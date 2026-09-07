@@ -1,0 +1,122 @@
+---
+argument_specs:
+  main:
+    short_description: Clone, configure and start (or delete) a VM on Proxmox VE
+    description:
+      - Looks the VM up by VMID, clones it from a cloud-init template if missing,
+        applies hardware and cloud-init settings, resizes the root disk and starts it.
+      - All API calls are delegated to the controller.
+    options:
+      proxmox_vm_api_host:
+        type: str
+        required: true
+        description: Proxmox VE API host (IP or DNS name).
+      proxmox_vm_api_port:
+        type: int
+        default: 8006
+      proxmox_vm_api_user:
+        type: str
+        default: ansible@pve
+      proxmox_vm_api_token_id:
+        type: str
+        default: ansible
+      proxmox_vm_api_token_secret:
+        type: str
+        required: true
+        no_log: true
+        description: API token secret. Keep it in an ansible-vault file.
+      proxmox_vm_validate_certs:
+        type: bool
+        default: false
+      proxmox_vm_node:
+        type: str
+        default: pve
+      proxmox_vm_storage:
+        type: str
+        default: local-lvm
+      proxmox_vm_template_name:
+        type: str
+        default: ubuntu-24.04-cloudinit
+      proxmox_vm_full_clone:
+        type: bool
+        default: true
+      proxmox_vm_timeout:
+        type: int
+        default: 600
+      proxmox_vm_state:
+        type: str
+        choices: [present, absent]
+        default: present
+      proxmox_vm_name:
+        type: str
+        description: VM name in Proxmox. Defaults to the inventory hostname.
+      proxmox_vm_id:
+        type: raw
+        required: true
+        description:
+          - Fixed VMID (100-999999999) for the VM. Defaults to the vm_id host var.
+          - Declared raw so the role can validate it and report a helpful message.
+      proxmox_vm_cores:
+        type: int
+        default: 2
+        description: Defaults to the vm_cores host var, else 2.
+      proxmox_vm_memory_mb:
+        type: int
+        default: 4096
+        description: Defaults to the vm_memory_mb host var, else 4096.
+      proxmox_vm_disk:
+        type: str
+        default: scsi0
+      proxmox_vm_disk_size:
+        type: str
+        default: 32G
+        description:
+          - Absolute root disk size with unit suffix (K, M, G, T). Applied on creation only.
+          - Defaults to the vm_disk_size host var, else 32G.
+      proxmox_vm_onboot:
+        type: bool
+        default: true
+      proxmox_vm_tags:
+        type: list
+        elements: str
+        default: [claude, ansible]
+      proxmox_vm_user:
+        type: str
+        default: dev
+      proxmox_vm_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Optional cloud-init password for the user (vm_password host var). Key-based login is the default.
+          - Either this or proxmox_vm_ssh_public_keys must be set.
+      proxmox_vm_ssh_public_keys:
+        type: list
+        elements: str
+        default: []
+      proxmox_vm_ip:
+        type: str
+        description: Static IPv4 address. Defaults to ansible_host.
+      proxmox_vm_prefix_length:
+        type: int
+        default: 24
+        description: Defaults to the vm_prefix_length host var, else 24.
+      proxmox_vm_gateway:
+        type: str
+        default: ""
+        description: Defaults to the vm_gateway host var.
+      proxmox_vm_ipconfig:
+        type: str
+        description: Full Proxmox ipconfig0 string. Generated from ip/prefix/gateway by default.
+      proxmox_vm_nameservers:
+        type: list
+        elements: str
+        default: []
+        description: Defaults to the vm_nameservers host var.
+      proxmox_vm_searchdomain:
+        type: str
+        default: ""
+        description: Defaults to the vm_searchdomain host var.
+      proxmox_vm_force_update:
+        type: bool
+        default: false

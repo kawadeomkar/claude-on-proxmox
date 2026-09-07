@@ -1,0 +1,70 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Read fake API request log and final state
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /var/lib/fake-pve/calls.log
+        - /var/lib/fake-pve/state.json
+      register: proxmox_vm_verify_raw
+
+    - name: Parse request log
+      ansible.builtin.set_fact:
+        proxmox_vm_verify_calls: >-
+          {{ (proxmox_vm_verify_raw.results[0].content | b64decode).splitlines() | map('from_json') | list }}
+        proxmox_vm_verify_state: "{{ proxmox_vm_verify_raw.results[1].content | b64decode | from_json }}"
+
+    - name: Extract the interesting requests
+      ansible.builtin.set_fact:
+        proxmox_vm_verify_clones: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9000/clone$') | list }}"
+        proxmox_vm_verify_configs: >-
+          {{ proxmox_vm_verify_calls | selectattr('method', 'equalto', 'PUT')
+             | selectattr('path', 'search', '/qemu/200/config$') | list }}
+        proxmox_vm_verify_resizes: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/resize$') | list }}"
+        proxmox_vm_verify_starts: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/status/start$') | list }}"
+        proxmox_vm_verify_shutdowns: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/status/shutdown$') | list }}"
+        proxmox_vm_verify_deletes: >-
+          {{ proxmox_vm_verify_calls | selectattr('method', 'equalto', 'DELETE')
+             | selectattr('path', 'search', '/qemu/200$') | list }}
+
+    - name: Assert the create sequence (converge) happened exactly once with the right settings
+      vars:
+        proxmox_vm_verify_cfg: "{{ proxmox_vm_verify_configs[0].params }}"
+      ansible.builtin.assert:
+        that:
+          - proxmox_vm_verify_clones | length == 1
+          - proxmox_vm_verify_clones[0].params.newid == '200'
+          - proxmox_vm_verify_clones[0].params.name == 'claude-dev'
+          - proxmox_vm_verify_clones[0].params.full == '1'
+          - proxmox_vm_verify_clones[0].params.storage == 'local-lvm'
+          - proxmox_vm_verify_configs | length == 1
+          - proxmox_vm_verify_cfg.cores == '4'
+          - proxmox_vm_verify_cfg.memory == '8192'
+          - proxmox_vm_verify_cfg.onboot == '1'
+          - proxmox_vm_verify_cfg.agent == 'enabled=1'
+          - proxmox_vm_verify_cfg.ciuser == 'dev'
+          - "'cipassword' not in proxmox_vm_verify_cfg"
+          - proxmox_vm_verify_cfg.ipconfig0 == 'ip=192.0.2.50/24,gw=192.0.2.1'
+          - proxmox_vm_verify_cfg.nameserver == '1.1.1.1 8.8.8.8'
+          - proxmox_vm_verify_cfg.searchdomain == 'lan'
+          - "'molecule%40test' in proxmox_vm_verify_cfg.sshkeys"
+          - "'claude' in proxmox_vm_verify_cfg.tags and 'ansible' in proxmox_vm_verify_cfg.tags"
+          - proxmox_vm_verify_resizes | length == 1
+          - proxmox_vm_verify_resizes[0].params.disk == 'scsi0'
+          - proxmox_vm_verify_resizes[0].params.size == '64G'
+          # started once by converge; the idempotence run found it running
+          - proxmox_vm_verify_starts | length == 1
+        quiet: true
+
+    - name: Assert the destroy sequence (side effect) and final state
+      ansible.builtin.assert:
+        that:
+          - proxmox_vm_verify_shutdowns | length == 1
+          - proxmox_vm_verify_shutdowns[0].params.forceStop == '1'
+          - proxmox_vm_verify_deletes | length == 1
+          - "'200' not in proxmox_vm_verify_state"
+          - "'9000' in proxmox_vm_verify_state"
+        quiet: true

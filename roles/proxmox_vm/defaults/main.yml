@@ -1,0 +1,55 @@
+---
+# Proxmox API connection. Token auth only. Prefer a dedicated user/token with
+# VM-scoped privileges over root@pam (see README, "Creating the Proxmox API token").
+proxmox_vm_api_host: ""
+proxmox_vm_api_port: 8006
+proxmox_vm_api_user: ansible@pve
+proxmox_vm_api_token_id: ansible
+proxmox_vm_api_token_secret: ""
+# Set to true after trusting the PVE CA on the controller (README).
+proxmox_vm_validate_certs: false
+
+# Where and from what to create the VM.
+proxmox_vm_node: pve
+proxmox_vm_storage: local-lvm
+proxmox_vm_template_name: ubuntu-24.04-cloudinit
+proxmox_vm_full_clone: true
+proxmox_vm_timeout: 600
+
+# present -> cloned, configured and started. absent -> stopped and deleted.
+proxmox_vm_state: present
+
+# Identity. A fixed VMID is required: Proxmox clone operations are not
+# name-idempotent, so the role looks the VM up by ID before cloning.
+# Taken from the vm_id host var by default.
+proxmox_vm_name: "{{ inventory_hostname }}"
+proxmox_vm_id: "{{ vm_id | default('') }}"
+
+# Hardware (taken from the vm_* host vars by default)
+proxmox_vm_cores: "{{ vm_cores | default(2) }}"
+proxmox_vm_memory_mb: "{{ vm_memory_mb | default(4096) }}"
+proxmox_vm_disk: scsi0
+proxmox_vm_disk_size: "{{ vm_disk_size | default('32G') }}"
+proxmox_vm_onboot: true
+proxmox_vm_tags: [claude, ansible]
+
+# Cloud-init: login user and credentials. At least one SSH key or a password
+# is required, otherwise the VM would be unreachable.
+proxmox_vm_user: dev
+proxmox_vm_password: "{{ vm_password | default('') }}"
+proxmox_vm_ssh_public_keys: []
+
+# Cloud-init: networking. Static addressing by default so the controller
+# knows where to SSH; set proxmox_vm_ipconfig to override entirely
+# (e.g. "ip=dhcp").
+proxmox_vm_ip: "{{ ansible_host }}"
+proxmox_vm_prefix_length: "{{ vm_prefix_length | default(24) }}"
+proxmox_vm_gateway: "{{ vm_gateway | default('') }}"
+proxmox_vm_ipconfig: >-
+  ip={{ proxmox_vm_ip }}/{{ proxmox_vm_prefix_length }}{{ ',gw=' ~ proxmox_vm_gateway if proxmox_vm_gateway else '' }}
+proxmox_vm_nameservers: "{{ vm_nameservers | default([]) }}"
+proxmox_vm_searchdomain: "{{ vm_searchdomain | default('') }}"
+
+# Re-apply hardware/cloud-init settings to an existing VM. Off by default
+# because Proxmox reports every update as a change, breaking idempotence.
+proxmox_vm_force_update: false

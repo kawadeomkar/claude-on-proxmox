@@ -1,0 +1,9 @@
+---
+# Runs after idempotence, before verify: tear the VM down again so verify can
+# check both the create and the destroy request sequences.
+- name: Side effect
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: proxmox_vm
+      proxmox_vm_state: absent

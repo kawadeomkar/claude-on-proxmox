@@ -1,0 +1,48 @@
+---
+# API connection parameters come from module_defaults in main.yml.
+- name: present | Clone from template {{ proxmox_vm_template_name }}
+  community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
+    node: "{{ proxmox_vm_node }}"
+    clone: "{{ proxmox_vm_template_name }}"
+    newid: "{{ proxmox_vm_id }}"
+    name: "{{ proxmox_vm_name }}"
+    full: "{{ proxmox_vm_full_clone }}"
+    storage: "{{ proxmox_vm_storage }}"
+    timeout: "{{ proxmox_vm_timeout }}"
+    state: present
+  when: not proxmox_vm_exists
+
+- name: present | Apply hardware and cloud-init settings
+  community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
+    node: "{{ proxmox_vm_node }}"
+    vmid: "{{ proxmox_vm_id }}"
+    name: "{{ proxmox_vm_name }}"
+    update: true
+    cores: "{{ proxmox_vm_cores }}"
+    memory: "{{ proxmox_vm_memory_mb }}"
+    onboot: "{{ proxmox_vm_onboot }}"
+    agent: enabled=1
+    tags: "{{ proxmox_vm_tags }}"
+    ciuser: "{{ proxmox_vm_user }}"
+    cipassword: "{{ proxmox_vm_password | default(omit, true) }}"
+    sshkeys: "{{ proxmox_vm_ssh_public_keys | join('\n') | default(omit, true) }}"
+    ipconfig:
+      ipconfig0: "{{ proxmox_vm_ipconfig }}"
+    nameservers: "{{ proxmox_vm_nameservers if proxmox_vm_nameservers else omit }}"
+    searchdomains: "{{ proxmox_vm_searchdomain | default(omit, true) }}"
+  when: not proxmox_vm_exists or proxmox_vm_force_update
+
+- name: present | Resize the root disk to {{ proxmox_vm_disk_size }}
+  community.proxmox.proxmox_disk: # noqa: args[module] - api_* come from module_defaults
+    vmid: "{{ proxmox_vm_id }}"
+    disk: "{{ proxmox_vm_disk }}"
+    size: "{{ proxmox_vm_disk_size }}"
+    state: resized
+  when: not proxmox_vm_exists
+
+- name: present | Start the VM
+  community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
+    node: "{{ proxmox_vm_node }}"
+    vmid: "{{ proxmox_vm_id }}"
+    state: started
+    timeout: "{{ proxmox_vm_timeout }}"

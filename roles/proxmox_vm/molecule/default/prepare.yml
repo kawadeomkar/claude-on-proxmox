@@ -1,0 +1,57 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    - name: Install fake Proxmox API server
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../../tests/molecule/fake_pve_api.py"
+        dest: /usr/local/bin/fake_pve_api.py
+        mode: "0755"
+
+    - name: Create a self-signed certificate (Proxmox ships one too)
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -x509
+          - -newkey
+          - rsa:2048
+          - -nodes
+          - -keyout
+          - /etc/fake-pve.key
+          - -out
+          - /etc/fake-pve.crt
+          - -days
+          - "2"
+          - -subj
+          - /CN=pve
+        creates: /etc/fake-pve.crt
+
+    - name: Install fake Proxmox API unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fake-pve-api.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Fake Proxmox VE API for Molecule
+          [Service]
+          ExecStart=/usr/bin/python3 /usr/local/bin/fake_pve_api.py 8006 /etc/fake-pve.crt /etc/fake-pve.key /var/lib/fake-pve molecule-test-secret
+          Restart=on-failure
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start fake Proxmox API
+      ansible.builtin.systemd_service:
+        name: fake-pve-api
+        daemon_reload: true
+        state: started
+        enabled: true
+
+    - name: Wait for the fake API from the controller
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 18006
+        timeout: 30
+      delegate_to: localhost
+      become: false

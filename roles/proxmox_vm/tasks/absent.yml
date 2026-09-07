@@ -1,0 +1,21 @@
+---
+# API connection parameters come from module_defaults in main.yml.
+- name: absent | Stop the VM
+  community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
+    node: "{{ proxmox_vm_node }}"
+    vmid: "{{ proxmox_vm_id }}"
+    state: stopped
+    force: true
+    timeout: "{{ proxmox_vm_timeout }}"
+  when: proxmox_vm_exists
+
+- name: absent | Delete the VM and its disks
+  community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
+    node: "{{ proxmox_vm_node }}"
+    vmid: "{{ proxmox_vm_id }}"
+    state: absent
+    # force also covers a VM that was (re)started between the two tasks;
+    # without it the module reports ok and leaves the VM in place.
+    force: true
+    timeout: "{{ proxmox_vm_timeout }}"
+  when: proxmox_vm_exists
