@@ -200,6 +200,11 @@ The weekly run is a canary. Most of what this project installs lives outside the
 cloud image, the Docker, NodeSource and GitHub CLI apt repositories, the Claude Code installer, the uv
 release and the Galaxy collections (pinned as ranges) - and any of it can break without a commit here.
 
+The scheduled run adds one more job that runs the integration scenario against the *unpinned* container
+image (`MOLECULE_IMAGE=...:latest`) instead of the digest the other jobs use. It never runs on a push or a
+pull request, and it is allowed to fail the weekly run: that failure is how you learn the current Ubuntu
+image no longer works before you bump the digest.
+
 No job needs a secret, so the full suite runs on pull requests from forks; keep it that way. Third-party
 actions are pinned to commit SHAs, and Dependabot updates them along with the pip pins every week. The
 setup steps shared by every job live in the composite action at `.github/actions/setup`.

@@ -87,6 +87,23 @@ jobs:
       - name: Molecule test
         run: make molecule MOLECULE_ROLES=${{ matrix.role }}
 
+  # Not part of the gate: this runs only on the weekly schedule (or on demand)
+  # and tests the roles against the *unpinned* image, so an upstream Ubuntu
+  # change surfaces on a Monday instead of at the next digest bump. It is
+  # allowed to fail the scheduled run - that failure is the notification.
+  canary:
+    name: Canary (unpinned Ubuntu image)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MOLECULE_IMAGE: geerlingguy/docker-ubuntu2404-ansible:latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup
+      - name: Molecule test (full configure playbook)
+        run: make molecule-integration
+
   integration:
     name: Molecule (full configure playbook)
     runs-on: ubuntu-latest
