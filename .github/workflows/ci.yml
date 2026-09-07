@@ -21,6 +21,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # .gitignore stops the accident; this stops `git add -f`.
+      - name: Check that no environment-specific file is tracked
+        run: |
+          leaked=$(git ls-files \
+            | grep -Ev '\.example$' \
+            | grep -E '(^|/)(hosts\.ya?ml|local[^/]*\.ya?ml|vault[^/]*\.ya?ml)$|^\.vault_pass|^\.env' \
+            || true)
+          if [ -n "$leaked" ]; then
+            echo "$leaked"
+            echo "::error::These files hold environment-specific or secret data and must not be committed."
+            exit 1
+          fi
+
       - uses: ./.github/actions/setup
 
       - name: Lint
@@ -31,6 +44,20 @@ jobs:
 
       - name: Unit tests
         run: make unit
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # `make lint` already ran yamllint, ansible-lint and ruff, so skip those
+      # and run the rest: gitleaks, detect-private-key, the large-file check and
+      # the whitespace hooks. Without this they only ever run for a developer
+      # who installed the git hook.
+      - name: Secret scan and file hygiene
+        env:
+          SKIP: yamllint,ansible-lint,ruff-check,ruff-format
+        run: make pre-commit
 
   molecule:
     name: Molecule (${{ matrix.role }})
