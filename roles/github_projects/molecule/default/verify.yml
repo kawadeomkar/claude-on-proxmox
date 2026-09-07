@@ -1,0 +1,45 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Stat expected and unexpected checkouts
+      ansible.builtin.stat:
+        path: "/home/dev/projects/{{ item }}"
+      loop: [alpha, beta, gamma, delta, excluded-one, epsilon]
+      register: github_projects_verify_dirs
+
+    - name: Assert only public, non-fork, non-archived, non-excluded, non-empty repos were cloned
+      ansible.builtin.assert:
+        that:
+          - github_projects_verify_dirs.results[0].stat.exists
+          - github_projects_verify_dirs.results[1].stat.exists
+          - not github_projects_verify_dirs.results[2].stat.exists
+          - not github_projects_verify_dirs.results[3].stat.exists
+          - not github_projects_verify_dirs.results[4].stat.exists
+          - not github_projects_verify_dirs.results[5].stat.exists
+          - github_projects_verify_dirs.results[0].stat.pw_name == 'dev'
+        quiet: true
+
+    - name: Stat checkouts of the explicit-list run
+      ansible.builtin.stat:
+        path: "/home/dev/selected/{{ item }}"
+      loop: [alpha, beta, excluded-one]
+      register: github_projects_verify_selected
+
+    - name: Assert an explicit list clones only the named repositories
+      ansible.builtin.assert:
+        that:
+          - not github_projects_verify_selected.results[0].stat.exists
+          - github_projects_verify_selected.results[1].stat.exists
+          - not github_projects_verify_selected.results[2].stat.exists
+        quiet: true
+
+    - name: Check the clone is on main with the seeded commit
+      ansible.builtin.command:
+        argv: [git, -C, /home/dev/projects/alpha, log, --oneline, -1, main]
+      become: true
+      become_user: dev
+      register: github_projects_verify_log
+      changed_when: false
+      failed_when: "'init' not in github_projects_verify_log.stdout"

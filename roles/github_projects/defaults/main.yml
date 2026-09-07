@@ -1,0 +1,28 @@
+---
+github_projects_user: dev
+
+# GitHub account whose repositories are cloned. Required.
+github_projects_username: ""
+# Optional token: raises the API rate limit and, when it belongs to
+# github_projects_username, includes private repositories in the listing.
+github_projects_token: ""
+github_projects_api_url: https://api.github.com
+
+# Destination; defaults to ~/projects of github_projects_user.
+github_projects_dir: ""
+
+# Selection
+github_projects_include_forks: false
+github_projects_include_archived: false
+# Only clone these repository names. Empty = every repository of
+# github_projects_username that passes the fork/archived filters.
+github_projects_include: []
+# Never clone these repository names.
+github_projects_exclude: []
+
+# https (works out of the box for public repos) or ssh (needs a key on the VM).
+github_projects_clone_protocol: https
+# Pull existing checkouts on every run. Off so local work is never disturbed.
+github_projects_update_existing: false
+# Shallow clone depth; leave empty for full history.
+github_projects_depth: ""

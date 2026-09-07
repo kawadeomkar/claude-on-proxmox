@@ -1,0 +1,19 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  roles:
+    # Default: empty include list clones every non-fork, non-archived repository.
+    - role: github_projects
+      vars:
+        github_projects_username: molecule
+        github_projects_api_url: http://127.0.0.1:8000
+        github_projects_exclude: [excluded-one]
+
+    # Explicit list: only the named repositories, into a separate directory.
+    - role: github_projects
+      vars:
+        github_projects_username: molecule
+        github_projects_api_url: http://127.0.0.1:8000
+        github_projects_include: [beta]
+        github_projects_dir: /home/dev/selected

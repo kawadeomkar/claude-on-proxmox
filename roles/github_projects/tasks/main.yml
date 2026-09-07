@@ -1,0 +1,84 @@
+---
+- name: Validate configuration
+  ansible.builtin.assert:
+    that:
+      - github_projects_username | length > 0
+    fail_msg: "github_projects_username must be set (vault_github_username in vault.yml)."
+    quiet: true
+
+- name: Look up home directory of {{ github_projects_user }}
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ github_projects_user }}"
+
+- name: Resolve projects directory
+  ansible.builtin.set_fact:
+    github_projects_target_dir: >-
+      {{ github_projects_dir if github_projects_dir else ansible_facts.getent_passwd[github_projects_user][4] ~ '/projects' }}
+
+- name: Ensure projects directory exists
+  ansible.builtin.file:
+    path: "{{ github_projects_target_dir }}"
+    state: directory
+    owner: "{{ github_projects_user }}"
+    group: "{{ github_projects_user }}"
+    mode: "0755"
+
+- name: List repositories of {{ github_projects_username }}
+  github_repos:
+    username: "{{ github_projects_username }}"
+    token: "{{ github_projects_token | default(omit, true) }}"
+    api_url: "{{ github_projects_api_url }}"
+    include_forks: "{{ github_projects_include_forks }}"
+    include_archived: "{{ github_projects_include_archived }}"
+  register: github_projects_listing
+
+- name: Select repositories to clone
+  ansible.builtin.set_fact:
+    github_projects_selected: >-
+      {{ github_projects_listing.repos
+         | rejectattr('empty')
+         | rejectattr('name', 'in', github_projects_exclude)
+         | selectattr('name', 'in', github_projects_include if github_projects_include else
+                                    github_projects_listing.repos | map(attribute='name') | list)
+         | list }}
+
+- name: Report selection
+  ansible.builtin.debug:
+    msg: >-
+      {{ github_projects_selected | length }} of {{ github_projects_listing.repos | length }}
+      repositories selected for {{ github_projects_target_dir }}
+      (skipped as empty: {{ github_projects_listing.repos | selectattr('empty') | map(attribute='name') | list }})
+
+- name: Fetch GitHub's published SSH host keys
+  ansible.builtin.uri:
+    url: "{{ github_projects_api_url }}/meta"
+    return_content: true
+  register: github_projects_github_meta
+  when: github_projects_clone_protocol == 'ssh'
+
+# Pre-seeding the published keys avoids trust-on-first-use for github.com.
+- name: Trust GitHub's SSH host keys
+  ansible.builtin.known_hosts:
+    name: github.com
+    key: "github.com {{ item }}"
+    state: present
+  become: true
+  become_user: "{{ github_projects_user }}"
+  loop: "{{ github_projects_github_meta.json.ssh_keys | default([]) }}"
+  loop_control:
+    label: "{{ item.split(' ')[0] }}"
+  when: github_projects_clone_protocol == 'ssh'
+
+- name: Clone repositories
+  ansible.builtin.git:
+    repo: "{{ item.ssh_url if github_projects_clone_protocol == 'ssh' else item.clone_url }}"
+    dest: "{{ github_projects_target_dir }}/{{ item.name }}"
+    version: "{{ item.default_branch }}"
+    update: "{{ github_projects_update_existing }}"
+    depth: "{{ github_projects_depth | default(omit, true) }}"
+  become: true
+  become_user: "{{ github_projects_user }}"
+  loop: "{{ github_projects_selected }}"
+  loop_control:
+    label: "{{ item.full_name }}"

@@ -1,0 +1,48 @@
+---
+argument_specs:
+  main:
+    short_description: Clone every GitHub repository of a user
+    options:
+      github_projects_user:
+        type: str
+        default: dev
+        description: Local user that owns the checkouts.
+      github_projects_username:
+        type: str
+        required: true
+        description: GitHub account to list repositories for.
+      github_projects_token:
+        type: str
+        default: ""
+        no_log: true
+      github_projects_api_url:
+        type: str
+        default: https://api.github.com
+      github_projects_dir:
+        type: path
+        description: Destination directory. Defaults to ~/projects.
+      github_projects_include_forks:
+        type: bool
+        default: false
+      github_projects_include_archived:
+        type: bool
+        default: false
+      github_projects_include:
+        type: list
+        elements: str
+        default: []
+        description: Repository names to clone. Empty means every repository of the user.
+      github_projects_exclude:
+        type: list
+        elements: str
+        default: []
+      github_projects_clone_protocol:
+        type: str
+        choices: [https, ssh]
+        default: https
+      github_projects_update_existing:
+        type: bool
+        default: false
+      github_projects_depth:
+        type: str
+        default: ""

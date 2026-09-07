@@ -1,0 +1,23 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  vars:
+    prepare_github_username: molecule
+    prepare_github_owner: dev
+    prepare_github_helper_dir: "{{ playbook_dir }}/../../../../tests/molecule"
+    prepare_github_repos:
+      - alpha
+      - beta
+      - gamma:fork
+      - delta:archived
+      - excluded-one
+      - epsilon:empty
+  tasks:
+    - name: Create the target user
+      ansible.builtin.user:
+        name: dev
+        shell: /bin/bash
+
+    - name: Set up fake GitHub
+      ansible.builtin.include_tasks: "{{ prepare_github_helper_dir }}/prepare_github.yml"

@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: claude-on-proxmox contributors
+  namespace: claude_on_proxmox
+  role_name: github_projects
+  description: Clone every GitHub repository of a user into a projects directory
+  license: MIT
+  min_ansible_version: "2.19"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - jammy
+    - name: Debian
+      versions:
+        - bookworm
+  galaxy_tags: [github, git, development]
+dependencies: []

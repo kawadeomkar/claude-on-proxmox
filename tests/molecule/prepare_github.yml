@@ -1,0 +1,70 @@
+---
+# Included by Molecule prepare playbooks. Creates bare git repositories and a
+# fake GitHub API (systemd unit) that lists them, so github_projects can be
+# exercised offline. Expects `prepare_github_repos` (list of name[:fork][:archived]),
+# `prepare_github_username` and `prepare_github_owner` (the local user that clones;
+# git refuses to serve repositories owned by someone else over file://).
+- name: molecule | prepare_github | Install git and python
+  ansible.builtin.apt:
+    name: [git, python3]
+    state: present
+    update_cache: true
+
+- name: molecule | prepare_github | Create source repositories with one commit on main
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      name="$REPO_NAME"
+      src=/tmp/src/$name
+      rm -rf "$src"
+      git init -q -b main "$src"
+      echo "# $name" > "$src/README.md"
+      git -C "$src" -c user.name=molecule -c user.email=molecule@example.com add README.md
+      git -C "$src" -c user.name=molecule -c user.email=molecule@example.com commit -q -m "init"
+      rm -rf "/srv/git/$name.git"
+      git clone -q --bare "$src" "/srv/git/$name.git"
+    creates: "/srv/git/{{ item.split(':')[0] }}.git"
+  environment:
+    REPO_NAME: "{{ item.split(':')[0] }}"
+  loop: "{{ prepare_github_repos }}"
+
+- name: molecule | prepare_github | Give the bare repositories to the cloning user
+  ansible.builtin.file:
+    path: /srv/git
+    state: directory
+    owner: "{{ prepare_github_owner }}"
+    group: "{{ prepare_github_owner }}"
+    recurse: true
+
+- name: molecule | prepare_github | Install fake GitHub API server
+  ansible.builtin.copy:
+    src: "{{ prepare_github_helper_dir }}/fake_github_api.py"
+    dest: /usr/local/bin/fake_github_api.py
+    mode: "0755"
+
+- name: molecule | prepare_github | Install fake GitHub API unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/fake-github-api.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Fake GitHub API for Molecule
+      [Service]
+      ExecStart=/usr/bin/python3 /usr/local/bin/fake_github_api.py 8000 \
+        {{ prepare_github_username | quote }} /srv/git {{ prepare_github_repos | map('quote') | join(' ') }}
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+
+- name: molecule | prepare_github | Start fake GitHub API
+  ansible.builtin.systemd_service:
+    name: fake-github-api
+    daemon_reload: true
+    state: started
+    enabled: true
+
+- name: molecule | prepare_github | Wait for fake GitHub API
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 8000
+    timeout: 30
