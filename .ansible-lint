@@ -1,0 +1,34 @@
+---
+# ansible-lint configuration. "production" is the strictest built-in profile.
+profile: production
+
+exclude_paths:
+  - .venv/
+  - .ansible/
+  - .cache/
+  - .vagrant/
+  - .github/
+  - collections/
+  - tests/unit/
+
+# Roles in this repo are meant to be used from this repo, not published to Galaxy.
+offline: true
+
+# Example files are copied into place by the user; treat them as regular YAML.
+kinds:
+  - yaml: "**/*.yml.example"
+  - inventory: "inventory/hosts.yml.example"
+  - tasks: "tests/molecule/*.yml"
+
+enable_list:
+  - args
+  - empty-string-compare
+  - no-log-password
+  - no-same-owner
+  - name[prefix]
+  - yaml
+
+# Do not warn about roles lacking Galaxy metadata that only matters for publishing.
+skip_list:
+  - galaxy[no-changelog]
+  - galaxy[version-incorrect]
