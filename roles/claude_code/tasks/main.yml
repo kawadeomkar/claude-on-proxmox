@@ -1,0 +1,53 @@
+---
+- name: Look up home directory of {{ claude_code_user }}
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ claude_code_user }}"
+
+- name: Set Claude Code paths
+  ansible.builtin.set_fact:
+    claude_code_home: "{{ ansible_facts.getent_passwd[claude_code_user][4] }}"
+    claude_code_bin: "{{ ansible_facts.getent_passwd[claude_code_user][4] }}/.local/bin/claude"
+
+- name: Ensure ~/.claude exists
+  ansible.builtin.file:
+    path: "{{ claude_code_home }}/.claude"
+    state: directory
+    owner: "{{ claude_code_user }}"
+    group: "{{ claude_code_user }}"
+    mode: "0700"
+
+- name: Install with the native installer
+  ansible.builtin.include_tasks: install_native.yml
+  when: claude_code_install_method == 'native'
+
+- name: Install with npm
+  ansible.builtin.include_tasks: install_npm.yml
+  when: claude_code_install_method == 'npm'
+
+- name: Write user settings
+  ansible.builtin.include_tasks: settings.yml
+
+- name: Write global CLAUDE.md
+  ansible.builtin.copy:
+    content: "{{ claude_code_global_instructions }}"
+    dest: "{{ claude_code_home }}/.claude/CLAUDE.md"
+    owner: "{{ claude_code_user }}"
+    group: "{{ claude_code_user }}"
+    mode: "0644"
+  when: claude_code_global_instructions | length > 0
+
+- name: Verify claude runs
+  ansible.builtin.command:
+    argv:
+      - "{{ claude_code_bin if claude_code_install_method == 'native' else 'claude' }}"
+      - --version
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_installed
+  changed_when: false
+  check_mode: false
+
+- name: Show installed version
+  ansible.builtin.debug:
+    msg: "Claude Code: {{ claude_code_installed.stdout }}"

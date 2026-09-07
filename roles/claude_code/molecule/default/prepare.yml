@@ -1,0 +1,31 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    - name: Create the target user
+      ansible.builtin.user:
+        name: dev
+        shell: /bin/bash
+
+    - name: Install prerequisites normally provided by the common role
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, zstd]
+        state: present
+        update_cache: true
+
+    - name: Create ~/.claude
+      ansible.builtin.file:
+        path: /home/dev/.claude
+        state: directory
+        owner: dev
+        group: dev
+        mode: "0700"
+
+    - name: Seed existing settings
+      ansible.builtin.copy:
+        dest: /home/dev/.claude/settings.json
+        content: '{"theme": "dark", "env": {"KEEP_ME": "1"}}'
+        owner: dev
+        group: dev
+        mode: "0600"

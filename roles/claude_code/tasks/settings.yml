@@ -1,0 +1,40 @@
+---
+- name: settings | Build managed settings
+  ansible.builtin.set_fact:
+    claude_code_managed_settings: >-
+      {{ claude_code_settings
+         | combine({'env': {'ANTHROPIC_API_KEY': claude_code_anthropic_api_key}} if claude_code_anthropic_api_key else {},
+                   recursive=True) }}
+  no_log: true
+
+- name: settings | Manage ~/.claude/settings.json
+  when: claude_code_managed_settings | length > 0
+  block:
+    - name: settings | Check for existing settings
+      ansible.builtin.stat:
+        path: "{{ claude_code_home }}/.claude/settings.json"
+      register: claude_code_settings_stat
+
+    - name: settings | Read existing settings
+      ansible.builtin.slurp:
+        src: "{{ claude_code_home }}/.claude/settings.json"
+      register: claude_code_settings_existing
+      when: claude_code_settings_stat.stat.exists
+      no_log: true
+
+    - name: settings | Merge managed settings over existing ones
+      ansible.builtin.set_fact:
+        claude_code_merged_settings: >-
+          {{ ((claude_code_settings_existing.content | b64decode | from_json)
+              if claude_code_settings_stat.stat.exists else {})
+             | combine(claude_code_managed_settings, recursive=True) }}
+      no_log: true
+
+    - name: settings | Write settings.json
+      ansible.builtin.copy:
+        content: "{{ claude_code_merged_settings | to_nice_json(indent=2) }}\n"
+        dest: "{{ claude_code_home }}/.claude/settings.json"
+        owner: "{{ claude_code_user }}"
+        group: "{{ claude_code_user }}"
+        mode: "0600"
+      no_log: true

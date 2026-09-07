@@ -1,0 +1,42 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Run claude --version as the user
+      ansible.builtin.command:
+        argv: [/home/dev/.local/bin/claude, --version]
+      become: true
+      become_user: dev
+      register: claude_code_verify_version
+      changed_when: false
+
+    - name: Read settings.json
+      ansible.builtin.slurp:
+        src: /home/dev/.claude/settings.json
+      register: claude_code_verify_settings_raw
+
+    - name: Read CLAUDE.md
+      ansible.builtin.slurp:
+        src: /home/dev/.claude/CLAUDE.md
+      register: claude_code_verify_claude_md
+
+    - name: Stat settings.json
+      ansible.builtin.stat:
+        path: /home/dev/.claude/settings.json
+      register: claude_code_verify_settings_stat
+
+    - name: Assert installation and configuration
+      vars:
+        claude_code_verify_settings: "{{ claude_code_verify_settings_raw.content | b64decode | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - claude_code_verify_version.stdout is search('[0-9]+\.[0-9]+\.[0-9]+')
+          - claude_code_verify_settings.env.ANTHROPIC_API_KEY == 'sk-ant-molecule-test-key'
+          - claude_code_verify_settings.env.KEEP_ME == '1'
+          - claude_code_verify_settings.theme == 'dark'
+          - claude_code_verify_settings.permissions.defaultMode == 'acceptEdits'
+          - claude_code_verify_settings_stat.stat.pw_name == 'dev'
+          - claude_code_verify_settings_stat.stat.mode == '0600'
+          - "'Keep answers short.' in (claude_code_verify_claude_md.content | b64decode)"
+        quiet: true

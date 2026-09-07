@@ -1,0 +1,17 @@
+---
+- name: install_npm | Ensure npm is available
+  ansible.builtin.command:
+    argv: [npm, --version]
+  register: claude_code_npm
+  changed_when: false
+  failed_when: claude_code_npm.rc != 0
+
+# state: present keeps runs idempotent; with stable/latest the package is
+# installed once and upgraded only when claude_code_version changes to an
+# exact version (or manually with `npm update -g`).
+- name: install_npm | Install @anthropic-ai/claude-code globally
+  community.general.npm:
+    name: "@anthropic-ai/claude-code"
+    global: true
+    state: present
+    version: "{{ omit if claude_code_version in ['stable', 'latest'] else claude_code_version }}"

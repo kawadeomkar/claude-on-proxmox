@@ -1,0 +1,13 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  roles:
+    - role: claude_code
+      vars:
+        claude_code_anthropic_api_key: sk-ant-molecule-test-key
+        claude_code_settings:
+          permissions:
+            defaultMode: acceptEdits
+        claude_code_global_instructions: |
+          Keep answers short.

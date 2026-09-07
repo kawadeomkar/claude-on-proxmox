@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: claude-on-proxmox contributors
+  namespace: claude_on_proxmox
+  role_name: claude_code
+  description: Install and configure Claude Code for a user
+  license: MIT
+  min_ansible_version: "2.19"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - jammy
+    - name: Debian
+      versions:
+        - bookworm
+  galaxy_tags: [claude, ai, development]
+dependencies: []

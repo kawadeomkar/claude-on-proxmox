@@ -1,0 +1,29 @@
+---
+argument_specs:
+  main:
+    short_description: Install and configure Claude Code for a user
+    options:
+      claude_code_user:
+        type: str
+        default: dev
+      claude_code_install_method:
+        type: str
+        choices: [native, npm]
+        default: native
+      claude_code_version:
+        type: str
+        default: stable
+        description: stable, latest or an exact semantic version.
+      claude_code_installer_url:
+        type: str
+        default: https://claude.ai/install.sh
+      claude_code_anthropic_api_key:
+        type: str
+        default: ""
+        no_log: true
+      claude_code_settings:
+        type: dict
+        default: {}
+      claude_code_global_instructions:
+        type: str
+        default: ""

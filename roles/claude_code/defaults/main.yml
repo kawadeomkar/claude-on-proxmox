@@ -1,0 +1,22 @@
+---
+claude_code_user: dev
+
+# native: official installer script (self-updating binary in ~/.local/bin)
+# npm:    @anthropic-ai/claude-code via npm (requires Node.js)
+claude_code_install_method: native
+
+# stable, latest, or an exact version such as 2.1.0
+claude_code_version: stable
+claude_code_installer_url: https://claude.ai/install.sh
+
+# Optional API key. Written to the `env` block of ~/.claude/settings.json so
+# every session picks it up. Leave empty to log in interactively on the VM.
+claude_code_anthropic_api_key: ""
+
+# Extra user settings merged (recursively) into ~/.claude/settings.json.
+# Existing keys the user changed on the VM are preserved.
+# See https://docs.anthropic.com/en/docs/claude-code/settings
+claude_code_settings: {}
+
+# Optional content for ~/.claude/CLAUDE.md (instructions applied to every project).
+claude_code_global_instructions: ""

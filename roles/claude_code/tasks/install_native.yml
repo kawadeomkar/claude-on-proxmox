@@ -1,0 +1,60 @@
+---
+- name: install_native | Check installed version
+  ansible.builtin.command:
+    argv:
+      - "{{ claude_code_bin }}"
+      - --version
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: install_native | Decide whether to (re)install
+  ansible.builtin.set_fact:
+    # stable/latest: only install when missing (the binary self-updates).
+    # exact version: reinstall when the installed version differs.
+    claude_code_needs_install: >-
+      {{ claude_code_current.rc != 0
+         or (claude_code_version is match('^[0-9]+\.[0-9]+\.[0-9]+')
+             and claude_code_version not in claude_code_current.stdout) }}
+
+- name: install_native | Install Claude Code {{ claude_code_version }}
+  when: claude_code_needs_install
+  block:
+    - name: install_native | Create download directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: claude-code
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_tmp
+
+    # The installer verifies the binary against the release manifest, but the
+    # script itself is trusted through TLS to claude.ai only (README).
+    - name: install_native | Download installer script
+      ansible.builtin.get_url:
+        url: "{{ claude_code_installer_url }}"
+        dest: "{{ claude_code_tmp.path }}/install.sh"
+        owner: "{{ claude_code_user }}"
+        group: "{{ claude_code_user }}"
+        mode: "0700"
+
+    - name: install_native | Run installer
+      ansible.builtin.command:
+        argv:
+          - bash
+          - "{{ claude_code_tmp.path }}/install.sh"
+          - "{{ claude_code_version }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      changed_when: true
+      environment:
+        HOME: "{{ claude_code_home }}"
+  always:
+    - name: install_native | Remove download directory
+      ansible.builtin.file:
+        path: "{{ claude_code_tmp.path }}"
+        state: absent
+      when: claude_code_tmp.path is defined
