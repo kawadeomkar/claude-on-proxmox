@@ -1,0 +1,18 @@
+---
+# Create (clone from template), configure cloud-init and start every VM in
+# the claude_vms group. All API calls are delegated to the controller.
+- name: Provision VMs on Proxmox
+  hosts: claude_vms
+  gather_facts: false
+  roles:
+    - role: proxmox_vm
+
+  post_tasks:
+    - name: Wait for SSH on the new VM
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        delay: 5
+        timeout: 600
+        search_regex: OpenSSH
+      delegate_to: localhost

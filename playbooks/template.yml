@@ -1,0 +1,8 @@
+---
+# One-time: build a cloud-init enabled Ubuntu template on the Proxmox host.
+# Runs over SSH on the PVE node because importing a disk image needs `qm`.
+- name: Build the cloud-init VM template
+  hosts: proxmox
+  become: true
+  roles:
+    - role: proxmox_template

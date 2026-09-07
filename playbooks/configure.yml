@@ -1,0 +1,33 @@
+---
+# Configure an already-reachable VM: OS baseline, developer tooling,
+# Claude Code and a checkout of every GitHub project.
+- name: Configure Claude development VMs
+  hosts: claude_vms
+  become: true
+
+  pre_tasks:
+    - name: Wait for the VM to accept connections
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      tags: [always]
+
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command:
+        cmd: cloud-init status --wait
+      register: configure_cloud_init
+      changed_when: false
+      check_mode: false
+      # Exit code 2 means "done with recoverable errors", which is fine for us.
+      failed_when: configure_cloud_init.rc not in [0, 2]
+      when: configure_wait_for_cloud_init | default(true) | bool
+      tags: [always]
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: dev_tools
+      tags: [dev_tools]
+    - role: claude_code
+      tags: [claude_code]
+    - role: github_projects
+      tags: [github_projects]

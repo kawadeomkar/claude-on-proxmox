@@ -1,0 +1,9 @@
+---
+# Full run: create the VM on Proxmox, then configure it.
+# The template (playbooks/template.yml) is a one-time prerequisite and is not
+# part of site.yml because it needs SSH access to the Proxmox host.
+- name: Provision VMs on Proxmox
+  ansible.builtin.import_playbook: playbooks/provision.yml
+
+- name: Configure VMs
+  ansible.builtin.import_playbook: playbooks/configure.yml
