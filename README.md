@@ -186,9 +186,26 @@ Not covered by Molecule: the npm install method for Claude Code, reinstalling on
 and `common_user_passwordless_sudo: false`. The Vagrant target exercises `configure.yml` on a real VM
 including the Docker and qemu-guest-agent services.
 
-CI (`.github/workflows/ci.yml`) runs lint, unit tests, every Molecule scenario and the integration scenario
-on pushes to `main`/`master` and on pull requests. `pre-commit` runs the same linters from the virtualenv
-plus a secret scanner (gitleaks).
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to `main`/`master`, on pull requests and weekly:
+
+1. **Lint and unit tests** - `make lint`, `make syntax`, `make unit`, a guard that fails if a `hosts.yml`,
+   `local.yml`, `vault.yml` or `.vault_pass` is ever committed, and the pre-commit hooks the other targets
+   do not cover (gitleaks, private-key detection, the whitespace and large-file checks). `pre-commit` runs
+   the same linters locally from the virtualenv.
+2. **Molecule** - every role scenario as a matrix job, plus the integration scenario.
+
+The weekly run is a canary. Most of what this project installs lives outside the repository - the Ubuntu
+cloud image, the Docker, NodeSource and GitHub CLI apt repositories, the Claude Code installer, the uv
+release and the Galaxy collections (pinned as ranges) - and any of it can break without a commit here.
+
+No job needs a secret, so the full suite runs on pull requests from forks; keep it that way. Third-party
+actions are pinned to commit SHAs, and Dependabot updates them along with the pip pins every week. The
+setup steps shared by every job live in the composite action at `.github/actions/setup`.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes a GitHub release with notes
+generated from the commits since the previous tag.
 
 ## Layout
 
@@ -204,6 +221,7 @@ tests/molecule/             shared fakes for Molecule scenarios
 molecule/configure/         integration scenario for the full configure playbook
                             (group_vars/all/defaults.yml is a symlink to the real one; keep it a git checkout)
 .config/molecule/           Molecule settings shared by every scenario
+.github/                    CI and release workflows, the shared setup action, Dependabot
 requirements.txt            pinned Python tooling; requirements.yml: Galaxy collections
 ```
 
