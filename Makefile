@@ -1,0 +1,137 @@
+# Developer entry points. Every target uses the project-local virtualenv so
+# the exact tool versions pinned in requirements.txt are used.
+VENV       ?= .venv
+BIN        := $(VENV)/bin
+ABSBIN     := $(abspath $(BIN))
+VAULT_FILE := inventory/group_vars/all/vault.yml
+PYTHON     ?= python3
+VAULT_PASS := .vault_pass
+VAULT_ARGS := $(if $(wildcard $(VAULT_PASS)),--vault-password-file $(VAULT_PASS),)
+ANSIBLE_ARGS ?=
+ROLES      := common dev_tools claude_code github_projects proxmox_template proxmox_vm
+MOLECULE_ROLES ?= $(ROLES)
+
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+
+# ---------------------------------------------------------------- setup ----
+$(BIN)/activate:
+	$(PYTHON) -m venv $(VENV)
+	$(BIN)/pip install --upgrade pip
+
+.PHONY: venv
+venv: $(BIN)/activate ## Create the virtualenv and install Python tooling
+	$(BIN)/pip install -r requirements.txt
+
+.PHONY: deps
+deps: venv ## Install Ansible Galaxy collections
+	$(BIN)/ansible-galaxy collection install -r requirements.yml
+
+.PHONY: init
+init: deps ## One-time local setup: venv, collections, local config from examples, pre-commit hooks
+	@test -f inventory/hosts.yml || cp inventory/hosts.yml.example inventory/hosts.yml
+	@test -f inventory/group_vars/all/local.yml || cp inventory/group_vars/all/local.yml.example inventory/group_vars/all/local.yml
+	@test -f inventory/group_vars/all/vault.yml || cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+	@$(BIN)/pre-commit install >/dev/null
+	@echo ""
+	@echo "Now edit these (they are git-ignored):"
+	@echo "  inventory/hosts.yml                  - Proxmox host + VM definitions"
+	@echo "  inventory/group_vars/all/local.yml   - GitHub username, Proxmox node/storage, package choices"
+	@echo "  inventory/group_vars/all/vault.yml   - secrets; then: make vault-encrypt"
+
+.PHONY: vault-encrypt
+vault-encrypt: ## Encrypt inventory/group_vars/all/vault.yml with ansible-vault
+	$(BIN)/ansible-vault encrypt $(VAULT_ARGS) $(VAULT_FILE)
+
+.PHONY: vault-edit
+vault-edit: ## Edit the encrypted vault file
+	$(BIN)/ansible-vault edit $(VAULT_ARGS) $(VAULT_FILE)
+
+# Refuse to run playbooks while vault.yml is still plaintext.
+.PHONY: vault-check
+vault-check:
+	@test ! -f $(VAULT_FILE) || head -c 14 $(VAULT_FILE) | grep -q '^\$$ANSIBLE_VAULT' \
+	  || { echo "error: $(VAULT_FILE) is not encrypted. Run: make vault-encrypt"; exit 1; }
+
+# ------------------------------------------------------------ run books ----
+.PHONY: template
+template: vault-check ## Build the cloud-init VM template on the Proxmox host (once)
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/template.yml
+
+.PHONY: provision
+provision: vault-check ## Create and start the VM(s) on Proxmox
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
+
+.PHONY: configure
+configure: vault-check ## Configure the VM(s): packages, tools, Claude Code, GitHub projects
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
+
+.PHONY: site
+site: vault-check ## Provision + configure (full run)
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) site.yml
+
+.PHONY: destroy
+destroy: vault-check ## Stop and delete the VM(s) on Proxmox
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
+	@rm -rf .cache/facts
+
+.PHONY: check
+check: vault-check ## Dry-run configure against real hosts (--check --diff)
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
+
+# ------------------------------------------------------------ quality -----
+.PHONY: lint
+lint: ## Run yamllint + ansible-lint + ruff
+	$(BIN)/yamllint --strict .
+	$(BIN)/ansible-lint
+	$(BIN)/ruff check .
+	$(BIN)/ruff format --check .
+
+.PHONY: syntax
+syntax: ## ansible-playbook --syntax-check on every playbook (uses the example inventory)
+	@tmp=$$(mktemp -d) && cp inventory/hosts.yml.example $$tmp/hosts.yml && \
+	for pb in site.yml playbooks/*.yml; do \
+	  echo "== $$pb"; \
+	  $(BIN)/ansible-playbook -i $$tmp/hosts.yml --syntax-check $$pb || exit 1; \
+	done; rm -rf $$tmp
+
+.PHONY: unit
+unit: ## Run Python unit tests for custom modules
+	$(BIN)/pytest
+
+# Molecule resolves ansible-playbook from PATH (and only appends the venv), so
+# the venv must come first or a system-wide Ansible would be used instead of
+# the pinned one.
+.PHONY: molecule
+molecule: ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_ROLES="common claude_code"
+	@for role in $(MOLECULE_ROLES); do \
+	  echo "===== molecule: $$role"; \
+	  (cd roles/$$role && PATH="$(ABSBIN):$$PATH" $(ABSBIN)/molecule test) || exit 1; \
+	done
+
+.PHONY: molecule-integration
+molecule-integration: ## Run the full configure playbook against a Docker container
+	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s configure
+
+.PHONY: test
+test: lint syntax unit molecule molecule-integration ## Run everything
+
+.PHONY: vagrant-up
+vagrant-up: ## End-to-end test of configure.yml on a real VirtualBox VM
+	vagrant up --provision
+
+.PHONY: vagrant-destroy
+vagrant-destroy: ## Destroy the Vagrant test VM
+	vagrant destroy -f
+
+.PHONY: pre-commit
+pre-commit: ## Run all pre-commit hooks against the whole tree
+	$(BIN)/pre-commit run --all-files
+
+.PHONY: clean
+clean: ## Remove caches and the virtualenv
+	rm -rf $(VENV) .cache .pytest_cache .ruff_cache .ansible .molecule collections
+	find . -name __pycache__ -type d -prune -exec rm -rf {} +
