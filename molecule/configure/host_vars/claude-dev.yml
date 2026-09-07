@@ -1,0 +1,17 @@
+---
+# Test overrides for the integration scenario. Host vars beat the project
+# defaults linked in from inventory/group_vars/all/defaults.yml.
+configure_wait_for_cloud_init: false
+vm_user: dev
+vm_ssh_public_keys:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMoleculeTestKeyDoNotUse0000000000000000000 molecule@test
+github_username: molecule
+github_token: ""
+# Empty = clone everything (the fork "beta" is still filtered out).
+github_projects: []
+anthropic_api_key: sk-ant-molecule-test-key
+github_projects_api_url: http://127.0.0.1:8000
+dev_tools_install_docker: false
+claude_code_settings:
+  permissions:
+    defaultMode: acceptEdits

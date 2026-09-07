@@ -1,0 +1,3 @@
+---
+- name: Run the real configure playbook against the container
+  ansible.builtin.import_playbook: ../../playbooks/configure.yml

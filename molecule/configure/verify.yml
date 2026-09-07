@@ -1,0 +1,41 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Run the tools the VM user would use
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      become: true
+      become_user: dev
+      loop:
+        - [bash, -lc, "claude --version"]
+        - [node, --version]
+        - [uv, --version]
+        - [gh, --version]
+        - [git, -C, /home/dev/projects/alpha, status]
+      register: verify_cmds
+      changed_when: false
+      loop_control:
+        label: "{{ item | join(' ') }}"
+
+    - name: Stat the fork that must not be cloned
+      ansible.builtin.stat:
+        path: /home/dev/projects/beta
+      register: verify_fork
+
+    - name: Read settings.json
+      ansible.builtin.slurp:
+        src: /home/dev/.claude/settings.json
+      register: verify_settings_raw
+
+    - name: Assert the VM is ready for use
+      vars:
+        verify_settings: "{{ verify_settings_raw.content | b64decode | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - verify_cmds.results[0].stdout is search('[0-9]+\.[0-9]+\.[0-9]+')
+          - not verify_fork.stat.exists
+          - verify_settings.env.ANTHROPIC_API_KEY == 'sk-ant-molecule-test-key'
+          - verify_settings.permissions.defaultMode == 'acceptEdits'
+        quiet: true

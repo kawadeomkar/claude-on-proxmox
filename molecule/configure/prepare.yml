@@ -1,0 +1,18 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  vars:
+    prepare_github_username: molecule
+    prepare_github_owner: dev
+    prepare_github_helper_dir: "{{ playbook_dir }}/../../tests/molecule"
+    prepare_github_repos:
+      - alpha
+      - beta:fork
+  tasks:
+    - name: Create the VM user early so test fixtures can be owned by it
+      ansible.builtin.user:
+        name: dev
+
+    - name: Set up fake GitHub
+      ansible.builtin.include_tasks: "{{ prepare_github_helper_dir }}/prepare_github.yml"
