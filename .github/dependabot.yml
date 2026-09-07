@@ -5,7 +5,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
   - package-ecosystem: github-actions
     directory: /
+    schedule:
+      interval: weekly
+
+  # Actions used inside the composite action are only picked up when the
+  # directory points at it.
+  - package-ecosystem: github-actions
+    directory: /.github/actions/setup
     schedule:
       interval: weekly
