@@ -1,0 +1,56 @@
+---
+argument_specs:
+  main:
+    short_description: Install developer tooling on an Ubuntu VM
+    options:
+      dev_tools_user:
+        type: str
+        default: dev
+        description: User added to the docker group.
+      dev_tools_install_node:
+        type: bool
+        default: true
+      dev_tools_install_docker:
+        type: bool
+        default: true
+      dev_tools_install_gh:
+        type: bool
+        default: true
+      dev_tools_install_uv:
+        type: bool
+        default: true
+      dev_tools_apt_packages:
+        type: list
+        elements: str
+      dev_tools_node_major:
+        type: int
+        default: 22
+      dev_tools_npm_global_packages:
+        type: list
+        elements: str
+        default: []
+      dev_tools_docker_packages:
+        type: list
+        elements: str
+      dev_tools_container_virt_types:
+        type: list
+        elements: str
+        default: [docker, container, containerd, podman, lxc]
+      dev_tools_docker_manage_service:
+        type: bool
+        description: Defaults to true unless running inside a container.
+      dev_tools_deb_arch:
+        type: str
+        choices: [amd64, arm64]
+        description: Derived from ansible_architecture by default.
+      dev_tools_uv_version:
+        type: str
+        default: "0.9.5"
+      dev_tools_uv_arch_map:
+        type: dict
+      dev_tools_uv_sha256:
+        type: dict
+        description: SHA256 of the uv release archive per architecture key of dev_tools_uv_arch_map.
+      dev_tools_uv_install_dir:
+        type: path
+        default: /usr/local/bin

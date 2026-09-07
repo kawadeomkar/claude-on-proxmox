@@ -1,0 +1,37 @@
+---
+- name: node | Add NodeSource repository
+  ansible.builtin.deb822_repository:
+    name: nodesource
+    types: deb
+    uris: "https://deb.nodesource.com/node_{{ dev_tools_node_major }}.x"
+    suites: nodistro
+    components: main
+    # Vendored key (roles/dev_tools/files/nodesource.asc) so a swapped download
+    # endpoint cannot supply its own signing key.
+    signed_by: "{{ lookup('ansible.builtin.file', 'nodesource.asc') }}"
+    state: present
+  register: dev_tools_node_repo
+
+- name: node | Pin Node.js to NodeSource over the distro package
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/nodesource
+    content: |
+      Package: nodejs
+      Pin: origin deb.nodesource.com
+      Pin-Priority: 600
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: node | Install Node.js
+  ansible.builtin.apt:
+    name: nodejs
+    state: present
+    update_cache: "{{ dev_tools_node_repo.changed }}"
+
+- name: node | Install global npm packages
+  community.general.npm:
+    name: "{{ item }}"
+    global: true
+    state: present
+  loop: "{{ dev_tools_npm_global_packages }}"

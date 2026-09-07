@@ -1,0 +1,33 @@
+---
+- name: docker | Add Docker repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: "https://download.docker.com/linux/{{ ansible_distribution | lower }}"
+    suites: "{{ ansible_distribution_release }}"
+    components: stable
+    # Vendored key (roles/dev_tools/files/docker.asc) so a swapped download
+    # endpoint cannot supply its own signing key.
+    signed_by: "{{ lookup('ansible.builtin.file', 'docker.asc') }}"
+    architectures: "{{ dev_tools_deb_arch }}"
+    state: present
+  register: dev_tools_docker_repo
+
+- name: docker | Install Docker Engine
+  ansible.builtin.apt:
+    name: "{{ dev_tools_docker_packages }}"
+    state: present
+    update_cache: "{{ dev_tools_docker_repo.changed }}"
+
+- name: docker | Enable and start Docker
+  ansible.builtin.service:
+    name: docker
+    enabled: true
+    state: started
+  when: dev_tools_docker_manage_service
+
+- name: docker | Add to docker group user {{ dev_tools_user }}
+  ansible.builtin.user:
+    name: "{{ dev_tools_user }}"
+    groups: docker
+    append: true

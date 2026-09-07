@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  author: claude-on-proxmox contributors
+  namespace: claude_on_proxmox
+  role_name: dev_tools
+  description: Developer tooling - Node.js, Docker Engine, GitHub CLI, uv, build packages
+  license: MIT
+  min_ansible_version: "2.19"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - jammy
+  galaxy_tags: [development, docker, nodejs, python]
+dependencies: []

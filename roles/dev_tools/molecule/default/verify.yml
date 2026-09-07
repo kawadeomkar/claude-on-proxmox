@@ -1,0 +1,49 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Load role defaults so pinned versions are asserted from one place
+      ansible.builtin.include_vars:
+        file: ../../defaults/main.yml
+        name: dev_tools_verify_defaults
+
+    - name: Check tool versions
+      ansible.builtin.command:
+        argv: "{{ item.value }}"
+      loop: "{{ dev_tools_verify_tools | dict2items }}"
+      vars:
+        dev_tools_verify_tools:
+          node: [node, --version]
+          npm: [npm, --version]
+          gh: [gh, --version]
+          uv: [uv, --version]
+          uvx: [uvx, --version]
+          docker: [docker, --version]
+          pipx: [pipx, --version]
+          shellcheck: [shellcheck, --version]
+          cowsay: [cowsay, molecule]
+      register: dev_tools_verify_run
+      changed_when: false
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Index results by tool name
+      ansible.builtin.set_fact:
+        dev_tools_verify_out: >-
+          {{ dict(dev_tools_verify_run.results | map(attribute='item.key')
+                  | zip(dev_tools_verify_run.results | map(attribute='stdout'))) }}
+
+    - name: Check Node major and uv version match the role defaults
+      ansible.builtin.assert:
+        that:
+          - dev_tools_verify_out.node is match('^v' ~ dev_tools_verify_defaults.dev_tools_node_major ~ '\\.')
+          - dev_tools_verify_out.uv is match('^uv ' ~ dev_tools_verify_defaults.dev_tools_uv_version)
+        quiet: true
+
+    - name: Check dev is in the docker group
+      ansible.builtin.command:
+        argv: [id, -nG, dev]
+      register: dev_tools_verify_groups
+      changed_when: false
+      failed_when: "'docker' not in dev_tools_verify_groups.stdout.split()"

@@ -1,0 +1,23 @@
+---
+- name: Install development packages
+  ansible.builtin.apt:
+    name: "{{ dev_tools_apt_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install Node.js
+  ansible.builtin.include_tasks: node.yml
+  when: dev_tools_install_node
+
+- name: Install Docker Engine
+  ansible.builtin.include_tasks: docker.yml
+  when: dev_tools_install_docker
+
+- name: Install GitHub CLI
+  ansible.builtin.include_tasks: gh.yml
+  when: dev_tools_install_gh
+
+- name: Install uv
+  ansible.builtin.include_tasks: uv.yml
+  when: dev_tools_install_uv

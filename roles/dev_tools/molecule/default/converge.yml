@@ -1,0 +1,8 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  roles:
+    - role: dev_tools
+      vars:
+        dev_tools_npm_global_packages: [cowsay]

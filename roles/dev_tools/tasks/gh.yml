@@ -1,0 +1,20 @@
+---
+- name: gh | Add GitHub CLI repository
+  ansible.builtin.deb822_repository:
+    name: github-cli
+    types: deb
+    uris: https://cli.github.com/packages
+    suites: stable
+    components: main
+    # Vendored key (roles/dev_tools/files/github-cli.asc) so a swapped download
+    # endpoint cannot supply its own signing key.
+    signed_by: "{{ lookup('ansible.builtin.file', 'github-cli.asc') }}"
+    architectures: "{{ dev_tools_deb_arch }}"
+    state: present
+  register: dev_tools_gh_repo
+
+- name: gh | Install GitHub CLI
+  ansible.builtin.apt:
+    name: gh
+    state: present
+    update_cache: "{{ dev_tools_gh_repo.changed }}"

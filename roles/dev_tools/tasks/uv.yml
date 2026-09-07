@@ -1,0 +1,48 @@
+---
+- name: uv | Check installed version
+  ansible.builtin.command:
+    argv:
+      - "{{ dev_tools_uv_install_dir }}/uv"
+      - --version
+  register: dev_tools_uv_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: uv | Install version {{ dev_tools_uv_version }}
+  when: >-
+    dev_tools_uv_current.rc != 0
+    or ('uv ' ~ dev_tools_uv_version) not in dev_tools_uv_current.stdout
+  vars:
+    dev_tools_uv_target: "{{ dev_tools_uv_arch_map[ansible_architecture] }}"
+    dev_tools_uv_archive: "uv-{{ dev_tools_uv_target }}.tar.gz"
+  block:
+    - name: uv | Create download directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: uv
+      register: dev_tools_uv_tmp
+
+    - name: uv | Download release archive
+      ansible.builtin.get_url:
+        url: "https://github.com/astral-sh/uv/releases/download/{{ dev_tools_uv_version }}/{{ dev_tools_uv_archive }}"
+        dest: "{{ dev_tools_uv_tmp.path }}/{{ dev_tools_uv_archive }}"
+        checksum: "sha256:{{ dev_tools_uv_sha256[ansible_architecture] }}"
+        mode: "0644"
+
+    - name: uv | Extract binaries
+      ansible.builtin.unarchive:
+        src: "{{ dev_tools_uv_tmp.path }}/{{ dev_tools_uv_archive }}"
+        dest: "{{ dev_tools_uv_install_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        include: ["uv-{{ dev_tools_uv_target }}/uv", "uv-{{ dev_tools_uv_target }}/uvx"]
+        owner: root
+        group: root
+        mode: "0755"
+  always:
+    - name: uv | Remove download directory
+      ansible.builtin.file:
+        path: "{{ dev_tools_uv_tmp.path }}"
+        state: absent
+      when: dev_tools_uv_tmp.path is defined
