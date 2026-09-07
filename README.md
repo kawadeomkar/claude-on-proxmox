@@ -230,6 +230,12 @@ molecule/configure/         integration scenario for the full configure playbook
 requirements.txt            pinned Python tooling; requirements.yml: Galaxy collections
 ```
 
+## Contributing
+
+Bug reports and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, the test
+commands and the conventions this repository follows. Security issues go through the process in
+[SECURITY.md](SECURITY.md) rather than a public issue.
+
 ## License
 
 MIT
