@@ -1,0 +1,77 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Gather user facts
+      ansible.builtin.getent:
+        database: passwd
+        key: dev
+
+    - name: Read sudoers drop-in
+      ansible.builtin.slurp:
+        src: /etc/sudoers.d/90-dev
+      register: common_verify_sudoers
+
+    - name: Read authorized_keys
+      ansible.builtin.slurp:
+        src: "{{ ansible_facts.getent_passwd.dev[4] }}/.ssh/authorized_keys"
+      register: common_verify_keys
+
+    - name: Check packages are installed
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Check timezone link
+      ansible.builtin.stat:
+        path: /etc/localtime
+      register: common_verify_tz
+
+    - name: Assert baseline
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.getent_passwd.dev[5] == '/bin/bash'
+          - "'dev ALL=(ALL) NOPASSWD:ALL' in (common_verify_sudoers.content | b64decode)"
+          - "'molecule@test' in (common_verify_keys.content | b64decode)"
+          - "'git' in ansible_facts.packages"
+          - "'ripgrep' in ansible_facts.packages"
+          - "'sl' in ansible_facts.packages"
+          - "'qemu-guest-agent' in ansible_facts.packages"
+          - common_verify_tz.stat.lnk_source == '/usr/share/zoneinfo/Europe/Amsterdam'
+        quiet: true
+
+    - name: Create ~/.local/bin as an installer would
+      ansible.builtin.file:
+        path: /home/dev/.local/bin
+        state: directory
+        owner: dev
+        group: dev
+        mode: "0755"
+
+    - name: Check PATH snippet is sourced by a login shell
+      ansible.builtin.command:
+        argv: [bash, -lc, 'echo "$PATH"']
+        # let the login shell expand $PATH, not the command module
+        expand_argument_vars: false
+      become: true
+      become_user: dev
+      register: common_verify_path
+      changed_when: false
+      failed_when: "'/home/dev/.local/bin' not in common_verify_path.stdout"
+
+    - name: Check sshd accepts the hardening drop-in
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -T]
+      register: common_verify_sshd
+      changed_when: false
+      # sshd -T prints the canonical spelling "without-password" for prohibit-password
+      failed_when: >-
+        'passwordauthentication no' not in common_verify_sshd.stdout
+        or common_verify_sshd.stdout is not search('permitrootlogin (without-password|prohibit-password)')
+
+    - name: Check dev is in sudo group
+      ansible.builtin.command:
+        argv: [id, -nG, dev]
+      register: common_verify_groups
+      changed_when: false
+      failed_when: "'sudo' not in common_verify_groups.stdout.split()"

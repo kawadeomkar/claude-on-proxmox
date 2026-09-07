@@ -1,0 +1,57 @@
+---
+argument_specs:
+  main:
+    short_description: OS baseline for a development VM
+    options:
+      common_user:
+        type: str
+        default: dev
+      common_user_shell:
+        type: str
+        default: /bin/bash
+      common_user_groups:
+        type: list
+        elements: str
+        default: [sudo]
+      common_user_passwordless_sudo:
+        type: bool
+        default: true
+      common_user_ssh_public_keys:
+        type: list
+        elements: str
+        default: []
+      common_timezone:
+        type: str
+        default: Etc/UTC
+      common_manage_hostname:
+        type: bool
+        default: true
+      common_hostname:
+        type: str
+      common_harden_ssh:
+        type: bool
+        default: true
+      common_apt_upgrade:
+        type: bool
+        default: true
+      common_apt_cache_valid_time:
+        type: int
+        default: 3600
+      common_apt_lock_timeout:
+        type: int
+        default: 600
+      common_container_virt_types:
+        type: list
+        elements: str
+        default: [docker, container, containerd, podman, lxc]
+      common_packages:
+        type: list
+        elements: str
+      common_extra_packages:
+        type: list
+        elements: str
+        default: []
+      common_enabled_services:
+        type: list
+        elements: str
+        default: [qemu-guest-agent]

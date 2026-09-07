@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+# Put per-user binaries (Claude Code, pipx, uv tools) on PATH for login shells.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) [ -d "$HOME/.local/bin" ] && PATH="$HOME/.local/bin:$PATH" ;;
+esac
+export PATH

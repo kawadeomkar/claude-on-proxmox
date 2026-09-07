@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: claude-on-proxmox contributors
+  namespace: claude_on_proxmox
+  role_name: common
+  description: OS baseline for a development VM - packages, user, sudo, SSH keys, timezone
+  license: MIT
+  min_ansible_version: "2.19"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - jammy
+    - name: Debian
+      versions:
+        - bookworm
+  galaxy_tags: [system, baseline, users]
+dependencies: []

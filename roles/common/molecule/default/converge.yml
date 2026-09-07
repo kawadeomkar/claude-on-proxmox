@@ -1,0 +1,11 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  roles:
+    - role: common
+      vars:
+        common_user_ssh_public_keys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMoleculeTestKeyDoNotUse0000000000000000000 molecule@test
+        common_extra_packages: [sl]
+        common_timezone: Europe/Amsterdam

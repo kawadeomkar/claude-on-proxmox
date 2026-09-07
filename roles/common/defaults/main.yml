@@ -1,0 +1,61 @@
+---
+# Login user. cloud-init normally creates it; the role makes sure it exists
+# with the right shell, groups and keys regardless.
+common_user: dev
+common_user_shell: /bin/bash
+common_user_groups: [sudo]
+common_user_passwordless_sudo: true
+common_user_ssh_public_keys: []
+
+common_timezone: Etc/UTC
+common_manage_hostname: true
+common_hostname: "{{ inventory_hostname }}"
+
+# SSH daemon hardening drop-in: key-only logins, no root password login.
+# Keeps password authentication off even if cloud-init was given a password.
+common_harden_ssh: true
+
+common_apt_upgrade: true
+common_apt_cache_valid_time: 3600
+# Fresh cloud images run unattended-upgrades right after first boot; wait for
+# the apt lock rather than failing after the 60 s module default.
+common_apt_lock_timeout: 600
+
+# Virtualisation types under which host-level settings (hostname, services)
+# cannot or should not be managed.
+common_container_virt_types: [docker, container, containerd, podman, lxc]
+
+# Baseline packages every VM gets.
+common_packages:
+  - apt-transport-https
+  - bash-completion
+  - build-essential
+  - ca-certificates
+  - curl
+  - fd-find
+  - git
+  - gnupg
+  - htop
+  - jq
+  - less
+  - openssh-server
+  - python3
+  - python3-pip
+  - python3-debian
+  - python3-venv
+  - qemu-guest-agent
+  - ripgrep
+  - rsync
+  - tmux
+  - tree
+  - unzip
+  - vim
+  - wget
+  - zip
+  - zstd
+# Add your own without replacing the baseline.
+common_extra_packages: []
+
+# Services to enable at boot. qemu-guest-agent only starts on real VMs.
+common_enabled_services:
+  - qemu-guest-agent
