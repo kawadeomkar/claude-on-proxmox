@@ -5,10 +5,22 @@ name: CI
   push:
     branches: [main, master]
   pull_request:
+  # Weekly canary. Most of what this project installs lives outside the
+  # repository - the Ubuntu cloud image, the Docker/NodeSource/GitHub CLI apt
+  # repositories, the Claude Code installer, the uv release and the Galaxy
+  # collections (pinned as ranges). Those break without a commit here, so the
+  # suite runs on a schedule as well as on changes.
+  schedule:
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# Superseded pull request runs are cancelled; pushes and the weekly run finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   PY_COLORS: "1"
@@ -18,6 +30,7 @@ jobs:
   lint:
     name: Lint and unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -63,6 +76,7 @@ jobs:
     name: Molecule (${{ matrix.role }})
     runs-on: ubuntu-latest
     needs: lint
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +91,7 @@ jobs:
     name: Molecule (full configure playbook)
     runs-on: ubuntu-latest
     needs: lint
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup
