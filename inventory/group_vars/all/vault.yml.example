@@ -1,0 +1,23 @@
+---
+# Copy to inventory/group_vars/all/vault.yml (git-ignored), fill in, then encrypt:
+#
+#   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+#   echo 'a-long-random-passphrase' > .vault_pass && chmod 600 .vault_pass
+#   make vault-encrypt
+#
+# Values are referenced indirectly (vault_* -> plain name) in defaults.yml so
+# `grep` finds their usage and ansible-lint's naming conventions are satisfied.
+
+# Proxmox API token secret for proxmox_api_user (default ansible@pve). See the
+# README section "Creating the Proxmox API token" for the pveum commands that
+# create a VM-scoped user, role and token.
+vault_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# GitHub account whose repositories get cloned onto the VM.
+vault_github_username: "your-github-username"
+# Optional: a fine-grained or classic token with `repo` scope to include private
+# repositories and avoid the unauthenticated API rate limit.
+vault_github_token: ""
+
+# Optional: skip interactive `claude` login on the VM.
+vault_anthropic_api_key: ""

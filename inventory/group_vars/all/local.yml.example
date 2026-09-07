@@ -1,0 +1,39 @@
+---
+# Copy to inventory/group_vars/all/local.yml (git-ignored). Anything set here
+# overrides inventory/group_vars/all/defaults.yml. Uncomment only what differs
+# so that future default changes still flow through.
+#
+#   cp inventory/group_vars/all/local.yml.example inventory/group_vars/all/local.yml
+
+# Proxmox node name as shown in the PVE UI, and the storage for VM disks.
+# proxmox_node: pve
+# proxmox_storage: local-lvm
+# Set to true after trusting the PVE CA on the controller (README).
+# proxmox_validate_certs: true
+
+# Login user on the VM.
+# vm_user: dev
+
+# Which of your GitHub repositories to clone. The username itself lives in vault.yml.
+# Leave github_projects empty to clone every repository of that user; list names
+# to clone only those.
+# github_projects: [personal-website, homeserver]
+# github_projects_include_forks: false
+# github_projects_include_archived: false
+# github_projects_exclude: []
+# github_projects_clone_protocol: https
+
+# Packages/tools installed on the VM. See roles/*/defaults/main.yml for the full lists.
+# common_extra_packages: [postgresql-client]
+# dev_tools_install_docker: true
+# dev_tools_install_node: true
+# dev_tools_install_uv: true
+# dev_tools_install_gh: true
+# dev_tools_node_major: 22
+
+# Claude Code release channel: stable, latest, or an exact version like 2.1.0
+# claude_code_version: stable
+# Extra user-level settings merged into ~/.claude/settings.json
+# claude_code_settings:
+#   permissions:
+#     defaultMode: acceptEdits

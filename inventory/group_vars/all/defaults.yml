@@ -1,0 +1,77 @@
+---
+# Shared, non-secret defaults that are safe to commit.
+# Override anything here in inventory/group_vars/all/local.yml (git-ignored).
+# Files in this directory load alphabetically, so defaults.yml < local.yml < vault.yml.
+
+# ---------------------------------------------------------------- Proxmox ---
+# Defaults to the ansible_host (or name) of the first host in the proxmox group.
+proxmox_api_host: >-
+  {{ hostvars[groups['proxmox'][0]]['ansible_host'] | default(groups['proxmox'][0])
+     if groups['proxmox'] | default([]) else '' }}
+proxmox_api_port: 8006
+# A dedicated, VM-scoped user is recommended over root@pam (README).
+proxmox_api_user: ansible@pve
+proxmox_api_token_id: ansible
+proxmox_api_token_secret: "{{ vault_proxmox_api_token_secret }}"
+# Proxmox ships a self-signed certificate. Set to true once the PVE CA is
+# trusted on the controller (README, "Trusting the Proxmox certificate").
+proxmox_validate_certs: false
+proxmox_node: pve
+proxmox_storage: local-lvm
+proxmox_bridge: vmbr0
+
+# Cloud-init template that VMs are cloned from (built by playbooks/template.yml)
+proxmox_template_vmid: 9000
+proxmox_template_name: ubuntu-24.04-cloudinit
+
+# ------------------------------------------------------------------- VM -----
+# Login user created by cloud-init and used for everything afterwards.
+vm_user: dev
+# configure.yml waits for cloud-init before configuring. Disable for hosts
+# that were not built from a cloud image (Vagrant, containers).
+configure_wait_for_cloud_init: true
+# Public keys authorised for vm_user. Defaults to your local default key.
+vm_ssh_public_keys:
+  - "{{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'HOME') + '/.ssh/id_ed25519.pub') }}"
+
+# --------------------------------------------------------------- GitHub -----
+github_username: "{{ vault_github_username | default('') }}"
+github_token: "{{ vault_github_token | default('') }}"
+# Repository names to clone. Empty list = every repository of github_username
+# (forks and archived repos excluded unless enabled below).
+github_projects: []
+
+# ------------------------------------------------------------ Anthropic -----
+# Optional. If empty, run `claude` on the VM once and log in interactively.
+anthropic_api_key: "{{ vault_anthropic_api_key | default('') }}"
+
+# --------------------------------------------------- role variable wiring ---
+# Roles are self-contained and prefix their variables; wire them to the
+# project-level values above so a single change flows everywhere.
+proxmox_vm_api_host: "{{ proxmox_api_host }}"
+proxmox_vm_api_port: "{{ proxmox_api_port }}"
+proxmox_vm_api_user: "{{ proxmox_api_user }}"
+proxmox_vm_api_token_id: "{{ proxmox_api_token_id }}"
+proxmox_vm_api_token_secret: "{{ proxmox_api_token_secret }}"
+proxmox_vm_validate_certs: "{{ proxmox_validate_certs }}"
+proxmox_vm_node: "{{ proxmox_node }}"
+proxmox_vm_storage: "{{ proxmox_storage }}"
+proxmox_vm_template_name: "{{ proxmox_template_name }}"
+proxmox_vm_user: "{{ vm_user }}"
+proxmox_vm_ssh_public_keys: "{{ vm_ssh_public_keys }}"
+
+proxmox_template_bridge: "{{ proxmox_bridge }}"
+proxmox_template_storage: "{{ proxmox_storage }}"
+
+common_user: "{{ vm_user }}"
+common_user_ssh_public_keys: "{{ vm_ssh_public_keys }}"
+
+dev_tools_user: "{{ vm_user }}"
+
+claude_code_user: "{{ vm_user }}"
+claude_code_anthropic_api_key: "{{ anthropic_api_key }}"
+
+github_projects_user: "{{ vm_user }}"
+github_projects_username: "{{ github_username }}"
+github_projects_token: "{{ github_token }}"
+github_projects_include: "{{ github_projects }}"
