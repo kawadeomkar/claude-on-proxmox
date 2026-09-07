@@ -1,0 +1,43 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    - name: Install fake qm
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../../tests/molecule/fake_qm.sh"
+        dest: /usr/local/bin/qm
+        mode: "0755"
+
+    - name: Create a fake cloud image and checksum file
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          mkdir -p /srv/images
+          head -c 65536 /dev/urandom > /srv/images/noble-server-cloudimg-amd64.img
+          (cd /srv/images && sha256sum noble-server-cloudimg-amd64.img > SHA256SUMS)
+        creates: /srv/images/SHA256SUMS
+
+    - name: Serve the image over HTTP
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fake-image-server.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Fake cloud image server for Molecule
+          [Service]
+          ExecStart=/usr/bin/python3 -m http.server 8080 --bind 127.0.0.1 --directory /srv/images
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start image server
+      ansible.builtin.systemd_service:
+        name: fake-image-server
+        daemon_reload: true
+        state: started
+
+    - name: Wait for image server
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8080
+        timeout: 30

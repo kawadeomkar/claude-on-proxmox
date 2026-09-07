@@ -1,0 +1,19 @@
+---
+proxmox_template_vmid: 9000
+proxmox_template_name: ubuntu-24.04-cloudinit
+
+# Ubuntu Noble cloud image. The checksum URL points at Ubuntu's SHA256SUMS
+# file; get_url looks up the image filename inside it.
+proxmox_template_image_url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+proxmox_template_image_checksum: sha256:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS
+proxmox_template_image_dir: /var/lib/vz/template/iso
+
+proxmox_template_storage: local-lvm
+proxmox_template_bridge: vmbr0
+proxmox_template_cores: 2
+proxmox_template_memory_mb: 2048
+proxmox_template_cpu_type: host
+proxmox_template_ostype: l26
+
+# Path to the qm binary on the PVE host (overridable for tests).
+proxmox_template_qm: /usr/sbin/qm

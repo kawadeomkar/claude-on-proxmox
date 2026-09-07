@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: claude-on-proxmox contributors
+  namespace: claude_on_proxmox
+  role_name: proxmox_template
+  description: Build a cloud-init enabled Ubuntu VM template on a Proxmox VE host
+  license: MIT
+  min_ansible_version: "2.19"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+  galaxy_tags: [proxmox, cloudinit, template]
+dependencies: []

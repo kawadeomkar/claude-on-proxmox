@@ -1,0 +1,35 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Read fake VM config and call log
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /var/lib/fake-qm/9000.conf
+        - /var/lib/fake-qm/calls.log
+      register: proxmox_template_verify_state
+
+    - name: Stat downloaded image
+      ansible.builtin.stat:
+        path: /var/lib/vz/template/iso/noble-server-cloudimg-amd64.img
+      register: proxmox_template_verify_image
+
+    - name: Assert template was built exactly once with the expected settings
+      vars:
+        proxmox_template_verify_conf: "{{ proxmox_template_verify_state.results[0].content | b64decode }}"
+        proxmox_template_verify_calls: "{{ proxmox_template_verify_state.results[1].content | b64decode | trim | split('\n') }}"
+      ansible.builtin.assert:
+        that:
+          - proxmox_template_verify_image.stat.exists
+          - "'ubuntu-24.04-cloudinit' in proxmox_template_verify_conf"
+          - "'virtio,bridge=vmbr1' in proxmox_template_verify_conf"
+          - "'local-zfs:0,import-from=/var/lib/vz/template/iso/noble-server-cloudimg-amd64.img,discard=on' in proxmox_template_verify_conf"
+          - "'local-zfs:cloudinit' in proxmox_template_verify_conf"
+          - "'order=scsi0' in proxmox_template_verify_conf"
+          - "'template: 1' in proxmox_template_verify_conf"
+          # converge + idempotence = two `qm config` probes, but only one build
+          - proxmox_template_verify_calls | select('search', '^create ') | list | length == 1
+          - proxmox_template_verify_calls | select('search', '^template ') | list | length == 1
+        quiet: true

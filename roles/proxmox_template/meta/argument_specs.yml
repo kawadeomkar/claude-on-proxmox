@@ -1,0 +1,46 @@
+---
+argument_specs:
+  main:
+    short_description: Build a cloud-init enabled VM template on a Proxmox VE host
+    description:
+      - Runs on the PVE node over SSH. Downloads a cloud image, creates a VM with
+        `qm`, imports the image as its root disk, adds a cloud-init drive and
+        converts the VM to a template. Skipped entirely if the VMID already exists.
+    options:
+      proxmox_template_vmid:
+        type: int
+        default: 9000
+      proxmox_template_name:
+        type: str
+        default: ubuntu-24.04-cloudinit
+      proxmox_template_image_url:
+        type: str
+        default: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+      proxmox_template_image_checksum:
+        type: str
+        default: sha256:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS
+        description: get_url checksum spec. Set to an empty string to skip verification.
+      proxmox_template_image_dir:
+        type: path
+        default: /var/lib/vz/template/iso
+      proxmox_template_storage:
+        type: str
+        default: local-lvm
+      proxmox_template_bridge:
+        type: str
+        default: vmbr0
+      proxmox_template_cores:
+        type: int
+        default: 2
+      proxmox_template_memory_mb:
+        type: int
+        default: 2048
+      proxmox_template_cpu_type:
+        type: str
+        default: host
+      proxmox_template_ostype:
+        type: str
+        default: l26
+      proxmox_template_qm:
+        type: path
+        default: /usr/sbin/qm

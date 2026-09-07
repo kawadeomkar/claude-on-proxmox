@@ -1,0 +1,107 @@
+---
+- name: Check for existing VM {{ proxmox_template_vmid }}
+  ansible.builtin.command:
+    argv:
+      - "{{ proxmox_template_qm }}"
+      - config
+      - "{{ proxmox_template_vmid }}"
+  register: proxmox_template_existing
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# A VMID that exists but is not our finished template (a half-built earlier
+# run, or an unrelated VM) is an error rather than something to skip silently.
+- name: Refuse to reuse VMID {{ proxmox_template_vmid }}
+  ansible.builtin.assert:
+    that:
+      - "'template: 1' in proxmox_template_existing.stdout_lines"
+      - "'name: ' ~ proxmox_template_name in proxmox_template_existing.stdout_lines"
+    fail_msg: >-
+      VMID {{ proxmox_template_vmid }} exists but is not the finished template
+      "{{ proxmox_template_name }}". Remove it (qm destroy {{ proxmox_template_vmid }})
+      or choose another proxmox_template_vmid.
+    quiet: true
+  when: proxmox_template_existing.rc == 0
+
+- name: Build the template
+  when: proxmox_template_existing.rc != 0
+  block:
+    - name: Ensure image directory exists
+      ansible.builtin.file:
+        path: "{{ proxmox_template_image_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download cloud image
+      ansible.builtin.get_url:
+        url: "{{ proxmox_template_image_url }}"
+        dest: "{{ proxmox_template_image_dir }}/{{ proxmox_template_image_url | basename }}"
+        checksum: "{{ proxmox_template_image_checksum | default(omit, true) }}"
+        owner: root
+        group: root
+        mode: "0644"
+        timeout: 300
+      register: proxmox_template_image
+
+    - name: Create VM {{ proxmox_template_vmid }}
+      ansible.builtin.command:
+        argv:
+          - "{{ proxmox_template_qm }}"
+          - create
+          - "{{ proxmox_template_vmid }}"
+          - --name
+          - "{{ proxmox_template_name }}"
+          - --ostype
+          - "{{ proxmox_template_ostype }}"
+          - --cpu
+          - "{{ proxmox_template_cpu_type }}"
+          - --cores
+          - "{{ proxmox_template_cores }}"
+          - --memory
+          - "{{ proxmox_template_memory_mb }}"
+          - --net0
+          - "virtio,bridge={{ proxmox_template_bridge }}"
+          - --scsihw
+          - virtio-scsi-pci
+          - --agent
+          - enabled=1
+          - --serial0
+          - socket
+          - --vga
+          - serial0
+      changed_when: true
+
+    - name: Import the cloud image as the root disk
+      ansible.builtin.command:
+        argv:
+          - "{{ proxmox_template_qm }}"
+          - set
+          - "{{ proxmox_template_vmid }}"
+          - --scsi0
+          - "{{ proxmox_template_storage }}:0,import-from={{ proxmox_template_image.dest }},discard=on"
+      changed_when: true
+
+    - name: Add cloud-init drive and set boot order
+      ansible.builtin.command:
+        argv:
+          - "{{ proxmox_template_qm }}"
+          - set
+          - "{{ proxmox_template_vmid }}"
+          - --ide2
+          - "{{ proxmox_template_storage }}:cloudinit"
+          - --boot
+          - order=scsi0
+          - --ipconfig0
+          - ip=dhcp
+      changed_when: true
+
+    - name: Convert VM to template
+      ansible.builtin.command:
+        argv:
+          - "{{ proxmox_template_qm }}"
+          - template
+          - "{{ proxmox_template_vmid }}"
+      changed_when: true
