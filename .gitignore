@@ -1,0 +1,34 @@
+# --- Local, environment-specific configuration (never commit) ---
+# Real inventories and any local/vault variable file, wherever they are placed.
+inventory/hosts.y*ml
+inventory/*.ini
+inventory/group_vars/**/local*.yml
+inventory/group_vars/**/vault*.yml
+inventory/host_vars/
+/host_vars/
+.vault_pass*
+.env*
+
+# --- Python / tooling ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Ansible / Molecule ---
+*.retry
+.ansible/
+.cache/
+.molecule/
+collections/ansible_collections/
+
+# --- Vagrant ---
+.vagrant/
+*.log
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+.DS_Store
