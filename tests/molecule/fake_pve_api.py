@@ -42,9 +42,22 @@ VMS = {
 }
 TASKS = 0
 # The guest agent is not up the moment a VM starts. Fail this many polls first
-# so the role's wait loop is actually exercised.
-AGENT_CALLS = 0
+# so the role's wait loop is actually exercised. Counted per VM: with a single
+# global counter the first VM absorbed every refusal and the second one's very
+# first poll succeeded, so a fleet never exercised the loop more than once.
+AGENT_CALLS = {}
 AGENT_READY_AFTER = 2
+
+
+def normalise_tags(raw):
+    """Store tags the way Proxmox does.
+
+    proxmox_kvm sends them comma-joined, but PVE stores and returns them
+    ";"-joined, lowercased and deduplicated, in alphabetical order. Echoing
+    the request back verbatim hid that from every test.
+    """
+    parts = [t.strip().lower() for t in raw.replace(",", ";").split(";")]
+    return ";".join(sorted({t for t in parts if t}))
 
 
 def mac_for(vmid):
@@ -108,6 +121,11 @@ class Handler(BaseHTTPRequestHandler):
         params.update({k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()})
         return params
 
+    def _reply_empty(self, status, reason):
+        self.send_response(status, reason)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _reply(self, status, data=None):
         payload = json.dumps({"data": data}).encode()
         self.send_response(status)
@@ -124,7 +142,11 @@ class Handler(BaseHTTPRequestHandler):
 
         auth = self.headers.get("Authorization", "")
         if not (auth.startswith("PVEAPIToken=") and auth.endswith(f"={TOKEN_SECRET}")):
-            return self._reply(401, None)
+            # Real pveproxy sends 401 with an *empty* body, deliberately
+            # withholding the reason; the detail survives only in the HTTP
+            # reason phrase. A well-formed {"data": null} here would let the
+            # role look better-informed than it can be in production.
+            return self._reply_empty(401, "authentication failure")
 
         parts = [unquote(p) for p in path.removeprefix("/api2/json").strip("/").split("/")]
         if parts == ["version"]:
@@ -159,6 +181,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, dict(vm["config"]))
         if sub == ["config"] and method in ("PUT", "POST"):
             vm["config"].update(params)
+            if "tags" in params:
+                vm["config"]["tags"] = normalise_tags(params["tags"])
             if "name" in params:
                 vm["name"] = params["name"]
             save_state()
@@ -188,9 +212,8 @@ class Handler(BaseHTTPRequestHandler):
             save_state()
             return self._reply(200, new_task())
         if sub == ["agent", "network-get-interfaces"] and method == "GET":
-            global AGENT_CALLS
-            AGENT_CALLS += 1
-            if vm["status"] != "running" or AGENT_CALLS <= AGENT_READY_AFTER:
+            AGENT_CALLS[vmid] = AGENT_CALLS.get(vmid, 0) + 1
+            if vm["status"] != "running" or AGENT_CALLS[vmid] <= AGENT_READY_AFTER:
                 return self._reply(500, None)
             return self._reply(200, {"result": agent_interfaces(vm)})
         if sub == ["status", "current"]:

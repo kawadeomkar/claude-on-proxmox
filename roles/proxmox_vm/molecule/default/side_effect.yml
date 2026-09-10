@@ -67,3 +67,84 @@
   roles:
     - role: proxmox_vm
       proxmox_vm_state: absent
+
+- name: Cover the paths converge does not reach
+  hosts: all
+  gather_facts: false
+  vars:
+    side_effect_api: "https://127.0.0.1:18006/api2/json/nodes/pve/qemu"
+    side_effect_headers:
+      Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
+  tasks:
+    # proxmox_vm_ipconfig is documented as the way to get a fixed address, but
+    # converge only ever asserts the literal default "ip=dhcp" - which passes
+    # even if the value were hardcoded. Prove it reaches Proxmox.
+    - name: Create a VM with a static address
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: static-vm
+        proxmox_vm_ipconfig: "ip=192.0.2.60/24,gw=192.0.2.1"
+
+    - name: Read what the static VM was configured with
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/{{ proxmox_vm_resolved_id }}/config"
+        headers: "{{ side_effect_headers }}"
+      delegate_to: localhost
+      register: proxmox_vm_static_cfg
+
+    - name: Assert the static address was applied verbatim
+      ansible.builtin.assert:
+        that: proxmox_vm_static_cfg.json.data.ipconfig0 == 'ip=192.0.2.60/24,gw=192.0.2.1'
+        fail_msg: >-
+          proxmox_vm_ipconfig did not reach Proxmox; got
+          "{{ proxmox_vm_static_cfg.json.data.ipconfig0 | default('nothing') }}"
+        quiet: true
+
+    - name: Remove the static VM again
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: static-vm
+        proxmox_vm_state: absent
+
+    # Deleting something that is not there should be a clean no-op, not an
+    # error and not a silent success that hid a failed lookup.
+    - name: Delete a VM that does not exist
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: never-existed
+        proxmox_vm_state: absent
+
+    - name: Assert the lookup found nothing and nothing was deleted
+      ansible.builtin.assert:
+        that:
+          - not proxmox_vm_exists
+          - proxmox_vm_resolved_id | length == 0
+        quiet: true
+
+    # A wrong or expired token is the likeliest first-run failure, and the
+    # README devotes a section to creating one. The user should get something
+    # better than a raw proxmoxer traceback.
+    - name: Run the role with a bad API token
+      block:
+        - name: Attempt a lookup that must fail
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_name: claude-dev
+            proxmox_vm_api_token_secret: definitely-not-the-secret
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: proxmox_vm accepted a bad API token.
+      rescue:
+        - name: Assert the failure names an authentication problem
+          ansible.builtin.assert:
+            that: ansible_failed_result.msg is search('[Aa]uthentication|[Aa]uthorization|401')
+            fail_msg: >-
+              Expected a clear authentication failure, got:
+              {{ ansible_failed_result.msg }}
+            quiet: true
