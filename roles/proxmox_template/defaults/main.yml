@@ -15,5 +15,16 @@ proxmox_template_memory_mb: 2048
 proxmox_template_cpu_type: host
 proxmox_template_ostype: l26
 
-# Path to the qm binary on the PVE host (overridable for tests).
+# Bake the QEMU guest agent into the image. Proxmox reads a VM's DHCP-assigned
+# address by asking this agent, so without it a cloned VM has no discoverable
+# address. Also truncates /etc/machine-id: clones sharing one machine-id send
+# the same DHCP client identifier and can be handed the same lease.
+proxmox_template_install_guest_agent: true
+proxmox_template_customize_packages:
+  - qemu-guest-agent
+# Off in tests, where libguestfs is faked rather than installed.
+proxmox_template_manage_libguestfs: true
+
+# Paths on the PVE host (overridable for tests).
 proxmox_template_qm: /usr/sbin/qm
+proxmox_template_virt_customize: /usr/bin/virt-customize

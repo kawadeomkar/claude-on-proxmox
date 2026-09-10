@@ -25,11 +25,29 @@
           - proxmox_template_verify_image.stat.exists
           - "'ubuntu-24.04-cloudinit' in proxmox_template_verify_conf"
           - "'virtio,bridge=vmbr1' in proxmox_template_verify_conf"
-          - "'local-zfs:0,import-from=/var/lib/vz/template/iso/noble-server-cloudimg-amd64.img,discard=on' in proxmox_template_verify_conf"
+          - "'local-zfs:0,import-from=/var/lib/vz/template/iso/claude-on-proxmox-9000.img,discard=on' in proxmox_template_verify_conf"
           - "'local-zfs:cloudinit' in proxmox_template_verify_conf"
           - "'order=scsi0' in proxmox_template_verify_conf"
           - "'template: 1' in proxmox_template_verify_conf"
           # converge + idempotence = two `qm config` probes, but only one build
           - proxmox_template_verify_calls | select('search', '^create ') | list | length == 1
           - proxmox_template_verify_calls | select('search', '^template ') | list | length == 1
+        quiet: true
+
+    - name: Read the fake virt-customize log
+      ansible.builtin.slurp:
+        src: /var/lib/fake-virt-customize.log
+      register: proxmox_template_verify_customize_raw
+
+    - name: Assert the guest agent was baked into a copy of the image
+      vars:
+        proxmox_template_verify_customize: "{{ proxmox_template_verify_customize_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'--install qemu-guest-agent' in proxmox_template_verify_customize"
+          # unique machine-ids, so clones do not collide on one DHCP lease
+          - "'--truncate /etc/machine-id' in proxmox_template_verify_customize"
+          # the pristine download is left alone so get_url stays idempotent
+          - "'--add /var/lib/vz/template/iso/claude-on-proxmox-9000.img' in proxmox_template_verify_customize"
+          - proxmox_template_verify_customize.splitlines() | length == 1
         quiet: true
