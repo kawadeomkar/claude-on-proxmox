@@ -184,6 +184,7 @@ make syntax               # --syntax-check of every playbook against the example
 make unit                 # pytest for the github_repos module (no network)
 make molecule             # Molecule (Docker) test of every role, incl. idempotence
 make molecule-integration # playbooks/configure.yml end to end in a container
+make molecule-provision   # provision.yml + discover.yml against a fake Proxmox API
 make test                 # all of the above
 make check                # dry run of configure.yml against your real VM (--check --diff)
 make vagrant-up           # configure.yml on a real VirtualBox VM
@@ -198,9 +199,13 @@ so the tests are deterministic:
 
 - `proxmox_vm` runs against a stateful fake Proxmox API (`tests/molecule/fake_pve_api.py`, TLS, token
   checked) and asserts the exact clone / config / resize / start / shutdown / delete requests, including
-  a destroy pass via Molecule's side-effect stage.
-- `proxmox_template` runs against a stateful fake `qm` (`tests/molecule/fake_qm.sh`) and a locally served
-  "cloud image" with a real SHA256SUMS file.
+  a destroy pass via Molecule's side-effect stage. The fake refuses the first guest-agent polls so the
+  wait loop is exercised, and reports a docker0 interface the role has to ignore.
+- The `provision` scenario runs `provision.yml` exactly as `make provision VM_NAME=alpha,beta` does,
+  then rediscovers both VMs from their tag in a separate stage - proving a later `make configure` can
+  find them without anything stored locally.
+- `proxmox_template` runs against a stateful fake `qm` (`tests/molecule/fake_qm.sh`), a fake
+  `virt-customize` and a locally served "cloud image" with a real SHA256SUMS file.
 - `github_projects` and the integration scenario talk to a fake GitHub API (`tests/molecule/fake_github_api.py`)
   that serves paginated responses and points clone URLs at local bare repositories.
 - `claude_code`, `dev_tools`, and the apt steps of every scenario download real packages, so the tests
@@ -242,13 +247,15 @@ generated from the commits since the previous tag.
 ```
 ansible.cfg                 project-wide Ansible settings (accept-new host keys, fact cache, yaml output)
 site.yml                    provision + configure
-playbooks/                  template.yml, provision.yml, configure.yml, destroy.yml
+playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, destroy.yml
+filter_plugins/             guest_ipv4 / net_mac, for reading guest agent output
 inventory/                  hosts.yml.example, group_vars/all/{defaults.yml,local.yml.example,vault.yml.example}
 roles/                      one role per concern, each with defaults, meta/argument_specs, molecule/
 roles/github_projects/library/github_repos.py   custom module
 tests/unit/                 pytest for custom modules
 tests/molecule/             shared fakes for Molecule scenarios
 molecule/configure/         integration scenario for the full configure playbook
+molecule/provision/         end-to-end scenario for provisioning + discovery
                             (group_vars/all/defaults.yml is a symlink to the real one; keep it a git checkout)
 .config/molecule/           Molecule settings shared by every scenario
 .github/                    CI and release workflows, the shared setup action, Dependabot
