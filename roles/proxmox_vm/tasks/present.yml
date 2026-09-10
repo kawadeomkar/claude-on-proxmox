@@ -14,6 +14,19 @@
   register: proxmox_vm_clone
   when: not proxmox_vm_exists
 
+# On a VMID collision proxmox_kvm reports ok and returns the *template's* VMID
+# rather than failing, so taking it on trust below would point every task that
+# follows at the template and reconfigure it.
+- name: present | Fail when the clone did not create a new VM
+  ansible.builtin.assert:
+    that: proxmox_vm_clone is changed
+    fail_msg: >-
+      Cloning "{{ proxmox_vm_name }}" changed nothing, which means VMID
+      "{{ proxmox_vm_id }}" is already taken. Continuing would reconfigure the
+      template. Pick a free proxmox_vm_id, or leave it empty to let Proxmox choose.
+    quiet: true
+  when: not proxmox_vm_exists
+
 - name: present | Record the VMID
   ansible.builtin.set_fact:
     proxmox_vm_resolved_id: "{{ proxmox_vm_clone.vmid if not proxmox_vm_exists else proxmox_vm_resolved_id }}"
