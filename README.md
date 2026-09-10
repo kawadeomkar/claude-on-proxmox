@@ -63,7 +63,7 @@ you get `claude-on-proxmox-default`. Pass several, comma-separated, to build a f
 
 ```bash
 make site VM_NAME=alpha,beta,gamma
-make configure LIMIT=alpha         # later, just one of them
+make configure VM_NAME=alpha       # later, just one of them
 make destroy VM_NAME=beta
 ```
 

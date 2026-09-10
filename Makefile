@@ -8,12 +8,14 @@ PYTHON     ?= python3
 VAULT_PASS := .vault_pass
 VAULT_ARGS := $(if $(wildcard $(VAULT_PASS)),--vault-password-file $(VAULT_PASS),)
 ANSIBLE_ARGS ?=
-# Name(s) of the VM(s) to create, comma-separated. Defaults to
+# Name(s) of the VM(s) to act on, comma-separated. Defaults to
 # claude-on-proxmox-default (set in inventory/group_vars/all/defaults.yml).
+# This selects for every target, so `make configure VM_NAME=alpha` narrows the
+# run to alpha. There is deliberately no LIMIT: --limit is applied before the
+# plays run, and these VMs only enter the inventory once discovery has found
+# them, so it could never match.
 VM_NAME    ?=
-# Restrict a run to some of the VMs, e.g. make configure LIMIT=alpha
-LIMIT      ?=
-VM_ARGS    := $(if $(VM_NAME),-e vm_name=$(VM_NAME),) $(if $(LIMIT),--limit $(LIMIT),)
+VM_ARGS    := $(if $(VM_NAME),-e vm_name=$(VM_NAME),)
 ROLES      := common dev_tools claude_code github_projects proxmox_template proxmox_vm
 MOLECULE_ROLES ?= $(ROLES)
 
