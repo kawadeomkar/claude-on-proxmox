@@ -39,7 +39,7 @@ jobs:
         run: |
           leaked=$(git ls-files \
             | grep -Ev '\.example$' \
-            | grep -E '(^|/)(hosts\.ya?ml|local[^/]*\.ya?ml|vault[^/]*\.ya?ml)$|^\.vault_pass|^\.env' \
+            | grep -E '^inventory/hosts\.ya?ml$|^inventory/[^/]+\.ini$|^inventory/group_vars/.+/(local|vault)[^/]*\.ya?ml$|^inventory/host_vars/|^host_vars/|^\.vault_pass|^\.env' \
             || true)
           if [ -n "$leaked" ]; then
             echo "$leaked"
