@@ -47,6 +47,13 @@ argument_specs:
         type: str
         choices: [present, absent]
         default: present
+      proxmox_vm_allow_untagged_delete:
+        type: bool
+        default: false
+        description:
+          - Allow state=absent to delete a VM that does not carry the ownership
+            tag. Off by default so a name collision cannot destroy a VM this
+            project never created.
       proxmox_vm_name:
         type: str
         description: VM name in Proxmox. Defaults to the inventory hostname.
@@ -80,7 +87,11 @@ argument_specs:
       proxmox_vm_tags:
         type: list
         elements: str
-        default: [claude, ansible]
+        default: [claude-on-proxmox]
+        description:
+          - Tags stamped on every VM this role creates. The first one is the
+            ownership marker - discovery finds VMs by it, and deleting refuses
+            to touch a VM that does not carry it.
       proxmox_vm_user:
         type: str
         default: dev

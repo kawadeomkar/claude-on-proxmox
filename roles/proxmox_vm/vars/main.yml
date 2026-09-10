@@ -7,3 +7,13 @@ proxmox_vm_reported_address: >-
      | default([], true) | map(attribute='network') | first | default([], true)
      | guest_ipv4(proxmox_vm_mac | default(''))
      | default('', true) }}
+
+# Internal: the tags of the VM the name lookup found, as a list. Proxmox joins
+# tags with ";" on the wire, so split on that; the "," is only there because
+# proxmox_kvm sends them comma-joined and some versions echo that back.
+# Matching whole elements, not a substring, is what keeps "claude-on-proxmox"
+# from matching "claude-on-proxmox-staging".
+proxmox_vm_found_tags: >-
+  {{ proxmox_vm_lookup.proxmox_vms[0].tags
+     | default('', true) | replace(',', ';') | split(';')
+     | map('trim') | select | list }}

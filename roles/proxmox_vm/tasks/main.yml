@@ -52,6 +52,26 @@
       ansible.builtin.include_tasks: present.yml
       when: proxmox_vm_state == 'present'
 
+    # Deleting is irreversible and the name alone does not prove ownership:
+    # Proxmox lets any VM carry any name, so `make destroy VM_NAME=nas` would
+    # otherwise match an unrelated VM. The tag is what this project stamps on
+    # everything it creates, and a template is never one of them.
+    - name: Refuse to delete a VM this project does not own
+      ansible.builtin.assert:
+        that:
+          - not (proxmox_vm_lookup.proxmox_vms[0].template | default(false) | bool)
+          - proxmox_vm_tags[0] in proxmox_vm_found_tags
+        fail_msg: >-
+          "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}) is a template or is
+          not tagged "{{ proxmox_vm_tags[0] }}", so this project did not create it.
+          Refusing to delete. Its tags are: {{ proxmox_vm_found_tags | join(', ') | default('(none)', true) }}.
+          Set proxmox_vm_allow_untagged_delete=true to delete it anyway.
+        quiet: true
+      when:
+        - proxmox_vm_state == 'absent'
+        - proxmox_vm_exists
+        - not (proxmox_vm_allow_untagged_delete | bool)
+
     - name: Delete the VM
       ansible.builtin.include_tasks: absent.yml
       when: proxmox_vm_state == 'absent'

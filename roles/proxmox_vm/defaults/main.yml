@@ -19,6 +19,11 @@ proxmox_vm_timeout: 600
 # present -> cloned, configured and started. absent -> stopped and deleted.
 proxmox_vm_state: present
 
+# Deleting refuses to touch a VM that does not carry proxmox_vm_tags[0]. Set
+# this to true for a VM created before the project started tagging, after
+# checking in the Proxmox UI that the VMID is the one you mean.
+proxmox_vm_allow_untagged_delete: false
+
 # Identity. The name is the key: the role looks the VM up by name and only
 # clones when no VM of that name exists, so re-running is a no-op. The VMID is
 # optional - left empty, Proxmox assigns the next free one.
