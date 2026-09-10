@@ -1,0 +1,10 @@
+---
+- name: Prepare
+  hosts: claude-on-proxmox-provision
+  become: true
+  tasks:
+    - name: Set up the fake Proxmox API
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../tests/molecule/prepare_pve.yml"
+      vars:
+        prepare_pve_source: "{{ playbook_dir }}/../../tests/molecule/fake_pve_api.py"
+        prepare_pve_port: 18007

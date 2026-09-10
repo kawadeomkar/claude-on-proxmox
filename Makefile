@@ -121,8 +121,12 @@ molecule: ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_
 molecule-integration: ## Run the full configure playbook against a Docker container
 	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s configure
 
+.PHONY: molecule-provision
+molecule-provision: ## Run provision.yml + discover.yml against a fake Proxmox API
+	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s provision
+
 .PHONY: test
-test: lint syntax unit molecule molecule-integration ## Run everything
+test: lint syntax unit molecule molecule-integration molecule-provision ## Run everything
 
 .PHONY: vagrant-up
 vagrant-up: ## End-to-end test of configure.yml on a real VirtualBox VM

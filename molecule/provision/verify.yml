@@ -1,0 +1,44 @@
+---
+# Discovery runs as its own playbook here, in a Molecule stage of its own, so
+# the in-memory hosts provisioning added are gone: this proves the VMs can be
+# found again from their Proxmox tag alone, which is what a later
+# `make configure` depends on.
+- name: Discover
+  ansible.builtin.import_playbook: ../../playbooks/discover.yml
+
+- name: Verify discovery found the fleet
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Assert both VMs were rediscovered by tag
+      ansible.builtin.assert:
+        that:
+          - groups['claude_vms'] | sort == ['alpha', 'beta']
+          - hostvars['alpha'].ansible_host == '192.0.2.51'
+          - hostvars['beta'].ansible_host == '192.0.2.52'
+          - hostvars['alpha'].ansible_user == 'dev'
+        quiet: true
+
+- name: Verify the API requests
+  hosts: claude-on-proxmox-provision
+  become: true
+  tasks:
+    - name: Read the fake API request log
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: provision_verify_raw
+
+    - name: Extract the clone requests
+      ansible.builtin.set_fact:
+        provision_verify_clones: >-
+          {{ (provision_verify_raw.content | b64decode).splitlines() | map('from_json')
+             | selectattr('path', 'search', '/qemu/9000/clone$') | list }}
+
+    - name: Assert each VM was cloned once, by name, with no VMID of ours
+      ansible.builtin.assert:
+        that:
+          - provision_verify_clones | length == 2
+          - provision_verify_clones | map(attribute='params.name') | sort == ['alpha', 'beta']
+          # Proxmox picked the IDs: the role never sent one
+          - provision_verify_clones | map(attribute='params.newid') | sort == ['9001', '9002']
+        quiet: true

@@ -1,0 +1,20 @@
+---
+# The real playbook, exactly as `make provision VM_NAME=alpha,beta` runs it.
+- name: Converge
+  ansible.builtin.import_playbook: ../../playbooks/provision.yml
+
+- name: Check what provisioning produced
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Assert both VMs were created and addressed
+      ansible.builtin.assert:
+        that:
+          - groups['claude_vms'] | sort == ['alpha', 'beta']
+          # VMIDs assigned by Proxmox, in creation order after the 9000 template
+          - hostvars['alpha'].proxmox_vm_id | int == 9001
+          - hostvars['beta'].proxmox_vm_id | int == 9002
+          # addresses reported by the guest agent, not assigned by us
+          - hostvars['alpha'].ansible_host == '192.0.2.51'
+          - hostvars['beta'].ansible_host == '192.0.2.52'
+        quiet: true
