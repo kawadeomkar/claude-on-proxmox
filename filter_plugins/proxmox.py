@@ -9,17 +9,31 @@ from ansible.errors import AnsibleFilterError
 MAC_RE = re.compile(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
 
 
-def net_mac(net_config):
+_RAISE = object()
+
+
+def net_mac(net_config, default=_RAISE):
     """Return the MAC address from a Proxmox ``netN`` config string.
 
     Proxmox stores it as ``virtio=BC:24:11:0E:72:04,bridge=vmbr0``.
+
+    Raises when no MAC can be read, because a caller that is about to act on
+    one VM wants to know. Pass ``default`` to get a fallback instead: a caller
+    sweeping the whole fleet should skip an odd VM (one whose NIC was removed
+    in the UI, or that has ``net1`` but no ``net0``) rather than abort the run
+    for every other VM as well.
     """
-    if not isinstance(net_config, str):
-        raise AnsibleFilterError(f"net_mac expects a string, got {type(net_config).__name__}")
-    match = MAC_RE.search(net_config)
-    if not match:
-        raise AnsibleFilterError(f"no MAC address found in {net_config!r}")
-    return match.group(0).lower()
+    if isinstance(net_config, str):
+        match = MAC_RE.search(net_config)
+        if match:
+            return match.group(0).lower()
+        problem = f"no MAC address found in {net_config!r}"
+    else:
+        problem = f"net_mac expects a string, got {type(net_config).__name__}"
+
+    if default is _RAISE:
+        raise AnsibleFilterError(problem)
+    return default
 
 
 def guest_ipv4(interfaces, mac=None):

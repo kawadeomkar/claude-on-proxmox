@@ -86,3 +86,22 @@ class TestGuestIpv4:
     def test_rejects_non_list(self):
         with pytest.raises(AnsibleFilterError, match="expects a list"):
             guest_ipv4({"eth0": []})
+
+
+class TestNetMacDefault:
+    """A fleet-wide sweep must not abort because one VM has no readable NIC."""
+
+    def test_returns_the_default_when_no_mac_is_present(self):
+        assert net_mac("", "") == ""
+        assert net_mac("bridge=vmbr0", "") == ""
+
+    def test_returns_the_default_for_a_non_string(self):
+        assert net_mac(None, "") == ""
+        assert net_mac(["virtio=BC:24:11:00:00:01"], "") == ""
+
+    def test_still_raises_without_a_default(self):
+        with pytest.raises(AnsibleFilterError):
+            net_mac("bridge=vmbr0")
+
+    def test_a_default_does_not_mask_a_real_mac(self):
+        assert net_mac("virtio=BC:24:11:0E:72:04,bridge=vmbr0", "") == "bc:24:11:0e:72:04"

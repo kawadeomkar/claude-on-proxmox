@@ -6,9 +6,14 @@
 # and a VM deleted in the UI simply stops appearing. Addresses come from the
 # QEMU guest agent, since a DHCP lease is not recorded anywhere else.
 #
-# Credentials come from the vault like every other play, which is why this is
-# a play rather than an inventory plugin: an inventory plugin runs before vault
-# decryption and would need its own copy of the API token.
+# community.proxmox ships an inventory plugin that does this same job, and it
+# can read a vault-encrypted token through a lookup, so the token would not
+# have to be duplicated. It is not used here because an inventory plugin has
+# no access to group_vars: proxmox_api_host would have to be declared a second
+# time, outside the one file the user edits. It also runs on every ansible
+# invocation, and when the API is unreachable it degrades to "no hosts matched"
+# rather than failing loudly. If those trade-offs stop mattering, replacing
+# this play with an inventory/proxmox.yml is the smaller design.
 - name: Discover VMs on Proxmox
   hosts: localhost
   gather_facts: false
@@ -27,12 +32,16 @@
         type: qemu
       register: claude_vm_all
 
+    # Match the whole tag, not a substring: Proxmox joins tags with ";" (and
+    # proxmox_kvm sends them comma-joined), so an unanchored search for
+    # "claude-on-proxmox" would also claim a VM tagged "claude-on-proxmox-staging"
+    # or "not-claude-on-proxmox" and configure someone else's machine.
     - name: Keep the ones this project created
       ansible.builtin.set_fact:
         claude_vm_tagged: >-
           {{ claude_vm_all.proxmox_vms
              | selectattr('tags', 'defined')
-             | selectattr('tags', 'search', claude_vm_tag)
+             | selectattr('tags', 'regex', claude_vm_tag_pattern)
              | list }}
 
     # With VM_NAME given, act only on those; without it, the whole fleet.
@@ -56,18 +65,26 @@
         loop_var: claude_vm_item
         label: "{{ claude_vm_item.name }}"
 
+    # net_mac is given a default here so that one odd VM - a NIC removed in
+    # the UI, or net1 with no net0 - is skipped instead of raising and taking
+    # discovery down for the whole fleet. Without a MAC the VM is skipped
+    # rather than guessed at, since an address picked without one could be a
+    # bridge the guest grew later (docker0).
     - name: Add the reachable ones to the inventory
+      vars:
+        claude_vm_found: "{{ claude_vm_detail.proxmox_vms | default([], true) | first | default({}, true) }}"
+        claude_vm_found_mac: "{{ claude_vm_found.config.net0 | default('', true) | net_mac('') }}"
+        claude_vm_found_ip: "{{ claude_vm_found.network | default([], true) | guest_ipv4(claude_vm_found_mac) | default('', true) }}"
       ansible.builtin.add_host:
-        name: "{{ claude_vm_detail.proxmox_vms[0].name }}"
+        name: "{{ claude_vm_found.name }}"
         groups: claude_vms
-        ansible_host: "{{ claude_vm_detail.proxmox_vms[0].network | guest_ipv4(claude_vm_detail.proxmox_vms[0].config.net0 | net_mac) }}"
+        ansible_host: "{{ claude_vm_found_ip }}"
         ansible_user: "{{ vm_user }}"
-        proxmox_vm_id: "{{ claude_vm_detail.proxmox_vms[0].vmid }}"
+        proxmox_vm_id: "{{ claude_vm_found.vmid }}"
       changed_when: false
       when:
-        - claude_vm_detail.proxmox_vms | default([]) | length > 0
-        - claude_vm_detail.proxmox_vms[0].network is defined
-        - claude_vm_detail.proxmox_vms[0].network | guest_ipv4(claude_vm_detail.proxmox_vms[0].config.net0 | net_mac) | default('', true) | length > 0
+        - claude_vm_found_mac | length > 0
+        - claude_vm_found_ip | length > 0
       loop: "{{ claude_vm_details.results }}"
       loop_control:
         loop_var: claude_vm_detail

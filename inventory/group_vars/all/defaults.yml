@@ -32,8 +32,16 @@ proxmox_template_name: ubuntu-24.04-cloudinit
 claude_vm_default_name: claude-on-proxmox-default
 # Applied to every VM this project creates, and how they are found again.
 claude_vm_tag: claude-on-proxmox
+# Matches claude_vm_tag as a whole tag in Proxmox's ";"-joined tag string (or
+# the ","-joined form proxmox_kvm sends), never as a substring of a longer one.
+claude_vm_tag_pattern: "(^|[;,]){{ claude_vm_tag | regex_escape }}([;,]|$)"
 claude_vm_names: >-
   {{ (vm_name | default(claude_vm_default_name, true)) | split(',') | map('trim') | select | list }}
+
+# configure.yml discovers VMs from Proxmox before configuring them. Set false
+# to configure hosts that are already in a static inventory (Vagrant does this)
+# and skip the Proxmox API entirely.
+claude_vm_discovery: true
 
 # Login user created by cloud-init and used for everything afterwards.
 vm_user: dev
