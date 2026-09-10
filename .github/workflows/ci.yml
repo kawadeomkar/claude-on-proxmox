@@ -34,20 +34,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # .gitignore stops the accident; this stops `git add -f`.
+      # .gitignore stops the accident; this stops `git add -f`. The patterns
+      # live in a script so tests/unit/test_tracked_files.py can assert both
+      # that every ignored path trips it and that test fixtures do not.
       - name: Check that no environment-specific file is tracked
-        run: |
-          pat='^inventory/hosts\.ya?ml$'
-          pat="$pat"'|^inventory/[^/]+\.ini$'
-          pat="$pat"'|^inventory/group_vars/.+/(local|vault)[^/]*\.ya?ml$'
-          pat="$pat"'|^inventory/host_vars/|^host_vars/'
-          pat="$pat"'|^\.vault_pass|^\.env'
-          leaked=$(git ls-files | grep -Ev '\.example$' | grep -E "$pat" || true)
-          if [ -n "$leaked" ]; then
-            echo "$leaked"
-            echo "::error::These files hold environment-specific or secret data and must not be committed."
-            exit 1
-          fi
+        run: bash tests/check_no_local_files.sh
 
       - uses: ./.github/actions/setup
 
@@ -66,13 +57,26 @@ jobs:
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
       # `make lint` already ran yamllint, ansible-lint and ruff, so skip those
-      # and run the rest: gitleaks, detect-private-key, the large-file check and
-      # the whitespace hooks. Without this they only ever run for a developer
-      # who installed the git hook.
-      - name: Secret scan and file hygiene
+      # and run the rest: detect-private-key, the large-file check and the
+      # whitespace hooks. Without this they only ever run for a developer who
+      # installed the git hook.
+      #
+      # gitleaks is skipped here and run separately below. Its hook is
+      # `gitleaks git --pre-commit --staged`, which scans the git index - and
+      # in a CI checkout the index equals HEAD, so it scans an empty diff and
+      # always passes. Scanning the working tree is what actually catches a
+      # secret arriving in a pull request.
+      - name: File hygiene
         env:
-          SKIP: yamllint,ansible-lint,ruff-check,ruff-format
+          SKIP: yamllint,ansible-lint,ruff-check,ruff-format,gitleaks
         run: make pre-commit
+
+      - name: Secret scan
+        # v8.30.0, the same release .pre-commit-config.yaml pins.
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9 \
+            dir . --config .gitleaks.toml --redact --no-banner --exit-code 1
 
   # Public repository: pull requests can add dependencies. This flags any new
   # one that carries a known advisory before it is merged. It reads the
