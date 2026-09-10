@@ -1,18 +1,6 @@
 ---
+# Everything the API needs lives in group_vars/all/fake_api.yml, so that the
+# hosts provision.yml creates per VM get it too. Only the controller's own
+# connection details belong here.
 ansible_connection: local
 ansible_python_interpreter: "{{ ansible_playbook_python }}"
-
-# Point the committed wiring at the fake API instead of a real Proxmox host.
-proxmox_api_host: 127.0.0.1
-proxmox_api_port: 18007
-vault_proxmox_api_token_secret: molecule-test-secret
-
-# What `make provision VM_NAME=alpha,beta` passes.
-vm_name: alpha,beta
-
-vm_user: dev
-vm_ssh_public_keys:
-  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMoleculeTestKeyDoNotUse0000000000000000000 molecule@test
-
-# The fake refuses the first polls on purpose; keep the retries quick.
-proxmox_vm_agent_delay: 1

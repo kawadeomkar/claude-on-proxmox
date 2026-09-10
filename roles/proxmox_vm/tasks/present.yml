@@ -12,6 +12,13 @@
     timeout: "{{ proxmox_vm_timeout }}"
     state: present
   register: proxmox_vm_clone
+  # One clone at a time, even when provisioning a fleet in parallel. Proxmox
+  # offers no way to reserve a VMID atomically: the module asks
+  # /cluster/nextid and then clones, so two clones in flight are handed the
+  # same free ID and the second one fails. Only this task is throttled - the
+  # rest of the role, including the multi-minute wait for the guest agent,
+  # still runs for every VM at once, which is where the time actually goes.
+  throttle: 1
   when: not proxmox_vm_exists
 
 # On a VMID collision proxmox_kvm reports ok and returns the *template's* VMID
@@ -49,7 +56,7 @@
       ipconfig0: "{{ proxmox_vm_ipconfig }}"
     nameservers: "{{ proxmox_vm_nameservers if proxmox_vm_nameservers else omit }}"
     searchdomains: "{{ proxmox_vm_searchdomain | default(omit, true) }}"
-  when: not proxmox_vm_exists or proxmox_vm_force_update
+  when: proxmox_vm_needs_configuration | bool
 
 - name: present | Resize the root disk to {{ proxmox_vm_disk_size }}
   community.proxmox.proxmox_disk: # noqa: args[module] - api_* come from module_defaults
@@ -57,7 +64,10 @@
     disk: "{{ proxmox_vm_disk }}"
     size: "{{ proxmox_vm_disk_size }}"
     state: resized
-  when: not proxmox_vm_exists
+  # Same condition as the settings above: a VM whose first run died before it
+  # was configured never got resized either. proxmox_disk reports no change
+  # when the disk is already the requested size, so re-running is free.
+  when: proxmox_vm_needs_configuration | bool
 
 - name: present | Start the VM
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
@@ -113,5 +123,10 @@
     groups: claude_vms
     ansible_host: "{{ proxmox_vm_address }}"
     ansible_user: "{{ proxmox_vm_user }}"
+    # Set explicitly: provision.yml runs this role against placeholder hosts
+    # that are connection: local, and add_host updates a host of the same name
+    # rather than replacing it. Without this the VM would inherit local and
+    # configure.yml would run against the controller instead of the VM.
+    ansible_connection: ssh
     proxmox_vm_id: "{{ proxmox_vm_resolved_id }}"
   changed_when: false

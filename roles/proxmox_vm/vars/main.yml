@@ -17,3 +17,14 @@ proxmox_vm_found_tags: >-
   {{ proxmox_vm_lookup.proxmox_vms[0].tags
      | default('', true) | replace(',', ';') | split(';')
      | map('trim') | select | list }}
+
+# Internal: whether the VM still needs its settings applied. Existence alone is
+# not convergence - if a run died between the clone and the settings call, the
+# VM exists but has no cloud-init user, no SSH keys, no agent and no tag, and
+# keying off existence would skip the repair forever and then wait five minutes
+# for an agent that was never enabled. The tag is written by that same call, so
+# its absence is the marker that the call did not complete.
+proxmox_vm_needs_configuration: >-
+  {{ (not proxmox_vm_exists)
+     or (proxmox_vm_force_update | bool)
+     or (proxmox_vm_tags[0] not in proxmox_vm_found_tags) }}

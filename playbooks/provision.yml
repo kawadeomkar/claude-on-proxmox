@@ -9,7 +9,14 @@
 # Proxmox picks the VMID, the LAN's DHCP server assigns the address, and the
 # QEMU guest agent reports it back. Each VM is added to the in-memory
 # claude_vms group so configure.yml can reach it in the same run.
-- name: Provision VMs on Proxmox
+#
+# This is three plays rather than one loop because the work is worth running
+# in parallel. Most of the time per VM is spent waiting for the guest agent to
+# report a DHCP address - up to five minutes - and every VM is already booting
+# on the hypervisor at the same time. A loop over include_role would watch them
+# one at a time, so a fleet of five would take five times as long as it needs
+# to. Giving each VM its own host lets Ansible fan out across `forks` instead.
+- name: Register the VMs to provision
   hosts: localhost
   gather_facts: false
 
@@ -20,17 +27,51 @@
         fail_msg: "No VM name to provision. Try: make provision VM_NAME=alpha"
         quiet: true
 
-    - name: Create each VM
-      ansible.builtin.include_role:
-        name: proxmox_vm
-      vars:
-        proxmox_vm_name: "{{ claude_vm_name_item }}"
+    - name: Add each name as a host to provision
+      ansible.builtin.add_host:
+        name: "{{ claude_vm_name_item }}"
+        groups: claude_vm_pending
+        # Every task in the proxmox_vm role is delegated to the controller and
+        # talks to the Proxmox API, so nothing ever connects to this host under
+        # this name. The real connection details arrive later, from discovery.
+        ansible_connection: local
+      changed_when: false
       loop: "{{ claude_vm_names }}"
       loop_control:
         loop_var: claude_vm_name_item
         label: "{{ claude_vm_name_item }}"
 
-    - name: Report the provisioned VMs
+- name: Create the VMs on Proxmox
+  hosts: claude_vm_pending
+  gather_facts: false
+  # proxmox_vm_name defaults to inventory_hostname, which is the VM name here.
+  roles:
+    - role: proxmox_vm
+
+- name: Publish and report the provisioned VMs
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    # The role adds each VM to claude_vms itself, but add_host bypasses the
+    # play's host loop: it runs once per task no matter how many hosts the play
+    # has, so in the fleet play above only the first VM would be published.
+    # Re-publish every one here from the facts the role left behind.
+    - name: Add each VM to the claude_vms group
+      ansible.builtin.add_host:
+        name: "{{ claude_vm_name_item }}"
+        groups: claude_vms
+        ansible_host: "{{ hostvars[claude_vm_name_item].proxmox_vm_address }}"
+        ansible_user: "{{ vm_user }}"
+        ansible_connection: ssh
+        proxmox_vm_id: "{{ hostvars[claude_vm_name_item].proxmox_vm_resolved_id }}"
+      changed_when: false
+      loop: "{{ claude_vm_names }}"
+      loop_control:
+        loop_var: claude_vm_name_item
+        label: "{{ claude_vm_name_item }}"
+
+    - name: Show each VM and the address it was given
       ansible.builtin.debug:
         msg: "{{ claude_vm_name_item }} is up at {{ hostvars[claude_vm_name_item].ansible_host }}"
       loop: "{{ claude_vm_names }}"
