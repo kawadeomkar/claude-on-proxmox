@@ -28,3 +28,24 @@ proxmox_vm_needs_configuration: >-
   {{ (not proxmox_vm_exists)
      or (proxmox_vm_force_update | bool)
      or (proxmox_vm_tags[0] not in proxmox_vm_found_tags) }}
+
+# Internal: the MAC of the VM's own NIC, or "" when it cannot be read - an
+# empty config list, or a template whose NIC is not proxmox_vm_nic. The
+# callers assert on it rather than letting net_mac raise mid-play.
+proxmox_vm_found_mac: >-
+  {{ (proxmox_vm_config.proxmox_vms | default([], true) | first | default({}, true))
+     .get('config', {}).get(proxmox_vm_nic, '') | net_mac('') }}
+
+# Internal: the address whose host key should be forgotten when the VM is
+# deleted. The guest agent cannot answer for a VM that is stopped, hung or
+# agent-less - which is most VMs at the point someone destroys them - so fall
+# back to whatever discovery or provisioning already recorded for this name.
+proxmox_vm_forget_address: >-
+  {{ proxmox_vm_reported_address if (proxmox_vm_reported_address | length > 0)
+     else (hostvars[proxmox_vm_name].ansible_host | default('', true)) }}
+
+# Internal: where this VM's cached facts live, or "" when fact caching is off
+# or not the jsonfile backend.
+proxmox_vm_fact_cache: >-
+  {{ (lookup('ansible.builtin.config', 'CACHE_PLUGIN') == 'jsonfile')
+     | ternary(lookup('ansible.builtin.config', 'CACHE_PLUGIN_CONNECTION') ~ '/' ~ proxmox_vm_name, '') }}

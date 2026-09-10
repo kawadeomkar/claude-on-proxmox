@@ -34,6 +34,9 @@ proxmox_vm_id: ""
 proxmox_vm_cores: "{{ vm_cores | default(2) }}"
 proxmox_vm_memory_mb: "{{ vm_memory_mb | default(4096) }}"
 proxmox_vm_disk: scsi0
+# Which NIC of the template carries the LAN address. Only change this if the
+# template was built with something other than a single net0.
+proxmox_vm_nic: net0
 proxmox_vm_disk_size: "{{ vm_disk_size | default('32G') }}"
 proxmox_vm_onboot: true
 proxmox_vm_tags: [claude-on-proxmox]
@@ -52,10 +55,20 @@ proxmox_vm_ipconfig: ip=dhcp
 proxmox_vm_nameservers: "{{ vm_nameservers | default([]) }}"
 proxmox_vm_searchdomain: "{{ vm_searchdomain | default('') }}"
 
+# The cluster resource list can lag a few seconds behind a VM that was just
+# cloned, so the config read that follows the start is retried.
+proxmox_vm_lookup_retries: 6
+proxmox_vm_lookup_delay: 5
+
 # How long to wait for the guest agent to report an address after first boot.
 # The agent starts early, but the guest still has to complete a DHCP exchange.
 proxmox_vm_agent_retries: 60
 proxmox_vm_agent_delay: 5
+
+# Start an already-configured VM that is currently stopped. Off by default so
+# re-running provision over a fleet does not boot a VM someone shut down on
+# purpose; a VM this run creates or repairs is always started.
+proxmox_vm_start_existing: false
 
 # Re-apply hardware/cloud-init settings to an existing VM. Off by default
 # because Proxmox reports every update as a change, breaking idempotence.

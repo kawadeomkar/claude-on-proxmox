@@ -22,10 +22,14 @@
   changed_when: false
   when: proxmox_vm_exists
 
+# Same extractor the present path uses, with a default: a VM being deleted may
+# well have no readable NIC, and that must not stop the deletion.
+# Set unconditionally. A skipped set_fact keeps whatever the previous loop
+# iteration left behind, unlike a register, so a conditional one here would
+# hand VM #1's MAC to VM #2 the first time anything downstream used it.
 - name: absent | Record the address to forget
   ansible.builtin.set_fact:
-    proxmox_vm_mac: "{{ proxmox_vm_config.proxmox_vms[0].config.net0 | default('') | regex_search('([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}') | default('', true) }}"
-  when: proxmox_vm_exists
+    proxmox_vm_mac: "{{ proxmox_vm_found_mac if proxmox_vm_exists else '' }}"
 
 - name: absent | Stop the VM
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
@@ -47,11 +51,37 @@
     timeout: "{{ proxmox_vm_timeout }}"
   when: proxmox_vm_exists
 
+# Leaving a stale key behind is not harmless: the address goes back in the
+# DHCP pool, and the next VM to get it fails with HOST KEY VERIFICATION FAILED
+# and no hint as to why.
 - name: absent | Forget the VM's SSH host key
   ansible.builtin.known_hosts:
-    name: "{{ proxmox_vm_reported_address }}"
+    name: "{{ proxmox_vm_forget_address }}"
     state: absent
   delegate_to: localhost
   when:
     - proxmox_vm_exists
-    - proxmox_vm_reported_address | length > 0
+    - proxmox_vm_forget_address | length > 0
+
+# VM names are cheap and reusable now, so a name can come back pointing at a
+# different machine. A cached fact set from the old one would be reused for up
+# to fact_caching_timeout, describing hardware that no longer exists.
+- name: absent | Drop the VM's cached facts
+  ansible.builtin.file:
+    path: "{{ proxmox_vm_fact_cache }}"
+    state: absent
+  delegate_to: localhost
+  when:
+    - proxmox_vm_exists
+    - proxmox_vm_fact_cache | length > 0
+
+- name: absent | Warn when the address could not be determined
+  ansible.builtin.debug:
+    msg: >-
+      Deleted "{{ proxmox_vm_name }}" but could not determine its address, so its
+      SSH host key is still in known_hosts. If a later VM picks up that lease you
+      will see HOST KEY VERIFICATION FAILED; remove the entry with
+      "ssh-keygen -R <address>".
+  when:
+    - proxmox_vm_exists
+    - proxmox_vm_forget_address | length == 0
