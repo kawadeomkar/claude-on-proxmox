@@ -49,8 +49,14 @@ vm_user: dev
 # that were not built from a cloud image (Vagrant, containers).
 configure_wait_for_cloud_init: true
 # Public keys authorised for vm_user. Defaults to your local default key.
-vm_ssh_public_keys:
-  - "{{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'HOME') + '/.ssh/id_ed25519.pub') }}"
+# Read with errors='ignore' so that someone whose key is an RSA or ECDSA one
+# gets the role's "set vm_ssh_public_keys" message rather than a bare
+# "could not locate file" from the lookup, which Jinja evaluates first.
+vm_ssh_public_keys: >-
+  {{ [lookup('ansible.builtin.file',
+             lookup('ansible.builtin.env', 'HOME') ~ '/.ssh/id_ed25519.pub',
+             errors='ignore')]
+     | select('string') | select | list }}
 
 # --------------------------------------------------------------- GitHub -----
 github_username: "{{ vault_github_username | default('') }}"

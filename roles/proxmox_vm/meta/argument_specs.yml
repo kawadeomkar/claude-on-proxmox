@@ -3,8 +3,10 @@ argument_specs:
   main:
     short_description: Clone, configure and start (or delete) a VM on Proxmox VE
     description:
-      - Looks the VM up by VMID, clones it from a cloud-init template if missing,
-        applies hardware and cloud-init settings, resizes the root disk and starts it.
+      - Looks the VM up by name, clones it from a cloud-init template if missing,
+        applies hardware and cloud-init settings, resizes the root disk, starts it
+        and waits for the guest agent to report an address.
+      - Deleting refuses any VM that does not carry the ownership tag.
       - All API calls are delegated to the controller.
     options:
       proxmox_vm_api_host:
@@ -47,6 +49,24 @@ argument_specs:
         type: str
         choices: [present, absent]
         default: present
+      proxmox_vm_start_existing:
+        type: bool
+        default: false
+        description:
+          - Start an already-configured VM that is stopped. Off by default so a
+            re-run does not boot a VM that was shut down deliberately.
+      proxmox_vm_nic:
+        type: str
+        default: net0
+        description:
+          - Which NIC of the template carries the LAN address; its MAC is what
+            the guest agent's reply is matched against.
+      proxmox_vm_lookup_retries:
+        type: int
+        default: 6
+      proxmox_vm_lookup_delay:
+        type: int
+        default: 5
       proxmox_vm_allow_untagged_delete:
         type: bool
         default: false

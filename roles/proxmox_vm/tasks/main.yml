@@ -1,19 +1,46 @@
 ---
-- name: Validate VM definition
+# Split by condition on purpose: a single catch-all message sent someone with
+# a mistyped VM name off to check their API token.
+- name: Validate the Proxmox connection settings
   ansible.builtin.assert:
     that:
       - proxmox_vm_api_host | length > 0
       - proxmox_vm_api_token_secret | length > 0
+    fail_msg: >-
+      Set proxmox_api_host in inventory/hosts.yml and vault_proxmox_api_token_secret
+      in inventory/group_vars/all/vault.yml. See "Creating the Proxmox API token"
+      in the README.
+    quiet: true
+
+- name: Validate the VM name
+  ansible.builtin.assert:
+    that:
       - proxmox_vm_name | length > 0
-      - proxmox_vm_name is match('^[a-zA-Z0-9][a-zA-Z0-9.-]*$')
+      - proxmox_vm_name | length <= 63
+      - proxmox_vm_name is match('^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$')
+    fail_msg: >-
+      "{{ proxmox_vm_name }}" is not usable as a VM name. Use 1-63 characters,
+      letters, digits, dots and hyphens only, starting and ending with a letter
+      or digit - no spaces and no underscores. For example: VM_NAME=alpha
+    quiet: true
+
+- name: Validate the login credentials for the VM
+  ansible.builtin.assert:
+    that: proxmox_vm_ssh_public_keys | length > 0 or proxmox_vm_password | length > 0
+    fail_msg: >-
+      The VM would be unreachable: set vm_ssh_public_keys (it defaults to
+      ~/.ssh/id_ed25519.pub) or vm_password for the cloud-init user.
+    quiet: true
+
+- name: Validate the remaining role arguments
+  ansible.builtin.assert:
+    that:
       - proxmox_vm_state in ['present', 'absent']
-      - proxmox_vm_ssh_public_keys | length > 0 or proxmox_vm_password | length > 0
       - proxmox_vm_id | string | length == 0 or proxmox_vm_id | string is match('^[1-9][0-9]{2,}$')
     fail_msg: >-
-      proxmox_vm needs proxmox_vm_api_host, proxmox_vm_api_token_secret, a DNS-safe
-      proxmox_vm_name and at least one SSH public key (vm_ssh_public_keys) or a
-      password (vm_password) for the cloud-init user. proxmox_vm_id, when set at all,
-      must be a number >= 100.
+      proxmox_vm_state must be present or absent (got "{{ proxmox_vm_state }}"), and
+      proxmox_vm_id, when set at all, must be a number >= 100
+      (got "{{ proxmox_vm_id }}").
     quiet: true
 
 - name: Manage the VM

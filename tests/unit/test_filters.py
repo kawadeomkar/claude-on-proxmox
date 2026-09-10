@@ -40,7 +40,12 @@ class TestNetMac:
         assert net_mac("virtio=BC:24:11:0E:72:04,bridge=vmbr0") == LAN_MAC
 
     def test_lowercases(self):
-        assert net_mac("virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0").islower()
+        # Assert the value, not .islower(): that predicate is True for a MAC of
+        # digits only, and for a truncated return such as "aa:bb".
+        assert net_mac("virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0") == "aa:bb:cc:dd:ee:ff"
+
+    def test_returns_the_whole_address_when_it_is_all_digits(self):
+        assert net_mac("virtio=00:11:22:33:44:55,bridge=vmbr0") == "00:11:22:33:44:55"
 
     def test_rejects_config_without_a_mac(self):
         with pytest.raises(AnsibleFilterError, match="no MAC address"):
@@ -63,7 +68,11 @@ class TestGuestIpv4:
         assert guest_ipv4([ETH0], LAN_MAC.upper()) == "192.0.2.51"
 
     def test_skips_loopback_without_a_mac(self):
-        assert guest_ipv4([LO, ETH0]) == "192.0.2.51"
+        # A plain 127.0.0.1 loopback proves nothing here - the "127." filter
+        # already drops it. Give lo a routable secondary, as a host with a
+        # service VIP has, so the name check is what excludes it.
+        lo_with_vip = iface("lo", "00:00:00:00:00:00", [("127.0.0.1", "ipv4", 8), ("10.0.0.1", "ipv4", 32)])
+        assert guest_ipv4([lo_with_vip, ETH0]) == "192.0.2.51"
 
     def test_skips_link_local(self):
         link_local = iface("eth0", LAN_MAC, [("169.254.3.4", "ipv4", 16), ("192.0.2.51", "ipv4", 24)])
@@ -74,10 +83,30 @@ class TestGuestIpv4:
         assert guest_ipv4(None) is None
 
     def test_none_when_the_nic_has_no_address_yet(self):
+        # Both shapes: QEMU's schema makes ip-addresses optional, so a NIC with
+        # no address omits the key entirely rather than sending []. That is
+        # exactly the state during the DHCP window the retry loop exists for.
         assert guest_ipv4([iface("eth0", LAN_MAC, [])], LAN_MAC) is None
+        assert guest_ipv4([{"name": "eth0", "hardware-address": LAN_MAC}], LAN_MAC) is None
+        assert guest_ipv4([{"name": "eth0", "hardware-address": LAN_MAC, "ip-addresses": None}], LAN_MAC) is None
+
+    def test_none_when_the_interface_has_no_hardware_address(self):
+        # Also optional in the agent's schema.
+        assert guest_ipv4([{"name": "eth0", "ip-addresses": []}], LAN_MAC) is None
+
+    def test_ignores_malformed_entries(self):
+        assert guest_ipv4(["not-a-dict", ETH0], LAN_MAC) == "192.0.2.51"
 
     def test_none_when_no_nic_matches(self):
         assert guest_ipv4([ETH0], "aa:aa:aa:aa:aa:aa") is None
+
+    def test_without_a_mac_the_first_non_loopback_nic_wins(self):
+        # Pinning the documented limit of the no-MAC path: it takes whatever
+        # comes first, so on a VM that has grown a docker bridge it can return
+        # 172.17.0.1. Callers that care pass a MAC - which is why discover.yml
+        # skips a VM whose MAC it cannot read rather than calling this bare.
+        assert guest_ipv4([DOCKER0, ETH0]) == "172.17.0.1"
+        assert guest_ipv4([ETH0, DOCKER0]) == "192.0.2.51"
 
     def test_ipv6_only_is_not_returned(self):
         v6 = iface("eth0", LAN_MAC, [("2001:db8::1", "ipv6", 64)])
