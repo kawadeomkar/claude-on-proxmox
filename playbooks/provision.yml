@@ -21,10 +21,18 @@
   gather_facts: false
 
   tasks:
-    - name: Check that at least one VM name was given
+    - name: Check the VM names are usable
       ansible.builtin.assert:
-        that: claude_vm_names | length > 0
-        fail_msg: "No VM name to provision. Try: make provision VM_NAME=alpha"
+        that:
+          - claude_vm_names | length > 0
+          - claude_vm_names | reject('match', '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') | list | length == 0
+        fail_msg: >-
+          {{ 'No VM name to provision. Try: make provision VM_NAME=alpha'
+             if claude_vm_names | length == 0
+             else 'These names are not usable as VM names: '
+                  ~ (claude_vm_names | reject('match', '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') | list | join(', '))
+                  ~ '. Separate several VMs with commas and no spaces, and use only'
+                  ~ ' letters, digits, dots and hyphens: VM_NAME=alpha,beta' }}
         quiet: true
 
     - name: Add each name as a host to provision

@@ -51,6 +51,23 @@
           {{ claude_vm_tagged | selectattr('name', 'in', claude_vm_names) | list
              if vm_name is defined else claude_vm_tagged }}
 
+    # Proxmox permits duplicate names. The role refuses to act on one; here the
+    # second add_host would silently overwrite the first, so `make configure`
+    # would report success having touched only one of them, unpredictably.
+    - name: Refuse to continue with duplicated VM names
+      vars:
+        claude_vm_dupes: >-
+          {{ claude_vm_discovered | map(attribute='name') | list
+             | community.general.counter | dict2items
+             | selectattr('value', 'gt', 1) | map(attribute='key') | sort | list }}
+      ansible.builtin.assert:
+        that: claude_vm_dupes | length == 0
+        fail_msg: >-
+          More than one VM is tagged {{ claude_vm_tag }} and named
+          {{ claude_vm_dupes | join(', ') }}. Rename or remove the duplicates so
+          it is unambiguous which one to configure.
+        quiet: true
+
     - name: Ask each guest agent for an address
       community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
         type: qemu
@@ -58,7 +75,12 @@
         config: current
         network: true
       register: claude_vm_details
-      failed_when: false
+      # A VM whose agent is not up yet is expected and simply gets skipped
+      # below. A permission or authentication failure is not: it applies to
+      # every VM, and swallowing it means `make configure` runs against zero
+      # hosts and exits 0, which looks like success.
+      failed_when: >-
+        claude_vm_details.msg | default('') is search('40[13]|[Pp]ermission|[Aa]uthentication')
       changed_when: false
       loop: "{{ claude_vm_discovered }}"
       loop_control:
@@ -89,3 +111,19 @@
       loop_control:
         loop_var: claude_vm_detail
         label: "{{ claude_vm_detail.claude_vm_item.name }}"
+
+    # Landing here with nothing is almost always a mistake rather than an empty
+    # fleet, and the plays that follow would otherwise just report "no hosts
+    # matched" and exit 0.
+    - name: Report when discovery found nothing to configure
+      ansible.builtin.debug:
+        msg: >-
+          No VMs to configure.
+          {{ 'Proxmox has no VM tagged ' ~ claude_vm_tag ~ '; run make provision first.'
+             if claude_vm_tagged | length == 0
+             else (claude_vm_discovered | length == 0)
+                  | ternary('Tagged VMs exist (' ~ (claude_vm_tagged | map(attribute='name') | join(', '))
+                            ~ ') but none match VM_NAME.',
+                            'Tagged VMs exist but none reported an address yet - they may still be'
+                            ~ ' booting, or the API token may lack VM.Monitor.') }}
+      when: groups['claude_vms'] | default([]) | length == 0

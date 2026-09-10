@@ -15,7 +15,11 @@ ANSIBLE_ARGS ?=
 # plays run, and these VMs only enter the inventory once discovery has found
 # them, so it could never match.
 VM_NAME    ?=
-VM_ARGS    := $(if $(VM_NAME),-e vm_name=$(VM_NAME),)
+# Passed as JSON, not key=value. Ansible's key=value parser splits extra-vars
+# on whitespace, so VM_NAME="alpha beta" silently became just alpha and only
+# half the fleet was created. As JSON the value arrives whole and reaches the
+# name check in provision.yml, which explains the problem.
+VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
 ROLES      := common dev_tools claude_code github_projects proxmox_template proxmox_vm
 MOLECULE_ROLES ?= $(ROLES)
 
@@ -119,16 +123,26 @@ molecule: ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_
 	  (cd roles/$$role && PATH="$(ABSBIN):$$PATH" $(ABSBIN)/molecule test) || exit 1; \
 	done
 
+# One entry point for the playbook-level scenarios so CI runs exactly what a
+# developer runs. CI used to inline the molecule call, which meant these
+# targets could break without CI noticing.
+.PHONY: molecule-scenario
+molecule-scenario: ## Run one playbook scenario: make molecule-scenario SCENARIO=provision
+	@test -n "$(SCENARIO)" || { echo "error: set SCENARIO, e.g. make molecule-scenario SCENARIO=provision"; exit 1; }
+	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s $(SCENARIO)
+
 .PHONY: molecule-integration
 molecule-integration: ## Run the full configure playbook against a Docker container
-	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s configure
+	$(MAKE) molecule-scenario SCENARIO=configure
 
 .PHONY: molecule-provision
 molecule-provision: ## Run provision.yml + discover.yml against a fake Proxmox API
-	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s provision
+	$(MAKE) molecule-scenario SCENARIO=provision
 
+# Includes pre-commit so that `make test` really is a superset of the CI gate;
+# it was possible to pass everything locally and still be failed by CI.
 .PHONY: test
-test: lint syntax unit molecule molecule-integration molecule-provision ## Run everything
+test: lint syntax unit pre-commit molecule molecule-integration molecule-provision ## Run everything
 
 .PHONY: vagrant-up
 vagrant-up: ## End-to-end test of configure.yml on a real VirtualBox VM
