@@ -4,7 +4,7 @@ Ansible project that turns a Proxmox VE host into a ready-to-use
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) development VM:
 
 1. **Template** – builds a cloud-init enabled Ubuntu 24.04 template on the Proxmox host (one time).
-2. **Provision** – clones the template into a VM with a static IP, your SSH key and the sizing you chose.
+2. **Provision** – clones the template into a VM named by you, with your SSH key, and reports the address DHCP gave it.
 3. **Configure** – installs a baseline of packages, developer tooling (Node.js, Docker, GitHub CLI, uv),
    Claude Code itself, and clones **every repository of your GitHub account** into `~/projects`.
 
@@ -72,6 +72,28 @@ already serves your network assigns the address, exactly as it would for a lapto
 guest agent - baked into the template by `make template` - reports that address back so Ansible can
 reach the VM and print it for you. The only address you ever type is your Proxmox host's.
 
+### Upgrading an existing install
+
+Provisioning now needs `qemu-guest-agent` **inside** the image: it is what
+reports the VM's DHCP address back. `make template` bakes it in, but a template
+built before this change does not have it, and re-running `make template` will
+**not** fix that - the role skips the whole build when the VMID already exists.
+A VM cloned from such a template never reports an address, so `make provision`
+waits five minutes and then fails.
+
+Rebuild the template once, on the Proxmox host:
+
+```bash
+qm destroy 9000        # the template's VMID (proxmox_template_vmid)
+```
+
+```bash
+make template          # rebuilds it, this time with the guest agent
+```
+
+Existing VMs keep working; they are configured over SSH and are not re-cloned.
+Your API token also needs `VM.Monitor` added - see below.
+
 ### Creating the Proxmox API token
 
 Use a dedicated user with only the rights the `proxmox_vm` role needs, rather than a root token.
@@ -115,7 +137,7 @@ and set `proxmox_validate_certs: true` in `local.yml`.
 | `dev_tools` | Node.js (NodeSource), Docker Engine, GitHub CLI, uv/uvx (release pinned by version and SHA256), pipx, build tools. Apt signing keys are vendored in `roles/dev_tools/files` | `dev_tools_install_*`, `dev_tools_node_major`, `dev_tools_uv_version`, `dev_tools_npm_global_packages` |
 | `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md` | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions` |
 | `github_projects` | Lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters) and clones them | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_projects_clone_protocol` |
-| `proxmox_vm` | Looks up the VM by VMID, clones the template, applies cloud-init (user, keys, static IP, DNS), resizes the disk, starts it. `proxmox_vm_state: absent` deletes it | `vm_id`, `vm_cores`, `vm_memory_mb`, `vm_disk_size`, `vm_gateway`, `vm_nameservers` (per host in `hosts.yml`) |
+| `proxmox_vm` | Looks the VM up **by name**, clones the template when it does not exist, applies cloud-init (user, keys, DHCP by default, DNS), resizes the disk, starts it, then waits for the guest agent to report an address. `proxmox_vm_state: absent` deletes it, refusing any VM that is not tagged `claude-on-proxmox` | `vm_cores`, `vm_memory_mb`, `vm_disk_size`, `vm_nameservers` (fleet-wide, in `local.yml`); `proxmox_vm_ipconfig` for a static address |
 | `proxmox_template` | Downloads the Ubuntu cloud image (SHA256 verified), creates the VM with `qm`, imports the disk, adds the cloud-init drive, converts to template | `proxmox_template_vmid`, `proxmox_template_image_url`, `proxmox_template_storage` |
 
 Every role documents its full interface in `roles/<name>/meta/argument_specs.yml`, and Ansible validates
@@ -128,7 +150,7 @@ roles/*/defaults/main.yml                 role defaults, role-prefixed names
 inventory/group_vars/all/defaults.yml     project defaults + wiring of vm_user, github_username, … into role vars   (committed)
 inventory/group_vars/all/local.yml        your overrides                                                            (git-ignored)
 inventory/group_vars/all/vault.yml        secrets as vault_* variables                                              (git-ignored, encrypted)
-inventory/hosts.yml                       hosts and per-VM sizing                                                   (git-ignored)
+inventory/hosts.yml                       the Proxmox host's address, nothing else                                  (git-ignored)
 ```
 
 Files in `group_vars/all/` load alphabetically, so `defaults` < `local` < `vault`.

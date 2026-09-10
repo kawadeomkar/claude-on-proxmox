@@ -14,6 +14,19 @@
 # Login user on the VM.
 # vm_user: dev
 
+# VM sizing. These apply to every VM a run creates - VMs are no longer listed
+# in hosts.yml, so there is no per-VM override. Provision fleets that need
+# different sizes in separate runs.
+# vm_cores: 2
+# vm_memory_mb: 4096
+# vm_disk_size: 32G
+# vm_nameservers: [1.1.1.1, 8.8.8.8]
+
+# Addressing is DHCP by default and the guest agent reports back what it got.
+# To pin an address instead, set the cloud-init ipconfig line directly. This is
+# also fleet-wide, so it only makes sense for a single-VM run.
+# proxmox_vm_ipconfig: "ip=192.0.2.60/24,gw=192.0.2.1"
+
 # Which of your GitHub repositories to clone. The username itself lives in vault.yml.
 # Leave github_projects empty to clone every repository of that user; list names
 # to clone only those.
