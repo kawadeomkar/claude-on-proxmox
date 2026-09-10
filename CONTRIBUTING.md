@@ -24,7 +24,7 @@ first.
 | Command | What it runs |
 |---------|--------------|
 | `make lint` | yamllint, ansible-lint (production profile), ruff |
-| `make syntax` | `--syntax-check` on every playbook, against the example inventory |
+| `make syntax` | `--syntax-check` on every playbook, against your `inventory/` |
 | `make unit` | pytest for `roles/github_projects/library/github_repos.py` |
 | `make molecule MOLECULE_ROLES="common dev_tools"` | one or more role scenarios |
 | `make molecule-integration` | `playbooks/configure.yml` end to end in a container |

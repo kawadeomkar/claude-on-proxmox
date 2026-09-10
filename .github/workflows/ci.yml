@@ -137,4 +137,4 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup
       - name: Molecule test
-        run: PATH="$PWD/.venv/bin:$PATH" .venv/bin/molecule test -s ${{ matrix.scenario }}
+        run: make molecule-scenario SCENARIO=${{ matrix.scenario }}

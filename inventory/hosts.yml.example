@@ -16,6 +16,6 @@ all:
           ansible_user: root
 
     # Left empty on purpose: provisioning adds VMs to this group at runtime,
-    # and inventory/proxmox.yml discovers already-created ones.
+    # and playbooks/discover.yml finds already-created ones by their tag.
     claude_vms:
       hosts: {}

@@ -100,7 +100,7 @@ Use a dedicated user with only the rights the `proxmox_vm` role needs, rather th
 On the PVE shell:
 
 ```bash
-pveum role add AnsibleVM -privs "VM.Allocate VM.Clone VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit \
+pveum role add AnsibleVM -privs "VM.Allocate VM.Clone VM.Config.CPU VM.Config.Cloudinit \
   VM.Config.Disk VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt VM.Audit VM.Monitor \
   Datastore.AllocateSpace Datastore.Audit SDN.Use"
 pveum user add ansible@pve
@@ -112,6 +112,12 @@ pveum user token add ansible@pve ansible --privsep 0
 
 `VM.Monitor` is what allows the token to ask the guest agent for the VM's address; without it
 provisioning creates the VM but cannot report where it is.
+
+One datacenter setting can also block provisioning: if **Datacenter → Options → Tag Style →
+User Tag Access** is set to `list` or `existing` rather than the default `free`, a non-root token
+cannot apply the `claude-on-proxmox` tag. Since that tag is how this project recognises its own
+VMs, provisioning fails or the VMs are created untagged and `make configure` then finds nothing.
+Either leave the setting at `free`, or add `claude-on-proxmox` to the allowed list.
 
 Put the printed secret in `vault.yml` as `vault_proxmox_api_token_secret`. The defaults already use
 `ansible@pve` / token ID `ansible`; change `proxmox_api_user` and `proxmox_api_token_id` in `local.yml`
@@ -202,7 +208,7 @@ make destroy          # prompts for confirmation; stops and deletes the VM and i
 
 ```bash
 make lint                 # yamllint + ansible-lint (production profile) + ruff
-make syntax               # --syntax-check of every playbook against the example inventory
+make syntax               # --syntax-check of every playbook against your inventory/
 make unit                 # pytest for the github_repos module (no network)
 make molecule             # Molecule (Docker) test of every role, incl. idempotence
 make molecule-integration # playbooks/configure.yml end to end in a container
