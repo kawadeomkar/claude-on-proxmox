@@ -85,6 +85,7 @@ def resource(vm):
         "type": "qemu",
         "status": vm["status"],
         "template": vm["template"],
+        "tags": vm["config"].get("tags", ""),
         "id": f"qemu/{vm['vmid']}",
     }
 

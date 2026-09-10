@@ -1,0 +1,74 @@
+---
+# Find the VMs this project created and make them reachable.
+#
+# Every VM the proxmox_vm role creates carries the claude-on-proxmox tag, so
+# Proxmox itself is the register of what exists - nothing is tracked locally
+# and a VM deleted in the UI simply stops appearing. Addresses come from the
+# QEMU guest agent, since a DHCP lease is not recorded anywhere else.
+#
+# Credentials come from the vault like every other play, which is why this is
+# a play rather than an inventory plugin: an inventory plugin runs before vault
+# decryption and would need its own copy of the API token.
+- name: Discover VMs on Proxmox
+  hosts: localhost
+  gather_facts: false
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ proxmox_api_host }}"
+      api_port: "{{ proxmox_api_port }}"
+      api_user: "{{ proxmox_api_user }}"
+      api_token_id: "{{ proxmox_api_token_id }}"
+      api_token_secret: "{{ proxmox_api_token_secret }}"
+      validate_certs: "{{ proxmox_validate_certs }}"
+
+  tasks:
+    - name: List every QEMU VM
+      community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+        type: qemu
+      register: claude_vm_all
+
+    - name: Keep the ones this project created
+      ansible.builtin.set_fact:
+        claude_vm_tagged: >-
+          {{ claude_vm_all.proxmox_vms
+             | selectattr('tags', 'defined')
+             | selectattr('tags', 'search', claude_vm_tag)
+             | list }}
+
+    # With VM_NAME given, act only on those; without it, the whole fleet.
+    - name: Narrow to the requested VMs
+      ansible.builtin.set_fact:
+        claude_vm_discovered: >-
+          {{ claude_vm_tagged | selectattr('name', 'in', claude_vm_names) | list
+             if vm_name is defined else claude_vm_tagged }}
+
+    - name: Ask each guest agent for an address
+      community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+        type: qemu
+        vmid: "{{ claude_vm_item.vmid }}"
+        config: current
+        network: true
+      register: claude_vm_details
+      failed_when: false
+      changed_when: false
+      loop: "{{ claude_vm_discovered }}"
+      loop_control:
+        loop_var: claude_vm_item
+        label: "{{ claude_vm_item.name }}"
+
+    - name: Add the reachable ones to the inventory
+      ansible.builtin.add_host:
+        name: "{{ claude_vm_detail.proxmox_vms[0].name }}"
+        groups: claude_vms
+        ansible_host: "{{ claude_vm_detail.proxmox_vms[0].network | guest_ipv4(claude_vm_detail.proxmox_vms[0].config.net0 | net_mac) }}"
+        ansible_user: "{{ vm_user }}"
+        proxmox_vm_id: "{{ claude_vm_detail.proxmox_vms[0].vmid }}"
+      changed_when: false
+      when:
+        - claude_vm_detail.proxmox_vms | default([]) | length > 0
+        - claude_vm_detail.proxmox_vms[0].network is defined
+        - claude_vm_detail.proxmox_vms[0].network | guest_ipv4(claude_vm_detail.proxmox_vms[0].config.net0 | net_mac) | default('', true) | length > 0
+      loop: "{{ claude_vm_details.results }}"
+      loop_control:
+        loop_var: claude_vm_detail
+        label: "{{ claude_vm_detail.claude_vm_item.name }}"

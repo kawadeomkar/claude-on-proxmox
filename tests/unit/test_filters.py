@@ -1,4 +1,4 @@
-"""Unit tests for roles/proxmox_vm/filter_plugins/proxmox.py."""
+"""Unit tests for filter_plugins/proxmox.py."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ansible.errors import AnsibleFilterError
 
 SPEC = importlib.util.spec_from_file_location(
     "proxmox_filters",
-    pathlib.Path(__file__).resolve().parents[2] / "roles" / "proxmox_vm" / "filter_plugins" / "proxmox.py",
+    pathlib.Path(__file__).resolve().parents[2] / "filter_plugins" / "proxmox.py",
 )
 proxmox_filters = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(proxmox_filters)
