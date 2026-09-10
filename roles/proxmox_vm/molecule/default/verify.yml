@@ -19,7 +19,11 @@
 
     - name: Extract the interesting requests
       ansible.builtin.set_fact:
-        proxmox_vm_verify_clones: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9000/clone$') | list }}"
+        # side_effect.yml clones an untagged VM to prove the delete guard
+        # refuses it; that is a fixture, not the role's work.
+        proxmox_vm_verify_clones: >-
+          {{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9000/clone$')
+             | rejectattr('params.name', 'equalto', 'someones-nas') | list }}
         proxmox_vm_verify_configs: >-
           {{ proxmox_vm_verify_calls | selectattr('method', 'equalto', 'PUT')
              | selectattr('path', 'search', '/qemu/9001/config$') | list }}
@@ -39,6 +43,8 @@
       ansible.builtin.assert:
         that:
           - proxmox_vm_verify_clones | length == 1
+          # The refused delete must not have reached the API at all.
+          - proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9002') | selectattr('method', 'equalto', 'DELETE') | list | length == 0
           - proxmox_vm_verify_clones[0].params.newid == '9001'
           - proxmox_vm_verify_clones[0].params.name == 'claude-dev'
           - proxmox_vm_verify_clones[0].params.full == '1'

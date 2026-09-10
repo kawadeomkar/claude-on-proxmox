@@ -1,4 +1,64 @@
 ---
+# The delete guard must refuse a VM this project did not create. Proxmox lets
+# any VM carry any name, so without this check `make destroy VM_NAME=nas`
+# would stop and delete an unrelated VM and its disks. Prove the refusal
+# before proving the normal teardown still works.
+- name: Refuse to delete a VM this project does not own
+  hosts: all
+  gather_facts: false
+  vars:
+    side_effect_api: "https://127.0.0.1:18006/api2/json/nodes/pve/qemu"
+    side_effect_headers:
+      Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
+  tasks:
+    - name: Create a VM this project did not create
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/9000/clone"
+        method: POST
+        headers: "{{ side_effect_headers }}"
+        body_format: form-urlencoded
+        body:
+          newid: 9002
+          name: someones-nas
+      delegate_to: localhost
+
+    - name: Try to delete it by name
+      block:
+        - name: Run the role against the untagged VM
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_name: someones-nas
+            proxmox_vm_state: absent
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: >-
+              proxmox_vm deleted "someones-nas", which carries no
+              claude-on-proxmox tag. The ownership guard is not working.
+      rescue:
+        - name: Assert it refused for the right reason
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('did not create it')
+              - ansible_failed_result.msg is search('someones-nas')
+            fail_msg: >-
+              Expected an ownership refusal, got: {{ ansible_failed_result.msg }}
+            quiet: true
+
+    - name: Assert the VM is still there
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/9002/status/current"
+        headers: "{{ side_effect_headers }}"
+      delegate_to: localhost
+      register: proxmox_vm_survivor
+      failed_when: proxmox_vm_survivor.json.data.name != 'someones-nas'
+
+    # Deliberately left in place: verify.yml asserts no DELETE for 9002 ever
+    # reached the API, which only means something if nothing else deletes it.
+
 # Runs after idempotence, before verify: tear the VM down again so verify can
 # check both the create and the destroy request sequences.
 - name: Side effect
