@@ -25,6 +25,14 @@ proxmox_template_vmid: 9000
 proxmox_template_name: ubuntu-24.04-cloudinit
 
 # ------------------------------------------------------------------- VM -----
+# Name(s) of the VM(s) to create. Set on the command line, comma-separated:
+#   make provision VM_NAME=alpha,beta
+# The name is what appears in the Proxmox UI. VMIDs are assigned by Proxmox and
+# addresses by your DHCP server, so neither has to be declared here.
+claude_vm_default_name: claude-on-proxmox-default
+claude_vm_names: >-
+  {{ (vm_name | default(claude_vm_default_name, true)) | split(',') | map('trim') | select | list }}
+
 # Login user created by cloud-init and used for everything afterwards.
 vm_user: dev
 # configure.yml waits for cloud-init before configuring. Disable for hosts

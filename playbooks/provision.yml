@@ -1,18 +1,39 @@
 ---
-# Create (clone from template), configure cloud-init and start every VM in
-# the claude_vms group. All API calls are delegated to the controller.
+# Create one or more VMs on Proxmox and report the address each one was given.
+#
+#   make provision                          -> claude-on-proxmox-default
+#   make provision VM_NAME=alpha
+#   make provision VM_NAME=alpha,beta,gamma
+#
+# Nothing has to be declared in inventory first: the VM is created by name,
+# Proxmox picks the VMID, the LAN's DHCP server assigns the address, and the
+# QEMU guest agent reports it back. Each VM is added to the in-memory
+# claude_vms group so configure.yml can reach it in the same run.
 - name: Provision VMs on Proxmox
-  hosts: claude_vms
+  hosts: localhost
   gather_facts: false
-  roles:
-    - role: proxmox_vm
 
-  post_tasks:
-    - name: Wait for SSH on the new VM
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host }}"
-        port: 22
-        delay: 5
-        timeout: 600
-        search_regex: OpenSSH
-      delegate_to: localhost
+  tasks:
+    - name: Check that at least one VM name was given
+      ansible.builtin.assert:
+        that: claude_vm_names | length > 0
+        fail_msg: "No VM name to provision. Try: make provision VM_NAME=alpha"
+        quiet: true
+
+    - name: Create each VM
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: "{{ claude_vm_name_item }}"
+      loop: "{{ claude_vm_names }}"
+      loop_control:
+        loop_var: claude_vm_name_item
+        label: "{{ claude_vm_name_item }}"
+
+    - name: Report the provisioned VMs
+      ansible.builtin.debug:
+        msg: "{{ claude_vm_name_item }} is up at {{ hostvars[claude_vm_name_item].ansible_host }}"
+      loop: "{{ claude_vm_names }}"
+      loop_control:
+        loop_var: claude_vm_name_item
+        label: "{{ claude_vm_name_item }}"

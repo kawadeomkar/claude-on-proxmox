@@ -1,8 +1,10 @@
 ---
-# Stop and delete every VM in the claude_vms group. Destructive; requires
-# confirmation unless run with `-e confirm_destroy=true`.
+# Stop and delete VMs by name. Destructive; requires confirmation.
+#
+#   make destroy VM_NAME=alpha
+#
 - name: Destroy VMs on Proxmox
-  hosts: claude_vms
+  hosts: localhost
   gather_facts: false
 
   vars_prompt:
@@ -10,19 +12,20 @@
       prompt: "This deletes the VM(s) and their disks. Type 'yes' to continue"
       private: false
 
-  pre_tasks:
+  tasks:
     - name: Abort unless confirmed
       ansible.builtin.assert:
         that: confirm_destroy | lower in ['yes', 'true']
         fail_msg: "Destroy not confirmed."
+        quiet: true
 
-  roles:
-    - role: proxmox_vm
-      proxmox_vm_state: absent
-
-  post_tasks:
-    - name: Forget the VM's SSH host key so a re-provisioned VM is trusted again
-      ansible.builtin.known_hosts:
-        name: "{{ ansible_host }}"
-        state: absent
-      delegate_to: localhost
+    - name: Delete each VM
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: "{{ claude_vm_name_item }}"
+        proxmox_vm_state: absent
+      loop: "{{ claude_vm_names }}"
+      loop_control:
+        loop_var: claude_vm_name_item
+        label: "{{ claude_vm_name_item }}"

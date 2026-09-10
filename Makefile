@@ -8,6 +8,12 @@ PYTHON     ?= python3
 VAULT_PASS := .vault_pass
 VAULT_ARGS := $(if $(wildcard $(VAULT_PASS)),--vault-password-file $(VAULT_PASS),)
 ANSIBLE_ARGS ?=
+# Name(s) of the VM(s) to create, comma-separated. Defaults to
+# claude-on-proxmox-default (set in inventory/group_vars/all/defaults.yml).
+VM_NAME    ?=
+# Restrict a run to some of the VMs, e.g. make configure LIMIT=alpha
+LIMIT      ?=
+VM_ARGS    := $(if $(VM_NAME),-e vm_name=$(VM_NAME),) $(if $(LIMIT),--limit $(LIMIT),)
 ROLES      := common dev_tools claude_code github_projects proxmox_template proxmox_vm
 MOLECULE_ROLES ?= $(ROLES)
 
@@ -38,7 +44,7 @@ init: deps ## One-time local setup: venv, collections, local config from example
 	@$(BIN)/pre-commit install >/dev/null
 	@echo ""
 	@echo "Now edit these (they are git-ignored):"
-	@echo "  inventory/hosts.yml                  - Proxmox host + VM definitions"
+	@echo "  inventory/hosts.yml                  - the address of your Proxmox host"
 	@echo "  inventory/group_vars/all/local.yml   - GitHub username, Proxmox node/storage, package choices"
 	@echo "  inventory/group_vars/all/vault.yml   - secrets; then: make vault-encrypt"
 
@@ -62,25 +68,25 @@ template: vault-check ## Build the cloud-init VM template on the Proxmox host (o
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/template.yml
 
 .PHONY: provision
-provision: vault-check ## Create and start the VM(s) on Proxmox
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
+provision: vault-check ## Create and start VM(s): make provision VM_NAME=alpha,beta
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
 
 .PHONY: configure
 configure: vault-check ## Configure the VM(s): packages, tools, Claude Code, GitHub projects
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: site
 site: vault-check ## Provision + configure (full run)
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) site.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) site.yml
 
 .PHONY: destroy
 destroy: vault-check ## Stop and delete the VM(s) on Proxmox
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 	@rm -rf .cache/facts
 
 .PHONY: check
 check: vault-check ## Dry-run configure against real hosts (--check --diff)
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
 
 # ------------------------------------------------------------ quality -----
 .PHONY: lint
@@ -91,12 +97,11 @@ lint: ## Run yamllint + ansible-lint + ruff
 	$(BIN)/ruff format --check .
 
 .PHONY: syntax
-syntax: ## ansible-playbook --syntax-check on every playbook (uses the example inventory)
-	@tmp=$$(mktemp -d) && cp inventory/hosts.yml.example $$tmp/hosts.yml && \
-	for pb in site.yml playbooks/*.yml; do \
+syntax: ## ansible-playbook --syntax-check on every playbook
+	@for pb in site.yml playbooks/*.yml; do \
 	  echo "== $$pb"; \
-	  $(BIN)/ansible-playbook -i $$tmp/hosts.yml --syntax-check $$pb || exit 1; \
-	done; rm -rf $$tmp
+	  $(BIN)/ansible-playbook --syntax-check $$pb || exit 1; \
+	done
 
 .PHONY: unit
 unit: ## Run Python unit tests for custom modules

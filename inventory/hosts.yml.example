@@ -3,12 +3,10 @@
 #
 #   cp inventory/hosts.yml.example inventory/hosts.yml
 #
-# Two groups:
-#   proxmox    - the Proxmox VE host. Its address is used for the API by every
-#                playbook, and for SSH by `playbooks/template.yml` only.
-#   claude_vms - VMs to create and configure. One entry per VM; all VM sizing
-#                lives here as host vars so `provision.yml` and `configure.yml`
-#                share a single source of truth.
+# The Proxmox host's address is the only address you have to supply. VMs are
+# created by name (make provision VM_NAME=alpha), Proxmox assigns their VMIDs,
+# your DHCP server assigns their addresses, and the QEMU guest agent reports
+# those back - so VMs are never listed here.
 all:
   children:
     proxmox:
@@ -17,20 +15,7 @@ all:
           ansible_host: 192.0.2.10 # IP of your Proxmox host (also used for the API)
           ansible_user: root
 
+    # Left empty on purpose: provisioning adds VMs to this group at runtime,
+    # and inventory/proxmox.yml discovers already-created ones.
     claude_vms:
-      hosts:
-        claude-dev:
-          # Static IP the VM will get via cloud-init. Must be free on your LAN.
-          ansible_host: 192.0.2.50
-          ansible_user: "{{ vm_user }}"
-
-          # Proxmox VM settings (consumed by roles/proxmox_vm)
-          vm_id: 200 # fixed VMID keeps provisioning idempotent
-          vm_cores: 4
-          vm_memory_mb: 8192
-          vm_disk_size: 64G
-          vm_prefix_length: 24
-          vm_gateway: 192.0.2.1
-          vm_nameservers:
-            - 1.1.1.1
-            - 8.8.8.8
+      hosts: {}
