@@ -37,10 +37,12 @@ jobs:
       # .gitignore stops the accident; this stops `git add -f`.
       - name: Check that no environment-specific file is tracked
         run: |
-          leaked=$(git ls-files \
-            | grep -Ev '\.example$' \
-            | grep -E '^inventory/hosts\.ya?ml$|^inventory/[^/]+\.ini$|^inventory/group_vars/.+/(local|vault)[^/]*\.ya?ml$|^inventory/host_vars/|^host_vars/|^\.vault_pass|^\.env' \
-            || true)
+          pat='^inventory/hosts\.ya?ml$'
+          pat="$pat"'|^inventory/[^/]+\.ini$'
+          pat="$pat"'|^inventory/group_vars/.+/(local|vault)[^/]*\.ya?ml$'
+          pat="$pat"'|^inventory/host_vars/|^host_vars/'
+          pat="$pat"'|^\.vault_pass|^\.env'
+          leaked=$(git ls-files | grep -Ev '\.example$' | grep -E "$pat" || true)
           if [ -n "$leaked" ]; then
             echo "$leaked"
             echo "::error::These files hold environment-specific or secret data and must not be committed."
