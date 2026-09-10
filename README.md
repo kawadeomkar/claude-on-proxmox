@@ -30,7 +30,7 @@ Edit the three git-ignored files `make init` created:
 
 | File | Contents |
 |------|----------|
-| `inventory/hosts.yml` | Proxmox host IP and one entry per VM: static IP, VMID, cores, memory, disk |
+| `inventory/hosts.yml` | The address of your Proxmox host. VMs are **not** listed here |
 | `inventory/group_vars/all/local.yml` | Proxmox node/storage names, package choices, which repos to skip |
 | `inventory/group_vars/all/vault.yml` | Proxmox API token, GitHub username/token, optional Anthropic API key |
 
@@ -41,14 +41,36 @@ is still plaintext.
 (umask 077; openssl rand -base64 32 > .vault_pass)
 make vault-encrypt
 
-make template        # once per Proxmox host  (playbooks/template.yml, over SSH)
-make provision       # create + start the VM  (playbooks/provision.yml, via API)
-make configure       # set the VM up          (playbooks/configure.yml, over SSH)
-# or: make site     -> provision + configure
+make template                      # once per Proxmox host (over SSH)
+make provision VM_NAME=alpha       # create + start a VM     (via the API)
+make configure                     # set it up               (over SSH)
+# or: make site VM_NAME=alpha     -> provision + configure
 ```
 
-Then `ssh dev@<vm-ip>` and run `claude`. If you did not set `vault_anthropic_api_key`, log in
+`make provision` prints the address each VM was given:
+
+```
+alpha is up at 192.0.2.51
+```
+
+Then `ssh dev@192.0.2.51` and run `claude`. If you did not set `vault_anthropic_api_key`, log in
 interactively the first time.
+
+### Naming and multiple VMs
+
+`VM_NAME` is the name the VM gets in Proxmox, and it is what you see in the Proxmox UI. Omit it and
+you get `claude-on-proxmox-default`. Pass several, comma-separated, to build a fleet in one run:
+
+```bash
+make site VM_NAME=alpha,beta,gamma
+make configure LIMIT=alpha         # later, just one of them
+make destroy VM_NAME=beta
+```
+
+You never assign a VMID or an IP address. Proxmox picks the next free VMID; the DHCP server that
+already serves your network assigns the address, exactly as it would for a laptop; and the QEMU
+guest agent - baked into the template by `make template` - reports that address back so Ansible can
+reach the VM and print it for you. The only address you ever type is your Proxmox host's.
 
 ### Creating the Proxmox API token
 
@@ -57,7 +79,7 @@ On the PVE shell:
 
 ```bash
 pveum role add AnsibleVM -privs "VM.Allocate VM.Clone VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit \
-  VM.Config.Disk VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt VM.Audit \
+  VM.Config.Disk VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt VM.Audit VM.Monitor \
   Datastore.AllocateSpace Datastore.Audit SDN.Use"
 pveum user add ansible@pve
 pveum aclmod /vms -user ansible@pve -role AnsibleVM
@@ -65,6 +87,9 @@ pveum aclmod /storage/local-lvm -user ansible@pve -role AnsibleVM   # your VM st
 pveum aclmod /sdn/zones/localnetwork/vmbr0 -user ansible@pve -role AnsibleVM   # your bridge
 pveum user token add ansible@pve ansible --privsep 0
 ```
+
+`VM.Monitor` is what allows the token to ask the guest agent for the VM's address; without it
+provisioning creates the VM but cannot report where it is.
 
 Put the printed secret in `vault.yml` as `vault_proxmox_api_token_secret`. The defaults already use
 `ansible@pve` / token ID `ansible`; change `proxmox_api_user` and `proxmox_api_token_id` in `local.yml`
