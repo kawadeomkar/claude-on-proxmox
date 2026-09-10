@@ -52,9 +52,10 @@ argument_specs:
         description: VM name in Proxmox. Defaults to the inventory hostname.
       proxmox_vm_id:
         type: raw
-        required: true
+        default: ""
         description:
-          - Fixed VMID (100-999999999) for the VM. Defaults to the vm_id host var.
+          - Pin the VM to a specific VMID. Left empty, Proxmox assigns the next free one.
+          - The VM is identified by name, not by ID, so this is rarely needed.
           - Declared raw so the role can validate it and report a helpful message.
       proxmox_vm_cores:
         type: int
@@ -94,20 +95,13 @@ argument_specs:
         type: list
         elements: str
         default: []
-      proxmox_vm_ip:
-        type: str
-        description: Static IPv4 address. Defaults to ansible_host.
-      proxmox_vm_prefix_length:
-        type: int
-        default: 24
-        description: Defaults to the vm_prefix_length host var, else 24.
-      proxmox_vm_gateway:
-        type: str
-        default: ""
-        description: Defaults to the vm_gateway host var.
       proxmox_vm_ipconfig:
         type: str
-        description: Full Proxmox ipconfig0 string. Generated from ip/prefix/gateway by default.
+        default: ip=dhcp
+        description:
+          - Proxmox ipconfig0 string. DHCP by default, with the address read back
+            from the guest agent.
+          - Set to something like "ip=192.0.2.50/24,gw=192.0.2.1" to assign a fixed address.
       proxmox_vm_nameservers:
         type: list
         elements: str
@@ -117,6 +111,14 @@ argument_specs:
         type: str
         default: ""
         description: Defaults to the vm_searchdomain host var.
+      proxmox_vm_agent_retries:
+        type: int
+        default: 60
+        description: How many times to poll the guest agent for an address.
+      proxmox_vm_agent_delay:
+        type: int
+        default: 5
+        description: Seconds between guest agent polls.
       proxmox_vm_force_update:
         type: bool
         default: false

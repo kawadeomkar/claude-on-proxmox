@@ -4,18 +4,24 @@
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"
     clone: "{{ proxmox_vm_template_name }}"
-    newid: "{{ proxmox_vm_id }}"
+    # Omitted, Proxmox assigns the next free VMID and the module returns it.
+    newid: "{{ proxmox_vm_id | default(omit, true) }}"
     name: "{{ proxmox_vm_name }}"
     full: "{{ proxmox_vm_full_clone }}"
     storage: "{{ proxmox_vm_storage }}"
     timeout: "{{ proxmox_vm_timeout }}"
     state: present
+  register: proxmox_vm_clone
   when: not proxmox_vm_exists
+
+- name: present | Record the VMID
+  ansible.builtin.set_fact:
+    proxmox_vm_resolved_id: "{{ proxmox_vm_clone.vmid if not proxmox_vm_exists else proxmox_vm_resolved_id }}"
 
 - name: present | Apply hardware and cloud-init settings
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"
-    vmid: "{{ proxmox_vm_id }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
     name: "{{ proxmox_vm_name }}"
     update: true
     cores: "{{ proxmox_vm_cores }}"
@@ -34,7 +40,7 @@
 
 - name: present | Resize the root disk to {{ proxmox_vm_disk_size }}
   community.proxmox.proxmox_disk: # noqa: args[module] - api_* come from module_defaults
-    vmid: "{{ proxmox_vm_id }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
     disk: "{{ proxmox_vm_disk }}"
     size: "{{ proxmox_vm_disk_size }}"
     state: resized
@@ -43,6 +49,56 @@
 - name: present | Start the VM
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"
-    vmid: "{{ proxmox_vm_id }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
     state: started
     timeout: "{{ proxmox_vm_timeout }}"
+
+- name: present | Read the VM's network configuration
+  community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+    type: qemu
+    vmid: "{{ proxmox_vm_resolved_id }}"
+    config: current
+  register: proxmox_vm_config
+
+- name: present | Record the NIC's MAC address
+  ansible.builtin.set_fact:
+    proxmox_vm_mac: "{{ proxmox_vm_config.proxmox_vms[0].config.net0 | net_mac }}"
+
+# The agent answers as soon as it is up, but the guest still has to finish its
+# DHCP exchange, so poll rather than reading once. Failures are retried too:
+# proxmox_vm_info errors outright while the agent is not yet listening.
+- name: present | Wait for the guest agent to report an address
+  community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+    type: qemu
+    vmid: "{{ proxmox_vm_resolved_id }}"
+    network: true
+  register: proxmox_vm_net
+  until: proxmox_vm_reported_address | length > 0
+  retries: "{{ proxmox_vm_agent_retries }}"
+  delay: "{{ proxmox_vm_agent_delay }}"
+  failed_when: false
+  changed_when: false
+
+- name: present | Record the VM's address
+  ansible.builtin.set_fact:
+    proxmox_vm_address: "{{ proxmox_vm_reported_address }}"
+
+- name: present | Fail when no address was reported
+  ansible.builtin.assert:
+    that: proxmox_vm_address | length > 0
+    fail_msg: >-
+      VM "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}) did not report an
+      address on {{ proxmox_vm_mac }} within
+      {{ proxmox_vm_agent_retries | int * proxmox_vm_agent_delay | int }}s. Check that the
+      template was built with proxmox_template_install_guest_agent enabled, that the VM
+      has a DHCP server on its bridge, and that the API token holds VM.Monitor.
+    quiet: true
+
+- name: present | Add the VM to the in-memory inventory
+  ansible.builtin.add_host:
+    name: "{{ proxmox_vm_name }}"
+    groups: claude_vms
+    ansible_host: "{{ proxmox_vm_address }}"
+    ansible_user: "{{ proxmox_vm_user }}"
+    proxmox_vm_id: "{{ proxmox_vm_resolved_id }}"
+  changed_when: false

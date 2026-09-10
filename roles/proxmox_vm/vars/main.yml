@@ -1,0 +1,9 @@
+---
+# Internal, not meant to be overridden: the address the guest agent reports for
+# the VM's own NIC, or "" while the agent has not answered yet. Jinja is lazy,
+# so this is only evaluated once proxmox_vm_net and proxmox_vm_mac are set.
+proxmox_vm_reported_address: >-
+  {{ proxmox_vm_net.proxmox_vms
+     | default([], true) | map(attribute='network') | first | default([], true)
+     | guest_ipv4(proxmox_vm_mac | default(''))
+     | default('', true) }}

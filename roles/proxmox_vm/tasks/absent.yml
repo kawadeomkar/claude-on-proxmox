@@ -1,9 +1,36 @@
 ---
 # API connection parameters come from module_defaults in main.yml.
+# The address is read while the VM still exists so its stale host key can be
+# dropped afterwards; a re-provisioned VM often reuses the same lease.
+- name: absent | Read the VM's network configuration
+  community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+    type: qemu
+    vmid: "{{ proxmox_vm_resolved_id }}"
+    config: current
+  register: proxmox_vm_config
+  failed_when: false
+  changed_when: false
+  when: proxmox_vm_exists
+
+- name: absent | Ask the guest agent for the VM's address
+  community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+    type: qemu
+    vmid: "{{ proxmox_vm_resolved_id }}"
+    network: true
+  register: proxmox_vm_net
+  failed_when: false
+  changed_when: false
+  when: proxmox_vm_exists
+
+- name: absent | Record the address to forget
+  ansible.builtin.set_fact:
+    proxmox_vm_mac: "{{ proxmox_vm_config.proxmox_vms[0].config.net0 | default('') | regex_search('([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}') | default('', true) }}"
+  when: proxmox_vm_exists
+
 - name: absent | Stop the VM
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"
-    vmid: "{{ proxmox_vm_id }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
     state: stopped
     force: true
     timeout: "{{ proxmox_vm_timeout }}"
@@ -12,10 +39,19 @@
 - name: absent | Delete the VM and its disks
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"
-    vmid: "{{ proxmox_vm_id }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
     state: absent
     # force also covers a VM that was (re)started between the two tasks;
     # without it the module reports ok and leaves the VM in place.
     force: true
     timeout: "{{ proxmox_vm_timeout }}"
   when: proxmox_vm_exists
+
+- name: absent | Forget the VM's SSH host key
+  ansible.builtin.known_hosts:
+    name: "{{ proxmox_vm_reported_address }}"
+    state: absent
+  delegate_to: localhost
+  when:
+    - proxmox_vm_exists
+    - proxmox_vm_reported_address | length > 0

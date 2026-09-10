@@ -41,6 +41,40 @@ VMS = {
     }
 }
 TASKS = 0
+# The guest agent is not up the moment a VM starts. Fail this many polls first
+# so the role's wait loop is actually exercised.
+AGENT_CALLS = 0
+AGENT_READY_AFTER = 2
+
+
+def mac_for(vmid):
+    return f"BC:24:11:{vmid // 65536 % 256:02X}:{vmid // 256 % 256:02X}:{vmid % 256:02X}"
+
+
+def agent_interfaces(vm):
+    """What network-get-interfaces reports: loopback, a docker bridge the role
+    must ignore, and the VM's own NIC with its DHCP address."""
+    vmid = vm["vmid"]
+    return [
+        {
+            "name": "lo",
+            "hardware-address": "00:00:00:00:00:00",
+            "ip-addresses": [{"ip-address": "127.0.0.1", "ip-address-type": "ipv4", "prefix": 8}],
+        },
+        {
+            "name": "docker0",
+            "hardware-address": "02:42:9A:11:22:33",
+            "ip-addresses": [{"ip-address": "172.17.0.1", "ip-address-type": "ipv4", "prefix": 16}],
+        },
+        {
+            "name": "eth0",
+            "hardware-address": mac_for(vmid).lower(),
+            "ip-addresses": [
+                {"ip-address": f"192.0.2.{vmid % 200 + 50}", "ip-address-type": "ipv4", "prefix": 24},
+                {"ip-address": "fe80::1", "ip-address-type": "ipv6", "prefix": 64},
+            ],
+        },
+    ]
 
 
 def resource(vm):
@@ -141,6 +175,7 @@ class Handler(BaseHTTPRequestHandler):
                     **{k: v for k, v in vm["config"].items() if k != "template"},
                     "name": params.get("name"),
                     "scsi0": vm["config"]["scsi0"].replace(f"base-{vmid}", f"vm-{newid}"),
+                    "net0": f"virtio={mac_for(newid)},bridge=vmbr0",
                 },
             }
             save_state()
@@ -151,6 +186,12 @@ class Handler(BaseHTTPRequestHandler):
             vm["config"][disk] = ",".join(o if not o.startswith("size=") else f"size={size}" for o in opts)
             save_state()
             return self._reply(200, new_task())
+        if sub == ["agent", "network-get-interfaces"] and method == "GET":
+            global AGENT_CALLS
+            AGENT_CALLS += 1
+            if vm["status"] != "running" or AGENT_CALLS <= AGENT_READY_AFTER:
+                return self._reply(500, None)
+            return self._reply(200, {"result": agent_interfaces(vm)})
         if sub == ["status", "current"]:
             return self._reply(200, {"status": vm["status"], "vmid": vmid, "name": vm["name"]})
         if sub[:1] == ["status"] and method == "POST":

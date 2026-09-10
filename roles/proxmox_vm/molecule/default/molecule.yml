@@ -36,13 +36,12 @@ provisioner:
         proxmox_vm_api_token_id: ansible
         proxmox_vm_api_token_secret: molecule-test-secret
         proxmox_vm_name: claude-dev
-        proxmox_vm_id: 200
         proxmox_vm_cores: 4
         proxmox_vm_memory_mb: 8192
         proxmox_vm_disk_size: 64G
-        proxmox_vm_ip: 192.0.2.50
-        proxmox_vm_prefix_length: 24
-        proxmox_vm_gateway: 192.0.2.1
+        # No VMID and no address: Proxmox assigns 9001 (next after the fake
+        # template) and the fake guest agent reports 192.0.2.51 for that VMID.
+        proxmox_vm_agent_delay: 1
         proxmox_vm_nameservers: [1.1.1.1, 8.8.8.8]
         proxmox_vm_searchdomain: lan
         proxmox_vm_ssh_public_keys:

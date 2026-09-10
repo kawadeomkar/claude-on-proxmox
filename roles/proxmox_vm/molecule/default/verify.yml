@@ -22,13 +22,16 @@
         proxmox_vm_verify_clones: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9000/clone$') | list }}"
         proxmox_vm_verify_configs: >-
           {{ proxmox_vm_verify_calls | selectattr('method', 'equalto', 'PUT')
-             | selectattr('path', 'search', '/qemu/200/config$') | list }}
-        proxmox_vm_verify_resizes: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/resize$') | list }}"
-        proxmox_vm_verify_starts: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/status/start$') | list }}"
-        proxmox_vm_verify_shutdowns: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/status/shutdown$') | list }}"
+             | selectattr('path', 'search', '/qemu/9001/config$') | list }}
+        proxmox_vm_verify_resizes: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9001/resize$') | list }}"
+        proxmox_vm_verify_starts: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9001/status/start$') | list }}"
+        proxmox_vm_verify_shutdowns: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9001/status/shutdown$') | list }}"
+        proxmox_vm_verify_agent: >-
+          {{ proxmox_vm_verify_calls
+             | selectattr('path', 'search', '/qemu/9001/agent/network-get-interfaces$') | list }}
         proxmox_vm_verify_deletes: >-
           {{ proxmox_vm_verify_calls | selectattr('method', 'equalto', 'DELETE')
-             | selectattr('path', 'search', '/qemu/200$') | list }}
+             | selectattr('path', 'search', '/qemu/9001$') | list }}
 
     - name: Assert the create sequence (converge) happened exactly once with the right settings
       vars:
@@ -36,7 +39,7 @@
       ansible.builtin.assert:
         that:
           - proxmox_vm_verify_clones | length == 1
-          - proxmox_vm_verify_clones[0].params.newid == '200'
+          - proxmox_vm_verify_clones[0].params.newid == '9001'
           - proxmox_vm_verify_clones[0].params.name == 'claude-dev'
           - proxmox_vm_verify_clones[0].params.full == '1'
           - proxmox_vm_verify_clones[0].params.storage == 'local-lvm'
@@ -47,16 +50,24 @@
           - proxmox_vm_verify_cfg.agent == 'enabled=1'
           - proxmox_vm_verify_cfg.ciuser == 'dev'
           - "'cipassword' not in proxmox_vm_verify_cfg"
-          - proxmox_vm_verify_cfg.ipconfig0 == 'ip=192.0.2.50/24,gw=192.0.2.1'
+          - proxmox_vm_verify_cfg.ipconfig0 == 'ip=dhcp'
           - proxmox_vm_verify_cfg.nameserver == '1.1.1.1 8.8.8.8'
           - proxmox_vm_verify_cfg.searchdomain == 'lan'
           - "'molecule%40test' in proxmox_vm_verify_cfg.sshkeys"
-          - "'claude' in proxmox_vm_verify_cfg.tags and 'ansible' in proxmox_vm_verify_cfg.tags"
+          - "'claude-on-proxmox' in proxmox_vm_verify_cfg.tags"
           - proxmox_vm_verify_resizes | length == 1
           - proxmox_vm_verify_resizes[0].params.disk == 'scsi0'
           - proxmox_vm_verify_resizes[0].params.size == '64G'
           # started once by converge; the idempotence run found it running
           - proxmox_vm_verify_starts | length == 1
+        quiet: true
+
+    - name: Assert the guest agent was polled until it answered
+      ansible.builtin.assert:
+        that:
+          # the fake refuses the first two polls, so the role must have retried
+          - proxmox_vm_verify_agent | length >= 3
+        fail_msg: "expected the agent to be polled at least 3 times, saw {{ proxmox_vm_verify_agent | length }}"
         quiet: true
 
     - name: Assert the destroy sequence (side effect) and final state
