@@ -58,9 +58,14 @@
     - name: Prepare the image for customization
       when: proxmox_template_install_guest_agent
       block:
+        # dhcpcd-base is not pulled in on Proxmox 9, and without it the
+        # libguestfs appliance cannot DHCP, so --install fails with
+        # "Temporary failure resolving 'deb.debian.org'".
         - name: Install libguestfs-tools
           ansible.builtin.apt:
-            name: libguestfs-tools
+            name:
+              - libguestfs-tools
+              - dhcpcd-base
             state: present
             update_cache: true
             cache_valid_time: 3600
