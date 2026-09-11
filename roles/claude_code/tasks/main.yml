@@ -51,3 +51,12 @@
 - name: Show installed version
   ansible.builtin.debug:
     msg: "Claude Code: {{ claude_code_installed.stdout }}"
+
+# Last in this role, after the binary and the settings exist. Note the
+# github_projects role runs after this one, so the session's directory may
+# still be empty when the server starts - which is fine, it serves a live
+# filesystem. It is not fine with spawn: worktree, which needs a git
+# repository at that path before the first remote session is created.
+- name: Set up Remote Control
+  ansible.builtin.include_tasks: remote_control.yml
+  when: claude_code_remote_control | bool

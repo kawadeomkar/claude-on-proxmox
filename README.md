@@ -141,7 +141,7 @@ and set `proxmox_validate_certs: true` in `local.yml`.
 |------|---------|---------------|
 | `common` | apt upgrade, baseline packages, login user with passwordless sudo and SSH keys, sshd hardening (key-only login), timezone, qemu-guest-agent, `~/.local/bin` on PATH | `common_packages`, `common_extra_packages`, `common_timezone`, `common_harden_ssh` |
 | `dev_tools` | Node.js (NodeSource), Docker Engine, GitHub CLI, uv/uvx (release pinned by version and SHA256), pipx, build tools. Apt signing keys are vendored in `roles/dev_tools/files` | `dev_tools_install_*`, `dev_tools_node_major`, `dev_tools_uv_version`, `dev_tools_npm_global_packages` |
-| `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md` | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions` |
+| `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md`, and optionally a Remote Control server so the session is reachable from claude.ai and the mobile app | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions`, `claude_code_remote_control` |
 | `github_projects` | Lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters) and clones them | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_projects_clone_protocol` |
 | `proxmox_vm` | Looks the VM up **by name**, clones the template when it does not exist, applies cloud-init (user, keys, DHCP by default, DNS), resizes the disk, starts it, then waits for the guest agent to report an address. `proxmox_vm_state: absent` deletes it, refusing any VM that is not tagged `claude-on-proxmox` | `vm_cores`, `vm_memory_mb`, `vm_disk_size`, `vm_nameservers` (fleet-wide, in `local.yml`); `proxmox_vm_ipconfig` for a static address |
 | `proxmox_template` | Downloads the Ubuntu cloud image (SHA256 verified), creates the VM with `qm`, imports the disk, adds the cloud-init drive, converts to template | `proxmox_template_vmid`, `proxmox_template_image_url`, `proxmox_template_storage` |
@@ -197,6 +197,37 @@ This is a development box, and the defaults reflect that:
   Code installer script is fetched over TLS from `claude.ai` and itself verifies the binary against a
   release manifest; there is no independently signed artifact to pin.
 - sshd is restricted to key-based logins (`common_harden_ssh`), even if `vm_password` is set.
+
+### Reaching a VM from your phone
+
+`claude_remote_control: true` runs a [Remote Control](https://code.claude.com/docs/en/remote-control)
+server on each VM, so its Claude Code session appears at claude.ai/code and in the Claude mobile app
+while the session itself keeps running on the VM, with the VM's filesystem and tools.
+
+There is one manual step per VM, and it cannot be automated away. Anthropic supports exactly one
+credential for Remote Control: an interactive claude.ai login on a Pro, Max, Team or Enterprise
+plan. API keys are **not** supported, and neither is the long-lived token from `claude setup-token`,
+which can make model requests but explicitly cannot establish a Remote Control session.
+
+```bash
+# in inventory/group_vars/all/local.yml
+claude_remote_control: true
+
+make configure VM_NAME=alpha     # installs and prepares everything, then tells you what is missing
+make claude-login VM_NAME=alpha  # prints the one command to run
+#   ssh -t dev@<address> "claude auth login"
+#   approve in the browser, paste the code back
+make configure VM_NAME=alpha     # now the service starts, and the session shows up on your phone
+```
+
+Leave `vault_anthropic_api_key` empty when using this. An API key takes precedence over the
+subscription login, so with both set the session would authenticate as the API account and Remote
+Control would refuse to start. The role fails with that message rather than letting you find out
+from an empty session list.
+
+The server runs as the `claude-remote-control` systemd unit, as the VM user, from `~/projects`. It
+restarts on failure and gives up after five attempts in five minutes, so an expired login surfaces
+in `systemctl status` instead of spinning forever.
 
 ### Tearing down
 

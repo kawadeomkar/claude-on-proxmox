@@ -1,0 +1,30 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Claude Code Remote Control ({{ claude_code_remote_control_name }})
+Documentation=https://code.claude.com/docs/en/remote-control
+After=network-online.target
+Wants=network-online.target
+# A login that has expired cannot be renewed without a browser, so the service
+# would otherwise restart every 10 seconds forever. Five attempts, then stop
+# and leave the failure visible in `systemctl status`.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+User={{ claude_code_user }}
+Group={{ claude_code_user }}
+WorkingDirectory={{ claude_code_remote_control_target_dir }}
+Environment=HOME={{ claude_code_home }}
+Environment=PATH={{ claude_code_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Remote Control needs the subscription login, and ANTHROPIC_API_KEY would
+# override it. It is deliberately not passed to this unit even when one is
+# configured for interactive use.
+ExecStart={{ claude_code_remote_control_bin }} remote-control --name {{ claude_code_remote_control_name | quote }} --permission-mode {{ claude_code_remote_control_permission_mode }} --spawn {{ claude_code_remote_control_spawn }}
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

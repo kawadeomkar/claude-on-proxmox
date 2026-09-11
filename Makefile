@@ -90,6 +90,13 @@ destroy: vault-check ## Stop and delete the VM(s) on Proxmox
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 	@rm -rf .cache/facts
 
+# Remote Control needs a claude.ai login on the VM, and Anthropic supports no
+# non-interactive way to create one, so this prints the command rather than
+# pretending to do it.
+.PHONY: claude-login
+claude-login: vault-check ## Show how to sign Claude Code in on the VM(s), for Remote Control
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
+
 .PHONY: check
 check: vault-check ## Dry-run configure against real hosts (--check --diff)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
