@@ -36,7 +36,8 @@
 
 - name: present | Record the VMID
   ansible.builtin.set_fact:
-    proxmox_vm_resolved_id: "{{ proxmox_vm_clone.vmid if not proxmox_vm_exists else proxmox_vm_resolved_id }}"
+    proxmox_vm_resolved_id: "{{ proxmox_vm_clone.vmid }}"
+  when: not proxmox_vm_exists
 
 - name: present | Apply hardware and cloud-init settings
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
@@ -94,13 +95,9 @@
   failed_when: false
   changed_when: false
 
-- name: present | Record the NIC's MAC address
-  ansible.builtin.set_fact:
-    proxmox_vm_mac: "{{ proxmox_vm_found_mac }}"
-
 - name: present | Fail when the VM's NIC could not be read
   ansible.builtin.assert:
-    that: proxmox_vm_mac | length > 0
+    that: proxmox_vm_found_mac | length > 0
     fail_msg: >-
       Could not read a MAC address from {{ proxmox_vm_nic }} of VM
       "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}).
@@ -138,22 +135,8 @@
     that: proxmox_vm_address | length > 0
     fail_msg: >-
       VM "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}) did not report an
-      address on {{ proxmox_vm_mac }}. Check that the template was built with
+      address on {{ proxmox_vm_found_mac }}. Check that the template was built with
       proxmox_template_install_guest_agent enabled, that the VM has a DHCP server on
       its bridge, and that the API token holds VM.Monitor.
       Last response from Proxmox: {{ proxmox_vm_net.msg | default('no error reported') }}
     quiet: true
-
-- name: present | Add the VM to the in-memory inventory
-  ansible.builtin.add_host:
-    name: "{{ proxmox_vm_name }}"
-    groups: claude_vms
-    ansible_host: "{{ proxmox_vm_address }}"
-    ansible_user: "{{ proxmox_vm_user }}"
-    # Set explicitly: provision.yml runs this role against placeholder hosts
-    # that are connection: local, and add_host updates a host of the same name
-    # rather than replacing it. Without this the VM would inherit local and
-    # configure.yml would run against the controller instead of the VM.
-    ansible_connection: ssh
-    proxmox_vm_id: "{{ proxmox_vm_resolved_id }}"
-  changed_when: false

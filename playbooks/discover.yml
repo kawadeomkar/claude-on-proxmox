@@ -32,18 +32,9 @@
         type: qemu
       register: claude_vm_all
 
-    # Match the whole tag, not a substring: Proxmox joins tags with ";" (and
-    # proxmox_kvm sends them comma-joined), so an unanchored search for
-    # "claude-on-proxmox" would also claim a VM tagged "claude-on-proxmox-staging"
-    # or "not-claude-on-proxmox" and configure someone else's machine.
-    - name: Keep the ones this project created
-      ansible.builtin.set_fact:
-        claude_vm_tagged: >-
-          {{ claude_vm_all.proxmox_vms
-             | selectattr('tags', 'defined')
-             | selectattr('tags', 'regex', claude_vm_tag_pattern)
-             | list }}
-
+    # claude_vm_tagged (group_vars/all) narrows that listing to the VMs
+    # carrying this project's tag, matched as a whole tag rather than a
+    # substring so "claude-on-proxmox-staging" is left alone.
     # With VM_NAME given, act only on those; without it, the whole fleet.
     - name: Narrow to the requested VMs
       ansible.builtin.set_fact:

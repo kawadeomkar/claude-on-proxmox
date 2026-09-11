@@ -22,10 +22,5 @@
           (172.17.0.1 would mean the docker bridge was picked up)
         quiet: true
 
-    - name: Assert the VM was added to the in-memory inventory
-      ansible.builtin.assert:
-        that:
-          - "'claude-dev' in groups['claude_vms']"
-          - hostvars['claude-dev'].ansible_host == '192.0.2.51'
-          - hostvars['claude-dev'].ansible_user == 'dev'
-        quiet: true
+    # Publishing to claude_vms is the playbook's job, not the role's; the
+    # provision scenario covers it for a whole fleet.

@@ -32,15 +32,14 @@
       ~/.ssh/id_ed25519.pub) or vm_password for the cloud-init user.
     quiet: true
 
-- name: Validate the remaining role arguments
+# proxmox_vm_state is not checked here: argument_specs declares its choices,
+# which Ansible validates before the first task runs.
+- name: Validate the VM ID
   ansible.builtin.assert:
-    that:
-      - proxmox_vm_state in ['present', 'absent']
-      - proxmox_vm_id | string | length == 0 or proxmox_vm_id | string is match('^[1-9][0-9]{2,}$')
+    that: proxmox_vm_id | string | length == 0 or proxmox_vm_id | string is match('^[1-9][0-9]{2,}$')
     fail_msg: >-
-      proxmox_vm_state must be present or absent (got "{{ proxmox_vm_state }}"), and
       proxmox_vm_id, when set at all, must be a number >= 100
-      (got "{{ proxmox_vm_id }}").
+      (got "{{ proxmox_vm_id }}"). Leave it empty to let Proxmox choose.
     quiet: true
 
 - name: Manage the VM

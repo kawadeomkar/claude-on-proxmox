@@ -43,11 +43,7 @@
 
     - name: Check that every VM asked for exists
       vars:
-        claude_vm_fleet: >-
-          {{ claude_vm_all.proxmox_vms
-             | selectattr('tags', 'defined')
-             | selectattr('tags', 'regex', claude_vm_tag_pattern)
-             | map(attribute='name') | sort | list }}
+        claude_vm_fleet: "{{ claude_vm_tagged | map(attribute='name') | sort | list }}"
         claude_vm_missing: "{{ claude_vm_names | difference(claude_vm_fleet) | list }}"
       ansible.builtin.assert:
         that: claude_vm_missing | length == 0

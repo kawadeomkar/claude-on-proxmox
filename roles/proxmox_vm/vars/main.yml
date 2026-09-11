@@ -1,11 +1,25 @@
 ---
-# Internal, not meant to be overridden: the address the guest agent reports for
-# the VM's own NIC, or "" while the agent has not answered yet. Jinja is lazy,
-# so this is only evaluated once proxmox_vm_net and proxmox_vm_mac are set.
+# Internal, not meant to be overridden: the MAC of the VM's own NIC, or "" when
+# it cannot be read - an empty config list, or a template whose NIC is not
+# proxmox_vm_nic. The callers assert on it rather than letting net_mac raise
+# mid-play.
+#
+# Computed here rather than copied into a fact so it cannot go stale.
+# destroy.yml runs this role in a loop, and a set_fact survives an iteration
+# that skips it - so a fact would hand VM #1's MAC to VM #2. A lazy var is
+# re-evaluated against whatever proxmox_vm_config holds right now, and a
+# skipped register is overwritten rather than kept.
+proxmox_vm_found_mac: >-
+  {{ (proxmox_vm_config.proxmox_vms | default([], true) | first | default({}, true))
+     .get('config', {}).get(proxmox_vm_nic, '') | net_mac('') }}
+
+# Internal: the address the guest agent reports for the VM's own NIC, or ""
+# while the agent has not answered yet. Jinja is lazy, so this is only
+# evaluated once proxmox_vm_net has been registered.
 proxmox_vm_reported_address: >-
   {{ proxmox_vm_net.proxmox_vms
      | default([], true) | map(attribute='network') | first | default([], true)
-     | guest_ipv4(proxmox_vm_mac | default(''))
+     | guest_ipv4(proxmox_vm_found_mac)
      | default('', true) }}
 
 # Internal: the tags of the VM the name lookup found, as a list. Proxmox joins
@@ -28,13 +42,6 @@ proxmox_vm_needs_configuration: >-
   {{ (not proxmox_vm_exists)
      or (proxmox_vm_force_update | bool)
      or (proxmox_vm_tags[0] not in proxmox_vm_found_tags) }}
-
-# Internal: the MAC of the VM's own NIC, or "" when it cannot be read - an
-# empty config list, or a template whose NIC is not proxmox_vm_nic. The
-# callers assert on it rather than letting net_mac raise mid-play.
-proxmox_vm_found_mac: >-
-  {{ (proxmox_vm_config.proxmox_vms | default([], true) | first | default({}, true))
-     .get('config', {}).get(proxmox_vm_nic, '') | net_mac('') }}
 
 # Internal: the address whose host key should be forgotten when the VM is
 # deleted. The guest agent cannot answer for a VM that is stopped, hung or

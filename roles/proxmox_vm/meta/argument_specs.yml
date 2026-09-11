@@ -11,8 +11,11 @@ argument_specs:
     options:
       proxmox_vm_api_host:
         type: str
-        required: true
-        description: Proxmox VE API host (IP or DNS name).
+        description:
+          - Proxmox VE API host (IP or DNS name).
+          - Not marked required. The role defaults it to "" and asserts on it
+            instead, so an unset host is reported with the name of the file to
+            put it in rather than as "missing required arguments".
       proxmox_vm_api_port:
         type: int
         default: 8006
@@ -24,9 +27,11 @@ argument_specs:
         default: ansible
       proxmox_vm_api_token_secret:
         type: str
-        required: true
         no_log: true
-        description: API token secret. Keep it in an ansible-vault file.
+        description:
+          - API token secret. Keep it in an ansible-vault file.
+          - Asserted by the role rather than marked required, for the same
+            reason as proxmox_vm_api_host.
       proxmox_vm_validate_certs:
         type: bool
         default: false

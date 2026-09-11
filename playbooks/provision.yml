@@ -21,18 +21,16 @@
   gather_facts: false
 
   tasks:
-    - name: Check the VM names are usable
+    # Only the empty case is checked here: with no names the play below has no
+    # hosts, so provisioning would report success having done nothing. What
+    # makes a name usable is the proxmox_vm role's business - it validates each
+    # one against the rule Proxmox actually enforces, and names the offender.
+    - name: Check there is a VM to provision
       ansible.builtin.assert:
-        that:
-          - claude_vm_names | length > 0
-          - claude_vm_names | reject('match', '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') | list | length == 0
+        that: claude_vm_names | length > 0
         fail_msg: >-
-          {{ 'No VM name to provision. Try: make provision VM_NAME=alpha'
-             if claude_vm_names | length == 0
-             else 'These names are not usable as VM names: '
-                  ~ (claude_vm_names | reject('match', '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') | list | join(', '))
-                  ~ '. Separate several VMs with commas and no spaces, and use only'
-                  ~ ' letters, digits, dots and hyphens: VM_NAME=alpha,beta' }}
+          No VM name to provision. Separate several with commas and no spaces:
+          make provision VM_NAME=alpha,beta
         quiet: true
 
     - name: Add each name as a host to provision
@@ -61,10 +59,11 @@
   gather_facts: false
 
   tasks:
-    # The role adds each VM to claude_vms itself, but add_host bypasses the
-    # play's host loop: it runs once per task no matter how many hosts the play
-    # has, so in the fleet play above only the first VM would be published.
-    # Re-publish every one here from the facts the role left behind.
+    # Publishing happens here rather than in the role because add_host bypasses
+    # the play's host loop: it runs once per task no matter how many hosts the
+    # play has, so a copy inside the role would publish only the first VM of a
+    # fleet. Looping it from localhost over the facts the role left behind is
+    # the only form that scales.
     - name: Add each VM to the claude_vms group
       ansible.builtin.add_host:
         name: "{{ claude_vm_name_item }}"

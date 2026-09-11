@@ -22,15 +22,6 @@
   changed_when: false
   when: proxmox_vm_exists
 
-# Same extractor the present path uses, with a default: a VM being deleted may
-# well have no readable NIC, and that must not stop the deletion.
-# Set unconditionally. A skipped set_fact keeps whatever the previous loop
-# iteration left behind, unlike a register, so a conditional one here would
-# hand VM #1's MAC to VM #2 the first time anything downstream used it.
-- name: absent | Record the address to forget
-  ansible.builtin.set_fact:
-    proxmox_vm_mac: "{{ proxmox_vm_found_mac if proxmox_vm_exists else '' }}"
-
 - name: absent | Stop the VM
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"

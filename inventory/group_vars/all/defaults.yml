@@ -35,6 +35,16 @@ claude_vm_tag: claude-on-proxmox
 # Matches claude_vm_tag as a whole tag in Proxmox's ";"-joined tag string (or
 # the ","-joined form proxmox_kvm sends), never as a substring of a longer one.
 claude_vm_tag_pattern: "(^|[;,]){{ claude_vm_tag | regex_escape }}([;,]|$)"
+# The VMs this project owns, filtered out of a proxmox_vm_info listing. Defined
+# here, not in each playbook, so discover.yml and destroy.yml cannot drift on
+# what "ours" means. Evaluated lazily: any play that uses it must have
+# registered claude_vm_all first, and is meant to fail loudly if it has not -
+# an empty fleet and an unasked API are not the same thing.
+claude_vm_tagged: >-
+  {{ claude_vm_all.proxmox_vms
+     | selectattr('tags', 'defined')
+     | selectattr('tags', 'regex', claude_vm_tag_pattern)
+     | list }}
 claude_vm_names: >-
   {{ (vm_name | default(claude_vm_default_name, true)) | split(',') | map('trim') | select | list }}
 
