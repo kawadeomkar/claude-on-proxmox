@@ -1,28 +1,66 @@
 ---
-# Stop and delete every VM in the claude_vms group. Destructive; requires
-# confirmation unless run with `-e confirm_destroy=true`.
+# Stop and delete VMs by name. Destructive; requires confirmation.
+#
+#   make destroy VM_NAME=alpha
+#   make destroy VM_NAME=alpha,beta
+#
+# Without VM_NAME this targets claude-on-proxmox-default, the same name
+# `make provision` uses when none is given. It checks first that the VMs it
+# was asked for actually exist, so that asking for the wrong name is an error
+# rather than a confirmation prompt followed by silence.
 - name: Destroy VMs on Proxmox
-  hosts: claude_vms
+  hosts: localhost
   gather_facts: false
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ proxmox_api_host }}"
+      api_port: "{{ proxmox_api_port }}"
+      api_user: "{{ proxmox_api_user }}"
+      api_token_id: "{{ proxmox_api_token_id }}"
+      api_token_secret: "{{ proxmox_api_token_secret }}"
+      validate_certs: "{{ proxmox_validate_certs }}"
 
   vars_prompt:
     - name: confirm_destroy
       prompt: "This deletes the VM(s) and their disks. Type 'yes' to continue"
       private: false
+      # A run with no terminal - CI, a cron job, a nested playbook - takes the
+      # default rather than hanging, so it must be the safe answer.
+      default: "no"
 
-  pre_tasks:
+  tasks:
     - name: Abort unless confirmed
       ansible.builtin.assert:
         that: confirm_destroy | lower in ['yes', 'true']
         fail_msg: "Destroy not confirmed."
+        quiet: true
 
-  roles:
-    - role: proxmox_vm
-      proxmox_vm_state: absent
+    - name: List the VMs this project created
+      community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+        type: qemu
+      register: claude_vm_all
+      changed_when: false
 
-  post_tasks:
-    - name: Forget the VM's SSH host key so a re-provisioned VM is trusted again
-      ansible.builtin.known_hosts:
-        name: "{{ ansible_host }}"
-        state: absent
-      delegate_to: localhost
+    - name: Check that every VM asked for exists
+      vars:
+        claude_vm_fleet: "{{ claude_vm_tagged | map(attribute='name') | sort | list }}"
+        claude_vm_missing: "{{ claude_vm_names | difference(claude_vm_fleet) | list }}"
+      ansible.builtin.assert:
+        that: claude_vm_missing | length == 0
+        fail_msg: >-
+          No VM named {{ claude_vm_missing | join(', ') }} was created by this project.
+          {{ 'It created: ' ~ (claude_vm_fleet | join(', ')) ~ '. Name what to delete with VM_NAME=.'
+             if claude_vm_fleet | length > 0
+             else 'It has not created any VMs on this host.' }}
+        quiet: true
+
+    - name: Delete each VM
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: "{{ claude_vm_name_item }}"
+        proxmox_vm_state: absent
+      loop: "{{ claude_vm_names }}"
+      loop_control:
+        loop_var: claude_vm_name_item
+        label: "{{ claude_vm_name_item }}"

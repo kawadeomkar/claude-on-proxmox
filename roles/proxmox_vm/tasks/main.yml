@@ -1,17 +1,45 @@
 ---
-- name: Validate VM definition
+# Split by condition on purpose: a single catch-all message sent someone with
+# a mistyped VM name off to check their API token.
+- name: Validate the Proxmox connection settings
   ansible.builtin.assert:
     that:
       - proxmox_vm_api_host | length > 0
       - proxmox_vm_api_token_secret | length > 0
-      - proxmox_vm_id | string is match('^[0-9]+$')
-      - proxmox_vm_id | int >= 100
-      - proxmox_vm_state in ['present', 'absent']
-      - proxmox_vm_ssh_public_keys | length > 0 or proxmox_vm_password | length > 0
     fail_msg: >-
-      proxmox_vm needs proxmox_vm_api_host, proxmox_vm_api_token_secret, a numeric
-      proxmox_vm_id (set vm_id on the host in inventory) and at least one SSH public
-      key (vm_ssh_public_keys) or a password (vm_password) for the cloud-init user.
+      Set proxmox_api_host in inventory/hosts.yml and vault_proxmox_api_token_secret
+      in inventory/group_vars/all/vault.yml. See "Creating the Proxmox API token"
+      in the README.
+    quiet: true
+
+- name: Validate the VM name
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm_name | length > 0
+      - proxmox_vm_name | length <= 63
+      - proxmox_vm_name is match('^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$')
+    fail_msg: >-
+      "{{ proxmox_vm_name }}" is not usable as a VM name. Use 1-63 characters,
+      letters, digits, dots and hyphens only, starting and ending with a letter
+      or digit - no spaces and no underscores. For example: VM_NAME=alpha
+    quiet: true
+
+- name: Validate the login credentials for the VM
+  ansible.builtin.assert:
+    that: proxmox_vm_ssh_public_keys | length > 0 or proxmox_vm_password | length > 0
+    fail_msg: >-
+      The VM would be unreachable: set vm_ssh_public_keys (it defaults to
+      ~/.ssh/id_ed25519.pub) or vm_password for the cloud-init user.
+    quiet: true
+
+# proxmox_vm_state is not checked here: argument_specs declares its choices,
+# which Ansible validates before the first task runs.
+- name: Validate the VM ID
+  ansible.builtin.assert:
+    that: proxmox_vm_id | string | length == 0 or proxmox_vm_id | string is match('^[1-9][0-9]{2,}$')
+    fail_msg: >-
+      proxmox_vm_id, when set at all, must be a number >= 100
+      (got "{{ proxmox_vm_id }}"). Leave it empty to let Proxmox choose.
     quiet: true
 
 - name: Manage the VM
@@ -25,28 +53,50 @@
       validate_certs: "{{ proxmox_vm_validate_certs }}"
   delegate_to: localhost
   block:
-    - name: Look up Proxmox VM {{ proxmox_vm_id }}
+    - name: Look up Proxmox VM {{ proxmox_vm_name }}
       community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
         type: qemu
-        vmid: "{{ proxmox_vm_id }}"
+        name: "{{ proxmox_vm_name }}"
       register: proxmox_vm_lookup
+
+    # Proxmox permits duplicate names; this role cannot tell which one is meant.
+    - name: Refuse to act on a duplicated VM name
+      ansible.builtin.assert:
+        that: proxmox_vm_lookup.proxmox_vms | length <= 1
+        fail_msg: >-
+          {{ proxmox_vm_lookup.proxmox_vms | length }} VMs are named "{{ proxmox_vm_name }}"
+          (VMIDs {{ proxmox_vm_lookup.proxmox_vms | map(attribute='vmid') | join(', ') }}).
+          Rename or remove the duplicates.
+        quiet: true
 
     - name: Record whether the VM already exists
       ansible.builtin.set_fact:
         proxmox_vm_exists: "{{ proxmox_vm_lookup.proxmox_vms | length > 0 }}"
-
-    - name: Refuse to touch a VMID that belongs to a different VM
-      ansible.builtin.assert:
-        that: proxmox_vm_lookup.proxmox_vms[0].name == proxmox_vm_name
-        fail_msg: >-
-          VMID {{ proxmox_vm_id }} is used by "{{ proxmox_vm_lookup.proxmox_vms[0].name }}",
-          not "{{ proxmox_vm_name }}". Pick another vm_id.
-        quiet: true
-      when: proxmox_vm_exists
+        proxmox_vm_resolved_id: "{{ proxmox_vm_lookup.proxmox_vms[0].vmid | default('') }}"
 
     - name: Create the VM
       ansible.builtin.include_tasks: present.yml
       when: proxmox_vm_state == 'present'
+
+    # Deleting is irreversible and the name alone does not prove ownership:
+    # Proxmox lets any VM carry any name, so `make destroy VM_NAME=nas` would
+    # otherwise match an unrelated VM. The tag is what this project stamps on
+    # everything it creates, and a template is never one of them.
+    - name: Refuse to delete a VM this project does not own
+      ansible.builtin.assert:
+        that:
+          - not (proxmox_vm_lookup.proxmox_vms[0].template | default(false) | bool)
+          - proxmox_vm_tags[0] in proxmox_vm_found_tags
+        fail_msg: >-
+          "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}) is a template or is
+          not tagged "{{ proxmox_vm_tags[0] }}", so this project did not create it.
+          Refusing to delete. Its tags are: {{ proxmox_vm_found_tags | join(', ') | default('(none)', true) }}.
+          Set proxmox_vm_allow_untagged_delete=true to delete it anyway.
+        quiet: true
+      when:
+        - proxmox_vm_state == 'absent'
+        - proxmox_vm_exists
+        - not (proxmox_vm_allow_untagged_delete | bool)
 
     - name: Delete the VM
       ansible.builtin.include_tasks: absent.yml

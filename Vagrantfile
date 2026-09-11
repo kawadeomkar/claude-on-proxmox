@@ -32,6 +32,10 @@ Vagrant.configure("2") do |config|
     ansible.playbook = "playbooks/configure.yml"
     ansible.groups = { "claude_vms" => ["default"] }
     ansible.extra_vars = {
+      # This VM is already in Vagrant's own inventory and there is no Proxmox
+      # API here, so skip discovery; otherwise configure.yml fails resolving
+      # proxmox_api_host, which lives in inventory/group_vars Vagrant does not load.
+      claude_vm_discovery: false,
       configure_wait_for_cloud_init: false,
       common_manage_hostname: false,
       common_user_ssh_public_keys: [SSH_PUBLIC_KEY],

@@ -18,6 +18,10 @@ runs:
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ~/.ansible/collections
+        # Correct only because requirements.yml pins exact versions. With
+        # ranges the hash never changed when the resolved version did, and
+        # ansible-galaxy skips collections already present, so CI could keep
+        # running a stale tree indefinitely.
         key: galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
 
     - name: Install tooling

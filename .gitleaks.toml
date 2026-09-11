@@ -1,0 +1,25 @@
+# Configuration for the CI secret scan.
+#
+# CI scans the working tree rather than the git index, because the index in a
+# fresh checkout is empty and the pre-commit hook's `--staged` scan therefore
+# finds nothing. Scanning the tree means gitleaks also sees directories git
+# ignores - a developer's .vagrant private key, the virtualenv created by
+# earlier CI steps - so those are excluded here. Everything excluded below is
+# gitignored and cannot reach the repository.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local build artifacts and caches, none of which are committed"
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)\.vagrant/''',
+  '''(^|/)\.cache/''',
+  '''(^|/)\.molecule/''',
+  '''(^|/)\.ansible/''',
+  '''(^|/)\.git/''',
+  '''(^|/)collections/ansible_collections/''',
+  '''(^|/)__pycache__/''',
+  '''(^|/)node_modules/''',
+]

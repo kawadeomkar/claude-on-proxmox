@@ -1,0 +1,51 @@
+---
+# Internal, not meant to be overridden.
+
+# Each of these switches off the feature-flag evaluation that Remote Control's
+# availability depends on, so a session starts and then never appears in the
+# app. ANTHROPIC_BASE_URL is checked alongside them for a different reason:
+# Remote Control is disabled whenever the client points anywhere other than
+# api.anthropic.com.
+claude_code_remote_control_blocking_env:
+  - DISABLE_TELEMETRY
+  - DO_NOT_TRACK
+  - CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+  - DISABLE_GROWTHBOOK
+
+# Internal: whether this VM holds a credential Remote Control can actually use.
+# Only a claude.ai login qualifies. An API key, a Console login and the
+# long-lived token from `claude setup-token` can all make model requests, and
+# none of them can establish a Remote Control session.
+#
+# The plan itself is deliberately not checked here: Pro, Max, Team and
+# Enterprise are all eligible, and hard-coding the strings `claude auth status`
+# reports for them would turn a new plan name into a false refusal. An
+# ineligible plan fails when the service starts, where the message comes from
+# Claude Code rather than from a guess made here.
+claude_code_remote_control_eligible: >-
+  {{ (claude_code_remote_control_status.loggedIn | default(false)) | bool
+     and (claude_code_remote_control_status.authMethod | default('')) == 'claude.ai' }}
+
+# Internal: why it is not eligible, phrased for the person reading the output.
+claude_code_remote_control_blocker: >-
+  {{ 'no Claude Code login is stored for ' ~ claude_code_user ~ ' on it.'
+     if not (claude_code_remote_control_status.loggedIn | default(false)) | bool
+     else 'it is signed in through "'
+          ~ (claude_code_remote_control_status.authMethod | default('unknown'))
+          ~ '", but Remote Control needs a claude.ai login on a Pro, Max, Team
+             or Enterprise plan.' }}
+
+# Internal: the directory Remote Control sessions actually open in, resolved
+# from the (possibly empty) option once claude_code_home is known.
+claude_code_remote_control_target_dir: >-
+  {{ claude_code_remote_control_dir if claude_code_remote_control_dir | length > 0
+     else claude_code_home ~ '/projects' }}
+
+# Internal: whether the two dialogs that would stall a headless Remote Control
+# server are already accepted in ~/.claude.json - first-run onboarding, and
+# workspace trust for the directory sessions open in.
+claude_code_remote_control_dialogs_seeded: >-
+  {{ (claude_code_remote_control_cfg.hasCompletedOnboarding | default(false)) | bool
+     and ((claude_code_remote_control_cfg.projects | default({}, true))
+          .get(claude_code_remote_control_target_dir, {})
+          .get('hasTrustDialogAccepted', false)) | bool }}

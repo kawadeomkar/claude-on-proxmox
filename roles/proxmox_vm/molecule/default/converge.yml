@@ -4,3 +4,23 @@
   gather_facts: false
   roles:
     - role: proxmox_vm
+
+  post_tasks:
+    # These assertions live here rather than in verify.yml because they check
+    # facts the role sets, which do not survive into a separate Molecule stage.
+    - name: Assert the VMID was allocated by Proxmox
+      ansible.builtin.assert:
+        that: proxmox_vm_resolved_id | int == 9001
+        fail_msg: "expected the next free VMID 9001, got {{ proxmox_vm_resolved_id }}"
+        quiet: true
+
+    - name: Assert the address came from the VM's own NIC
+      ansible.builtin.assert:
+        that: proxmox_vm_address == '192.0.2.51'
+        fail_msg: >-
+          expected 192.0.2.51 from eth0, got "{{ proxmox_vm_address }}"
+          (172.17.0.1 would mean the docker bridge was picked up)
+        quiet: true
+
+    # Publishing to claude_vms is the playbook's job, not the role's; the
+    # provision scenario covers it for a whole fleet.

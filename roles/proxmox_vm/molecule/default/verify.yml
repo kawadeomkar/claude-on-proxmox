@@ -19,16 +19,24 @@
 
     - name: Extract the interesting requests
       ansible.builtin.set_fact:
-        proxmox_vm_verify_clones: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9000/clone$') | list }}"
+        # side_effect.yml clones VMs of its own - an untagged one to prove the
+        # delete guard refuses it, and one to prove a static address is
+        # applied. Those are fixtures, not the role's work on claude-dev.
+        proxmox_vm_verify_clones: >-
+          {{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9000/clone$')
+             | rejectattr('params.name', 'in', ['someones-nas', 'static-vm']) | list }}
         proxmox_vm_verify_configs: >-
           {{ proxmox_vm_verify_calls | selectattr('method', 'equalto', 'PUT')
-             | selectattr('path', 'search', '/qemu/200/config$') | list }}
-        proxmox_vm_verify_resizes: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/resize$') | list }}"
-        proxmox_vm_verify_starts: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/status/start$') | list }}"
-        proxmox_vm_verify_shutdowns: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/200/status/shutdown$') | list }}"
+             | selectattr('path', 'search', '/qemu/9001/config$') | list }}
+        proxmox_vm_verify_resizes: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9001/resize$') | list }}"
+        proxmox_vm_verify_starts: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9001/status/start$') | list }}"
+        proxmox_vm_verify_shutdowns: "{{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9001/status/shutdown$') | list }}"
+        proxmox_vm_verify_agent: >-
+          {{ proxmox_vm_verify_calls
+             | selectattr('path', 'search', '/qemu/9001/agent/network-get-interfaces$') | list }}
         proxmox_vm_verify_deletes: >-
           {{ proxmox_vm_verify_calls | selectattr('method', 'equalto', 'DELETE')
-             | selectattr('path', 'search', '/qemu/200$') | list }}
+             | selectattr('path', 'search', '/qemu/9001$') | list }}
 
     - name: Assert the create sequence (converge) happened exactly once with the right settings
       vars:
@@ -36,7 +44,9 @@
       ansible.builtin.assert:
         that:
           - proxmox_vm_verify_clones | length == 1
-          - proxmox_vm_verify_clones[0].params.newid == '200'
+          # The refused delete must not have reached the API at all.
+          - proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9002') | selectattr('method', 'equalto', 'DELETE') | list | length == 0
+          - proxmox_vm_verify_clones[0].params.newid == '9001'
           - proxmox_vm_verify_clones[0].params.name == 'claude-dev'
           - proxmox_vm_verify_clones[0].params.full == '1'
           - proxmox_vm_verify_clones[0].params.storage == 'local-lvm'
@@ -47,16 +57,32 @@
           - proxmox_vm_verify_cfg.agent == 'enabled=1'
           - proxmox_vm_verify_cfg.ciuser == 'dev'
           - "'cipassword' not in proxmox_vm_verify_cfg"
-          - proxmox_vm_verify_cfg.ipconfig0 == 'ip=192.0.2.50/24,gw=192.0.2.1'
+          - proxmox_vm_verify_cfg.ipconfig0 == 'ip=dhcp'
           - proxmox_vm_verify_cfg.nameserver == '1.1.1.1 8.8.8.8'
           - proxmox_vm_verify_cfg.searchdomain == 'lan'
           - "'molecule%40test' in proxmox_vm_verify_cfg.sshkeys"
-          - "'claude' in proxmox_vm_verify_cfg.tags and 'ansible' in proxmox_vm_verify_cfg.tags"
+          - "'claude-on-proxmox' in proxmox_vm_verify_cfg.tags"
           - proxmox_vm_verify_resizes | length == 1
           - proxmox_vm_verify_resizes[0].params.disk == 'scsi0'
           - proxmox_vm_verify_resizes[0].params.size == '64G'
           # started once by converge; the idempotence run found it running
           - proxmox_vm_verify_starts | length == 1
+        quiet: true
+
+    - name: Assert the guest agent was polled until it answered
+      vars:
+        # Only converge's polls for 9001. The log spans converge, idempotence
+        # and side_effect, so a cumulative count would also be satisfied by
+        # three stages polling once each.
+        proxmox_vm_verify_agent_9001: >-
+          {{ proxmox_vm_verify_agent | selectattr('path', 'search', '/qemu/9001/agent') | list }}
+      ansible.builtin.assert:
+        that:
+          # the fake refuses the first two polls, so the role must have retried
+          - proxmox_vm_verify_agent_9001 | length >= 3
+        fail_msg: >-
+          expected 9001's agent to be polled at least 3 times,
+          saw {{ proxmox_vm_verify_agent_9001 | length }}
         quiet: true
 
     - name: Assert the destroy sequence (side effect) and final state
@@ -65,6 +91,11 @@
           - proxmox_vm_verify_shutdowns | length == 1
           - proxmox_vm_verify_shutdowns[0].params.forceStop == '1'
           - proxmox_vm_verify_deletes | length == 1
-          - "'200' not in proxmox_vm_verify_state"
+          # 9001 is the VM converge created; it must be gone from the fake's
+          # persisted state. This asserted '200' until now - a VMID that had
+          # been renumbered away, so it was true before the delete ever ran.
+          - "'9001' not in proxmox_vm_verify_state"
           - "'9000' in proxmox_vm_verify_state"
+          # The untagged VM the delete guard refused is still there.
+          - "'9002' in proxmox_vm_verify_state"
         quiet: true

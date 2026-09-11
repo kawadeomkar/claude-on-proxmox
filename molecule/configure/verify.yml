@@ -36,6 +36,65 @@
         that:
           - verify_cmds.results[0].stdout is search('[0-9]+\.[0-9]+\.[0-9]+')
           - not verify_fork.stat.exists
-          - verify_settings.env.ANTHROPIC_API_KEY == 'sk-ant-molecule-test-key'
+          # No API key in this scenario: it is mutually exclusive with Remote
+          # Control, and an env block would have overridden the login.
+          - "'ANTHROPIC_API_KEY' not in (verify_settings.env | default({}))"
           - verify_settings.permissions.defaultMode == 'acceptEdits'
+        quiet: true
+
+    # Remote Control cannot start in a container - no claude.ai login exists and
+    # none can be created without a browser. What must still happen is that the
+    # unit is written, the dialogs that would stall it are pre-accepted, and the
+    # service is left stopped rather than crash-looping.
+    - name: Read the installed Remote Control unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/claude-remote-control.service
+      register: verify_rc_unit
+
+    - name: Read the seeded Claude Code config
+      ansible.builtin.slurp:
+        src: /home/dev/.claude.json
+      register: verify_rc_cfg
+
+    - name: Check whether the Remote Control service is running
+      ansible.builtin.command:
+        argv: [systemctl, is-active, claude-remote-control]
+      register: verify_rc_active
+      failed_when: false
+      changed_when: false
+
+    - name: Check whether the Remote Control service is enabled
+      ansible.builtin.command:
+        argv: [systemctl, is-enabled, claude-remote-control]
+      register: verify_rc_enabled
+      failed_when: false
+      changed_when: false
+
+    - name: Assert Remote Control is prepared but correctly not started
+      vars:
+        verify_rc_text: "{{ verify_rc_unit.content | b64decode }}"
+        verify_rc_json: "{{ verify_rc_cfg.content | b64decode | from_json }}"
+      ansible.builtin.assert:
+        that:
+          # Runs as the VM user, from the projects directory, not as root
+          - "'User=dev' in verify_rc_text"
+          - "'WorkingDirectory=/home/dev/projects' in verify_rc_text"
+          # Server mode, named after the host, so it is identifiable in the app
+          - "'remote-control --name' in verify_rc_text"
+          - "'claude-dev' in verify_rc_text"
+          # An API key must never reach the unit's environment: it would
+          # override the subscription login Remote Control requires. Matched on
+          # the Environment= line, not the bare word, which also appears in the
+          # comment above it explaining exactly this.
+          - verify_rc_text.split('\n')
+            | select('match', '^Environment=.*ANTHROPIC_API_KEY') | list | length == 0
+          # The two dialogs that would otherwise stall a headless server
+          - verify_rc_json.hasCompletedOnboarding
+          - verify_rc_json.projects['/home/dev/projects'].hasTrustDialogAccepted
+          # Not logged in, so it must be left alone rather than crash-looping
+          - verify_rc_active.stdout | trim != 'active'
+          - verify_rc_enabled.stdout | trim != 'enabled'
+        fail_msg: >-
+          Remote Control preparation is wrong. active={{ verify_rc_active.stdout | trim }}
+          enabled={{ verify_rc_enabled.stdout | trim }}
         quiet: true

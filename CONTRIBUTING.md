@@ -24,17 +24,19 @@ first.
 | Command | What it runs |
 |---------|--------------|
 | `make lint` | yamllint, ansible-lint (production profile), ruff |
-| `make syntax` | `--syntax-check` on every playbook, against the example inventory |
+| `make syntax` | `--syntax-check` on every playbook, against your `inventory/` |
 | `make unit` | pytest for `roles/github_projects/library/github_repos.py` |
 | `make molecule MOLECULE_ROLES="common dev_tools"` | one or more role scenarios |
 | `make molecule-integration` | `playbooks/configure.yml` end to end in a container |
+| `make molecule-provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
 | `make vagrant-up` | `configure.yml` on a real VirtualBox VM |
 
 Every role has a Molecule scenario, and a change to a role should keep its scenario passing - including the
 idempotence stage, which reruns the converge and fails on any changed task.
 
 Tests never talk to a real Proxmox, a real GitHub or a real hypervisor. `tests/molecule/` holds fakes for
-all three: a stateful Proxmox API, a stateful `qm`, and a GitHub API serving local bare repositories. If
+all of them: a stateful Proxmox API (including the guest agent), a stateful `qm`, a `virt-customize`, and
+a GitHub API serving local bare repositories. If
 your change needs a new external interaction, extend a fake rather than reaching for the network.
 
 ## Conventions
@@ -55,7 +57,8 @@ your change needs a new external interaction, extend a fake rather than reaching
 1. `roles/<name>/` with `defaults/main.yml`, `meta/main.yml`, `meta/argument_specs.yml` and `tasks/`.
 2. A Molecule scenario at `roles/<name>/molecule/default/` - it inherits the driver and platform from
    `.config/molecule/config.yml`, so it only needs what differs.
-3. Add the role to `ROLES` in the `Makefile` and to the matrix in `.github/workflows/ci.yml`.
+3. Add the role to `ROLES` in the `Makefile` and to the matrix in `.github/workflows/ci.yml`. Renaming a
+   CI job also means updating the required status checks on `main`, or pull requests can never merge.
 4. Add it to the role table in the README.
 
 ## Pull requests

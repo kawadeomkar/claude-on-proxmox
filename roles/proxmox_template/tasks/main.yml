@@ -46,6 +46,57 @@
         timeout: 300
       register: proxmox_template_image
 
+    # The pristine download is left untouched so get_url stays idempotent;
+    # virt-customize edits a copy, which is what gets imported.
+    - name: Decide which image to import
+      ansible.builtin.set_fact:
+        proxmox_template_import_path: >-
+          {{ proxmox_template_image_dir ~ '/claude-on-proxmox-' ~ proxmox_template_vmid ~ '.img'
+             if proxmox_template_install_guest_agent
+             else proxmox_template_image.dest }}
+
+    - name: Prepare the image for customization
+      when: proxmox_template_install_guest_agent
+      block:
+        # dhcpcd-base is not pulled in on Proxmox 9, and without it the
+        # libguestfs appliance cannot DHCP, so --install fails with
+        # "Temporary failure resolving 'deb.debian.org'".
+        - name: Install libguestfs-tools
+          ansible.builtin.apt:
+            name:
+              - libguestfs-tools
+              - dhcpcd-base
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+            lock_timeout: 600
+          when: proxmox_template_manage_libguestfs
+
+        - name: Copy the cloud image for customization
+          ansible.builtin.copy:
+            src: "{{ proxmox_template_image.dest }}"
+            dest: "{{ proxmox_template_import_path }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0644"
+
+        # --truncate /etc/machine-id: clones that share a machine-id send the
+        # same DHCP client identifier and can be handed the same lease.
+        - name: Install packages into the image with virt-customize
+          ansible.builtin.command:
+            argv:
+              - "{{ proxmox_template_virt_customize }}"
+              - --add
+              - "{{ proxmox_template_import_path }}"
+              - --install
+              - "{{ proxmox_template_customize_packages | join(',') }}"
+              - --truncate
+              - /etc/machine-id
+          environment:
+            LIBGUESTFS_BACKEND: direct
+          changed_when: true
+
     - name: Create VM {{ proxmox_template_vmid }}
       ansible.builtin.command:
         argv:
@@ -81,7 +132,7 @@
           - set
           - "{{ proxmox_template_vmid }}"
           - --scsi0
-          - "{{ proxmox_template_storage }}:0,import-from={{ proxmox_template_image.dest }},discard=on"
+          - "{{ proxmox_template_storage }}:0,import-from={{ proxmox_template_import_path }},discard=on"
       changed_when: true
 
     - name: Add cloud-init drive and set boot order

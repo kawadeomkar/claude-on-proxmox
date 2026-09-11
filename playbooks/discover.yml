@@ -1,0 +1,120 @@
+---
+# Find the VMs this project created and make them reachable.
+#
+# Every VM the proxmox_vm role creates carries the claude-on-proxmox tag, so
+# Proxmox itself is the register of what exists - nothing is tracked locally
+# and a VM deleted in the UI simply stops appearing. Addresses come from the
+# QEMU guest agent, since a DHCP lease is not recorded anywhere else.
+#
+# community.proxmox ships an inventory plugin that does this same job, and it
+# can read a vault-encrypted token through a lookup, so the token would not
+# have to be duplicated. It is not used here because an inventory plugin has
+# no access to group_vars: proxmox_api_host would have to be declared a second
+# time, outside the one file the user edits. It also runs on every ansible
+# invocation, and when the API is unreachable it degrades to "no hosts matched"
+# rather than failing loudly. If those trade-offs stop mattering, replacing
+# this play with an inventory/proxmox.yml is the smaller design.
+- name: Discover VMs on Proxmox
+  hosts: localhost
+  gather_facts: false
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ proxmox_api_host }}"
+      api_port: "{{ proxmox_api_port }}"
+      api_user: "{{ proxmox_api_user }}"
+      api_token_id: "{{ proxmox_api_token_id }}"
+      api_token_secret: "{{ proxmox_api_token_secret }}"
+      validate_certs: "{{ proxmox_validate_certs }}"
+
+  tasks:
+    - name: List every QEMU VM
+      community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+        type: qemu
+      register: claude_vm_all
+
+    # claude_vm_tagged (group_vars/all) narrows that listing to the VMs
+    # carrying this project's tag, matched as a whole tag rather than a
+    # substring so "claude-on-proxmox-staging" is left alone.
+    # With VM_NAME given, act only on those; without it, the whole fleet.
+    - name: Narrow to the requested VMs
+      ansible.builtin.set_fact:
+        claude_vm_discovered: >-
+          {{ claude_vm_tagged | selectattr('name', 'in', claude_vm_names) | list
+             if vm_name is defined else claude_vm_tagged }}
+
+    # Proxmox permits duplicate names. The role refuses to act on one; here the
+    # second add_host would silently overwrite the first, so `make configure`
+    # would report success having touched only one of them, unpredictably.
+    - name: Refuse to continue with duplicated VM names
+      vars:
+        claude_vm_dupes: >-
+          {{ claude_vm_discovered | map(attribute='name') | list
+             | community.general.counter | dict2items
+             | selectattr('value', 'gt', 1) | map(attribute='key') | sort | list }}
+      ansible.builtin.assert:
+        that: claude_vm_dupes | length == 0
+        fail_msg: >-
+          More than one VM is tagged {{ claude_vm_tag }} and named
+          {{ claude_vm_dupes | join(', ') }}. Rename or remove the duplicates so
+          it is unambiguous which one to configure.
+        quiet: true
+
+    - name: Ask each guest agent for an address
+      community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+        type: qemu
+        vmid: "{{ claude_vm_item.vmid }}"
+        config: current
+        network: true
+      register: claude_vm_details
+      # A VM whose agent is not up yet is expected and simply gets skipped
+      # below. A permission or authentication failure is not: it applies to
+      # every VM, and swallowing it means `make configure` runs against zero
+      # hosts and exits 0, which looks like success.
+      failed_when: >-
+        claude_vm_details.msg | default('') is search('40[13]|[Pp]ermission|[Aa]uthentication')
+      changed_when: false
+      loop: "{{ claude_vm_discovered }}"
+      loop_control:
+        loop_var: claude_vm_item
+        label: "{{ claude_vm_item.name }}"
+
+    # net_mac is given a default here so that one odd VM - a NIC removed in
+    # the UI, or net1 with no net0 - is skipped instead of raising and taking
+    # discovery down for the whole fleet. Without a MAC the VM is skipped
+    # rather than guessed at, since an address picked without one could be a
+    # bridge the guest grew later (docker0).
+    - name: Add the reachable ones to the inventory
+      vars:
+        claude_vm_found: "{{ claude_vm_detail.proxmox_vms | default([], true) | first | default({}, true) }}"
+        claude_vm_found_mac: "{{ claude_vm_found.config.net0 | default('', true) | net_mac('') }}"
+        claude_vm_found_ip: "{{ claude_vm_found.network | default([], true) | guest_ipv4(claude_vm_found_mac) | default('', true) }}"
+      ansible.builtin.add_host:
+        name: "{{ claude_vm_found.name }}"
+        groups: claude_vms
+        ansible_host: "{{ claude_vm_found_ip }}"
+        ansible_user: "{{ vm_user }}"
+        proxmox_vm_id: "{{ claude_vm_found.vmid }}"
+      changed_when: false
+      when:
+        - claude_vm_found_mac | length > 0
+        - claude_vm_found_ip | length > 0
+      loop: "{{ claude_vm_details.results }}"
+      loop_control:
+        loop_var: claude_vm_detail
+        label: "{{ claude_vm_detail.claude_vm_item.name }}"
+
+    # Landing here with nothing is almost always a mistake rather than an empty
+    # fleet, and the plays that follow would otherwise just report "no hosts
+    # matched" and exit 0.
+    - name: Report when discovery found nothing to configure
+      ansible.builtin.debug:
+        msg: >-
+          No VMs to configure.
+          {{ 'Proxmox has no VM tagged ' ~ claude_vm_tag ~ '; run make provision first.'
+             if claude_vm_tagged | length == 0
+             else (claude_vm_discovered | length == 0)
+                  | ternary('Tagged VMs exist (' ~ (claude_vm_tagged | map(attribute='name') | join(', '))
+                            ~ ') but none match VM_NAME.',
+                            'Tagged VMs exist but none reported an address yet - they may still be'
+                            ~ ' booting, or the API token may lack VM.Monitor.') }}
+      when: groups['claude_vms'] | default([]) | length == 0

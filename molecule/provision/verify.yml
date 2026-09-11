@@ -1,0 +1,160 @@
+---
+# Seed VMs that discovery must NOT claim, before it runs.
+#
+# Without these the tag filter is not load-bearing: the only untagged VM the
+# fake knows is the stopped template, which the agent check already excludes,
+# so deleting the tag filter entirely would leave every assertion passing.
+# These three are running and their agents answer, so the only thing keeping
+# them out of the fleet is the filter under test.
+- name: Seed VMs this project does not own
+  hosts: localhost
+  gather_facts: false
+  vars:
+    verify_api: "https://127.0.0.1:18007/api2/json/nodes/pve/qemu"
+    verify_headers:
+      Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
+    verify_intruders:
+      # The lookalike: an unanchored substring match on "claude-on-proxmox"
+      # would claim this VM and configure someone else's staging box.
+      - {vmid: 9003, name: stranger, tags: claude-on-proxmox-staging, net0: keep}
+      # Tagged the other way round, for the same reason.
+      - {vmid: 9004, name: bystander, tags: not-claude-on-proxmox, net0: keep}
+      # Correctly tagged but has no net0, as if its NIC were removed in the UI.
+      # net_mac used to raise on this and take discovery down for the fleet.
+      - {vmid: 9005, name: nonic, tags: claude-on-proxmox, net0: ""}
+  tasks:
+    - name: Clone each intruder from the template
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api }}/9000/clone"
+        method: POST
+        headers: "{{ verify_headers }}"
+        body_format: form-urlencoded
+        body:
+          newid: "{{ verify_intruder.vmid }}"
+          name: "{{ verify_intruder.name }}"
+      loop: "{{ verify_intruders }}"
+      loop_control:
+        loop_var: verify_intruder
+        label: "{{ verify_intruder.name }}"
+
+    - name: Give each intruder its tags
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api }}/{{ verify_intruder.vmid }}/config"
+        method: PUT
+        headers: "{{ verify_headers }}"
+        body_format: form-urlencoded
+        body: >-
+          {{ {'tags': verify_intruder.tags}
+             | combine({'net0': ''} if verify_intruder.net0 == '' else {}) }}
+        status_code: [200]
+      loop: "{{ verify_intruders }}"
+      loop_control:
+        loop_var: verify_intruder
+        label: "{{ verify_intruder.name }}"
+
+    - name: Start each intruder so its agent answers
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api }}/{{ verify_intruder.vmid }}/status/start"
+        method: POST
+        headers: "{{ verify_headers }}"
+      loop: "{{ verify_intruders }}"
+      loop_control:
+        loop_var: verify_intruder
+        label: "{{ verify_intruder.name }}"
+
+# Discovery runs as its own playbook here, in a Molecule stage of its own, so
+# the in-memory hosts provisioning added are gone: this proves the VMs can be
+# found again from their Proxmox tag alone, which is what a later
+# `make configure` depends on.
+- name: Discover
+  ansible.builtin.import_playbook: ../../playbooks/discover.yml
+
+- name: Verify discovery found the fleet
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Assert both VMs were rediscovered by tag
+      ansible.builtin.assert:
+        that:
+          - groups['claude_vms'] | sort == ['alpha', 'beta']
+          - hostvars['alpha'].ansible_host == '192.0.2.51'
+          - hostvars['beta'].ansible_host == '192.0.2.52'
+          - hostvars['alpha'].ansible_user == 'dev'
+        quiet: true
+
+    - name: Assert no VM this project does not own was claimed
+      ansible.builtin.assert:
+        that:
+          - "'stranger' not in groups['claude_vms']"
+          - "'bystander' not in groups['claude_vms']"
+          # Tagged correctly, but unusable: skipped rather than crashing the
+          # play, and never added with a guessed address.
+          - "'nonic' not in groups['claude_vms']"
+        fail_msg: >-
+          Discovery claimed a VM it does not own: {{ groups['claude_vms'] | sort }}.
+        quiet: true
+
+    # The assertion above passes for the wrong reason on its own: this scenario
+    # sets vm_name, so discover.yml narrows to alpha,beta before the tag filter
+    # is reached. Apply the filter to the live VM list to test the filter
+    # itself, which is what a fleet-wide `make configure` relies on.
+    - name: List every VM the fake API knows
+      ansible.builtin.uri:
+        validate_certs: false
+        url: https://127.0.0.1:18007/api2/json/cluster/resources
+        headers:
+          Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
+      register: verify_resources
+
+    - name: Assert the tag filter admits only VMs this project created
+      vars:
+        verify_tagged: >-
+          {{ verify_resources.json.data
+             | selectattr('tags', 'defined')
+             | selectattr('tags', 'regex', claude_vm_tag_pattern)
+             | map(attribute='name') | sort | list }}
+      ansible.builtin.assert:
+        that: verify_tagged == ['alpha', 'beta', 'nonic']
+        fail_msg: >-
+          The tag filter selected {{ verify_tagged }}. It must match
+          "{{ claude_vm_tag }}" as a whole tag: "stranger" is tagged
+          claude-on-proxmox-staging and "bystander" not-claude-on-proxmox,
+          and a substring match would wrongly claim both.
+        quiet: true
+
+- name: Verify the API requests
+  hosts: claude-on-proxmox-provision
+  become: true
+  tasks:
+    - name: Read the fake API request log
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: provision_verify_raw
+
+    - name: Extract the clone requests
+      ansible.builtin.set_fact:
+        provision_verify_clones: >-
+          {{ (provision_verify_raw.content | b64decode).splitlines() | map('from_json')
+             | selectattr('path', 'search', '/qemu/9000/clone$')
+             | rejectattr('params.name', 'in', ['stranger', 'bystander', 'nonic']) | list }}
+
+    - name: Assert each VM was cloned once, by name, with no VMID of ours
+      ansible.builtin.assert:
+        that:
+          - provision_verify_clones | length == 2
+          - provision_verify_clones | map(attribute='params.name') | sort == ['alpha', 'beta']
+          # Proxmox picked the IDs: the role never sent one
+          - provision_verify_clones | map(attribute='params.newid') | sort == ['9001', '9002']
+        quiet: true
+
+    - name: Assert the role asked Proxmox for a free VMID rather than choosing one
+      ansible.builtin.assert:
+        that:
+          - >-
+            (provision_verify_raw.content | b64decode).splitlines() | map('from_json')
+            | selectattr('path', 'search', '/cluster/nextid$') | list | length >= 2
+        fail_msg: The role must not invent VMIDs; Proxmox allocates them.
+        quiet: true

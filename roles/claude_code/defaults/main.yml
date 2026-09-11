@@ -20,3 +20,33 @@ claude_code_settings: {}
 
 # Optional content for ~/.claude/CLAUDE.md (instructions applied to every project).
 claude_code_global_instructions: ""
+
+# ------------------------------------------------------- Remote Control -----
+# Put this VM's Claude Code session in the session list at claude.ai/code and
+# in the Claude mobile app, while the session keeps running here with this
+# filesystem and these tools.
+#
+# Off by default because it cannot be switched on from Ansible alone: Anthropic
+# supports one credential for it, an interactive claude.ai login on a Pro, Max,
+# Team or Enterprise plan. API keys are not supported, and neither is the
+# long-lived token from `claude setup-token`. With this true the role installs
+# and configures everything, then either starts the service (when the VM is
+# already logged in) or prints the one command you have to run.
+claude_code_remote_control: false
+# Session title shown in the list at claude.ai/code. Defaults to the VM name.
+claude_code_remote_control_name: "{{ inventory_hostname }}"
+# Where sessions open. Empty resolves to ~/projects of claude_code_user, the
+# directory github_projects clones into. It must not be the home directory:
+# Claude Code never saves workspace trust for one.
+#
+# Left empty rather than templated from claude_code_home, because Ansible
+# validates a role's defaults against meta/argument_specs.yml at role entry -
+# before the task that resolves the home directory has run.
+claude_code_remote_control_dir: ""
+# Starting permission mode for the sessions the server creates.
+claude_code_remote_control_permission_mode: default
+# same-dir: every session shares the directory above.
+# worktree: each on-demand session gets its own git worktree (needs a repo).
+# session: serve exactly one session and reject further connections.
+claude_code_remote_control_spawn: same-dir
+claude_code_remote_control_service: claude-remote-control

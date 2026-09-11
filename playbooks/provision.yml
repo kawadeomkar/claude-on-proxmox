@@ -1,18 +1,87 @@
 ---
-# Create (clone from template), configure cloud-init and start every VM in
-# the claude_vms group. All API calls are delegated to the controller.
-- name: Provision VMs on Proxmox
-  hosts: claude_vms
+# Create one or more VMs on Proxmox and report the address each one was given.
+#
+#   make provision                          -> claude-on-proxmox-default
+#   make provision VM_NAME=alpha
+#   make provision VM_NAME=alpha,beta,gamma
+#
+# Nothing has to be declared in inventory first: the VM is created by name,
+# Proxmox picks the VMID, the LAN's DHCP server assigns the address, and the
+# QEMU guest agent reports it back. Each VM is added to the in-memory
+# claude_vms group so configure.yml can reach it in the same run.
+#
+# This is three plays rather than one loop because the work is worth running
+# in parallel. Most of the time per VM is spent waiting for the guest agent to
+# report a DHCP address - up to five minutes - and every VM is already booting
+# on the hypervisor at the same time. A loop over include_role would watch them
+# one at a time, so a fleet of five would take five times as long as it needs
+# to. Giving each VM its own host lets Ansible fan out across `forks` instead.
+- name: Register the VMs to provision
+  hosts: localhost
   gather_facts: false
+
+  tasks:
+    # Only the empty case is checked here: with no names the play below has no
+    # hosts, so provisioning would report success having done nothing. What
+    # makes a name usable is the proxmox_vm role's business - it validates each
+    # one against the rule Proxmox actually enforces, and names the offender.
+    - name: Check there is a VM to provision
+      ansible.builtin.assert:
+        that: claude_vm_names | length > 0
+        fail_msg: >-
+          No VM name to provision. Separate several with commas and no spaces:
+          make provision VM_NAME=alpha,beta
+        quiet: true
+
+    - name: Add each name as a host to provision
+      ansible.builtin.add_host:
+        name: "{{ claude_vm_name_item }}"
+        groups: claude_vm_pending
+        # Every task in the proxmox_vm role is delegated to the controller and
+        # talks to the Proxmox API, so nothing ever connects to this host under
+        # this name. The real connection details arrive later, from discovery.
+        ansible_connection: local
+      changed_when: false
+      loop: "{{ claude_vm_names }}"
+      loop_control:
+        loop_var: claude_vm_name_item
+        label: "{{ claude_vm_name_item }}"
+
+- name: Create the VMs on Proxmox
+  hosts: claude_vm_pending
+  gather_facts: false
+  # proxmox_vm_name defaults to inventory_hostname, which is the VM name here.
   roles:
     - role: proxmox_vm
 
-  post_tasks:
-    - name: Wait for SSH on the new VM
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host }}"
-        port: 22
-        delay: 5
-        timeout: 600
-        search_regex: OpenSSH
-      delegate_to: localhost
+- name: Publish and report the provisioned VMs
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    # Publishing happens here rather than in the role because add_host bypasses
+    # the play's host loop: it runs once per task no matter how many hosts the
+    # play has, so a copy inside the role would publish only the first VM of a
+    # fleet. Looping it from localhost over the facts the role left behind is
+    # the only form that scales.
+    - name: Add each VM to the claude_vms group
+      ansible.builtin.add_host:
+        name: "{{ claude_vm_name_item }}"
+        groups: claude_vms
+        ansible_host: "{{ hostvars[claude_vm_name_item].proxmox_vm_address }}"
+        ansible_user: "{{ vm_user }}"
+        ansible_connection: ssh
+        proxmox_vm_id: "{{ hostvars[claude_vm_name_item].proxmox_vm_resolved_id }}"
+      changed_when: false
+      loop: "{{ claude_vm_names }}"
+      loop_control:
+        loop_var: claude_vm_name_item
+        label: "{{ claude_vm_name_item }}"
+
+    - name: Show each VM and the address it was given
+      ansible.builtin.debug:
+        msg: "{{ claude_vm_name_item }} is up at {{ hostvars[claude_vm_name_item].ansible_host }}"
+      loop: "{{ claude_vm_names }}"
+      loop_control:
+        loop_var: claude_vm_name_item
+        label: "{{ claude_vm_name_item }}"
