@@ -1,6 +1,6 @@
 # Python tooling for developing and testing this project.
 # Install into a virtualenv:  make venv   (or: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt)
-ansible-core==2.21.3
+ansible-core==2.21.4
 ansible-lint==26.8.0
 molecule==26.8.0
 molecule-plugins[docker]==26.7.15
