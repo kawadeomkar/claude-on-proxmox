@@ -4,18 +4,45 @@
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"
     clone: "{{ proxmox_vm_template_name }}"
-    newid: "{{ proxmox_vm_id }}"
+    # Omitted, Proxmox assigns the next free VMID and the module returns it.
+    newid: "{{ proxmox_vm_id | default(omit, true) }}"
     name: "{{ proxmox_vm_name }}"
     full: "{{ proxmox_vm_full_clone }}"
     storage: "{{ proxmox_vm_storage }}"
     timeout: "{{ proxmox_vm_timeout }}"
     state: present
+  register: proxmox_vm_clone
+  # One clone at a time, even when provisioning a fleet in parallel. Proxmox
+  # offers no way to reserve a VMID atomically: the module asks
+  # /cluster/nextid and then clones, so two clones in flight are handed the
+  # same free ID and the second one fails. Only this task is throttled - the
+  # rest of the role, including the multi-minute wait for the guest agent,
+  # still runs for every VM at once, which is where the time actually goes.
+  throttle: 1
+  when: not proxmox_vm_exists
+
+# On a VMID collision proxmox_kvm reports ok and returns the *template's* VMID
+# rather than failing, so taking it on trust below would point every task that
+# follows at the template and reconfigure it.
+- name: present | Fail when the clone did not create a new VM
+  ansible.builtin.assert:
+    that: proxmox_vm_clone is changed
+    fail_msg: >-
+      Cloning "{{ proxmox_vm_name }}" changed nothing, which means VMID
+      "{{ proxmox_vm_id }}" is already taken. Continuing would reconfigure the
+      template. Pick a free proxmox_vm_id, or leave it empty to let Proxmox choose.
+    quiet: true
+  when: not proxmox_vm_exists
+
+- name: present | Record the VMID
+  ansible.builtin.set_fact:
+    proxmox_vm_resolved_id: "{{ proxmox_vm_clone.vmid }}"
   when: not proxmox_vm_exists
 
 - name: present | Apply hardware and cloud-init settings
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"
-    vmid: "{{ proxmox_vm_id }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
     name: "{{ proxmox_vm_name }}"
     update: true
     cores: "{{ proxmox_vm_cores }}"
@@ -30,19 +57,86 @@
       ipconfig0: "{{ proxmox_vm_ipconfig }}"
     nameservers: "{{ proxmox_vm_nameservers if proxmox_vm_nameservers else omit }}"
     searchdomains: "{{ proxmox_vm_searchdomain | default(omit, true) }}"
-  when: not proxmox_vm_exists or proxmox_vm_force_update
+  when: proxmox_vm_needs_configuration | bool
 
 - name: present | Resize the root disk to {{ proxmox_vm_disk_size }}
   community.proxmox.proxmox_disk: # noqa: args[module] - api_* come from module_defaults
-    vmid: "{{ proxmox_vm_id }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
     disk: "{{ proxmox_vm_disk }}"
     size: "{{ proxmox_vm_disk_size }}"
     state: resized
-  when: not proxmox_vm_exists
+  # Same condition as the settings above: a VM whose first run died before it
+  # was configured never got resized either. proxmox_disk reports no change
+  # when the disk is already the requested size, so re-running is free.
+  when: proxmox_vm_needs_configuration | bool
 
+# Only start a VM this run created or repaired. Re-running provision against
+# a fleet should not boot a VM someone deliberately shut down.
 - name: present | Start the VM
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_node }}"
-    vmid: "{{ proxmox_vm_id }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
     state: started
     timeout: "{{ proxmox_vm_timeout }}"
+  when: proxmox_vm_needs_configuration | bool or proxmox_vm_start_existing | bool
+
+# proxmox_vm_info builds its answer from /cluster/resources, which can lag a
+# few seconds behind a VM cloned moments ago and then returns nothing at all.
+# Retry rather than indexing into an empty list.
+- name: present | Read the VM's network configuration
+  community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+    type: qemu
+    vmid: "{{ proxmox_vm_resolved_id }}"
+    config: current
+  register: proxmox_vm_config
+  until: proxmox_vm_config.proxmox_vms | default([], true) | length > 0
+  retries: "{{ proxmox_vm_lookup_retries }}"
+  delay: "{{ proxmox_vm_lookup_delay }}"
+  failed_when: false
+  changed_when: false
+
+- name: present | Fail when the VM's NIC could not be read
+  ansible.builtin.assert:
+    that: proxmox_vm_found_mac | length > 0
+    fail_msg: >-
+      Could not read a MAC address from {{ proxmox_vm_nic }} of VM
+      "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}).
+      {{ 'Proxmox returned no configuration for it: ' ~ (proxmox_vm_config.msg | default('no detail'))
+         if (proxmox_vm_config.proxmox_vms | default([], true) | length == 0)
+         else 'The template may use a NIC other than ' ~ proxmox_vm_nic ~ '; set proxmox_vm_nic.' }}
+    quiet: true
+
+# The agent answers as soon as it is up, but the guest still has to finish its
+# DHCP exchange, so poll rather than reading once. Failures are retried too:
+# proxmox_vm_info errors outright while the agent is not yet listening.
+- name: present | Wait for the guest agent to report an address
+  community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+    type: qemu
+    vmid: "{{ proxmox_vm_resolved_id }}"
+    network: true
+  register: proxmox_vm_net
+  # Stop early on an error that will never come right: a token without
+  # VM.Monitor returns 403 on every attempt, and waiting five minutes to say
+  # so helps nobody. Anything else is treated as "not up yet" and retried.
+  until: >-
+    proxmox_vm_reported_address | length > 0
+    or (proxmox_vm_net.msg | default('') is search('40[13]|[Pp]ermission|[Aa]uthentication'))
+  retries: "{{ proxmox_vm_agent_retries }}"
+  delay: "{{ proxmox_vm_agent_delay }}"
+  failed_when: false
+  changed_when: false
+
+- name: present | Record the VM's address
+  ansible.builtin.set_fact:
+    proxmox_vm_address: "{{ proxmox_vm_reported_address }}"
+
+- name: present | Fail when no address was reported
+  ansible.builtin.assert:
+    that: proxmox_vm_address | length > 0
+    fail_msg: >-
+      VM "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}) did not report an
+      address on {{ proxmox_vm_found_mac }}. Check that the template was built with
+      proxmox_template_install_guest_agent enabled, that the VM has a DHCP server on
+      its bridge, and that the API token holds VM.Monitor.
+      Last response from Proxmox: {{ proxmox_vm_net.msg | default('no error reported') }}
+    quiet: true

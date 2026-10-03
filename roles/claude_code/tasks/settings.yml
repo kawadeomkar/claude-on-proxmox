@@ -10,23 +10,20 @@
 - name: settings | Manage ~/.claude/settings.json
   when: claude_code_managed_settings | length > 0
   block:
-    - name: settings | Check for existing settings
-      ansible.builtin.stat:
-        path: "{{ claude_code_home }}/.claude/settings.json"
-      register: claude_code_settings_stat
-
+    # No stat first: slurp's own failure is the "not there yet" signal on a
+    # first run, and `content` is only set when it read something.
     - name: settings | Read existing settings
       ansible.builtin.slurp:
         src: "{{ claude_code_home }}/.claude/settings.json"
       register: claude_code_settings_existing
-      when: claude_code_settings_stat.stat.exists
+      failed_when: false
       no_log: true
 
     - name: settings | Merge managed settings over existing ones
       ansible.builtin.set_fact:
         claude_code_merged_settings: >-
           {{ ((claude_code_settings_existing.content | b64decode | from_json)
-              if claude_code_settings_stat.stat.exists else {})
+              if claude_code_settings_existing.content is defined else {})
              | combine(claude_code_managed_settings, recursive=True) }}
       no_log: true
 

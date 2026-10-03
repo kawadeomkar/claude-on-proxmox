@@ -1,0 +1,204 @@
+---
+# Remote Control puts this VM's Claude Code session in the session list at
+# claude.ai/code and in the Claude mobile app, while the session itself keeps
+# running here, with this filesystem and these tools.
+#
+# It is the one part of this role that cannot be fully automated. Anthropic
+# supports exactly one credential for it - an interactive claude.ai login on a
+# Pro, Max, Team or Enterprise plan. API keys are not supported, and neither is
+# the long-lived token from `claude setup-token`, which can make model requests
+# but explicitly cannot establish a Remote Control session. So this file
+# prepares everything around the login, starts the service when the login is
+# already there, and otherwise says exactly what to run.
+
+- name: remote_control | Refuse to fight the API key for the credential
+  ansible.builtin.assert:
+    that: claude_code_anthropic_api_key | length == 0
+    fail_msg: >-
+      Remote Control and an API key cannot both be configured. ANTHROPIC_API_KEY
+      takes precedence over the subscription login that Remote Control requires,
+      so the session would authenticate as the API account and Remote Control
+      would refuse to start. Clear vault_anthropic_api_key to use Remote Control,
+      or set claude_remote_control=false to keep the API key.
+    quiet: true
+
+# Each of these disables the feature-flag evaluation Remote Control's
+# availability depends on, so the server starts and then never appears.
+- name: remote_control | Refuse settings that silently disable Remote Control
+  ansible.builtin.assert:
+    that:
+      - (claude_code_settings.env | default({})).keys() | list
+        | intersect(claude_code_remote_control_blocking_env) | length == 0
+      - "'ANTHROPIC_BASE_URL' not in (claude_code_settings.env | default({}))"
+    fail_msg: >-
+      claude_code_settings.env sets one of
+      {{ claude_code_remote_control_blocking_env | join(', ') }} or
+      ANTHROPIC_BASE_URL. Each of those disables Remote Control - the first four
+      by switching off the feature-flag evaluation it depends on, the last by
+      pointing the client away from api.anthropic.com.
+    quiet: true
+
+- name: remote_control | Ensure the session's working directory exists
+  ansible.builtin.file:
+    path: "{{ claude_code_remote_control_target_dir }}"
+    state: directory
+    owner: "{{ claude_code_user }}"
+    group: "{{ claude_code_user }}"
+    mode: "0755"
+
+# Resolved rather than assumed: the native installer puts the binary in
+# ~/.local/bin, npm puts it on the global prefix, and the unit file needs an
+# absolute path either way because systemd does not read a login shell.
+- name: remote_control | Resolve the claude binary
+  ansible.builtin.command:
+    argv: [bash, -lc, "command -v claude"]
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_remote_control_which
+  changed_when: false
+  check_mode: false
+
+- name: remote_control | Record the binary path
+  ansible.builtin.set_fact:
+    claude_code_remote_control_bin: "{{ claude_code_remote_control_which.stdout | trim }}"
+
+- name: remote_control | Fail when claude is not on the user's PATH
+  ansible.builtin.assert:
+    that: claude_code_remote_control_bin | length > 0
+    fail_msg: >-
+      `claude` is not on {{ claude_code_user }}'s PATH, so no systemd unit can
+      start it. The common role installs /etc/profile.d/local-bin-path.sh for
+      exactly this; check that it ran.
+    quiet: true
+
+# The server stops for a trust dialog on an unseen directory and for the
+# first-run onboarding, neither of which anything can answer under systemd.
+# Both are recorded in ~/.claude.json, so seed them rather than have the
+# service fail in a way that looks like an authentication problem.
+- name: remote_control | Read the Claude Code config
+  ansible.builtin.slurp:
+    src: "{{ claude_code_home }}/.claude.json"
+  register: claude_code_remote_control_cfg_raw
+  failed_when: false
+
+- name: remote_control | Record the current config
+  ansible.builtin.set_fact:
+    claude_code_remote_control_cfg: >-
+      {{ (claude_code_remote_control_cfg_raw.content | b64decode | from_json)
+         if claude_code_remote_control_cfg_raw.content is defined else {} }}
+
+# Written only when one of the two flags is actually missing. Claude Code owns
+# this file and rewrites it constantly - start counters, cached flags, per
+# project metadata - so a copy that reasserted the whole document every run
+# would report changed forever and fight the application for it. Guarding on
+# the two keys also keeps the write to the first run, which is the only moment
+# nothing else is holding the file.
+- name: remote_control | Pre-accept onboarding and workspace trust
+  vars:
+    claude_code_remote_control_seed:
+      hasCompletedOnboarding: true
+      projects: "{{ {claude_code_remote_control_target_dir: {'hasTrustDialogAccepted': true}} }}"
+  ansible.builtin.copy:
+    content: >-
+      {{ claude_code_remote_control_cfg
+         | combine(claude_code_remote_control_seed, recursive=True)
+         | to_nice_json(indent=2) }}
+    dest: "{{ claude_code_home }}/.claude.json"
+    owner: "{{ claude_code_user }}"
+    group: "{{ claude_code_user }}"
+    mode: "0600"
+  when: not (claude_code_remote_control_dialogs_seeded | bool)
+
+# Read before the unit is installed, so the "what do I run next" message below
+# reflects the state the user is actually in.
+- name: remote_control | Check whether this VM is logged in
+  ansible.builtin.command:
+    argv: ["{{ claude_code_remote_control_bin }}", auth, status]
+  become: true
+  become_user: "{{ claude_code_user }}"
+  environment:
+    HOME: "{{ claude_code_home }}"
+  register: claude_code_remote_control_auth
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: remote_control | Record the authentication state
+  ansible.builtin.set_fact:
+    claude_code_remote_control_status: >-
+      {{ (claude_code_remote_control_auth.stdout | from_json)
+         if claude_code_remote_control_auth.rc == 0
+            and (claude_code_remote_control_auth.stdout | trim | length > 0)
+         else {} }}
+
+- name: remote_control | Install the systemd unit
+  ansible.builtin.template:
+    src: claude-remote-control.service.j2
+    dest: /etc/systemd/system/{{ claude_code_remote_control_service }}.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: claude_code_remote_control_unit
+
+- name: remote_control | Start Remote Control
+  when: claude_code_remote_control_eligible | bool
+  block:
+    - name: remote_control | Enable and start the service
+      ansible.builtin.systemd_service:
+        name: "{{ claude_code_remote_control_service }}"
+        enabled: true
+        state: "{{ 'restarted' if claude_code_remote_control_unit.changed else 'started' }}"
+        daemon_reload: true
+
+    # `started` returns as soon as systemd forks the process. The server needs a
+    # moment to register with claude.ai, and a credential it cannot use fails
+    # here rather than an hour later when someone reaches for their phone.
+    - name: remote_control | Confirm the session stayed up
+      ansible.builtin.command:
+        argv: [systemctl, is-active, "{{ claude_code_remote_control_service }}"]
+      register: claude_code_remote_control_active
+      until: claude_code_remote_control_active.stdout | trim == 'active'
+      retries: 6
+      delay: 5
+      changed_when: false
+      failed_when: false
+
+    - name: remote_control | Fail when the session did not stay up
+      ansible.builtin.assert:
+        that: claude_code_remote_control_active.stdout | trim == 'active'
+        fail_msg: >-
+          {{ claude_code_remote_control_service }} did not stay running on
+          {{ inventory_hostname }}. Read the reason with
+          "ssh {{ claude_code_user }}@{{ ansible_host | default(inventory_hostname) }}
+          sudo journalctl -u {{ claude_code_remote_control_service }} -n 40".
+        quiet: true
+
+    - name: remote_control | Report where to reach the session
+      ansible.builtin.debug:
+        msg: >-
+          Remote Control is live for {{ inventory_hostname }} as
+          "{{ claude_code_remote_control_name }}"
+          ({{ claude_code_remote_control_status.subscriptionType | default('unknown') }} plan).
+          Open claude.ai/code or the Claude mobile app, signed in as the same
+          account, and it appears in the session list.
+
+- name: remote_control | Explain the one step that cannot be automated
+  when: not (claude_code_remote_control_eligible | bool)
+  block:
+    - name: remote_control | Leave the service stopped until the login exists
+      ansible.builtin.systemd_service:
+        name: "{{ claude_code_remote_control_service }}"
+        enabled: false
+        state: stopped
+        daemon_reload: true
+
+    - name: remote_control | Say exactly what to run
+      ansible.builtin.debug:
+        msg: >-
+          Remote Control is configured on {{ inventory_hostname }} but not started:
+          {{ claude_code_remote_control_blocker }}
+          Log in once, from any terminal - the browser shows a code to paste back,
+          which is the supported flow over SSH:
+          "make claude-login VM_NAME={{ inventory_hostname }}" prints the exact
+          command. Then re-run "make configure VM_NAME={{ inventory_hostname }}"
+          and the service starts.

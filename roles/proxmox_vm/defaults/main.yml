@@ -19,19 +19,27 @@ proxmox_vm_timeout: 600
 # present -> cloned, configured and started. absent -> stopped and deleted.
 proxmox_vm_state: present
 
-# Identity. A fixed VMID is required: Proxmox clone operations are not
-# name-idempotent, so the role looks the VM up by ID before cloning.
-# Taken from the vm_id host var by default.
+# Deleting refuses to touch a VM that does not carry proxmox_vm_tags[0]. Set
+# this to true for a VM created before the project started tagging, after
+# checking in the Proxmox UI that the VMID is the one you mean.
+proxmox_vm_allow_untagged_delete: false
+
+# Identity. The name is the key: the role looks the VM up by name and only
+# clones when no VM of that name exists, so re-running is a no-op. The VMID is
+# optional - left empty, Proxmox assigns the next free one.
 proxmox_vm_name: "{{ inventory_hostname }}"
-proxmox_vm_id: "{{ vm_id | default('') }}"
+proxmox_vm_id: ""
 
 # Hardware (taken from the vm_* host vars by default)
 proxmox_vm_cores: "{{ vm_cores | default(2) }}"
 proxmox_vm_memory_mb: "{{ vm_memory_mb | default(4096) }}"
 proxmox_vm_disk: scsi0
+# Which NIC of the template carries the LAN address. Only change this if the
+# template was built with something other than a single net0.
+proxmox_vm_nic: net0
 proxmox_vm_disk_size: "{{ vm_disk_size | default('32G') }}"
 proxmox_vm_onboot: true
-proxmox_vm_tags: [claude, ansible]
+proxmox_vm_tags: [claude-on-proxmox]
 
 # Cloud-init: login user and credentials. At least one SSH key or a password
 # is required, otherwise the VM would be unreachable.
@@ -39,16 +47,28 @@ proxmox_vm_user: dev
 proxmox_vm_password: "{{ vm_password | default('') }}"
 proxmox_vm_ssh_public_keys: []
 
-# Cloud-init: networking. Static addressing by default so the controller
-# knows where to SSH; set proxmox_vm_ipconfig to override entirely
-# (e.g. "ip=dhcp").
-proxmox_vm_ip: "{{ ansible_host }}"
-proxmox_vm_prefix_length: "{{ vm_prefix_length | default(24) }}"
-proxmox_vm_gateway: "{{ vm_gateway | default('') }}"
-proxmox_vm_ipconfig: >-
-  ip={{ proxmox_vm_ip }}/{{ proxmox_vm_prefix_length }}{{ ',gw=' ~ proxmox_vm_gateway if proxmox_vm_gateway else '' }}
+# Cloud-init: networking. DHCP by default - whatever already serves your LAN
+# assigns the address, and the role reads it back from the guest agent. Set
+# proxmox_vm_ipconfig to something like "ip=192.0.2.50/24,gw=192.0.2.1" to
+# assign a fixed address instead.
+proxmox_vm_ipconfig: ip=dhcp
 proxmox_vm_nameservers: "{{ vm_nameservers | default([]) }}"
 proxmox_vm_searchdomain: "{{ vm_searchdomain | default('') }}"
+
+# The cluster resource list can lag a few seconds behind a VM that was just
+# cloned, so the config read that follows the start is retried.
+proxmox_vm_lookup_retries: 6
+proxmox_vm_lookup_delay: 5
+
+# How long to wait for the guest agent to report an address after first boot.
+# The agent starts early, but the guest still has to complete a DHCP exchange.
+proxmox_vm_agent_retries: 60
+proxmox_vm_agent_delay: 5
+
+# Start an already-configured VM that is currently stopped. Off by default so
+# re-running provision over a fleet does not boot a VM someone shut down on
+# purpose; a VM this run creates or repairs is always started.
+proxmox_vm_start_existing: false
 
 # Re-apply hardware/cloud-init settings to an existing VM. Off by default
 # because Proxmox reports every update as a change, breaking idempotence.

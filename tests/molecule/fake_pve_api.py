@@ -41,6 +41,53 @@ VMS = {
     }
 }
 TASKS = 0
+# The guest agent is not up the moment a VM starts. Fail this many polls first
+# so the role's wait loop is actually exercised. Counted per VM: with a single
+# global counter the first VM absorbed every refusal and the second one's very
+# first poll succeeded, so a fleet never exercised the loop more than once.
+AGENT_CALLS = {}
+AGENT_READY_AFTER = 2
+
+
+def normalise_tags(raw):
+    """Store tags the way Proxmox does.
+
+    proxmox_kvm sends them comma-joined, but PVE stores and returns them
+    ";"-joined, lowercased and deduplicated, in alphabetical order. Echoing
+    the request back verbatim hid that from every test.
+    """
+    parts = [t.strip().lower() for t in raw.replace(",", ";").split(";")]
+    return ";".join(sorted({t for t in parts if t}))
+
+
+def mac_for(vmid):
+    return f"BC:24:11:{vmid // 65536 % 256:02X}:{vmid // 256 % 256:02X}:{vmid % 256:02X}"
+
+
+def agent_interfaces(vm):
+    """What network-get-interfaces reports: loopback, a docker bridge the role
+    must ignore, and the VM's own NIC with its DHCP address."""
+    vmid = vm["vmid"]
+    return [
+        {
+            "name": "lo",
+            "hardware-address": "00:00:00:00:00:00",
+            "ip-addresses": [{"ip-address": "127.0.0.1", "ip-address-type": "ipv4", "prefix": 8}],
+        },
+        {
+            "name": "docker0",
+            "hardware-address": "02:42:9A:11:22:33",
+            "ip-addresses": [{"ip-address": "172.17.0.1", "ip-address-type": "ipv4", "prefix": 16}],
+        },
+        {
+            "name": "eth0",
+            "hardware-address": mac_for(vmid).lower(),
+            "ip-addresses": [
+                {"ip-address": f"192.0.2.{vmid % 200 + 50}", "ip-address-type": "ipv4", "prefix": 24},
+                {"ip-address": "fe80::1", "ip-address-type": "ipv6", "prefix": 64},
+            ],
+        },
+    ]
 
 
 def resource(vm):
@@ -51,6 +98,7 @@ def resource(vm):
         "type": "qemu",
         "status": vm["status"],
         "template": vm["template"],
+        "tags": vm["config"].get("tags", ""),
         "id": f"qemu/{vm['vmid']}",
     }
 
@@ -73,6 +121,11 @@ class Handler(BaseHTTPRequestHandler):
         params.update({k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()})
         return params
 
+    def _reply_empty(self, status, reason):
+        self.send_response(status, reason)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _reply(self, status, data=None):
         payload = json.dumps({"data": data}).encode()
         self.send_response(status)
@@ -89,7 +142,11 @@ class Handler(BaseHTTPRequestHandler):
 
         auth = self.headers.get("Authorization", "")
         if not (auth.startswith("PVEAPIToken=") and auth.endswith(f"={TOKEN_SECRET}")):
-            return self._reply(401, None)
+            # Real pveproxy sends 401 with an *empty* body, deliberately
+            # withholding the reason; the detail survives only in the HTTP
+            # reason phrase. A well-formed {"data": null} here would let the
+            # role look better-informed than it can be in production.
+            return self._reply_empty(401, "authentication failure")
 
         parts = [unquote(p) for p in path.removeprefix("/api2/json").strip("/").split("/")]
         if parts == ["version"]:
@@ -124,6 +181,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, dict(vm["config"]))
         if sub == ["config"] and method in ("PUT", "POST"):
             vm["config"].update(params)
+            if "tags" in params:
+                vm["config"]["tags"] = normalise_tags(params["tags"])
             if "name" in params:
                 vm["name"] = params["name"]
             save_state()
@@ -141,6 +200,7 @@ class Handler(BaseHTTPRequestHandler):
                     **{k: v for k, v in vm["config"].items() if k != "template"},
                     "name": params.get("name"),
                     "scsi0": vm["config"]["scsi0"].replace(f"base-{vmid}", f"vm-{newid}"),
+                    "net0": f"virtio={mac_for(newid)},bridge=vmbr0",
                 },
             }
             save_state()
@@ -151,6 +211,11 @@ class Handler(BaseHTTPRequestHandler):
             vm["config"][disk] = ",".join(o if not o.startswith("size=") else f"size={size}" for o in opts)
             save_state()
             return self._reply(200, new_task())
+        if sub == ["agent", "network-get-interfaces"] and method == "GET":
+            AGENT_CALLS[vmid] = AGENT_CALLS.get(vmid, 0) + 1
+            if vm["status"] != "running" or AGENT_CALLS[vmid] <= AGENT_READY_AFTER:
+                return self._reply(500, None)
+            return self._reply(200, {"result": agent_interfaces(vm)})
         if sub == ["status", "current"]:
             return self._reply(200, {"status": vm["status"], "vmid": vmid, "name": vm["name"]})
         if sub[:1] == ["status"] and method == "POST":

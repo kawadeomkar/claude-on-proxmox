@@ -11,17 +11,13 @@
   failed_when: false
   check_mode: false
 
-- name: install_native | Decide whether to (re)install
-  ansible.builtin.set_fact:
-    # stable/latest: only install when missing (the binary self-updates).
-    # exact version: reinstall when the installed version differs.
-    claude_code_needs_install: >-
-      {{ claude_code_current.rc != 0
-         or (claude_code_version is match('^[0-9]+\.[0-9]+\.[0-9]+')
-             and claude_code_version not in claude_code_current.stdout) }}
-
+# stable/latest: only install when missing (the binary self-updates).
+# exact version: reinstall when the installed version differs.
 - name: install_native | Install Claude Code {{ claude_code_version }}
-  when: claude_code_needs_install
+  when: >-
+    claude_code_current.rc != 0
+    or (claude_code_version is match('^[0-9]+\.[0-9]+\.[0-9]+')
+        and claude_code_version not in claude_code_current.stdout)
   block:
     - name: install_native | Create download directory
       ansible.builtin.tempfile:

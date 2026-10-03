@@ -1,0 +1,6 @@
+---
+# Everything the API needs lives in group_vars/all/fake_api.yml, so that the
+# hosts provision.yml creates per VM get it too. Only the controller's own
+# connection details belong here.
+ansible_connection: local
+ansible_python_interpreter: "{{ ansible_playbook_python }}"

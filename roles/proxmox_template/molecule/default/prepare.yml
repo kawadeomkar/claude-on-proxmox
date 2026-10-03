@@ -9,6 +9,12 @@
         dest: /usr/local/bin/qm
         mode: "0755"
 
+    - name: Install fake virt-customize
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../../tests/molecule/fake_virt_customize.sh"
+        dest: /usr/local/bin/virt-customize
+        mode: "0755"
+
     - name: Create a fake cloud image and checksum file
       ansible.builtin.shell:
         cmd: |

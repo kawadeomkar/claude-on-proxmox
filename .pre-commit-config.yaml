@@ -3,8 +3,10 @@
 # The linters run from the project virtualenv so their versions are pinned in
 # exactly one place (requirements.txt).
 repos:
+  # Pinned to commit SHAs, not tags: a tag can be moved to point at different
+  # code, and pre-commit executes whatever it resolves to, in CI included.
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
@@ -15,7 +17,7 @@ repos:
       - id: check-merge-conflict
 
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.0
+    rev: 6eaad039603a4de39fddd1cf5f727391efe9974e  # v8.30.0
     hooks:
       - id: gitleaks
 

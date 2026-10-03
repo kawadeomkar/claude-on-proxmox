@@ -3,14 +3,19 @@ argument_specs:
   main:
     short_description: Clone, configure and start (or delete) a VM on Proxmox VE
     description:
-      - Looks the VM up by VMID, clones it from a cloud-init template if missing,
-        applies hardware and cloud-init settings, resizes the root disk and starts it.
+      - Looks the VM up by name, clones it from a cloud-init template if missing,
+        applies hardware and cloud-init settings, resizes the root disk, starts it
+        and waits for the guest agent to report an address.
+      - Deleting refuses any VM that does not carry the ownership tag.
       - All API calls are delegated to the controller.
     options:
       proxmox_vm_api_host:
         type: str
-        required: true
-        description: Proxmox VE API host (IP or DNS name).
+        description:
+          - Proxmox VE API host (IP or DNS name).
+          - Not marked required. The role defaults it to "" and asserts on it
+            instead, so an unset host is reported with the name of the file to
+            put it in rather than as "missing required arguments".
       proxmox_vm_api_port:
         type: int
         default: 8006
@@ -22,9 +27,11 @@ argument_specs:
         default: ansible
       proxmox_vm_api_token_secret:
         type: str
-        required: true
         no_log: true
-        description: API token secret. Keep it in an ansible-vault file.
+        description:
+          - API token secret. Keep it in an ansible-vault file.
+          - Asserted by the role rather than marked required, for the same
+            reason as proxmox_vm_api_host.
       proxmox_vm_validate_certs:
         type: bool
         default: false
@@ -47,14 +54,40 @@ argument_specs:
         type: str
         choices: [present, absent]
         default: present
+      proxmox_vm_start_existing:
+        type: bool
+        default: false
+        description:
+          - Start an already-configured VM that is stopped. Off by default so a
+            re-run does not boot a VM that was shut down deliberately.
+      proxmox_vm_nic:
+        type: str
+        default: net0
+        description:
+          - Which NIC of the template carries the LAN address; its MAC is what
+            the guest agent's reply is matched against.
+      proxmox_vm_lookup_retries:
+        type: int
+        default: 6
+      proxmox_vm_lookup_delay:
+        type: int
+        default: 5
+      proxmox_vm_allow_untagged_delete:
+        type: bool
+        default: false
+        description:
+          - Allow state=absent to delete a VM that does not carry the ownership
+            tag. Off by default so a name collision cannot destroy a VM this
+            project never created.
       proxmox_vm_name:
         type: str
         description: VM name in Proxmox. Defaults to the inventory hostname.
       proxmox_vm_id:
         type: raw
-        required: true
+        default: ""
         description:
-          - Fixed VMID (100-999999999) for the VM. Defaults to the vm_id host var.
+          - Pin the VM to a specific VMID. Left empty, Proxmox assigns the next free one.
+          - The VM is identified by name, not by ID, so this is rarely needed.
           - Declared raw so the role can validate it and report a helpful message.
       proxmox_vm_cores:
         type: int
@@ -79,7 +112,11 @@ argument_specs:
       proxmox_vm_tags:
         type: list
         elements: str
-        default: [claude, ansible]
+        default: [claude-on-proxmox]
+        description:
+          - Tags stamped on every VM this role creates. The first one is the
+            ownership marker - discovery finds VMs by it, and deleting refuses
+            to touch a VM that does not carry it.
       proxmox_vm_user:
         type: str
         default: dev
@@ -94,20 +131,13 @@ argument_specs:
         type: list
         elements: str
         default: []
-      proxmox_vm_ip:
-        type: str
-        description: Static IPv4 address. Defaults to ansible_host.
-      proxmox_vm_prefix_length:
-        type: int
-        default: 24
-        description: Defaults to the vm_prefix_length host var, else 24.
-      proxmox_vm_gateway:
-        type: str
-        default: ""
-        description: Defaults to the vm_gateway host var.
       proxmox_vm_ipconfig:
         type: str
-        description: Full Proxmox ipconfig0 string. Generated from ip/prefix/gateway by default.
+        default: ip=dhcp
+        description:
+          - Proxmox ipconfig0 string. DHCP by default, with the address read back
+            from the guest agent.
+          - Set to something like "ip=192.0.2.50/24,gw=192.0.2.1" to assign a fixed address.
       proxmox_vm_nameservers:
         type: list
         elements: str
@@ -117,6 +147,14 @@ argument_specs:
         type: str
         default: ""
         description: Defaults to the vm_searchdomain host var.
+      proxmox_vm_agent_retries:
+        type: int
+        default: 60
+        description: How many times to poll the guest agent for an address.
+      proxmox_vm_agent_delay:
+        type: int
+        default: 5
+        description: Seconds between guest agent polls.
       proxmox_vm_force_update:
         type: bool
         default: false

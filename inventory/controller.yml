@@ -1,0 +1,8 @@
+---
+# The controller (your machine) runs the Proxmox API calls. Declared explicitly
+# so it picks up group_vars/all like any other host.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: "{{ ansible_playbook_python }}"

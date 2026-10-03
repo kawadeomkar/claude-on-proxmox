@@ -1,6 +1,11 @@
 ---
-# Configure an already-reachable VM: OS baseline, developer tooling,
-# Claude Code and a checkout of every GitHub project.
+# Configure the VMs: OS baseline, developer tooling, Claude Code and a checkout
+# of every GitHub project. Finds them by tag, so it works on its own and not
+# only straight after provisioning.
+- name: Discover VMs on Proxmox
+  ansible.builtin.import_playbook: discover.yml
+  when: claude_vm_discovery | default(true) | bool
+
 - name: Configure Claude development VMs
   hosts: claude_vms
   become: true

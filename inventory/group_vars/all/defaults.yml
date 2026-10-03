@@ -25,14 +25,48 @@ proxmox_template_vmid: 9000
 proxmox_template_name: ubuntu-24.04-cloudinit
 
 # ------------------------------------------------------------------- VM -----
+# Name(s) of the VM(s) to create. Set on the command line, comma-separated:
+#   make provision VM_NAME=alpha,beta
+# The name is what appears in the Proxmox UI. VMIDs are assigned by Proxmox and
+# addresses by your DHCP server, so neither has to be declared here.
+claude_vm_default_name: claude-on-proxmox-default
+# Applied to every VM this project creates, and how they are found again.
+claude_vm_tag: claude-on-proxmox
+# Matches claude_vm_tag as a whole tag in Proxmox's ";"-joined tag string (or
+# the ","-joined form proxmox_kvm sends), never as a substring of a longer one.
+claude_vm_tag_pattern: "(^|[;,]){{ claude_vm_tag | regex_escape }}([;,]|$)"
+# The VMs this project owns, filtered out of a proxmox_vm_info listing. Defined
+# here, not in each playbook, so discover.yml and destroy.yml cannot drift on
+# what "ours" means. Evaluated lazily: any play that uses it must have
+# registered claude_vm_all first, and is meant to fail loudly if it has not -
+# an empty fleet and an unasked API are not the same thing.
+claude_vm_tagged: >-
+  {{ claude_vm_all.proxmox_vms
+     | selectattr('tags', 'defined')
+     | selectattr('tags', 'regex', claude_vm_tag_pattern)
+     | list }}
+claude_vm_names: >-
+  {{ (vm_name | default(claude_vm_default_name, true)) | split(',') | map('trim') | select | list }}
+
+# configure.yml discovers VMs from Proxmox before configuring them. Set false
+# to configure hosts that are already in a static inventory (Vagrant does this)
+# and skip the Proxmox API entirely.
+claude_vm_discovery: true
+
 # Login user created by cloud-init and used for everything afterwards.
 vm_user: dev
 # configure.yml waits for cloud-init before configuring. Disable for hosts
 # that were not built from a cloud image (Vagrant, containers).
 configure_wait_for_cloud_init: true
 # Public keys authorised for vm_user. Defaults to your local default key.
-vm_ssh_public_keys:
-  - "{{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'HOME') + '/.ssh/id_ed25519.pub') }}"
+# Read with errors='ignore' so that someone whose key is an RSA or ECDSA one
+# gets the role's "set vm_ssh_public_keys" message rather than a bare
+# "could not locate file" from the lookup, which Jinja evaluates first.
+vm_ssh_public_keys: >-
+  {{ [lookup('ansible.builtin.file',
+             lookup('ansible.builtin.env', 'HOME') ~ '/.ssh/id_ed25519.pub',
+             errors='ignore')]
+     | select('string') | select | list }}
 
 # --------------------------------------------------------------- GitHub -----
 github_username: "{{ vault_github_username | default('') }}"
@@ -42,8 +76,25 @@ github_token: "{{ vault_github_token | default('') }}"
 github_projects: []
 
 # ------------------------------------------------------------ Anthropic -----
-# Optional. If empty, run `claude` on the VM once and log in interactively.
+# Optional API key, for billing Claude Code to Anthropic API credits. If empty,
+# run `claude` on the VM once and log in interactively with your Claude account.
+#
+# Note this is not the credential Remote Control uses - see below.
 anthropic_api_key: "{{ vault_anthropic_api_key | default('') }}"
+
+# Run a Remote Control server on each VM, so its Claude Code session shows up
+# at claude.ai/code and in the Claude mobile app while running on the VM.
+#
+# This needs an interactive claude.ai login on the VM (Pro, Max, Team or
+# Enterprise). Anthropic does not support API keys for Remote Control, and the
+# long-lived token from `claude setup-token` cannot establish one either, so
+# there is one manual step per VM: `make claude-login VM_NAME=<name>`. With
+# this true, `make configure` sets everything else up and tells you whether the
+# session is live or what is missing.
+#
+# Leave anthropic_api_key empty when using this: an API key overrides the
+# subscription login that Remote Control requires.
+claude_remote_control: false
 
 # --------------------------------------------------- role variable wiring ---
 # Roles are self-contained and prefix their variables; wire them to the
@@ -59,6 +110,7 @@ proxmox_vm_storage: "{{ proxmox_storage }}"
 proxmox_vm_template_name: "{{ proxmox_template_name }}"
 proxmox_vm_user: "{{ vm_user }}"
 proxmox_vm_ssh_public_keys: "{{ vm_ssh_public_keys }}"
+proxmox_vm_tags: ["{{ claude_vm_tag }}"]
 
 proxmox_template_bridge: "{{ proxmox_bridge }}"
 proxmox_template_storage: "{{ proxmox_storage }}"
@@ -70,6 +122,7 @@ dev_tools_user: "{{ vm_user }}"
 
 claude_code_user: "{{ vm_user }}"
 claude_code_anthropic_api_key: "{{ anthropic_api_key }}"
+claude_code_remote_control: "{{ claude_remote_control }}"
 
 github_projects_user: "{{ vm_user }}"
 github_projects_username: "{{ github_username }}"

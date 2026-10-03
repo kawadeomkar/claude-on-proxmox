@@ -4,7 +4,7 @@ Ansible project that turns a Proxmox VE host into a ready-to-use
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) development VM:
 
 1. **Template** – builds a cloud-init enabled Ubuntu 24.04 template on the Proxmox host (one time).
-2. **Provision** – clones the template into a VM with a static IP, your SSH key and the sizing you chose.
+2. **Provision** – clones the template into a VM named by you, with your SSH key, and reports the address DHCP gave it.
 3. **Configure** – installs a baseline of packages, developer tooling (Node.js, Docker, GitHub CLI, uv),
    Claude Code itself, and clones **every repository of your GitHub account** into `~/projects`.
 
@@ -30,7 +30,7 @@ Edit the three git-ignored files `make init` created:
 
 | File | Contents |
 |------|----------|
-| `inventory/hosts.yml` | Proxmox host IP and one entry per VM: static IP, VMID, cores, memory, disk |
+| `inventory/hosts.yml` | The address of your Proxmox host. VMs are **not** listed here |
 | `inventory/group_vars/all/local.yml` | Proxmox node/storage names, package choices, which repos to skip |
 | `inventory/group_vars/all/vault.yml` | Proxmox API token, GitHub username/token, optional Anthropic API key |
 
@@ -41,14 +41,58 @@ is still plaintext.
 (umask 077; openssl rand -base64 32 > .vault_pass)
 make vault-encrypt
 
-make template        # once per Proxmox host  (playbooks/template.yml, over SSH)
-make provision       # create + start the VM  (playbooks/provision.yml, via API)
-make configure       # set the VM up          (playbooks/configure.yml, over SSH)
-# or: make site     -> provision + configure
+make template                      # once per Proxmox host (over SSH)
+make provision VM_NAME=alpha       # create + start a VM     (via the API)
+make configure                     # set it up               (over SSH)
+# or: make site VM_NAME=alpha     -> provision + configure
 ```
 
-Then `ssh dev@<vm-ip>` and run `claude`. If you did not set `vault_anthropic_api_key`, log in
+`make provision` prints the address each VM was given:
+
+```
+alpha is up at 192.0.2.51
+```
+
+Then `ssh dev@192.0.2.51` and run `claude`. If you did not set `vault_anthropic_api_key`, log in
 interactively the first time.
+
+### Naming and multiple VMs
+
+`VM_NAME` is the name the VM gets in Proxmox, and it is what you see in the Proxmox UI. Omit it and
+you get `claude-on-proxmox-default`. Pass several, comma-separated, to build a fleet in one run:
+
+```bash
+make site VM_NAME=alpha,beta,gamma
+make configure VM_NAME=alpha       # later, just one of them
+make destroy VM_NAME=beta
+```
+
+You never assign a VMID or an IP address. Proxmox picks the next free VMID; the DHCP server that
+already serves your network assigns the address, exactly as it would for a laptop; and the QEMU
+guest agent - baked into the template by `make template` - reports that address back so Ansible can
+reach the VM and print it for you. The only address you ever type is your Proxmox host's.
+
+### Upgrading an existing install
+
+Provisioning now needs `qemu-guest-agent` **inside** the image: it is what
+reports the VM's DHCP address back. `make template` bakes it in, but a template
+built before this change does not have it, and re-running `make template` will
+**not** fix that - the role skips the whole build when the VMID already exists.
+A VM cloned from such a template never reports an address, so `make provision`
+waits five minutes and then fails.
+
+Rebuild the template once, on the Proxmox host:
+
+```bash
+qm destroy 9000        # the template's VMID (proxmox_template_vmid)
+```
+
+```bash
+make template          # rebuilds it, this time with the guest agent
+```
+
+Existing VMs keep working; they are configured over SSH and are not re-cloned.
+Your API token also needs `VM.Monitor` added - see below.
 
 ### Creating the Proxmox API token
 
@@ -56,8 +100,8 @@ Use a dedicated user with only the rights the `proxmox_vm` role needs, rather th
 On the PVE shell:
 
 ```bash
-pveum role add AnsibleVM -privs "VM.Allocate VM.Clone VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit \
-  VM.Config.Disk VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt VM.Audit \
+pveum role add AnsibleVM -privs "VM.Allocate VM.Clone VM.Config.CPU VM.Config.Cloudinit \
+  VM.Config.Disk VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt VM.Audit VM.Monitor \
   Datastore.AllocateSpace Datastore.Audit SDN.Use"
 pveum user add ansible@pve
 pveum aclmod /vms -user ansible@pve -role AnsibleVM
@@ -65,6 +109,15 @@ pveum aclmod /storage/local-lvm -user ansible@pve -role AnsibleVM   # your VM st
 pveum aclmod /sdn/zones/localnetwork/vmbr0 -user ansible@pve -role AnsibleVM   # your bridge
 pveum user token add ansible@pve ansible --privsep 0
 ```
+
+`VM.Monitor` is what allows the token to ask the guest agent for the VM's address; without it
+provisioning creates the VM but cannot report where it is.
+
+One datacenter setting can also block provisioning: if **Datacenter → Options → Tag Style →
+User Tag Access** is set to `list` or `existing` rather than the default `free`, a non-root token
+cannot apply the `claude-on-proxmox` tag. Since that tag is how this project recognises its own
+VMs, provisioning fails or the VMs are created untagged and `make configure` then finds nothing.
+Either leave the setting at `free`, or add `claude-on-proxmox` to the allowed list.
 
 Put the printed secret in `vault.yml` as `vault_proxmox_api_token_secret`. The defaults already use
 `ansible@pve` / token ID `ansible`; change `proxmox_api_user` and `proxmox_api_token_id` in `local.yml`
@@ -88,9 +141,9 @@ and set `proxmox_validate_certs: true` in `local.yml`.
 |------|---------|---------------|
 | `common` | apt upgrade, baseline packages, login user with passwordless sudo and SSH keys, sshd hardening (key-only login), timezone, qemu-guest-agent, `~/.local/bin` on PATH | `common_packages`, `common_extra_packages`, `common_timezone`, `common_harden_ssh` |
 | `dev_tools` | Node.js (NodeSource), Docker Engine, GitHub CLI, uv/uvx (release pinned by version and SHA256), pipx, build tools. Apt signing keys are vendored in `roles/dev_tools/files` | `dev_tools_install_*`, `dev_tools_node_major`, `dev_tools_uv_version`, `dev_tools_npm_global_packages` |
-| `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md` | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions` |
+| `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md`, and optionally a Remote Control server so the session is reachable from claude.ai and the mobile app | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions`, `claude_code_remote_control` |
 | `github_projects` | Lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters) and clones them | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_projects_clone_protocol` |
-| `proxmox_vm` | Looks up the VM by VMID, clones the template, applies cloud-init (user, keys, static IP, DNS), resizes the disk, starts it. `proxmox_vm_state: absent` deletes it | `vm_id`, `vm_cores`, `vm_memory_mb`, `vm_disk_size`, `vm_gateway`, `vm_nameservers` (per host in `hosts.yml`) |
+| `proxmox_vm` | Looks the VM up **by name**, clones the template when it does not exist, applies cloud-init (user, keys, DHCP by default, DNS), resizes the disk, starts it, then waits for the guest agent to report an address. `proxmox_vm_state: absent` deletes it, refusing any VM that is not tagged `claude-on-proxmox` | `vm_cores`, `vm_memory_mb`, `vm_disk_size`, `vm_nameservers` (fleet-wide, in `local.yml`); `proxmox_vm_ipconfig` for a static address |
 | `proxmox_template` | Downloads the Ubuntu cloud image (SHA256 verified), creates the VM with `qm`, imports the disk, adds the cloud-init drive, converts to template | `proxmox_template_vmid`, `proxmox_template_image_url`, `proxmox_template_storage` |
 
 Every role documents its full interface in `roles/<name>/meta/argument_specs.yml`, and Ansible validates
@@ -103,7 +156,7 @@ roles/*/defaults/main.yml                 role defaults, role-prefixed names
 inventory/group_vars/all/defaults.yml     project defaults + wiring of vm_user, github_username, … into role vars   (committed)
 inventory/group_vars/all/local.yml        your overrides                                                            (git-ignored)
 inventory/group_vars/all/vault.yml        secrets as vault_* variables                                              (git-ignored, encrypted)
-inventory/hosts.yml                       hosts and per-VM sizing                                                   (git-ignored)
+inventory/hosts.yml                       the Proxmox host's address, nothing else                                  (git-ignored)
 ```
 
 Files in `group_vars/all/` load alphabetically, so `defaults` < `local` < `vault`.
@@ -145,6 +198,37 @@ This is a development box, and the defaults reflect that:
   release manifest; there is no independently signed artifact to pin.
 - sshd is restricted to key-based logins (`common_harden_ssh`), even if `vm_password` is set.
 
+### Reaching a VM from your phone
+
+`claude_remote_control: true` runs a [Remote Control](https://code.claude.com/docs/en/remote-control)
+server on each VM, so its Claude Code session appears at claude.ai/code and in the Claude mobile app
+while the session itself keeps running on the VM, with the VM's filesystem and tools.
+
+There is one manual step per VM, and it cannot be automated away. Anthropic supports exactly one
+credential for Remote Control: an interactive claude.ai login on a Pro, Max, Team or Enterprise
+plan. API keys are **not** supported, and neither is the long-lived token from `claude setup-token`,
+which can make model requests but explicitly cannot establish a Remote Control session.
+
+```bash
+# in inventory/group_vars/all/local.yml
+claude_remote_control: true
+
+make configure VM_NAME=alpha     # installs and prepares everything, then tells you what is missing
+make claude-login VM_NAME=alpha  # prints the one command to run
+#   ssh -t dev@<address> "claude auth login"
+#   approve in the browser, paste the code back
+make configure VM_NAME=alpha     # now the service starts, and the session shows up on your phone
+```
+
+Leave `vault_anthropic_api_key` empty when using this. An API key takes precedence over the
+subscription login, so with both set the session would authenticate as the API account and Remote
+Control would refuse to start. The role fails with that message rather than letting you find out
+from an empty session list.
+
+The server runs as the `claude-remote-control` systemd unit, as the VM user, from `~/projects`. It
+restarts on failure and gives up after five attempts in five minutes, so an expired login surfaces
+in `systemctl status` instead of spinning forever.
+
 ### Tearing down
 
 ```bash
@@ -155,10 +239,11 @@ make destroy          # prompts for confirmation; stops and deletes the VM and i
 
 ```bash
 make lint                 # yamllint + ansible-lint (production profile) + ruff
-make syntax               # --syntax-check of every playbook against the example inventory
+make syntax               # --syntax-check of every playbook against your inventory/
 make unit                 # pytest for the github_repos module (no network)
 make molecule             # Molecule (Docker) test of every role, incl. idempotence
 make molecule-integration # playbooks/configure.yml end to end in a container
+make molecule-provision   # provision.yml + discover.yml against a fake Proxmox API
 make test                 # all of the above
 make check                # dry run of configure.yml against your real VM (--check --diff)
 make vagrant-up           # configure.yml on a real VirtualBox VM
@@ -173,9 +258,13 @@ so the tests are deterministic:
 
 - `proxmox_vm` runs against a stateful fake Proxmox API (`tests/molecule/fake_pve_api.py`, TLS, token
   checked) and asserts the exact clone / config / resize / start / shutdown / delete requests, including
-  a destroy pass via Molecule's side-effect stage.
-- `proxmox_template` runs against a stateful fake `qm` (`tests/molecule/fake_qm.sh`) and a locally served
-  "cloud image" with a real SHA256SUMS file.
+  a destroy pass via Molecule's side-effect stage. The fake refuses the first guest-agent polls so the
+  wait loop is exercised, and reports a docker0 interface the role has to ignore.
+- The `provision` scenario runs `provision.yml` exactly as `make provision VM_NAME=alpha,beta` does,
+  then rediscovers both VMs from their tag in a separate stage - proving a later `make configure` can
+  find them without anything stored locally.
+- `proxmox_template` runs against a stateful fake `qm` (`tests/molecule/fake_qm.sh`), a fake
+  `virt-customize` and a locally served "cloud image" with a real SHA256SUMS file.
 - `github_projects` and the integration scenario talk to a fake GitHub API (`tests/molecule/fake_github_api.py`)
   that serves paginated responses and points clone URLs at local bare repositories.
 - `claude_code`, `dev_tools`, and the apt steps of every scenario download real packages, so the tests
@@ -217,13 +306,15 @@ generated from the commits since the previous tag.
 ```
 ansible.cfg                 project-wide Ansible settings (accept-new host keys, fact cache, yaml output)
 site.yml                    provision + configure
-playbooks/                  template.yml, provision.yml, configure.yml, destroy.yml
+playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, destroy.yml
+filter_plugins/             guest_ipv4 / net_mac, for reading guest agent output
 inventory/                  hosts.yml.example, group_vars/all/{defaults.yml,local.yml.example,vault.yml.example}
 roles/                      one role per concern, each with defaults, meta/argument_specs, molecule/
 roles/github_projects/library/github_repos.py   custom module
 tests/unit/                 pytest for custom modules
 tests/molecule/             shared fakes for Molecule scenarios
 molecule/configure/         integration scenario for the full configure playbook
+molecule/provision/         end-to-end scenario for provisioning + discovery
                             (group_vars/all/defaults.yml is a symlink to the real one; keep it a git checkout)
 .config/molecule/           Molecule settings shared by every scenario
 .github/                    CI and release workflows, the shared setup action, Dependabot

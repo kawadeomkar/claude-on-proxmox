@@ -8,6 +8,18 @@ PYTHON     ?= python3
 VAULT_PASS := .vault_pass
 VAULT_ARGS := $(if $(wildcard $(VAULT_PASS)),--vault-password-file $(VAULT_PASS),)
 ANSIBLE_ARGS ?=
+# Name(s) of the VM(s) to act on, comma-separated. Defaults to
+# claude-on-proxmox-default (set in inventory/group_vars/all/defaults.yml).
+# This selects for every target, so `make configure VM_NAME=alpha` narrows the
+# run to alpha. There is deliberately no LIMIT: --limit is applied before the
+# plays run, and these VMs only enter the inventory once discovery has found
+# them, so it could never match.
+VM_NAME    ?=
+# Passed as JSON, not key=value. Ansible's key=value parser splits extra-vars
+# on whitespace, so VM_NAME="alpha beta" silently became just alpha and only
+# half the fleet was created. As JSON the value arrives whole and reaches the
+# name check in provision.yml, which explains the problem.
+VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
 ROLES      := common dev_tools claude_code github_projects proxmox_template proxmox_vm
 MOLECULE_ROLES ?= $(ROLES)
 
@@ -38,7 +50,7 @@ init: deps ## One-time local setup: venv, collections, local config from example
 	@$(BIN)/pre-commit install >/dev/null
 	@echo ""
 	@echo "Now edit these (they are git-ignored):"
-	@echo "  inventory/hosts.yml                  - Proxmox host + VM definitions"
+	@echo "  inventory/hosts.yml                  - the address of your Proxmox host"
 	@echo "  inventory/group_vars/all/local.yml   - GitHub username, Proxmox node/storage, package choices"
 	@echo "  inventory/group_vars/all/vault.yml   - secrets; then: make vault-encrypt"
 
@@ -62,25 +74,32 @@ template: vault-check ## Build the cloud-init VM template on the Proxmox host (o
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/template.yml
 
 .PHONY: provision
-provision: vault-check ## Create and start the VM(s) on Proxmox
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
+provision: vault-check ## Create and start VM(s): make provision VM_NAME=alpha,beta
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
 
 .PHONY: configure
 configure: vault-check ## Configure the VM(s): packages, tools, Claude Code, GitHub projects
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: site
 site: vault-check ## Provision + configure (full run)
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) site.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) site.yml
 
 .PHONY: destroy
 destroy: vault-check ## Stop and delete the VM(s) on Proxmox
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 	@rm -rf .cache/facts
+
+# Remote Control needs a claude.ai login on the VM, and Anthropic supports no
+# non-interactive way to create one, so this prints the command rather than
+# pretending to do it.
+.PHONY: claude-login
+claude-login: vault-check ## Show how to sign Claude Code in on the VM(s), for Remote Control
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
 
 .PHONY: check
 check: vault-check ## Dry-run configure against real hosts (--check --diff)
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
 
 # ------------------------------------------------------------ quality -----
 .PHONY: lint
@@ -91,12 +110,11 @@ lint: ## Run yamllint + ansible-lint + ruff
 	$(BIN)/ruff format --check .
 
 .PHONY: syntax
-syntax: ## ansible-playbook --syntax-check on every playbook (uses the example inventory)
-	@tmp=$$(mktemp -d) && cp inventory/hosts.yml.example $$tmp/hosts.yml && \
-	for pb in site.yml playbooks/*.yml; do \
+syntax: ## ansible-playbook --syntax-check on every playbook
+	@for pb in site.yml playbooks/*.yml; do \
 	  echo "== $$pb"; \
-	  $(BIN)/ansible-playbook -i $$tmp/hosts.yml --syntax-check $$pb || exit 1; \
-	done; rm -rf $$tmp
+	  $(BIN)/ansible-playbook --syntax-check $$pb || exit 1; \
+	done
 
 .PHONY: unit
 unit: ## Run Python unit tests for custom modules
@@ -112,12 +130,26 @@ molecule: ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_
 	  (cd roles/$$role && PATH="$(ABSBIN):$$PATH" $(ABSBIN)/molecule test) || exit 1; \
 	done
 
+# One entry point for the playbook-level scenarios so CI runs exactly what a
+# developer runs. CI used to inline the molecule call, which meant these
+# targets could break without CI noticing.
+.PHONY: molecule-scenario
+molecule-scenario: ## Run one playbook scenario: make molecule-scenario SCENARIO=provision
+	@test -n "$(SCENARIO)" || { echo "error: set SCENARIO, e.g. make molecule-scenario SCENARIO=provision"; exit 1; }
+	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s $(SCENARIO)
+
 .PHONY: molecule-integration
 molecule-integration: ## Run the full configure playbook against a Docker container
-	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s configure
+	$(MAKE) molecule-scenario SCENARIO=configure
 
+.PHONY: molecule-provision
+molecule-provision: ## Run provision.yml + discover.yml against a fake Proxmox API
+	$(MAKE) molecule-scenario SCENARIO=provision
+
+# Includes pre-commit so that `make test` really is a superset of the CI gate;
+# it was possible to pass everything locally and still be failed by CI.
 .PHONY: test
-test: lint syntax unit molecule molecule-integration ## Run everything
+test: lint syntax unit pre-commit molecule molecule-integration molecule-provision ## Run everything
 
 .PHONY: vagrant-up
 vagrant-up: ## End-to-end test of configure.yml on a real VirtualBox VM

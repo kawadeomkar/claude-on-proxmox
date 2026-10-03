@@ -1,0 +1,4 @@
+---
+# There is no Proxmox API in this scenario: the container is already in the
+# claude_vms group, so skip the discovery play configure.yml starts with.
+claude_vm_discovery: false

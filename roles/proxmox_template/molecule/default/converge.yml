@@ -6,6 +6,9 @@
     - role: proxmox_template
       vars:
         proxmox_template_qm: /usr/local/bin/qm
+        proxmox_template_virt_customize: /usr/local/bin/virt-customize
+        # libguestfs is faked here rather than installed into the container.
+        proxmox_template_manage_libguestfs: false
         proxmox_template_image_url: http://127.0.0.1:8080/noble-server-cloudimg-amd64.img
         proxmox_template_image_checksum: sha256:http://127.0.0.1:8080/SHA256SUMS
         proxmox_template_storage: local-zfs

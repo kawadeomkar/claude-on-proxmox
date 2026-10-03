@@ -34,5 +34,11 @@ that only restate them are not treated as vulnerabilities:
 - The VM's user gets passwordless sudo and docker group membership by default; both are toggles.
 - SSH host keys are accepted on first contact (`StrictHostKeyChecking=accept-new`) so a freshly cloned VM
   can be reached without manual steps. Changed keys are still refused.
+- Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
+  for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
+  once - and `make configure` then sends it your SSH keys, GitHub token and Anthropic API key. Keeping
+  the key instead would only trade this for a failure every time a lease is recycled, so the removal is
+  deliberate. On a network where you do not trust every device, assign VMs a fixed address with
+  `proxmox_vm_ipconfig` rather than relying on DHCP.
 
 If you can show one of these is exploitable beyond the documented trade-off, please report it.

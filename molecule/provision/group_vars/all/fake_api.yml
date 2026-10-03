@@ -1,0 +1,20 @@
+---
+# Point the committed wiring at the fake Proxmox API instead of a real host.
+#
+# These live in group_vars/all rather than host_vars/localhost because
+# provision.yml runs the role against one host per VM, not against localhost,
+# exactly as it does in production where this configuration comes from
+# inventory/group_vars/all. Loads after defaults.yml, so it wins.
+proxmox_api_host: 127.0.0.1
+proxmox_api_port: 18007
+vault_proxmox_api_token_secret: molecule-test-secret
+
+# What `make provision VM_NAME=alpha,beta` passes.
+vm_name: alpha,beta
+
+vm_user: dev
+vm_ssh_public_keys:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMoleculeTestKeyDoNotUse0000000000000000000 molecule@test
+
+# The fake refuses the first polls on purpose; keep the retries quick.
+proxmox_vm_agent_delay: 1

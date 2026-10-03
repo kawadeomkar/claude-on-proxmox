@@ -27,3 +27,38 @@ argument_specs:
       claude_code_global_instructions:
         type: str
         default: ""
+      claude_code_remote_control:
+        type: bool
+        default: false
+        description:
+          - Run a Claude Code Remote Control server on the VM, so its session
+            appears at claude.ai/code and in the Claude mobile app while
+            executing here.
+          - Requires an interactive claude.ai login on the VM (Pro, Max, Team or
+            Enterprise). API keys and `claude setup-token` tokens cannot
+            establish a Remote Control session, so this cannot be enabled by
+            configuration alone.
+          - Mutually exclusive with claude_code_anthropic_api_key, which would
+            override the subscription login.
+      claude_code_remote_control_name:
+        type: str
+        description: Session title at claude.ai/code. Defaults to the VM name.
+      claude_code_remote_control_dir:
+        type: str
+        description:
+          - Directory the sessions open in. Empty resolves to ~/projects.
+          - Not the home directory - Claude Code never saves workspace trust for one.
+      claude_code_remote_control_permission_mode:
+        type: str
+        default: default
+        choices: [default, acceptEdits, plan, bypassPermissions]
+        description: Starting permission mode for sessions the server creates.
+      claude_code_remote_control_spawn:
+        type: str
+        default: same-dir
+        choices: [same-dir, worktree, session]
+        description: How the server creates sessions.
+      claude_code_remote_control_service:
+        type: str
+        default: claude-remote-control
+        description: Name of the systemd unit installed for the server.

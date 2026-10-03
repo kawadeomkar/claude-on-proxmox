@@ -9,7 +9,11 @@ github_username: molecule
 github_token: ""
 # Empty = clone everything (the fork "beta" is still filtered out).
 github_projects: []
-anthropic_api_key: sk-ant-molecule-test-key
+# No API key here: Remote Control below is mutually exclusive with one, and
+# this scenario covers the Remote Control path. The api-key path is covered
+# by the claude_code role's own scenario.
+anthropic_api_key: ""
+claude_remote_control: true
 github_projects_api_url: http://127.0.0.1:8000
 dev_tools_install_docker: false
 claude_code_settings:

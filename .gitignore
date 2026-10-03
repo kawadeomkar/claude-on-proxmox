@@ -1,11 +1,26 @@
 # --- Local, environment-specific configuration (never commit) ---
-# Real inventories and any local/vault variable file, wherever they are placed.
+# Real inventories and any local/vault/secret variable file, wherever they are
+# placed. group_vars/ and host_vars/ are matched at any depth and outside
+# inventory/ too, because Ansible loads them next to a playbook as well.
 inventory/hosts.y*ml
-inventory/*.ini
-inventory/group_vars/**/local*.yml
-inventory/group_vars/**/vault*.yml
-inventory/host_vars/
+inventory/proxmox.y*ml
+inventory/**/*.ini
+inventory/**/group_vars/**/local*.y*ml
+inventory/**/group_vars/**/vault*.y*ml
+inventory/**/group_vars/**/secret*.y*ml
+inventory/**/group_vars/**/local*.json
+inventory/**/group_vars/**/vault*.json
+inventory/**/group_vars/**/secret*.json
+inventory/**/host_vars/
+# Ansible also loads group_vars/ and host_vars/ next to a playbook, and
+# site.yml sits at the repo root, so cover the root copies too. Scoped to the
+# root on purpose: molecule/*/host_vars/ holds tracked test fixtures.
+/group_vars/**/local*.y*ml
+/group_vars/**/vault*.y*ml
+/group_vars/**/secret*.y*ml
 /host_vars/
+/vault.y*ml
+/local.y*ml
 .vault_pass*
 .env*
 

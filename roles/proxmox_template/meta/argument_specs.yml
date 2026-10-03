@@ -44,3 +44,21 @@ argument_specs:
       proxmox_template_qm:
         type: path
         default: /usr/sbin/qm
+      proxmox_template_install_guest_agent:
+        description:
+          - Bake qemu-guest-agent into the image with virt-customize.
+          - Required for Proxmox to report a DHCP-assigned address.
+        type: bool
+        default: true
+      proxmox_template_customize_packages:
+        description: Packages installed into the image by virt-customize.
+        type: list
+        elements: str
+        default: [qemu-guest-agent]
+      proxmox_template_manage_libguestfs:
+        description: Install libguestfs-tools on the node. Disable where it is already present or faked.
+        type: bool
+        default: true
+      proxmox_template_virt_customize:
+        type: path
+        default: /usr/bin/virt-customize

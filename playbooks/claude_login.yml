@@ -1,0 +1,48 @@
+---
+# Print the one command Remote Control cannot automate.
+#
+#   make claude-login VM_NAME=alpha
+#
+# Remote Control needs a claude.ai subscription login on the VM itself, and
+# Anthropic supports no non-interactive way to create one: API keys are not
+# accepted, and the long-lived token from `claude setup-token` can make model
+# requests but explicitly cannot establish a Remote Control session. So the
+# login is a browser flow, done once per VM. Over SSH the browser cannot reach
+# Claude Code's local callback server, so it shows a code to paste back into
+# the terminal - which is the supported path, not a workaround.
+- name: Discover VMs on Proxmox
+  ansible.builtin.import_playbook: discover.yml
+  when: claude_vm_discovery | default(true) | bool
+
+- name: Show how to log Claude Code in on each VM
+  hosts: claude_vms
+  gather_facts: false
+
+  tasks:
+    - name: Check whether this VM is already logged in
+      ansible.builtin.command:
+        argv: [bash, -lc, "claude auth status"]
+      register: claude_login_status
+      failed_when: false
+      changed_when: false
+      check_mode: false
+
+    - name: Report the login state and what to do about it
+      vars:
+        claude_login_json: >-
+          {{ (claude_login_status.stdout | from_json)
+             if claude_login_status.rc == 0 and (claude_login_status.stdout | trim | length > 0)
+             else {} }}
+        claude_login_target: "{{ vm_user }}@{{ ansible_host | default(inventory_hostname) }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ 'already signed in as ' ~ (claude_login_json.email | default('?'))
+             ~ ' (' ~ (claude_login_json.authMethod | default('?')) ~ ', '
+             ~ (claude_login_json.subscriptionType | default('?')) ~ ' plan).'
+             ~ ' Run: make configure VM_NAME=' ~ inventory_hostname
+             if (claude_login_json.loggedIn | default(false)) | bool
+             else 'not signed in. Run this, approve in the browser, and paste back the'
+                  ~ ' code it shows: ssh -t ' ~ claude_login_target
+                  ~ ' "claude auth login". Then: make configure VM_NAME='
+                  ~ inventory_hostname }}
