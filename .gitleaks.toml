@@ -1,11 +1,13 @@
-# Configuration for the CI secret scan.
+# Configuration for the CI secret scans.
 #
 # CI scans the working tree rather than the git index, because the index in a
 # fresh checkout is empty and the pre-commit hook's `--staged` scan therefore
 # finds nothing. Scanning the tree means gitleaks also sees directories git
 # ignores - a developer's .vagrant private key, the virtualenv created by
 # earlier CI steps - so those are excluded here. Everything excluded below is
-# gitignored and cannot reach the repository.
+# gitignored and cannot reach the repository. CI also scans the commits a push
+# or pull request brings in with this file; there the exclusions would only
+# matter if one of these paths were force-added.
 
 [extend]
 useDefault = true
