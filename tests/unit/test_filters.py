@@ -17,6 +17,8 @@ SPEC.loader.exec_module(proxmox_filters)
 
 net_mac = proxmox_filters.net_mac
 guest_ipv4 = proxmox_filters.guest_ipv4
+guest_address = proxmox_filters.guest_address
+guest_addresses = proxmox_filters.guest_addresses
 proxmox_access_denied = proxmox_filters.proxmox_access_denied
 
 
@@ -141,6 +143,55 @@ class TestNetMacDefault:
         assert net_mac("virtio=BC:24:11:0E:72:04,bridge=vmbr0", "") == "bc:24:11:0e:72:04"
 
 
+def vm_info(config=None, network=None):
+    """What proxmox_vm_info registers for one VM read with config and network."""
+    vm = {"vmid": 9001, "name": "alpha"}
+    if config is not None:
+        vm["config"] = config
+    if network is not None:
+        vm["network"] = network
+    return {"changed": False, "proxmox_vms": [vm]}
+
+
+NET0 = "virtio=BC:24:11:0E:72:04,bridge=vmbr0"
+
+
+class TestGuestAddress:
+    def test_returns_the_address_of_the_configured_nic(self):
+        assert guest_address(vm_info({"net0": NET0}, [LO, DOCKER0, ETH0])) == "192.0.2.51"
+
+    def test_reads_the_mac_from_the_nic_it_is_given(self):
+        # A template whose LAN NIC is net1: reading net0 regardless is the bug
+        # that left such a VM out of make configure and blank in make list.
+        info = vm_info({"net0": "virtio=02:00:00:00:00:01,bridge=vmbr1", "net1": NET0}, [LO, DOCKER0, ETH0])
+        assert guest_address(info, "net1") == "192.0.2.51"
+        assert guest_address(info, "net0") == ""
+
+    def test_defaults_to_net0(self):
+        assert guest_address(vm_info({"net0": NET0}, [ETH0])) == "192.0.2.51"
+
+    def test_empty_when_the_vm_has_no_such_nic(self):
+        # Never a guessed address: without the MAC, docker0 would come first.
+        assert guest_address(vm_info({"net1": NET0}, [DOCKER0, ETH0]), "net0") == ""
+        assert guest_address(vm_info({"net0": "bridge=vmbr0"}, [DOCKER0, ETH0])) == ""
+
+    def test_empty_while_the_agent_has_not_answered(self):
+        assert guest_address(vm_info({"net0": NET0})) == ""
+        assert guest_address(vm_info({"net0": NET0}, [])) == ""
+        assert guest_address(vm_info({"net0": NET0}, [iface("eth0", LAN_MAC, [])])) == ""
+
+    def test_empty_for_a_call_that_failed_or_was_skipped(self):
+        assert guest_address({"failed": True, "msg": "500 Internal Server Error: VM 4013 is not running"}) == ""
+        assert guest_address({"skipped": True}) == ""
+        assert guest_address({"proxmox_vms": []}) == ""
+        assert guest_address(None) == ""
+
+    def test_empty_for_malformed_answers(self):
+        assert guest_address(vm_info(None, [ETH0])) == ""
+        assert guest_address({"proxmox_vms": ["not-a-dict"]}) == ""
+        assert guest_address(vm_info({"net0": NET0}, {"eth0": ETH0})) == ""
+
+
 class TestProxmoxAccessDenied:
     @pytest.mark.parametrize(
         "msg",
@@ -172,3 +223,60 @@ class TestProxmoxAccessDenied:
 
     def test_false_for_no_message(self):
         assert proxmox_access_denied(None) is False
+
+
+def uri_result(data=None, status=200, skipped=False):
+    """What a `uri` loop registers for one VM: a JSON body, or nothing."""
+    if skipped:
+        return {"skipped": True, "changed": False}
+    result = {"status": status, "changed": False}
+    if data is not None or status != 595:
+        result["json"] = {"data": data}
+    return result
+
+
+ALPHA = {"vmid": 9001, "name": "alpha", "node": "pve", "status": "running", "tags": "claude-on-proxmox"}
+PARKED = {"vmid": 4013, "name": "parked", "node": "pve", "status": "stopped"}
+NAMELESS = {"vmid": 8001, "node": "pve2", "status": "unknown", "tags": "claude-on-proxmox"}
+
+
+class TestGuestAddresses:
+    def test_pairs_each_vm_with_its_agents_address_in_order(self):
+        rows = guest_addresses(
+            [ALPHA, PARKED],
+            [uri_result({"net0": NET0}), uri_result({"net0": NET0})],
+            [uri_result({"result": [LO, DOCKER0, ETH0]}), uri_result(skipped=True)],
+        )
+        assert rows == [{**ALPHA, "address": "192.0.2.51"}, {**PARKED, "address": ""}]
+
+    def test_reads_the_nic_it_is_given(self):
+        config = uri_result({"net1": NET0})
+        network = uri_result({"result": [DOCKER0, ETH0]})
+        assert guest_addresses([ALPHA], [config], [network], "net1")[0]["address"] == "192.0.2.51"
+        assert guest_addresses([ALPHA], [config], [network], "net0")[0]["address"] == ""
+
+    def test_empty_for_a_request_that_failed_was_skipped_or_had_no_body(self):
+        rows = guest_addresses(
+            [NAMELESS, ALPHA, ALPHA, ALPHA],
+            [uri_result(skipped=True), uri_result({"net0": NET0}), uri_result({"net0": NET0}), uri_result(None, 595)],
+            [
+                uri_result(skipped=True),
+                uri_result(None, 500),
+                uri_result({"result": []}),
+                uri_result({"result": [ETH0]}),
+            ],
+        )
+        assert [row["address"] for row in rows] == ["", "", "", ""]
+        assert rows[0] == {**NAMELESS, "address": ""}
+
+    def test_never_guesses_without_the_nics_mac(self):
+        rows = guest_addresses([ALPHA], [uri_result({})], [uri_result({"result": [DOCKER0, ETH0]})])
+        assert rows[0]["address"] == ""
+
+    def test_rejects_lists_of_different_lengths(self):
+        with pytest.raises(AnsibleFilterError, match="1 VMs, 2 configs"):
+            guest_addresses([ALPHA], [uri_result({}), uri_result({})], [uri_result({})])
+
+    def test_rejects_non_lists(self):
+        with pytest.raises(AnsibleFilterError, match="three lists"):
+            guest_addresses({"vmid": 1}, [], [])

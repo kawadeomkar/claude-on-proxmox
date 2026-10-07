@@ -8,6 +8,20 @@ converting a VM to a template for the tests' fixtures. Every
 request is appended as a JSON line to <state_dir>/calls.log and the VM table is
 written to <state_dir>/state.json after each mutation, for verification.
 
+One guest is a container, listed by /cluster/resources?type=vm as type "lxc"
+the way a real cluster lists containers alongside VMs, and tagged as this
+project's. It is not a VM: /nodes/<node>/qemu does not list it and any
+/nodes/<node>/qemu/<its id>/... request fails as it would for a VMID that is
+not a VM. It proves the consumers of the listing filter on type, and that a
+fleet's VMIDs skip the ones containers hold.
+
+The cluster has a second node that is down, holding one VM that is none of this
+project's business and one that is, so every test also proves that one
+unreachable node does not break commands about VMs on the others. Guests on it
+are listed the way a real cluster lists them once the node's statistics have
+expired: VMID, node, type, tags and status "unknown", with no name or template
+key at all.
+
 A second token id, "noagent", stands for a token created without the
 guest-agent privilege (VM.Monitor on PVE 8, VM.GuestAgent.Audit on 9): every
 request is accepted except the agent's, which is refused with 403.
@@ -52,6 +66,37 @@ VMS = {
             "ide2": "local-lvm:vm-9000-cloudinit,media=cdrom",
             "template": 1,
         },
+    },
+    # Two guests on the node that is down: a stranger, and one this project
+    # created there. Below NEXTID_LOWER, so they never affect the numbering.
+    8000: {
+        "vmid": 8000,
+        "name": "on-a-node-that-is-down",
+        "node": DOWN_NODE,
+        "status": "unknown",
+        "template": 0,
+        "config": {"name": "on-a-node-that-is-down"},
+    },
+    8001: {
+        "vmid": 8001,
+        "name": "ours-on-a-node-that-is-down",
+        "node": DOWN_NODE,
+        "status": "unknown",
+        "template": 0,
+        "config": {"name": "ours-on-a-node-that-is-down", "tags": "claude-on-proxmox"},
+    },
+    # A container carrying this project's tag, inside the fleet's numbering:
+    # the provision scenario numbers alpha and beta from NEXTID_LOWER and must
+    # step over it, and discovery, the listing and the destroy pre-check must
+    # all leave it alone for being an lxc, tag or no tag.
+    9003: {
+        "vmid": 9003,
+        "name": "ours-container",
+        "node": NODE,
+        "type": "lxc",
+        "status": "running",
+        "template": 0,
+        "config": {"hostname": "ours-container", "tags": "claude-on-proxmox"},
     },
 }
 # /cluster/nextid answers with the lowest free VMID, as Proxmox does - not the
@@ -122,8 +167,13 @@ def resource(vm):
         "status": vm["status"],
         "id": f"{guest_type(vm)}/{vm['vmid']}",
     }
-    entry["name"] = vm["name"]
-    entry["template"] = vm["template"]
+    # Proxmox fills name, template and the real status from the node's
+    # statistics, which the cluster drops five minutes after a node stops
+    # reporting. A guest on a node that is down is therefore listed with
+    # neither, and consumers that index `name` without a default fall over.
+    if vm["node"] != DOWN_NODE:
+        entry["name"] = vm["name"]
+        entry["template"] = vm["template"]
     # PVE leaves the key out for a guest with no tags, rather than sending "".
     # Always sending it hid that anything filtering on tags has to allow for
     # a VM without the attribute at all.

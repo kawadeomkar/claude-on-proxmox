@@ -2,9 +2,20 @@
 # Configure the VMs: OS baseline, developer tooling, Claude Code and a checkout
 # of every GitHub project. Finds them by tag, so it works on its own and not
 # only straight after provisioning.
+#
+#   make configure                    -> every VM tagged claude-on-proxmox
+#   make configure VM_NAME=alpha,beta
+#
+# deploy.yml imports this with claude_vm_discovery: false, because provisioning
+# has already put the VMs it was asked for into claude_vms.
 - name: Discover VMs on Proxmox
   ansible.builtin.import_playbook: discover.yml
   when: claude_vm_discovery | default(true) | bool
+  # tags propagate to the imported play's tasks, and "always" is what keeps
+  # them running under --tags. Without it, `--tags claude_code` skips discovery,
+  # claude_vms stays empty and the play below matches no hosts - so every role
+  # tag silently does nothing at all.
+  tags: [always]
 
 - name: Configure Claude development VMs
   hosts: claude_vms

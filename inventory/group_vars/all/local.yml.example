@@ -10,7 +10,6 @@
 # proxmox_storage: local-lvm
 # Set to true after trusting the PVE CA on the controller (README).
 # proxmox_validate_certs: true
-
 # Which NIC of the template carries the LAN address: its MAC is how a VM's own
 # address is told apart from bridges the guest grows later (docker0). Change it
 # only if the template was built with something other than a single net0.
@@ -29,7 +28,9 @@
 
 # Addressing is DHCP by default and the guest agent reports back what it got.
 # To pin an address instead, set the cloud-init ipconfig line directly. This is
-# also fleet-wide, so it only makes sense for a single-VM run.
+# also fleet-wide: every VM a run provisions gets this same address, so use it
+# only for a single VM, or one VM per run with a new value each time. (A router
+# DHCP reservation is no substitute across rebuilds - every clone gets a new MAC.)
 # proxmox_vm_ipconfig: "ip=192.0.2.60/24,gw=192.0.2.1"
 
 # Which of your GitHub repositories to clone. The username itself lives in vault.yml.

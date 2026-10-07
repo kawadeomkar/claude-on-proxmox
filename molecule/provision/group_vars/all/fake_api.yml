@@ -9,8 +9,11 @@ proxmox_api_host: 127.0.0.1
 proxmox_api_port: 18007
 vault_proxmox_api_token_secret: molecule-test-secret
 
-# What `make provision VM_NAME=alpha,beta` passes.
-vm_name: alpha,beta
+# vm_name is deliberately not set here. converge.yml passes it to provisioning,
+# the way `make provision VM_NAME=alpha,beta` does, and verify.yml runs
+# discovery and the listing both with and without it. A group var cannot be
+# unset, so defining it here would make the fleet-wide path - the one that
+# relies on the ownership filter alone - impossible to test.
 
 vm_user: dev
 vm_ssh_public_keys:

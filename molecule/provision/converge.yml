@@ -1,7 +1,37 @@
 ---
-# The real playbook, exactly as `make provision VM_NAME=alpha,beta` runs it.
+# The real playbook, as `make provision VM_NAME=alpha,beta` runs it. The make
+# target passes vm_name as an extra var; here it is an import var, which is
+# scoped to this import, so verify.yml can still run discovery without it.
+# A VMID in the way. The fleet's VMIDs start at /cluster/nextid and skip
+# every one already in use; with nothing in use inside that range, dropping
+# the skip would still pass. 9002 is taken before provisioning runs, and 9003
+# is the fake's container - a VMID too, held by something /nodes/pve/qemu
+# never lists - so alpha lands on 9001 and beta must land on 9004.
+- name: Take the VMID the second clone would otherwise get
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Clone a VM onto 9002
+      ansible.builtin.uri:
+        validate_certs: false
+        url: https://127.0.0.1:18007/api2/json/nodes/pve/qemu/9000/clone
+        method: POST
+        headers:
+          Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
+        body_format: form-urlencoded
+        body:
+          newid: 9002
+          name: in-the-way
+        # Taken already on the idempotence re-run, which the fake answers
+        # with 500: that is the state wanted either way, and a fixture is
+        # not what the re-run measures.
+        status_code: [200, 500]
+      changed_when: false
+
 - name: Converge
   ansible.builtin.import_playbook: ../../playbooks/provision.yml
+  vars:
+    vm_name: alpha,beta
 
 - name: Check what provisioning produced
   hosts: localhost
@@ -11,10 +41,11 @@
       ansible.builtin.assert:
         that:
           - groups['claude_vms'] | sort == ['alpha', 'beta']
-          # VMIDs assigned by Proxmox, in creation order after the 9000 template
+          # VMIDs from Proxmox's next free one on, skipping the taken 9002
+          # and the container on 9003
           - hostvars['alpha'].proxmox_vm_id | int == 9001
-          - hostvars['beta'].proxmox_vm_id | int == 9002
+          - hostvars['beta'].proxmox_vm_id | int == 9004
           # addresses reported by the guest agent, not assigned by us
           - hostvars['alpha'].ansible_host == '192.0.2.51'
-          - hostvars['beta'].ansible_host == '192.0.2.52'
+          - hostvars['beta'].ansible_host == '192.0.2.54'
         quiet: true
