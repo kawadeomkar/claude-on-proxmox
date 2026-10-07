@@ -1,28 +1,38 @@
 # --- Local, environment-specific configuration (never commit) ---
-# Real inventories and any local/vault/secret variable file, wherever they are
-# placed. group_vars/ and host_vars/ are matched at any depth and outside
-# inventory/ too, because Ansible loads them next to a playbook as well.
-inventory/hosts.y*ml
-inventory/proxmox.y*ml
+# Mirrors tests/check_no_local_files.sh, which explains each rule; the two must
+# agree. Ansible loads group_vars/ and host_vars/ beside every inventory source
+# and every playbook - deploy.yml at the root, the rest in playbooks/ - so these
+# match at any depth, and tracked fixtures are re-included by name.
+#
+# Real inventories.
+hosts.y*ml
+hosts.json
+hosts.ini
+inventory/**/hosts
+inventory/**/hosts.*
 inventory/**/*.ini
-inventory/**/group_vars/**/local*.y*ml
-inventory/**/group_vars/**/vault*.y*ml
-inventory/**/group_vars/**/secret*.y*ml
-inventory/**/group_vars/**/local*.json
-inventory/**/group_vars/**/vault*.json
-inventory/**/group_vars/**/secret*.json
-inventory/**/host_vars/
-# Ansible also loads group_vars/ and host_vars/ next to a playbook, and
-# site.yml sits at the repo root, so cover the root copies too. Scoped to the
-# root on purpose: molecule/*/host_vars/ holds tracked test fixtures.
-/group_vars/**/local*.y*ml
-/group_vars/**/vault*.y*ml
-/group_vars/**/secret*.y*ml
-/host_vars/
-/vault.y*ml
-/local.y*ml
+inventory/**/*proxmox.y*ml
+# A vars file of exactly that name under group_vars/ is not the plugin's config.
+!inventory/**/group_vars/**/proxmox.y*ml
+# Local and secret variable files.
+**/group_vars/**/local*
+**/group_vars/**/vault*
+**/group_vars/**/secret*
+host_vars/
+!/molecule/*/host_vars/
+local.y*ml
+local.json
+secret.y*ml
+secret.json
+secrets.y*ml
+secrets.json
+vault*.y*ml
+vault*.json
+# Credentials.
 .vault_pass*
 .env*
+# A committed template carries no real values.
+!*.example
 
 # --- Python / tooling ---
 .venv/
@@ -47,3 +57,6 @@ collections/ansible_collections/
 .idea/
 .vscode/
 .DS_Store
+
+# Working documents - review reports and the like - stay local to the author.
+docs/

@@ -7,7 +7,9 @@
 # canary catches breakage but not a malicious release - which CI would then
 # execute in a privileged container. It also made the CI cache key useless:
 # it hashes this file, so it never changed when the resolved version did.
-# Bump these deliberately; the canary job tells you when a bump is due.
+# Bump these deliberately. Nothing flags when a bump is due: the canary job
+# installs these same pins, so it cannot see a newer release, and Dependabot
+# has no Galaxy ecosystem to watch them.
 collections:
   - name: community.proxmox
     version: "2.0.0"
