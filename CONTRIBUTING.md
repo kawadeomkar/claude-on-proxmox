@@ -69,3 +69,10 @@ it that way and do not add a job that needs one.
 
 Before opening a PR, run `make test` locally, and check that nothing environment-specific slipped in: CI
 fails if a `hosts.yml`, `local.yml`, `vault.yml` or `.vault_pass` is ever committed.
+
+**PR titles** start with a bracketed tag that says what kind of change the PR is, then a short
+imperative summary: `[feat] create VMs by name, find them by tag, and let DHCP address them`,
+`[fix] ...`, `[cleanup] ...`, `[docs] ...`, `[test] ...`, `[ci] ...`, `[build] ...`. The tag is
+the same vocabulary as the commit types, in brackets rather than with a colon, so the PR list reads
+as a changelog; pick one tag for the PR as a whole, and keep the summary in the same voice as the
+commit subjects (what the change does, not what you did).

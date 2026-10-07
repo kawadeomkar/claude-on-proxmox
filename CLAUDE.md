@@ -170,4 +170,6 @@ catch people out: role variables must be prefixed with the role name (`var-namin
 including vars set inside a role's own Molecule scenario), task names in an included file are
 prefixed with the file name (`- name: node | Install Node.js`), and every role variable needs both
 a `defaults/main.yml` entry and a `meta/argument_specs.yml` entry, with `no_log: true` if it can
-hold a secret. Commits follow Conventional Commits; the body explains *why*.
+hold a secret. Commits follow Conventional Commits; the body explains *why*. Pull request titles
+start with the kind of change in brackets - `[feat]`, `[fix]`, `[cleanup]`, `[docs]`, `[test]`,
+`[ci]`, `[build]` - then a short imperative summary, never a `feat:` prefix.
