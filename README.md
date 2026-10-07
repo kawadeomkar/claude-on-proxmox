@@ -661,7 +661,6 @@ molecule/provision/         end-to-end scenario for provisioning + discovery
 .config/molecule/           Molecule settings shared by every scenario
 .github/                    CI and release workflows, the shared setup action, Dependabot
 requirements.txt            pinned Python tooling; requirements.yml: Galaxy collections
-docs/                       the adversarial reviews of this branch, with each finding's resolution
 ```
 
 ## Contributing

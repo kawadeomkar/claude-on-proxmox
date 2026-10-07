@@ -57,3 +57,6 @@ collections/ansible_collections/
 .idea/
 .vscode/
 .DS_Store
+
+# Working documents - review reports and the like - stay local to the author.
+docs/

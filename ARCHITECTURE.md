@@ -1167,7 +1167,6 @@ molecule/
   configure/                      configure.yml end to end in a container
 .config/molecule/config.yml       driver, pinned image, shared provisioner settings
 .github/                          CI, release, the composite setup action, Dependabot
-docs/                             the adversarial reviews of this branch, each finding with its resolution
 ```
 
 ---
