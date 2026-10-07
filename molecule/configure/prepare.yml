@@ -14,5 +14,24 @@
       ansible.builtin.user:
         name: dev
 
+    # This VM was once built with an API key, which it no longer has. The key
+    # an earlier run wrote must come out of settings.json, or it goes on
+    # outranking the claude.ai login and Remote Control can never start.
+    - name: Create ~/.claude for the leftover settings
+      ansible.builtin.file:
+        path: /home/dev/.claude
+        state: directory
+        owner: dev
+        group: dev
+        mode: "0700"
+
+    - name: Leave behind the API key an earlier run wrote
+      ansible.builtin.copy:
+        dest: /home/dev/.claude/settings.json
+        content: '{"env": {"ANTHROPIC_API_KEY": "sk-ant-left-by-an-earlier-run", "KEEP_ME": "1"}}'
+        owner: dev
+        group: dev
+        mode: "0600"
+
     - name: Set up fake GitHub
       ansible.builtin.include_tasks: "{{ prepare_github_helper_dir }}/prepare_github.yml"

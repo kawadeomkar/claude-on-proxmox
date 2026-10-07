@@ -7,24 +7,85 @@
                    recursive=True) }}
   no_log: true
 
-- name: settings | Manage ~/.claude/settings.json
-  when: claude_code_managed_settings | length > 0
+# Read even when there is nothing to manage, which is the default. A key an
+# earlier run wrote has to come out again once claude_code_anthropic_api_key
+# is cleared: left in the env block it still outranks the claude.ai login, so
+# Remote Control could never start, and the key stays on a VM its owner
+# believes it is gone from.
+#
+# No stat first: slurp's own failure is the "not there yet" signal on a
+# first run, and `content` is only set when it read something.
+- name: settings | Read existing settings
+  ansible.builtin.slurp:
+    src: "{{ claude_code_home }}/.claude/settings.json"
+  register: claude_code_settings_existing
+  failed_when: false
+  no_log: true
+
+# The file is parsed only once something has to be merged into it, or once its
+# text holds the key the role owns: with nothing managed, a file this role has
+# nothing to do with is never parsed at all, so a hand-edited settings.json
+# with a syntax error does not fail the run. Once something is managed it has
+# to be parsed, and that is done here, in a block of its own, because a parse
+# error inside a no_log task is a bare traceback: the rescue names the file
+# instead. An empty or whitespace-only file - a write that was cut short, or a
+# file someone cleared by hand - is {}, which is how vars/main.yml reads the
+# same file for the Remote Control preflight.
+- name: settings | Parse the settings on disk when they are needed
+  when: >-
+    claude_code_managed_settings | length > 0
+    or 'ANTHROPIC_API_KEY' in claude_code_settings_existing_text
   block:
-    # No stat first: slurp's own failure is the "not there yet" signal on a
-    # first run, and `content` is only set when it read something.
-    - name: settings | Read existing settings
-      ansible.builtin.slurp:
-        src: "{{ claude_code_home }}/.claude/settings.json"
-      register: claude_code_settings_existing
-      failed_when: false
+    - name: settings | Parse the settings on disk
+      ansible.builtin.set_fact:
+        claude_code_settings_on_disk: >-
+          {{ (claude_code_settings_existing_text | from_json)
+             if claude_code_settings_existing_text | trim | length > 0 else {} }}
       no_log: true
 
+    - name: settings | Require a JSON object
+      ansible.builtin.assert:
+        that: claude_code_settings_on_disk is mapping
+        quiet: true
+      no_log: true
+  rescue:
+    - name: settings | Fail naming the file that could not be parsed
+      ansible.builtin.fail:
+        msg: >-
+          {{ claude_code_home }}/.claude/settings.json on {{ inventory_hostname }}
+          is not a JSON object, and this run has settings to merge into it.
+          Fix the file or move it aside, then re-run.
+
+# The role owns env.ANTHROPIC_API_KEY, so one on disk that nothing managed puts
+# there is stale. A key set through claude_code_settings.env counts as managed
+# and is left alone. The text is searched first, so the parsed copy is only
+# read when it exists.
+- name: settings | Look for a key an earlier run left behind
+  ansible.builtin.set_fact:
+    claude_code_settings_stale_key: >-
+      {{ 'ANTHROPIC_API_KEY' not in (claude_code_managed_settings.env | default({}))
+         and 'ANTHROPIC_API_KEY' in claude_code_settings_existing_text
+         and 'ANTHROPIC_API_KEY' in ((claude_code_settings_on_disk | default({})).env | default({})) }}
+  no_log: true
+
+- name: settings | Manage ~/.claude/settings.json
+  when: claude_code_managed_settings | length > 0 or claude_code_settings_stale_key | bool
+  block:
+    # A stale key is dropped from the merged result, along with an env block it
+    # leaves empty, so the file ends up as if the key had never been written.
     - name: settings | Merge managed settings over existing ones
+      vars:
+        claude_code_settings_combined: >-
+          {{ claude_code_settings_on_disk | combine(claude_code_managed_settings, recursive=True) }}
+        claude_code_settings_env_left: >-
+          {{ claude_code_settings_combined.env | default({}) | dict2items
+             | rejectattr('key', 'eq', 'ANTHROPIC_API_KEY') | items2dict }}
       ansible.builtin.set_fact:
         claude_code_merged_settings: >-
-          {{ ((claude_code_settings_existing.content | b64decode | from_json)
-              if claude_code_settings_existing.content is defined else {})
-             | combine(claude_code_managed_settings, recursive=True) }}
+          {{ claude_code_settings_combined
+             if not claude_code_settings_stale_key | bool
+             else (claude_code_settings_combined | dict2items | rejectattr('key', 'eq', 'env') | items2dict)
+                  | combine({'env': claude_code_settings_env_left} if claude_code_settings_env_left | length > 0 else {}) }}
       no_log: true
 
     - name: settings | Write settings.json

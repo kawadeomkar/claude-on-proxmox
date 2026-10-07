@@ -10,10 +10,14 @@ github_token: ""
 # Empty = clone everything (the fork "beta" is still filtered out).
 github_projects: []
 # No API key here: Remote Control below is mutually exclusive with one, and
-# this scenario covers the Remote Control path. The api-key path is covered
-# by the claude_code role's own scenario.
+# this scenario covers the Remote Control path. The api-key path - the key
+# reaching settings.json and being removed once cleared - is covered by the
+# claude_code role's own scenario, which sets claude_code_anthropic_api_key
+# directly. So the anthropic_api_key -> claude_code_anthropic_api_key wiring in
+# defaults.yml is exercised here only with its empty default.
 anthropic_api_key: ""
-claude_remote_control: true
+# claude_remote_control is deliberately not set: an empty API key is what the
+# role derives Remote Control from, and this scenario proves that default.
 github_projects_api_url: http://127.0.0.1:8000
 dev_tools_install_docker: false
 claude_code_settings:

@@ -26,6 +26,17 @@
         path: /home/dev/.claude/settings.json
       register: claude_code_verify_settings_stat
 
+    # This scenario configures an API key, which outranks the claude.ai login
+    # Remote Control needs - so Remote Control must derive that it cannot run
+    # and leave nothing installed, even though claude_code_remote_control
+    # defaults true. The side effect ends by configuring the key again on a VM
+    # where Remote Control was running, so this is also the state after
+    # switching an existing VM to the API path.
+    - name: Stat the Remote Control unit that must not exist
+      ansible.builtin.stat:
+        path: /etc/systemd/system/claude-remote-control.service
+      register: claude_code_verify_rc_unit
+
     - name: Assert installation and configuration
       vars:
         claude_code_verify_settings: "{{ claude_code_verify_settings_raw.content | b64decode | from_json }}"
@@ -39,4 +50,9 @@
           - claude_code_verify_settings_stat.stat.pw_name == 'dev'
           - claude_code_verify_settings_stat.stat.mode == '0600'
           - "'Keep answers short.' in (claude_code_verify_claude_md.content | b64decode)"
+          - not claude_code_verify_rc_unit.stat.exists
+        fail_msg: >-
+          {{ 'Remote Control was set up despite an API key being configured; the
+             two credentials are mutually exclusive.'
+             if claude_code_verify_rc_unit.stat.exists else 'see the failed assertion' }}
         quiet: true

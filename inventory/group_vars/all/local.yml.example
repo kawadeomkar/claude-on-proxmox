@@ -56,3 +56,23 @@
 # claude_code_settings:
 #   permissions:
 #     defaultMode: acceptEdits
+
+# Remote Control: put each VM's Claude Code session in the list at claude.ai/code
+# and in the mobile app. On by default, and derived from the credentials on the
+# VM (README, "Reaching a VM from your phone"). Set false to turn it off - also
+# the answer when claude_code_settings.env carries a privacy setting such as
+# DISABLE_TELEMETRY or DO_NOT_TRACK on purpose: those disable Remote Control,
+# so the role leaves the service stopped and says so until one or the other goes.
+# claude_remote_control: true
+# Session title in the list at claude.ai/code; defaults to the VM name.
+# claude_code_remote_control_name: "{{ inventory_hostname }}"
+# Where sessions open. Empty means ~/projects of the VM user, where
+# github_projects clones; it must not be the home directory itself.
+# claude_code_remote_control_dir: ""
+# Permission mode remote sessions start in, passed as --permission-mode, which
+# outranks permissions.defaultMode in claude_code_settings.
+# claude_code_remote_control_permission_mode: default
+# same-dir: every session shares the directory above. worktree: each session
+# gets its own git worktree (needs a repository there). session: serve one
+# session and reject further connections.
+# claude_code_remote_control_spawn: same-dir

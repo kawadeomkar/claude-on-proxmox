@@ -144,16 +144,20 @@ anthropic_api_key: "{{ vault_anthropic_api_key | default('') }}"
 # Run a Remote Control server on each VM, so its Claude Code session shows up
 # at claude.ai/code and in the Claude mobile app while running on the VM.
 #
-# This needs an interactive claude.ai login on the VM (Pro, Max, Team or
-# Enterprise). Anthropic does not support API keys for Remote Control, and the
-# long-lived token from `claude setup-token` cannot establish one either, so
-# there is one manual step per VM: `make claude-login VM_NAME=<name>`. With
-# this true, `make configure` sets everything else up and tells you whether the
-# session is live or what is missing.
+# On by default, but what actually happens is derived from the credentials on
+# the VM rather than from this switch, because the two Claude Code credentials
+# are mutually exclusive: an API key outranks the claude.ai login, and only
+# that login can establish a Remote Control session.
 #
-# Leave anthropic_api_key empty when using this: an API key overrides the
-# subscription login that Remote Control requires.
-claude_remote_control: false
+#   anthropic_api_key set  -> off; you are on the API path
+#   no key, not logged in  -> prepared but not started; run make claude-login
+#   no key, logged in      -> started, and reachable from the app
+#
+# So activating it is: clear the API key (the next run removes it from the VM),
+# run `make claude-login VM_NAME=<name>` once, and re-run `make configure`.
+# Set this false to opt out. Off - by this switch or by a key - stops, disables
+# and removes a server an earlier run installed.
+claude_remote_control: true
 
 # --------------------------------------------------- role variable wiring ---
 # Roles are self-contained and prefix their variables; wire them to the

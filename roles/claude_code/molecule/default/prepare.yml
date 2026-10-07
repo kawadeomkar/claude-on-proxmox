@@ -14,6 +14,16 @@
         state: present
         update_cache: true
 
+    # Also from the common role. Remote Control resolves `claude` through a
+    # login shell, and the side effect sets Remote Control up.
+    - name: Put ~/.local/bin on PATH for login shells, as the common role does
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../../common/templates/local-bin-path.sh.j2"
+        dest: /etc/profile.d/local-bin-path.sh
+        owner: root
+        group: root
+        mode: "0644"
+
     - name: Create ~/.claude
       ansible.builtin.file:
         path: /home/dev/.claude
