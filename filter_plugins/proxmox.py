@@ -8,6 +8,12 @@ from ansible.errors import AnsibleFilterError
 
 MAC_RE = re.compile(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
 
+# proxmoxer words every API error "<status> <reason>: <detail>", and a
+# community.proxmox module puts its own "...: " in front. 401 and 403 are only
+# looked for in that status position: Proxmox names the VM in the detail, so
+# "500 Internal Server Error: VM 4013 is not running" must not read as a 401.
+DENIED_RE = re.compile(r"(?:^|: )40[13] |[Pp]ermission|[Aa]uthentication")
+
 
 _RAISE = object()
 
@@ -68,6 +74,20 @@ def guest_ipv4(interfaces, mac=None):
     return None
 
 
+def proxmox_access_denied(msg):
+    """Whether a community.proxmox error means the API refused the token.
+
+    That is worth failing on straight away: it applies to every VM, and waiting
+    or skipping would only hide it. Anything else - a stopped VM, an agent that
+    is not up yet, a node that is down - is about one VM and is not.
+    """
+    return isinstance(msg, str) and DENIED_RE.search(msg) is not None
+
+
 class FilterModule:
     def filters(self):
-        return {"net_mac": net_mac, "guest_ipv4": guest_ipv4}
+        return {
+            "net_mac": net_mac,
+            "guest_ipv4": guest_ipv4,
+            "proxmox_access_denied": proxmox_access_denied,
+        }

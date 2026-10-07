@@ -3,14 +3,20 @@
 
 Implements just enough of /api2/json for community.proxmox's proxmox_vm_info,
 proxmox_kvm (clone / update / start / shutdown / delete) and proxmox_disk
-(resize) so roles/proxmox_vm can be exercised without a hypervisor. Every
+(resize) so roles/proxmox_vm can be exercised without a hypervisor, plus
+converting a VM to a template for the tests' fixtures. Every
 request is appended as a JSON line to <state_dir>/calls.log and the VM table is
 written to <state_dir>/state.json after each mutation, for verification.
+
+A second token id, "noagent", stands for a token created without the
+guest-agent privilege (VM.Monitor on PVE 8, VM.GuestAgent.Audit on 9): every
+request is accepted except the agent's, which is refused with 403.
 
 Usage: fake_pve_api.py <port> <certfile> <keyfile> <state_dir> <expected_token_secret>
 """
 
 import json
+import re
 import ssl
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -21,13 +27,21 @@ PORT = int(sys.argv[1])
 CERT, KEY = sys.argv[2], sys.argv[3]
 STATE_DIR = Path(sys.argv[4])
 TOKEN_SECRET = sys.argv[5]
+TOKEN_RE = re.compile(r"^PVEAPIToken=([^!]+)!([^=]+)=(.*)$")
+# Accepted everywhere but at the guest agent, like a token whose role lacks
+# the guest-agent privilege.
+NOAGENT_TOKEN_ID = "noagent"
 NODE = "pve"
+# Listed by /nodes and /cluster/resources, but every request to it fails the
+# way pveproxy fails one it cannot forward to a node that is powered off.
+DOWN_NODE = "pve2"
 
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 VMS = {
     9000: {
         "vmid": 9000,
         "name": "ubuntu-24.04-cloudinit",
+        "node": NODE,
         "status": "stopped",
         "template": 1,
         "config": {
@@ -38,8 +52,14 @@ VMS = {
             "ide2": "local-lvm:vm-9000-cloudinit,media=cdrom",
             "template": 1,
         },
-    }
+    },
 }
+# /cluster/nextid answers with the lowest free VMID, as Proxmox does - not the
+# highest in use plus one, which never collided with anything and so never
+# exercised the fleet's "skip the VMIDs in use" step. Proxmox lets the
+# datacenter raise the floor (Datacenter -> Options -> Next free VMID range);
+# the fake's floor keeps the fixtures below it out of the numbering.
+NEXTID_LOWER = 9001
 TASKS = 0
 # The guest agent is not up the moment a VM starts. Fail this many polls first
 # so the role's wait loop is actually exercised. Counted per VM: with a single
@@ -90,17 +110,26 @@ def agent_interfaces(vm):
     ]
 
 
+def guest_type(vm):
+    return vm.get("type", "qemu")
+
+
 def resource(vm):
-    return {
+    entry = {
         "vmid": vm["vmid"],
-        "name": vm["name"],
-        "node": NODE,
-        "type": "qemu",
+        "node": vm["node"],
+        "type": guest_type(vm),
         "status": vm["status"],
-        "template": vm["template"],
-        "tags": vm["config"].get("tags", ""),
-        "id": f"qemu/{vm['vmid']}",
+        "id": f"{guest_type(vm)}/{vm['vmid']}",
     }
+    entry["name"] = vm["name"]
+    entry["template"] = vm["template"]
+    # PVE leaves the key out for a guest with no tags, rather than sending "".
+    # Always sending it hid that anything filtering on tags has to allow for
+    # a VM without the attribute at all.
+    if vm["config"].get("tags"):
+        entry["tags"] = vm["config"]["tags"]
+    return entry
 
 
 def save_state():
@@ -126,9 +155,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def _reply(self, status, data=None):
+    def _reply(self, status, data=None, reason=None):
+        # PVE puts the reason for a failure in the HTTP reason phrase, and
+        # proxmoxer copies it into the error message ("500 Internal Server
+        # Error: VM 4013 is not running"). Callers pattern-match that message,
+        # so the fake has to say what Proxmox says.
         payload = json.dumps({"data": data}).encode()
-        self.send_response(status)
+        self.send_response(status, reason)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -137,11 +170,21 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self, method):
         path = urlparse(self.path).path
         params = self._params()
+        token = TOKEN_RE.match(self.headers.get("Authorization", ""))
         with STATE_DIR.joinpath("calls.log").open("a") as log:
-            log.write(json.dumps({"method": method, "path": path, "params": params}) + "\n")
+            # The agent tells a request the playbooks made themselves through
+            # `uri` ("ansible-httpget") from one a community.proxmox module
+            # made through proxmoxer ("python-requests/...").
+            entry = {
+                "method": method,
+                "path": path,
+                "params": params,
+                "token": token and token.group(2),
+                "agent": self.headers.get("User-Agent", ""),
+            }
+            log.write(json.dumps(entry) + "\n")
 
-        auth = self.headers.get("Authorization", "")
-        if not (auth.startswith("PVEAPIToken=") and auth.endswith(f"={TOKEN_SECRET}")):
+        if not token or token.group(3) != TOKEN_SECRET:
             # Real pveproxy sends 401 with an *empty* body, deliberately
             # withholding the reason; the detail survives only in the HTTP
             # reason phrase. A well-formed {"data": null} here would let the
@@ -149,19 +192,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply_empty(401, "authentication failure")
 
         parts = [unquote(p) for p in path.removeprefix("/api2/json").strip("/").split("/")]
+        if token.group(2) == NOAGENT_TOKEN_ID and "agent" in parts:
+            vmid = parts[parts.index("agent") - 1]
+            return self._reply(403, None, f"Permission check failed (/vms/{vmid}, VM.GuestAgent.Audit)")
         if parts == ["version"]:
             return self._reply(200, {"version": "8.2.4", "release": "8.2", "repoid": "fake"})
         if parts == ["nodes"]:
-            return self._reply(200, [{"node": NODE, "status": "online"}])
+            return self._reply(200, [{"node": NODE, "status": "online"}, {"node": DOWN_NODE, "status": "offline"}])
         if parts == ["cluster", "resources"]:
             return self._reply(200, [resource(vm) for vm in VMS.values()])
         if parts == ["cluster", "nextid"]:
-            return self._reply(200, str(max(VMS) + 1))
+            return self._reply(200, str(next(i for i in range(NEXTID_LOWER, NEXTID_LOWER + 10000) if i not in VMS)))
+        if parts[:2] == ["nodes", DOWN_NODE]:
+            return self._reply_empty(595, "No route to host")
         if parts[:2] != ["nodes", NODE]:
             return self._reply(404, None)
         rest = parts[2:]
         if rest == ["qemu"]:
-            return self._reply(200, [resource(vm) for vm in VMS.values()])
+            return self._reply(
+                200, [resource(vm) for vm in VMS.values() if vm["node"] == NODE and guest_type(vm) == "qemu"]
+            )
         if rest[:1] == ["tasks"] and rest[2:] == ["status"]:
             return self._reply(200, {"status": "stopped", "exitstatus": "OK", "upid": rest[1]})
         if rest[:1] == ["tasks"] and rest[2:] == ["log"]:
@@ -169,8 +219,8 @@ class Handler(BaseHTTPRequestHandler):
         if rest[:1] != ["qemu"] or len(rest) < 2 or not rest[1].isdigit():
             return self._reply(404, None)
         vmid, sub = int(rest[1]), rest[2:]
-        if vmid not in VMS:
-            return self._reply(500, None)
+        if vmid not in VMS or VMS[vmid]["node"] != NODE or guest_type(VMS[vmid]) != "qemu":
+            return self._reply(500, None, f"Configuration file 'nodes/{NODE}/qemu-server/{vmid}.conf' does not exist")
         vm = VMS[vmid]
 
         if method == "DELETE" and not sub:
@@ -180,8 +230,18 @@ class Handler(BaseHTTPRequestHandler):
         if sub == ["config"] and method == "GET":
             return self._reply(200, dict(vm["config"]))
         if sub == ["config"] and method in ("PUT", "POST"):
+            # PVE removes a setting through `delete`, a comma-separated list of
+            # keys - not by sending it blank. parse_qs drops blank values, so a
+            # fixture that sent `net0=` used to leave the NIC in place and pass
+            # as if it had removed it.
+            for key in filter(None, (k.strip() for k in params.pop("delete", "").split(","))):
+                vm["config"].pop(key, None)
+            # Not a PVE parameter: a fixture sends it to keep the tags exactly
+            # as given - comma-joined, the way proxmox_kvm sends them and some
+            # Proxmox versions echo them back - rather than normalised.
+            verbatim = params.pop("fake-verbatim-tags", None)
             vm["config"].update(params)
-            if "tags" in params:
+            if "tags" in params and not verbatim:
                 vm["config"]["tags"] = normalise_tags(params["tags"])
             if "name" in params:
                 vm["name"] = params["name"]
@@ -194,6 +254,7 @@ class Handler(BaseHTTPRequestHandler):
             VMS[newid] = {
                 "vmid": newid,
                 "name": params.get("name", f"Copy-of-VM-{vmid}"),
+                "node": NODE,
                 "status": "stopped",
                 "template": 0,
                 "config": {
@@ -205,6 +266,15 @@ class Handler(BaseHTTPRequestHandler):
             }
             save_state()
             return self._reply(200, new_task())
+        if sub == ["template"] and method == "POST":
+            # Only the tests' fixtures call this, to build a template that
+            # carries this project's tag. PVE refuses to convert a running VM.
+            if vm["status"] == "running":
+                return self._reply(500, None)
+            vm["template"] = 1
+            vm["config"]["template"] = 1
+            save_state()
+            return self._reply(200, new_task())
         if sub == ["resize"] and method == "PUT":
             disk, size = params["disk"], params["size"]
             opts = vm["config"][disk].split(",")
@@ -212,9 +282,11 @@ class Handler(BaseHTTPRequestHandler):
             save_state()
             return self._reply(200, new_task())
         if sub == ["agent", "network-get-interfaces"] and method == "GET":
+            if vm["status"] != "running":
+                return self._reply(500, None, f"VM {vmid} is not running")
             AGENT_CALLS[vmid] = AGENT_CALLS.get(vmid, 0) + 1
-            if vm["status"] != "running" or AGENT_CALLS[vmid] <= AGENT_READY_AFTER:
-                return self._reply(500, None)
+            if AGENT_CALLS[vmid] <= AGENT_READY_AFTER:
+                return self._reply(500, None, "QEMU guest agent is not running")
             return self._reply(200, {"result": agent_interfaces(vm)})
         if sub == ["status", "current"]:
             return self._reply(200, {"status": vm["status"], "vmid": vmid, "name": vm["name"]})

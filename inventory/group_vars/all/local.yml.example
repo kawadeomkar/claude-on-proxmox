@@ -11,6 +11,11 @@
 # Set to true after trusting the PVE CA on the controller (README).
 # proxmox_validate_certs: true
 
+# Which NIC of the template carries the LAN address: its MAC is how a VM's own
+# address is told apart from bridges the guest grows later (docker0). Change it
+# only if the template was built with something other than a single net0.
+# proxmox_nic: net0
+
 # Login user on the VM.
 # vm_user: dev
 
