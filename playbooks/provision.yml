@@ -6,9 +6,11 @@
 #   make provision VM_NAME=alpha,beta,gamma
 #
 # Nothing has to be declared in inventory first: the VM is created by name,
-# Proxmox picks the VMID, the LAN's DHCP server assigns the address, and the
-# QEMU guest agent reports it back. Each VM is added to the in-memory
-# claude_vms group so configure.yml can reach it in the same run.
+# its VMID is the next free one Proxmox has, the LAN's DHCP server assigns the
+# address, and the QEMU guest agent reports it back. Each VM that reports an
+# address is added to the in-memory claude_vms group so configure.yml can reach
+# it in the same run - which is all deploy.yml configures. A VM that already
+# exists and was shut down is left stopped, and reported rather than added.
 #
 # This is three plays rather than one loop because the work is worth running
 # in parallel. Most of the time per VM is spent waiting for the guest agent to
@@ -19,6 +21,24 @@
 - name: Register the VMs to provision
   hosts: localhost
   gather_facts: false
+  vars:
+    # Evaluated lazily, from the registers below; empty when they were skipped.
+    claude_vm_guests: "{{ claude_vm_all.json.data | default([], true) }}"
+    claude_vm_new_names: >-
+      {{ claude_vm_names
+         | reject('in', claude_vm_guests | selectattr('type', 'equalto', 'qemu')
+                        | map(attribute='name', default='') | list)
+         | list }}
+    claude_vm_taken_ids: "{{ claude_vm_guests | map(attribute='vmid') | map('int') | list }}"
+    claude_vm_first_id: "{{ claude_vm_nextid.json.data | default(0) | int }}"
+    # The first free VMIDs from claude_vm_first_id on, one per new name. The
+    # range is long enough to hold them even if every taken VMID lies inside it.
+    claude_vm_new_ids: >-
+      {{ dict(claude_vm_new_names
+              | zip(range(claude_vm_first_id,
+                          claude_vm_first_id + claude_vm_taken_ids | length + claude_vm_new_names | length)
+                    | reject('in', claude_vm_taken_ids)))
+         if claude_vm_first_id > 0 else {} }}
 
   tasks:
     # Only the empty case is checked here: with no names the play below has no
@@ -33,6 +53,70 @@
           make provision VM_NAME=alpha,beta
         quiet: true
 
+    # Several new VMs are given their VMIDs here, so that play 2 can clone them
+    # all at once. Left to Proxmox, each clone asks /cluster/nextid and then
+    # clones, with nothing reserved in between, so concurrent clones are handed
+    # the same ID and all but one fail. The role therefore throttles a clone
+    # that has no VMID to one at a time - and under the linear strategy every
+    # VM's settings, start and boot then wait for the last clone of the fleet.
+    #
+    # The numbering still starts where Proxmox would start it, at
+    # /cluster/nextid, which honours the datacenter's next-id range, and skips
+    # every VMID in use - containers too - from /cluster/resources. Both are
+    # read raw rather than through proxmox_vm_info, which also asks every node
+    # that holds a guest and fails outright if one is offline; the listing is
+    # the same shared task discovery, make list and destroy use. The README's
+    # token can see every guest. Something that takes one of these IDs before
+    # its clone runs still fails that clone rather than being cloned over:
+    # proxmox_kvm checks, and the role asserts the clone changed something.
+    #
+    # A single new VM needs none of this: nothing else in the run can collide
+    # with it, so Proxmox picks its VMID as it always did.
+    - name: Read the VMs and VMIDs that already exist
+      ansible.builtin.import_tasks: tasks/cluster_vms.yml
+      when: claude_vm_names | length > 1
+
+    # One pinned VMID cannot be every new VM's: all clones but the first would
+    # find it taken. Refused before anything is created, rather than part-way.
+    - name: Refuse one pinned VMID for several new VMs
+      ansible.builtin.assert:
+        that: proxmox_vm_id | default('', true) | string | length == 0
+        fail_msg: >-
+          proxmox_vm_id is set to {{ proxmox_vm_id | default('') }}, but {{ claude_vm_new_names | join(', ') }}
+          do not exist yet, and one VMID can only be given to one of them. Leave
+          proxmox_vm_id unset so each gets a free VMID, or provision them one at a time.
+        quiet: true
+      when:
+        - claude_vm_names | length > 1
+        - claude_vm_new_names | length > 1
+
+    # The token travels in the header, so the task is no_log - which hides its
+    # error as well, so the outcome is checked right after, as in
+    # tasks/cluster_vms.yml. The listing above has already proved the token
+    # and the host, so what is left to go wrong here is rare, but it must
+    # still say what it was rather than "output hidden".
+    - name: Ask Proxmox where to start numbering the new VMs
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_url }}/cluster/nextid"
+        headers: "{{ proxmox_api_headers }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+      register: claude_vm_nextid
+      no_log: true
+      failed_when: false
+      when:
+        - claude_vm_names | length > 1
+        - claude_vm_new_names | length > 1
+
+    - name: Fail when Proxmox did not answer with the next free VMID
+      ansible.builtin.assert:
+        that: claude_vm_nextid.status | default(-1) == 200
+        fail_msg: >-
+          Could not read the next free VMID from {{ proxmox_api_url }}/cluster/nextid:
+          {{ claude_vm_nextid.msg | default('no response') }}.
+        quiet: true
+      when: claude_vm_nextid is not skipped
+
     - name: Add each name as a host to provision
       ansible.builtin.add_host:
         name: "{{ claude_vm_name_item }}"
@@ -41,6 +125,9 @@
         # talks to the Proxmox API, so nothing ever connects to this host under
         # this name. The real connection details arrive later, from discovery.
         ansible_connection: local
+        # Only a new VM of a fleet has one; otherwise the variable is not set
+        # at all, so a proxmox_vm_id from the inventory or -e still applies.
+        proxmox_vm_id: "{{ claude_vm_new_ids[claude_vm_name_item] | default(omit) }}"
       changed_when: false
       loop: "{{ claude_vm_names }}"
       loop_control:
@@ -64,6 +151,13 @@
     # play has, so a copy inside the role would publish only the first VM of a
     # fleet. Looping it from localhost over the facts the role left behind is
     # the only form that scales.
+    #
+    # Only a VM with an address is published. The loop is over the names asked
+    # for, not the VMs that survived the play above: one the role left stopped
+    # has no address on purpose, and one whose run failed never recorded any.
+    # Publishing those would hand configure.yml a host it cannot reach, and
+    # reading the missing fact would crash this play - skipping configuration
+    # for every VM that did come up.
     - name: Add each VM to the claude_vms group
       ansible.builtin.add_host:
         name: "{{ claude_vm_name_item }}"
@@ -73,6 +167,7 @@
         ansible_connection: ssh
         proxmox_vm_id: "{{ hostvars[claude_vm_name_item].proxmox_vm_resolved_id }}"
       changed_when: false
+      when: hostvars[claude_vm_name_item].proxmox_vm_address | default('') | length > 0
       loop: "{{ claude_vm_names }}"
       loop_control:
         loop_var: claude_vm_name_item
@@ -80,7 +175,14 @@
 
     - name: Show each VM and the address it was given
       ansible.builtin.debug:
-        msg: "{{ claude_vm_name_item }} is up at {{ hostvars[claude_vm_name_item].ansible_host }}"
+        msg: >-
+          {{ claude_vm_name_item }}
+          {{ 'is up at ' ~ hostvars[claude_vm_name_item].proxmox_vm_address
+             if hostvars[claude_vm_name_item].proxmox_vm_address | default('') | length > 0
+             else 'is stopped and was left that way, so it is not configured. Start it, or'
+                  ~ ' re-run with proxmox_vm_start_existing=true.'
+             if hostvars[claude_vm_name_item].proxmox_vm_stopped | default(false) | bool
+             else 'failed - see its error above - so it is not configured.' }}
       loop: "{{ claude_vm_names }}"
       loop_control:
         loop_var: claude_vm_name_item

@@ -1,0 +1,97 @@
+---
+# Everything, in order: build the template if it is missing, create the VMs,
+# configure them.
+#
+#   make deploy                       -> claude-on-proxmox-default, and only it
+#   make deploy VM_NAME=alpha,beta    -> alpha and beta, and only them
+#
+# Configuration is limited to the VMs this run provisioned. Other VMs this
+# project created are left alone; `make configure` with no VM_NAME is the
+# command that reaches the whole fleet.
+#
+# Every stage is idempotent, so this is also the command to re-run after
+# changing a variable - not only the one to run first. A second run rebuilds
+# nothing: the template play is skipped, the VMs are found by name rather than
+# created again, and configuration re-applies only what has drifted.
+#
+# The template check is made through the Proxmox API rather than on the node,
+# and playbooks/template.yml gathers no facts, so a run that does not need to
+# build the template opens no SSH connection to the Proxmox host at all. Only
+# the first run - the one that actually builds it - needs root SSH.
+- name: Check whether the cloud-init template already exists
+  hosts: localhost
+  gather_facts: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ proxmox_api_module_defaults }}"
+
+  tasks:
+    # By name, so that only the node holding the template is asked for its VM
+    # list. Unfiltered, proxmox_vm_info asks every node that owns any VM, and
+    # one node that is down failed the run before anything was built.
+    - name: Look up the template by name
+      community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
+        type: qemu
+        name: "{{ proxmox_template_name }}"
+      register: claude_deploy_template
+      changed_when: false
+
+    # `template` is 1 on a template and absent or 0 otherwise, so map it with a
+    # default rather than assuming the key is there - a VM that merely shares
+    # the template's name is not a built template.
+    - name: Record whether the template is already built
+      ansible.builtin.set_fact:
+        claude_template_exists: >-
+          {{ (claude_deploy_template.proxmox_vms
+              | selectattr('name', 'equalto', proxmox_template_name)
+              | map(attribute='template', default=0)
+              | select | list | length) > 0 }}
+
+    # The clone is sent to proxmox_node, and Proxmox reads the template's
+    # configuration on the node it is sent to, so a template on any other
+    # node fails every clone with "configuration file does not exist" - right
+    # after this play said the template was built. Said here instead, with
+    # both nodes named (README, "If you have more than one node").
+    - name: Fail when the template is on another node
+      vars:
+        claude_template_node: >-
+          {{ claude_deploy_template.proxmox_vms
+             | selectattr('name', 'equalto', proxmox_template_name)
+             | selectattr('template', 'defined') | selectattr('template', 'truthy')
+             | map(attribute='node') | first | default(proxmox_node) }}
+      ansible.builtin.assert:
+        that: claude_template_node == proxmox_node
+        fail_msg: >-
+          Template "{{ proxmox_template_name }}" is on node {{ claude_template_node }}, but
+          proxmox_node is {{ proxmox_node }}, and a VM can only be cloned on the node that
+          holds its template. Set proxmox_node to {{ claude_template_node }} in local.yml, or
+          build a template on {{ proxmox_node }} with its own proxmox_template_vmid and
+          proxmox_template_name.
+        quiet: true
+      when: claude_template_exists | bool
+
+    - name: Report what this run will do
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Template "' ~ proxmox_template_name ~ '" is already built, so this run needs no SSH to the Proxmox host.'
+             if claude_template_exists | bool
+             else 'Template "' ~ proxmox_template_name ~ '" does not exist yet; building it first, over SSH as root@'
+                  ~ (groups['proxmox'][0] | default('the proxmox host')) ~ '.' }}
+          Then provisioning {{ claude_vm_names | join(', ') }} and configuring.
+
+- name: Build the cloud-init VM template
+  ansible.builtin.import_playbook: playbooks/template.yml
+  when: not (hostvars['localhost'].claude_template_exists | default(false)) | bool
+
+- name: Provision VMs on Proxmox
+  ansible.builtin.import_playbook: playbooks/provision.yml
+
+# Provisioning has just put every requested VM that came up into claude_vms,
+# with its address, so discovery would only repeat that work - one API call
+# per VM, in sequence. Worse, discovery without VM_NAME means the whole fleet,
+# so a bare `make deploy` would configure every tagged VM rather than the
+# default one it was asked for. Turning it off here configures exactly what
+# was provisioned, and a VM left stopped or failed is simply not in the group.
+- name: Configure VMs
+  ansible.builtin.import_playbook: playbooks/configure.yml
+  vars:
+    claude_vm_discovery: false

@@ -4,5 +4,11 @@
 - name: Build the cloud-init VM template
   hosts: proxmox
   become: true
+  # The role reads no ansible_* facts, so there is nothing worth gathering. What
+  # lets deploy.yml skip this play without an SSH connection is the import's
+  # when:, which ansible-core applies to the implicit fact-gathering task too,
+  # not this line - it only saves a pointless gather on the first run, when the
+  # play does execute.
+  gather_facts: false
   roles:
     - role: proxmox_template
