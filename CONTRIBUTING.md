@@ -25,7 +25,7 @@ first.
 |---------|--------------|
 | `make lint` | yamllint, ansible-lint (production profile), ruff |
 | `make syntax` | `--syntax-check` on every playbook, against your `inventory/` |
-| `make unit` | pytest for `roles/github_projects/library/github_repos.py` |
+| `make unit` | pytest: the custom filters, the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, `deploy`'s refusal of `TAGS`) |
 | `make molecule MOLECULE_ROLES="common dev_tools"` | one or more role scenarios |
 | `make molecule-integration` | `playbooks/configure.yml` end to end in a container |
 | `make molecule-provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
@@ -69,3 +69,10 @@ it that way and do not add a job that needs one.
 
 Before opening a PR, run `make test` locally, and check that nothing environment-specific slipped in: CI
 fails if a `hosts.yml`, `local.yml`, `vault.yml` or `.vault_pass` is ever committed.
+
+**PR titles** start with a bracketed tag that says what kind of change the PR is, then a short
+imperative summary: `[feat] create VMs by name, find them by tag, and let DHCP address them`,
+`[fix] ...`, `[cleanup] ...`, `[docs] ...`, `[test] ...`, `[ci] ...`, `[build] ...`. The tag is
+the same vocabulary as the commit types, in brackets rather than with a colon, so the PR list reads
+as a changelog; pick one tag for the PR as a whole, and keep the summary in the same voice as the
+commit subjects (what the change does, not what you did).
