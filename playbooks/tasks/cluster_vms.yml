@@ -1,0 +1,43 @@
+---
+# Every VM in the cluster, registered as claude_vm_all, which claude_vm_tagged
+# (group_vars/all) filters down to this project's.
+#
+# Straight from /cluster/resources rather than through proxmox_vm_info, because
+# that module cannot stop there: unfiltered, it goes on to ask every node that
+# owns a VM for that node's VM list, and fails outright if any node does not
+# answer. One node powered off in a homelab cluster then broke discovery,
+# make list and make destroy for VMs on every other node. /cluster/resources
+# is answered by the cluster as a whole and already carries what these
+# playbooks select on - name, vmid, node, status, template and tags. A VM on a
+# node that is down is still listed, but only as what the cluster still knows
+# without that node: vmid, node, type, tags and status "unknown"; name and
+# template come from the node's statistics, which expire five minutes after it
+# stops reporting, so those keys are absent. Anything more about one VM is
+# then asked of that VM alone, by VMID.
+- name: cluster_vms | List every VM in the cluster
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_url }}/cluster/resources?type=vm"
+    headers: "{{ proxmox_api_headers }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+  register: claude_vm_all
+  # uri does not run in check mode at all, and `make check` needs the listing
+  # to find anything to check. A GET changes nothing, so it always runs.
+  check_mode: false
+  # The request carries the token. Hiding the task hides its error as well, so
+  # the outcome is checked below, where only the status and reason are shown.
+  no_log: true
+  failed_when: false
+
+- name: cluster_vms | Fail when Proxmox did not list the VMs
+  vars:
+    claude_vm_all_hint: >-
+      {{ 'Check proxmox_api_user, proxmox_api_token_id and vault_proxmox_api_token_secret (README, "Creating the Proxmox API token").'
+         if claude_vm_all.status | default(-1) in [401, 403]
+         else 'Check that proxmox_api_host in inventory/hosts.yml is the Proxmox host, and that it is reachable.' }}
+  ansible.builtin.assert:
+    that: claude_vm_all.status | default(-1) == 200
+    fail_msg: >-
+      Could not list the VMs on {{ proxmox_api_url }}: {{ claude_vm_all.msg | default('no response') }}.
+      {{ claude_vm_all_hint }}
+    quiet: true

@@ -19,6 +19,42 @@ proxmox_validate_certs: false
 proxmox_node: pve
 proxmox_storage: local-lvm
 proxmox_bridge: vmbr0
+# Which NIC of the template carries the LAN address: its MAC is how a VM's own
+# address is told apart from bridges the guest grows later. Provisioning,
+# discovery and make list all read it from here. Only change it if the
+# template was built with something other than a single net0.
+proxmox_nic: net0
+
+# The API connection, as one value for a play's module_defaults, so that the
+# playbooks cannot drift apart on it:
+#   module_defaults:
+#     group/community.proxmox.proxmox: "{{ proxmox_api_module_defaults }}"
+# The proxmox_vm role keeps its own, from the proxmox_vm_api_* wiring below.
+proxmox_api_module_defaults:
+  api_host: "{{ proxmox_api_host }}"
+  api_port: "{{ proxmox_api_port }}"
+  api_user: "{{ proxmox_api_user }}"
+  api_token_id: "{{ proxmox_api_token_id }}"
+  api_token_secret: "{{ proxmox_api_token_secret }}"
+  validate_certs: "{{ proxmox_validate_certs }}"
+# Base URL for the one request no community.proxmox module makes on its own
+# (playbooks/tasks/cluster_vms.yml). A bare IPv6 address is bracketed, as
+# proxmoxer does for the modules.
+proxmox_api_url: >-
+  https://{{ '[' ~ proxmox_api_host ~ ']' if proxmox_api_host is search(':.*:') and proxmox_api_host is not match('[[]')
+  else proxmox_api_host }}:{{ proxmox_api_port }}/api2/json
+
+# The pieces a raw request to the API needs, for the few reads that go through
+# `uri` rather than a community.proxmox module (the cluster listing, the next
+# free VMID, each VM's config and agent reply). One definition, so a change to
+# how the token is sent or the CA is found cannot leave one caller behind.
+# The header carries the token: every task that sends it is no_log.
+proxmox_api_headers:
+  Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+# The README trusts the Proxmox CA through REQUESTS_CA_BUNDLE, which the
+# modules' HTTP client reads and `uri` does not, so it is passed on. Empty
+# when certificates are not validated; callers `default(omit, true)` it.
+proxmox_api_ca_path: "{{ lookup('ansible.builtin.env', 'REQUESTS_CA_BUNDLE') if proxmox_validate_certs | bool else '' }}"
 
 # Cloud-init template that VMs are cloned from (built by playbooks/template.yml)
 proxmox_template_vmid: 9000
@@ -29,24 +65,47 @@ proxmox_template_name: ubuntu-24.04-cloudinit
 #   make provision VM_NAME=alpha,beta
 # The name is what appears in the Proxmox UI. VMIDs are assigned by Proxmox and
 # addresses by your DHCP server, so neither has to be declared here.
+#
+# claude_vm_names falls back to this default name when vm_name is not given,
+# which is what provision.yml, deploy.yml and destroy.yml act on. discover.yml
+# and list.yml test `vm_name is defined` instead and, without it, cover every
+# tagged VM - so configure, check, list and claude-login are fleet-wide.
 claude_vm_default_name: claude-on-proxmox-default
 # Applied to every VM this project creates, and how they are found again.
 claude_vm_tag: claude-on-proxmox
 # Matches claude_vm_tag as a whole tag in Proxmox's ";"-joined tag string (or
 # the ","-joined form proxmox_kvm sends), never as a substring of a longer one.
-claude_vm_tag_pattern: "(^|[;,]){{ claude_vm_tag | regex_escape }}([;,]|$)"
-# The VMs this project owns, filtered out of a proxmox_vm_info listing. Defined
-# here, not in each playbook, so discover.yml and destroy.yml cannot drift on
-# what "ours" means. Evaluated lazily: any play that uses it must have
-# registered claude_vm_all first, and is meant to fail loudly if it has not -
-# an empty fleet and an unasked API are not the same thing.
+# Case-insensitive, because Proxmox stores tags lowercased by default: a
+# claude_vm_tag of "Claude-On-Proxmox" is stamped on a VM as
+# "claude-on-proxmox", and matched as typed it would never be found again.
+# The proxmox_vm role lowercases both sides of its own comparison the same way.
+claude_vm_tag_pattern: "(?i)(^|[;,]){{ claude_vm_tag | lower | regex_escape }}([;,]|$)"
+# The VMs this project owns, filtered out of the cluster's VM list. Defined
+# here, not in each playbook, so discover.yml, list.yml and destroy.yml cannot
+# drift on what "ours" means. Evaluated lazily: any play that uses it must have
+# run playbooks/tasks/cluster_vms.yml, which registers claude_vm_all, and is
+# meant to fail loudly if it has not - an empty fleet and an unasked API are
+# not the same thing. Proxmox leaves `tags` out altogether for a VM that has
+# none, so the "defined" check is what lets such a VM through without an error.
+# `name` can be missing too: Proxmox fills it from the node's statistics, which
+# the cluster drops five minutes after a node stops reporting, so a tagged VM
+# on a node that is down is listed with a VMID, a node and its tags but no
+# name. It stays in this list - `make list` shows it - and every consumer
+# reads `name` with a default rather than failing the whole fleet over it.
 claude_vm_tagged: >-
-  {{ claude_vm_all.proxmox_vms
+  {{ claude_vm_all.json.data
+     | selectattr('type', 'equalto', 'qemu')
      | selectattr('tags', 'defined')
      | selectattr('tags', 'regex', claude_vm_tag_pattern)
      | list }}
 claude_vm_names: >-
   {{ (vm_name | default(claude_vm_default_name, true)) | split(',') | map('trim') | select | list }}
+# The tagged VMs a fleet-wide target acts on: the ones VM_NAME names, or all of
+# them without it. discover.yml and list.yml both narrow through this, so
+# `make configure` and `make list` cannot disagree on what VM_NAME selects.
+claude_vm_requested: >-
+  {{ claude_vm_tagged | selectattr('name', 'defined') | selectattr('name', 'in', claude_vm_names) | list
+     if vm_name is defined else claude_vm_tagged }}
 
 # configure.yml discovers VMs from Proxmox before configuring them. Set false
 # to configure hosts that are already in a static inventory (Vagrant does this)
@@ -85,16 +144,20 @@ anthropic_api_key: "{{ vault_anthropic_api_key | default('') }}"
 # Run a Remote Control server on each VM, so its Claude Code session shows up
 # at claude.ai/code and in the Claude mobile app while running on the VM.
 #
-# This needs an interactive claude.ai login on the VM (Pro, Max, Team or
-# Enterprise). Anthropic does not support API keys for Remote Control, and the
-# long-lived token from `claude setup-token` cannot establish one either, so
-# there is one manual step per VM: `make claude-login VM_NAME=<name>`. With
-# this true, `make configure` sets everything else up and tells you whether the
-# session is live or what is missing.
+# On by default, but what actually happens is derived from the credentials on
+# the VM rather than from this switch, because the two Claude Code credentials
+# are mutually exclusive: an API key outranks the claude.ai login, and only
+# that login can establish a Remote Control session.
 #
-# Leave anthropic_api_key empty when using this: an API key overrides the
-# subscription login that Remote Control requires.
-claude_remote_control: false
+#   anthropic_api_key set  -> off; you are on the API path
+#   no key, not logged in  -> prepared but not started; run make claude-login
+#   no key, logged in      -> started, and reachable from the app
+#
+# So activating it is: clear the API key (the next run removes it from the VM),
+# run `make claude-login VM_NAME=<name>` once, and re-run `make configure`.
+# Set this false to opt out. Off - by this switch or by a key - stops, disables
+# and removes a server an earlier run installed.
+claude_remote_control: true
 
 # --------------------------------------------------- role variable wiring ---
 # Roles are self-contained and prefix their variables; wire them to the
@@ -108,6 +171,7 @@ proxmox_vm_validate_certs: "{{ proxmox_validate_certs }}"
 proxmox_vm_node: "{{ proxmox_node }}"
 proxmox_vm_storage: "{{ proxmox_storage }}"
 proxmox_vm_template_name: "{{ proxmox_template_name }}"
+proxmox_vm_nic: "{{ proxmox_nic }}"
 proxmox_vm_user: "{{ vm_user }}"
 proxmox_vm_ssh_public_keys: "{{ vm_ssh_public_keys }}"
 proxmox_vm_tags: ["{{ claude_vm_tag }}"]

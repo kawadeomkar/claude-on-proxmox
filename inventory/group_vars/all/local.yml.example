@@ -10,6 +10,10 @@
 # proxmox_storage: local-lvm
 # Set to true after trusting the PVE CA on the controller (README).
 # proxmox_validate_certs: true
+# Which NIC of the template carries the LAN address: its MAC is how a VM's own
+# address is told apart from bridges the guest grows later (docker0). Change it
+# only if the template was built with something other than a single net0.
+# proxmox_nic: net0
 
 # Login user on the VM.
 # vm_user: dev
@@ -24,7 +28,9 @@
 
 # Addressing is DHCP by default and the guest agent reports back what it got.
 # To pin an address instead, set the cloud-init ipconfig line directly. This is
-# also fleet-wide, so it only makes sense for a single-VM run.
+# also fleet-wide: every VM a run provisions gets this same address, so use it
+# only for a single VM, or one VM per run with a new value each time. (A router
+# DHCP reservation is no substitute across rebuilds - every clone gets a new MAC.)
 # proxmox_vm_ipconfig: "ip=192.0.2.60/24,gw=192.0.2.1"
 
 # Which of your GitHub repositories to clone. The username itself lives in vault.yml.
@@ -50,3 +56,23 @@
 # claude_code_settings:
 #   permissions:
 #     defaultMode: acceptEdits
+
+# Remote Control: put each VM's Claude Code session in the list at claude.ai/code
+# and in the mobile app. On by default, and derived from the credentials on the
+# VM (README, "Reaching a VM from your phone"). Set false to turn it off - also
+# the answer when claude_code_settings.env carries a privacy setting such as
+# DISABLE_TELEMETRY or DO_NOT_TRACK on purpose: those disable Remote Control,
+# so the role leaves the service stopped and says so until one or the other goes.
+# claude_remote_control: true
+# Session title in the list at claude.ai/code; defaults to the VM name.
+# claude_code_remote_control_name: "{{ inventory_hostname }}"
+# Where sessions open. Empty means ~/projects of the VM user, where
+# github_projects clones; it must not be the home directory itself.
+# claude_code_remote_control_dir: ""
+# Permission mode remote sessions start in, passed as --permission-mode, which
+# outranks permissions.defaultMode in claude_code_settings.
+# claude_code_remote_control_permission_mode: default
+# same-dir: every session shares the directory above. worktree: each session
+# gets its own git worktree (needs a repository there). session: serve one
+# session and reject further connections.
+# claude_code_remote_control_spawn: same-dir

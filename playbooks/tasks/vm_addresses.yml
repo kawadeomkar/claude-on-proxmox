@@ -1,0 +1,83 @@
+---
+# The address each VM's guest agent reports, for the VMs in claude_vm_query -
+# a list of /cluster/resources entries. Registers claude_vm_addressed: the same
+# entries with an `address` key, "" for a VM that gave none.
+#
+# Two raw requests per VM, each sent to the node the listing says holds it,
+# rather than proxmox_vm_info: that module fetches the whole cluster listing
+# and the node's VM list again on every call, so a fleet of twenty cost a
+# hundred requests and twenty module runs before an address came back. Both
+# go through `uri` with the shared header and CA from group_vars/all.
+#
+# Only a running VM can answer its agent, so a stopped one, or one whose node
+# is down ("unknown"), is not asked and gets "". Any other failure is one VM's
+# own - an agent not up yet, a NIC removed in the UI - and leaves that VM
+# without an address rather than failing the fleet. A refused token is not: it
+# applies to every VM, and swallowing it would make `make configure` run
+# against zero hosts and exit 0, so it is reported and the run stops.
+#
+# The requests carry the token, so the tasks are no_log; the refusal check
+# below is what reports a failure, by status and reason only.
+- name: vm_addresses | Read each VM's configuration
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_url }}/nodes/{{ claude_vm_item.node }}/qemu/{{ claude_vm_item.vmid }}/config"
+    headers: "{{ proxmox_api_headers }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+  register: claude_vm_configs
+  # A GET changes nothing, and `make check` needs the answers to find anything
+  # to check, so this runs in check mode too.
+  check_mode: false
+  no_log: true
+  failed_when: false
+  when: claude_vm_item.status | default('unknown') != 'unknown'
+  loop: "{{ claude_vm_query }}"
+  loop_control:
+    loop_var: claude_vm_item
+    label: "{{ claude_vm_item.name | default(claude_vm_item.vmid) }}"
+
+- name: vm_addresses | Ask each running VM's guest agent for its addresses
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_url }}/nodes/{{ claude_vm_item.node }}/qemu/{{ claude_vm_item.vmid }}/agent/network-get-interfaces"
+    headers: "{{ proxmox_api_headers }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+  register: claude_vm_networks
+  check_mode: false
+  no_log: true
+  failed_when: false
+  when: claude_vm_item.status | default('') == 'running'
+  loop: "{{ claude_vm_query }}"
+  loop_control:
+    loop_var: claude_vm_item
+    label: "{{ claude_vm_item.name | default(claude_vm_item.vmid) }}"
+
+# fail_msg is rendered whether or not the assertion holds, so everything it
+# reads has a default for the (usual) case of nothing having been refused.
+- name: vm_addresses | Fail when the API refused the token
+  vars:
+    claude_vm_denied: >-
+      {{ ((claude_vm_configs.results | default([], true)) + (claude_vm_networks.results | default([], true)))
+         | selectattr('status', 'defined') | selectattr('status', 'in', [401, 403]) | list }}
+    claude_vm_denied_first: "{{ claude_vm_denied | first | default({}, true) }}"
+    claude_vm_denied_vm: "{{ claude_vm_denied_first.claude_vm_item | default({}, true) }}"
+  ansible.builtin.assert:
+    that: claude_vm_denied | length == 0
+    fail_msg: >-
+      Proxmox refused the API token for VM
+      "{{ claude_vm_denied_vm.name | default(claude_vm_denied_vm.vmid | default('?')) }}":
+      {{ claude_vm_denied_first.msg | default('HTTP ' ~ (claude_vm_denied_first.status | default('?'))) }}.
+      Reading a VM needs VM.Audit, and its address needs the guest-agent privilege:
+      VM.Monitor on Proxmox VE 8, VM.GuestAgent.Audit on 9
+      (README, "Creating the Proxmox API token").
+    quiet: true
+
+# guest_addresses reads the MAC of proxmox_nic from each config and picks the
+# agent interface that carries it, so a bridge the guest grew later (docker0)
+# is never returned, and a VM without that NIC gets "" rather than a guess.
+- name: vm_addresses | Pair each VM with the address its agent reported
+  ansible.builtin.set_fact:
+    claude_vm_addressed: >-
+      {{ claude_vm_query | guest_addresses(claude_vm_configs.results | default([], true),
+                                           claude_vm_networks.results | default([], true),
+                                           proxmox_nic) }}
