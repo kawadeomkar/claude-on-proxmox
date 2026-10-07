@@ -10,7 +10,8 @@ claude_code_version: stable
 claude_code_installer_url: https://claude.ai/install.sh
 
 # Optional API key. Written to the `env` block of ~/.claude/settings.json so
-# every session picks it up. Leave empty to log in interactively on the VM.
+# every session picks it up. Leave empty to log in interactively on the VM;
+# clearing it removes the key an earlier run wrote there.
 claude_code_anthropic_api_key: ""
 
 # Extra user settings merged (recursively) into ~/.claude/settings.json.
@@ -26,13 +27,20 @@ claude_code_global_instructions: ""
 # in the Claude mobile app, while the session keeps running here with this
 # filesystem and these tools.
 #
-# Off by default because it cannot be switched on from Ansible alone: Anthropic
-# supports one credential for it, an interactive claude.ai login on a Pro, Max,
-# Team or Enterprise plan. API keys are not supported, and neither is the
-# long-lived token from `claude setup-token`. With this true the role installs
-# and configures everything, then either starts the service (when the VM is
-# already logged in) or prints the one command you have to run.
-claude_code_remote_control: false
+# On by default, but it means "when this VM can" rather than "always". Nothing
+# here can create the credential: Anthropic supports one for Remote Control, an
+# interactive claude.ai login on a Pro, Max, Team or Enterprise plan. API keys
+# are not supported, and neither is the long-lived token from
+# `claude setup-token`.
+#
+# So the role derives what to do from the credentials it finds, and a re-run is
+# what activates it:
+#   an API key is set      -> off, because a key outranks the login
+#   no key, no login yet   -> everything installed, service left stopped, told what to run
+#   no key, logged in      -> the session is started and appears in the app
+# Set false to turn it off. "Off" is enforced, not just skipped: a server an
+# earlier run installed is stopped, disabled and its unit removed.
+claude_code_remote_control: true
 # Session title shown in the list at claude.ai/code. Defaults to the VM name.
 claude_code_remote_control_name: "{{ inventory_hostname }}"
 # Where sessions open. Empty resolves to ~/projects of claude_code_user, the
@@ -43,7 +51,9 @@ claude_code_remote_control_name: "{{ inventory_hostname }}"
 # validates a role's defaults against meta/argument_specs.yml at role entry -
 # before the task that resolves the home directory has run.
 claude_code_remote_control_dir: ""
-# Starting permission mode for the sessions the server creates.
+# Starting permission mode for the sessions the server creates. Passed as
+# --permission-mode, which outranks permissions.defaultMode in
+# claude_code_settings: that one only reaches `claude` started on the VM itself.
 claude_code_remote_control_permission_mode: default
 # same-dir: every session shares the directory above.
 # worktree: each on-demand session gets its own git worktree (needs a repo).

@@ -59,4 +59,55 @@
 # repository at that path before the first remote session is created.
 - name: Set up Remote Control
   ansible.builtin.include_tasks: remote_control.yml
-  when: claude_code_remote_control | bool
+  when: claude_code_remote_control_wanted | bool
+
+# The other side of the same decision. Skipping remote_control.yml is not
+# enough on a VM where an earlier run started the server: it would keep taking
+# sessions from the app after the user opted out, and once a key is in
+# settings.json it is refused and restarts on every boot. Only the unit this
+# role installs is touched, and only when it is there - systemd_service fails
+# on a unit that does not exist, check mode included, and a VM that never had
+# Remote Control has nothing to remove.
+- name: Look for a Remote Control unit an earlier run installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/{{ claude_code_remote_control_service }}.service
+  register: claude_code_remote_control_leftover
+  when: not (claude_code_remote_control_wanted | bool)
+
+- name: Remove Remote Control
+  when:
+    - not (claude_code_remote_control_wanted | bool)
+    - claude_code_remote_control_leftover.stat.exists
+  block:
+    # Stopped explicitly: removing the file alone leaves the loaded unit
+    # running until the next reboot.
+    - name: Stop and disable the Remote Control service
+      ansible.builtin.systemd_service:
+        name: "{{ claude_code_remote_control_service }}"
+        state: stopped
+        enabled: false
+
+    - name: Remove the Remote Control unit
+      ansible.builtin.file:
+        path: /etc/systemd/system/{{ claude_code_remote_control_service }}.service
+        state: absent
+
+    # Reports ok, not changed, and this block only runs when there was a unit
+    # to remove - so this reloads exactly when something was removed.
+    - name: Make systemd forget the removed unit
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+# Not a failure: with Remote Control on by default, a VM on the API path is a
+# normal configuration rather than a mistake. It still says why, because an
+# empty session list with no explanation is the worse outcome.
+- name: Explain why Remote Control was skipped
+  ansible.builtin.debug:
+    msg: >-
+      Remote Control was not set up on {{ inventory_hostname }}: an Anthropic
+      API key is configured, and ANTHROPIC_API_KEY outranks the claude.ai login
+      that Remote Control requires, so the server would refuse to start. Clear
+      vault_anthropic_api_key and re-run to use Remote Control instead.
+  when:
+    - claude_code_remote_control | bool
+    - claude_code_anthropic_api_key | length > 0

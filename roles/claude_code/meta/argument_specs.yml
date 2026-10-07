@@ -21,25 +21,33 @@ argument_specs:
         type: str
         default: ""
         no_log: true
+        description:
+          - Written to the env block of ~/.claude/settings.json. Clearing it
+            removes the key an earlier run wrote there.
       claude_code_settings:
         type: dict
         default: {}
+        no_log: true
+        description:
+          - Merged recursively into ~/.claude/settings.json. Its env block can
+            carry a key or a token, which is why it is no_log.
       claude_code_global_instructions:
         type: str
         default: ""
       claude_code_remote_control:
         type: bool
-        default: false
+        default: true
         description:
           - Run a Claude Code Remote Control server on the VM, so its session
             appears at claude.ai/code and in the Claude mobile app while
             executing here.
-          - Requires an interactive claude.ai login on the VM (Pro, Max, Team or
-            Enterprise). API keys and `claude setup-token` tokens cannot
-            establish a Remote Control session, so this cannot be enabled by
-            configuration alone.
-          - Mutually exclusive with claude_code_anthropic_api_key, which would
-            override the subscription login.
+          - On by default, but it means "when this VM can". The role turns it
+            off when claude_code_anthropic_api_key is set, because a key
+            outranks the claude.ai login Remote Control requires; and it
+            prepares but does not start the service when no login exists yet,
+            because nothing can create one non-interactively.
+          - Set false to turn it off. Either way off, the service an earlier
+            run installed is stopped, disabled and its unit removed.
       claude_code_remote_control_name:
         type: str
         description: Session title at claude.ai/code. Defaults to the VM name.
@@ -51,8 +59,15 @@ argument_specs:
       claude_code_remote_control_permission_mode:
         type: str
         default: default
-        choices: [default, acceptEdits, plan, bypassPermissions]
-        description: Starting permission mode for sessions the server creates.
+        description:
+          - Starting permission mode for sessions the server creates, such as
+            acceptEdits or plan. Passed as --permission-mode, which outranks
+            permissions.defaultMode in claude_code_settings, so that setting
+            does not reach these sessions.
+          - Deliberately not constrained to a list of choices here. Claude Code
+            validates the mode at startup and prints the ones it accepts, so a
+            mode added upstream works without a change to this role - whereas a
+            hard-coded list would reject it before Claude Code ever saw it.
       claude_code_remote_control_spawn:
         type: str
         default: same-dir
@@ -62,3 +77,20 @@ argument_specs:
         type: str
         default: claude-remote-control
         description: Name of the systemd unit installed for the server.
+
+  # tasks_from: login, which playbooks/claude_login.yml runs on VMs this role
+  # has configured.
+  login:
+    short_description: Say whether Claude Code is signed in the way Remote Control needs
+    description:
+      - Runs `claude auth status` as the connecting user and prints either that
+        the VM is ready, or the login command and what else to change.
+      - Decides with the same definitions the main entry point starts Remote
+        Control from.
+    options:
+      claude_code_user:
+        type: str
+        default: dev
+        description:
+          - The user the printed command logs in. The check runs as the
+            connecting user, which is the same one on the VMs this project builds.

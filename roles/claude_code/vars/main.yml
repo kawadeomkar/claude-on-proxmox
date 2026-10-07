@@ -1,39 +1,173 @@
 ---
 # Internal, not meant to be overridden.
 
-# Each of these switches off the feature-flag evaluation that Remote Control's
-# availability depends on, so a session starts and then never appears in the
-# app. ANTHROPIC_BASE_URL is checked alongside them for a different reason:
-# Remote Control is disabled whenever the client points anywhere other than
-# api.anthropic.com.
+# Environment keys in settings.json that each disable Remote Control. The first
+# four switch off the feature-flag evaluation its availability depends on, so a
+# session starts and then never appears in the app. The rest route the client
+# to a different credential or provider than the claude.ai login it needs:
+# ANTHROPIC_AUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN (a `claude setup-token`
+# token) both outrank the login, and the Bedrock and Vertex switches send
+# requests elsewhere. ANTHROPIC_BASE_URL and apiKeyHelper also block, but are
+# checked separately: a base URL only when its host is not api.anthropic.com,
+# and apiKeyHelper as a top-level settings key rather than an env one.
 claude_code_remote_control_blocking_env:
   - DISABLE_TELEMETRY
   - DO_NOT_TRACK
   - CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
   - DISABLE_GROWTHBOOK
+  - ANTHROPIC_AUTH_TOKEN
+  - CLAUDE_CODE_OAUTH_TOKEN
+  - CLAUDE_CODE_USE_BEDROCK
+  - CLAUDE_CODE_USE_VERTEX
+
+# Internal: what settings.yml read from ~/.claude/settings.json, as text, or
+# '' when the file is not there. settings.yml searches it before deciding
+# whether to parse it, so a file it has no business with is never parsed.
+claude_code_settings_existing_text: >-
+  {{ (claude_code_settings_existing.content | b64decode)
+     if claude_code_settings_existing.content is defined else '' }}
+
+# Internal: the settings.json Claude Code will actually start with, read back
+# from disk after settings.yml has written it. The preflight checks this rather
+# than the claude_code_settings variable, because settings.yml preserves keys
+# already on the VM: a blocker the user has since dropped from the variable is
+# still on disk, still blocks, and is what the server would see. Reads the
+# register remote_control.yml and login.yml both set; {} when the file is not
+# there yet.
+claude_code_remote_control_settings_on_disk: >-
+  {{ (claude_code_remote_control_settings_raw.content | b64decode | from_json)
+     if claude_code_remote_control_settings_raw.content is defined
+        and (claude_code_remote_control_settings_raw.content | b64decode | trim | length > 0)
+     else {} }}
+
+claude_code_remote_control_settings_env: >-
+  {{ claude_code_remote_control_settings_on_disk.env | default({}, true) }}
+
+# Internal: ANTHROPIC_BASE_URL is allowed only when it points at
+# api.anthropic.com; any other host disables Remote Control. Absent is fine.
+claude_code_remote_control_base_url_ok: >-
+  {{ 'ANTHROPIC_BASE_URL' not in claude_code_remote_control_settings_env
+     or (claude_code_remote_control_settings_env.ANTHROPIC_BASE_URL
+         | urlsplit('hostname')) == 'api.anthropic.com' }}
+
+# Internal: the names of the settings on disk that disable Remote Control -
+# names only, never values, because this list ends up in a message. Empty when
+# nothing does. A blocker here is handled like a credential Remote Control
+# cannot use (below): the unit is installed and left stopped, and the message
+# names the keys and the off switch. It used to fail the host, which stopped
+# github_projects behind it for a telemetry opt-out the user set on purpose.
+claude_code_remote_control_settings_blockers: >-
+  {{ (claude_code_remote_control_settings_env.keys() | list
+      | intersect(claude_code_remote_control_blocking_env))
+     + (['apiKeyHelper'] if 'apiKeyHelper' in claude_code_remote_control_settings_on_disk else [])
+     + (['ANTHROPIC_BASE_URL'] if not (claude_code_remote_control_base_url_ok | bool) else []) }}
+
+# Internal: whether this run should have a Remote Control server on the VM at
+# all. main.yml sets it up when this is true and removes it when it is false,
+# so the two branches cannot drift apart. An API key rules it out because it
+# outranks the claude.ai login Remote Control needs.
+claude_code_remote_control_wanted: >-
+  {{ claude_code_remote_control | bool
+     and claude_code_anthropic_api_key | length == 0 }}
+
+# Internal: the output of `claude auth status`, read from the result both
+# remote_control.yml and login.yml register as claude_code_remote_control_auth.
+# This and the two below are the one definition of whether a VM can run Remote
+# Control. `make claude-login` used to decide from `loggedIn` alone, so a VM
+# signed in any other way was told by it to run `make configure`, and by
+# `make configure` to run it. A var rather than a fact for the same reason as
+# roles/proxmox_vm/vars/main.yml: it follows the register it reads.
+#
+# Exit status 1 means not logged in, and anything else unreadable counts as the
+# same, which is what points the user at the login.
+claude_code_remote_control_status: >-
+  {{ (claude_code_remote_control_auth.stdout | from_json)
+     if claude_code_remote_control_auth.rc == 0
+        and (claude_code_remote_control_auth.stdout | trim | length > 0)
+     else {} }}
 
 # Internal: whether this VM holds a credential Remote Control can actually use.
 # Only a claude.ai login qualifies. An API key, a Console login and the
 # long-lived token from `claude setup-token` can all make model requests, and
 # none of them can establish a Remote Control session.
 #
+# `authMethod` alone cannot see a key: `claude auth status` reports
+# "claude.ai" whenever that login exists, even while ANTHROPIC_API_KEY
+# outranks it, and also for a Console login. The key in use is reported
+# separately, as `apiKeySource` - ANTHROPIC_API_KEY (the environment or a
+# settings file's env block), apiKeyHelper, or a Console login's
+# "/login managed key". So both are checked.
+#
 # The plan itself is deliberately not checked here: Pro, Max, Team and
 # Enterprise are all eligible, and hard-coding the strings `claude auth status`
 # reports for them would turn a new plan name into a false refusal. An
 # ineligible plan fails when the service starts, where the message comes from
 # Claude Code rather than from a guess made here.
+#
+# The settings on disk are part of the same answer: a login the server cannot
+# use because settings.json switches the feature off is no more eligible than
+# an API key, and takes the same stopped-with-a-message path.
 claude_code_remote_control_eligible: >-
   {{ (claude_code_remote_control_status.loggedIn | default(false)) | bool
-     and (claude_code_remote_control_status.authMethod | default('')) == 'claude.ai' }}
+     and (claude_code_remote_control_status.authMethod | default('')) == 'claude.ai'
+     and (claude_code_remote_control_status.apiKeySource | default('', true)) | length == 0
+     and claude_code_remote_control_settings_blockers | length == 0 }}
 
-# Internal: why it is not eligible, phrased for the person reading the output.
+# Internal: why it is not eligible and, when a login is there but the wrong
+# kind, what to change - phrased for the person reading the output. Each way of
+# signing in that is not claude.ai needs its own fix, and `claude auth logout`
+# alone does not undo one that comes from the environment.
+#
+# A settings blocker comes first, whatever the login state: it has to be dealt
+# with regardless, and someone who set a telemetry opt-out on purpose should
+# learn about the off switch before being sent to log in.
 claude_code_remote_control_blocker: >-
-  {{ 'no Claude Code login is stored for ' ~ claude_code_user ~ ' on it.'
+  {{ '~/.claude/settings.json for ' ~ claude_code_user ~ ' on it disables Remote Control through '
+     ~ (claude_code_remote_control_settings_blockers | join(', ')) ~ '. Each switches off the'
+     ~ ' feature-flag evaluation Remote Control depends on, or routes the client away from the'
+     ~ ' claude.ai login it needs. Remove it from claude_code_settings and from the file on the'
+     ~ ' VM, or set claude_remote_control: false to leave Remote Control off.'
+     if claude_code_remote_control_settings_blockers | length > 0
+     else 'no Claude Code login is stored for ' ~ claude_code_user ~ ' on it.'
      if not (claude_code_remote_control_status.loggedIn | default(false)) | bool
+     else 'Claude Code on it uses an API key from "'
+          ~ claude_code_remote_control_status.apiKeySource
+          ~ '", which outranks the claude.ai login Remote Control needs.'
+          ~ ' Remove it wherever it is set (the shell environment, an env block'
+          ~ ' in a settings file, apiKeyHelper), or run "claude auth logout" if'
+          ~ ' it came from a Console login.'
+     if (claude_code_remote_control_status.apiKeySource | default('', true)) | length > 0
      else 'it is signed in through "'
           ~ (claude_code_remote_control_status.authMethod | default('unknown'))
-          ~ '", but Remote Control needs a claude.ai login on a Pro, Max, Team
-             or Enterprise plan.' }}
+          ~ '", but Remote Control needs a claude.ai login on a Pro, Max, Team'
+          ~ ' or Enterprise plan. Remove what selects that method wherever it is'
+          ~ ' set - CLAUDE_CODE_OAUTH_TOKEN for a token from "claude setup-token",'
+          ~ ' or a CLAUDE_CODE_USE_* setting that routes it to Bedrock, Vertex AI'
+          ~ ' or another provider - or run "claude auth logout" for a stored login.' }}
+
+# Internal: the command that logs claude_code_user in, printed for the user to
+# run. Through a login shell, because only a login shell reads
+# /etc/profile.d/local-bin-path.sh, which puts ~/.local/bin - where the native
+# installer puts claude - on PATH. ssh runs a command in a non-login,
+# non-interactive shell, and Ubuntu's .bashrc returns before doing anything for
+# one, so a bare "claude auth login" is "command not found".
+claude_code_remote_control_login_command: >-
+  ssh -t {{ claude_code_user }}@{{ ansible_host | default(inventory_hostname) }} "bash -lc 'claude auth login'"
+
+# Internal: whether the server started by this run is still the same, running
+# process. Compares the state read right after the start with one read after
+# the startup window. NRestarts is compared rather than required to be 0,
+# because systemd keeps counting for as long as the unit is not fully stopped:
+# a server that already restarted its way through an outage, and that this run
+# found running and left alone, has a non-zero count and is perfectly healthy.
+claude_code_remote_control_stayed_up: >-
+  {{ (claude_code_remote_control_after.status.ActiveState | default('')) == 'active'
+     and (claude_code_remote_control_after.status.SubState | default('')) == 'running'
+     and (claude_code_remote_control_after.status.ExecMainPID | default('0')) != '0'
+     and (claude_code_remote_control_after.status.ExecMainPID | default('0'))
+         == (claude_code_remote_control_started.status.ExecMainPID | default(''))
+     and (claude_code_remote_control_after.status.NRestarts | default(''))
+         == (claude_code_remote_control_started.status.NRestarts | default('')) }}
 
 # Internal: the directory Remote Control sessions actually open in, resolved
 # from the (possibly empty) option once claude_code_home is known.
@@ -41,11 +175,13 @@ claude_code_remote_control_target_dir: >-
   {{ claude_code_remote_control_dir if claude_code_remote_control_dir | length > 0
      else claude_code_home ~ '/projects' }}
 
-# Internal: whether the two dialogs that would stall a headless Remote Control
-# server are already accepted in ~/.claude.json - first-run onboarding, and
-# workspace trust for the directory sessions open in.
+# Internal: whether the prompts that would stall a headless Remote Control
+# server are already answered in ~/.claude.json - first-run onboarding, Remote
+# Control's one-time confirmation, and workspace trust for the directory
+# sessions open in.
 claude_code_remote_control_dialogs_seeded: >-
   {{ (claude_code_remote_control_cfg.hasCompletedOnboarding | default(false)) | bool
+     and (claude_code_remote_control_cfg.remoteDialogSeen | default(false)) | bool
      and ((claude_code_remote_control_cfg.projects | default({}, true))
           .get(claude_code_remote_control_target_dir, {})
           .get('hasTrustDialogAccepted', false)) | bool }}

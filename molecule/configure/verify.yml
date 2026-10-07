@@ -37,14 +37,16 @@
           - verify_cmds.results[0].stdout is search('[0-9]+\.[0-9]+\.[0-9]+')
           - not verify_fork.stat.exists
           # No API key in this scenario: it is mutually exclusive with Remote
-          # Control, and an env block would have overridden the login.
+          # Control, and an env block would have overridden the login. The
+          # one prepare.yml left behind must be gone, and nothing else with it.
           - "'ANTHROPIC_API_KEY' not in (verify_settings.env | default({}))"
+          - verify_settings.env.KEEP_ME == '1'
           - verify_settings.permissions.defaultMode == 'acceptEdits'
         quiet: true
 
     # Remote Control cannot start in a container - no claude.ai login exists and
     # none can be created without a browser. What must still happen is that the
-    # unit is written, the dialogs that would stall it are pre-accepted, and the
+    # unit is written, the prompts that would stall it are pre-answered, and the
     # service is left stopped rather than crash-looping.
     - name: Read the installed Remote Control unit
       ansible.builtin.slurp:
@@ -70,6 +72,13 @@
       failed_when: false
       changed_when: false
 
+    # Read back from systemd rather than the file, so a directive this systemd
+    # does not understand - and would ignore with only a warning - fails here.
+    - name: Read the restart policy systemd loaded for the unit
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: verify_rc_service
+
     - name: Assert Remote Control is prepared but correctly not started
       vars:
         verify_rc_text: "{{ verify_rc_unit.content | b64decode }}"
@@ -88,13 +97,29 @@
           # comment above it explaining exactly this.
           - verify_rc_text.split('\n')
             | select('match', '^Environment=.*ANTHROPIC_API_KEY') | list | length == 0
-          # The two dialogs that would otherwise stall a headless server
+          # The prompts that would otherwise stall a headless server. Without
+          # remoteDialogSeen the server asks "Enable Remote Control? (y/n)",
+          # reads /dev/null under systemd and exits 0 without starting.
           - verify_rc_json.hasCompletedOnboarding
+          - verify_rc_json.remoteDialogSeen | default(false)
           - verify_rc_json.projects['/home/dev/projects'].hasTrustDialogAccepted
           # Not logged in, so it must be left alone rather than crash-looping
           - verify_rc_active.stdout | trim != 'active'
           - verify_rc_enabled.stdout | trim != 'enabled'
+          # Restarted whatever the exit status, so server mode giving up on the
+          # network comes back too; backing off to five minutes rather than
+          # hitting a start limit that would leave it failed for good
+          - verify_rc_service.status.Restart == 'always'
+          - verify_rc_service.status.RestartUSec == '10s'
+          - verify_rc_service.status.RestartSteps == '5'
+          - verify_rc_service.status.RestartMaxDelayUSec == '5min'
+          - verify_rc_service.status.StartLimitIntervalUSec == '0'
         fail_msg: >-
           Remote Control preparation is wrong. active={{ verify_rc_active.stdout | trim }}
           enabled={{ verify_rc_enabled.stdout | trim }}
+          Restart={{ verify_rc_service.status.Restart | default('?') }}
+          RestartUSec={{ verify_rc_service.status.RestartUSec | default('?') }}
+          RestartSteps={{ verify_rc_service.status.RestartSteps | default('?') }}
+          RestartMaxDelayUSec={{ verify_rc_service.status.RestartMaxDelayUSec | default('?') }}
+          StartLimitIntervalUSec={{ verify_rc_service.status.StartLimitIntervalUSec | default('?') }}
         quiet: true
