@@ -15,6 +15,28 @@
         dest: /usr/local/bin/virt-customize
         mode: "0755"
 
+    # pmxcfs's cluster-wide guest list, which the role reads before it builds.
+    # VMID 8000 lives on a second node, pve2, as in fake_pve_api.py; nothing
+    # keeps it in step with the fake qm's own VMs, which only ever exist here.
+    - name: Create the fake pmxcfs directory
+      ansible.builtin.file:
+        path: /etc/pve
+        state: directory
+        mode: "0755"
+
+    - name: Fake /etc/pve/.vmlist with a VM on a sibling node
+      ansible.builtin.copy:
+        dest: /etc/pve/.vmlist
+        mode: "0644"
+        content: |
+          {
+          "version": 1,
+
+          "ids": {
+          "8000": { "node": "pve2", "type": "qemu", "version": 1 }}
+
+          }
+
     - name: Create a fake cloud image and checksum file
       ansible.builtin.shell:
         cmd: |
