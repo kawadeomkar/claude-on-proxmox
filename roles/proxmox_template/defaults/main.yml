@@ -6,7 +6,11 @@ proxmox_template_name: ubuntu-24.04-cloudinit
 # file; get_url looks up the image filename inside it.
 proxmox_template_image_url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
 proxmox_template_image_checksum: sha256:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS
-proxmox_template_image_dir: /var/lib/vz/template/iso
+# Where the download is kept on the node. Not a content directory of the
+# `local` storage (template/iso, say): Proxmox lists whatever it finds there in
+# the UI, so the pristine image showed up as an ISO. The customised copy that
+# is imported is derived from it and is removed once the template is finished.
+proxmox_template_image_dir: /var/lib/vz/claude-on-proxmox
 
 proxmox_template_storage: local-lvm
 proxmox_template_bridge: vmbr0

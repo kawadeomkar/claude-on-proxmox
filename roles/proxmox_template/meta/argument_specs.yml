@@ -5,7 +5,9 @@ argument_specs:
     description:
       - Runs on the PVE node over SSH. Downloads a cloud image, creates a VM with
         `qm`, imports the image as its root disk, adds a cloud-init drive and
-        converts the VM to a template. Skipped entirely if the VMID already exists.
+        converts the VM to a template. Skipped entirely if the VMID already holds
+        the finished template on this node; refused if it holds anything else, on
+        this node or another.
     options:
       proxmox_template_vmid:
         type: int
@@ -22,7 +24,11 @@ argument_specs:
         description: get_url checksum spec. Set to an empty string to skip verification.
       proxmox_template_image_dir:
         type: path
-        default: /var/lib/vz/template/iso
+        default: /var/lib/vz/claude-on-proxmox
+        description:
+          - Directory on the node that keeps the pristine download. Created if missing.
+          - Keep it outside the content directories of a storage, or Proxmox lists the
+            image in the UI (under template/iso it appeared as an ISO).
       proxmox_template_storage:
         type: str
         default: local-lvm
