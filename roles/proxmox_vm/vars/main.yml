@@ -1,17 +1,37 @@
 ---
-# Internal, not meant to be overridden: the MAC of the VM's own NIC, or "" when
-# it cannot be read - an empty config list, or a template whose NIC is not
-# proxmox_vm_nic. The callers assert on it rather than letting net_mac raise
-# mid-play.
+# Internal, not meant to be overridden: the config of the VM this run is
+# acting on. For a VM that already exists it is the one the name lookup in
+# main.yml fetched (config: current), so nothing reads it a second time. For
+# a VM this run has just cloned there is no lookup to read, so present.yml
+# reads it by VMID, with retries, into proxmox_vm_config - and only then.
+# Keyed off proxmox_vm_exists rather than off whether proxmox_vm_config holds
+# anything: the role can run more than once in a play, and a register a run
+# never reaches keeps the previous run's answer for another VM.
+proxmox_vm_found_config: >-
+  {{ ((proxmox_vm_lookup.proxmox_vms if proxmox_vm_exists | bool else proxmox_vm_config.proxmox_vms)
+      | default([], true) | first | default({}, true)).get('config', {}) }}
+
+# Internal: the MAC of the VM's own NIC, or "" when it cannot be read - an
+# empty config, or a template whose NIC is not proxmox_vm_nic. The callers
+# assert on it rather than letting net_mac raise mid-play.
 #
-# Computed here rather than copied into a fact so it cannot go stale.
-# destroy.yml runs this role in a loop, and a set_fact survives an iteration
-# that skips it - so a fact would hand VM #1's MAC to VM #2. A lazy var is
-# re-evaluated against whatever proxmox_vm_config holds right now, and a
-# skipped register is overwritten rather than kept.
+# Computed here rather than copied into a fact so it cannot go stale. The
+# role can run more than once for the same host in one play - the role
+# scenario's side_effect.yml includes it back to back - and a set_fact
+# survives a run that skips it, so a fact would hand VM #1's MAC to VM #2. A
+# lazy var is re-evaluated against whatever the registers hold right now, and
+# a skipped register is overwritten rather than kept.
 proxmox_vm_found_mac: >-
-  {{ (proxmox_vm_config.proxmox_vms | default([], true) | first | default({}, true))
-     .get('config', {}).get(proxmox_vm_nic, '') | net_mac('') }}
+  {{ proxmox_vm_found_config.get(proxmox_vm_nic, '') | net_mac('') }}
+
+# Internal: the node that holds the VM the name lookup found, which is where
+# every call about an existing VM has to go - a VM migrated since it was
+# created is no longer on proxmox_vm_node, and proxmox_kvm's update sends a
+# settings call to the node it is given rather than looking the VM up. A VM
+# that does not exist yet is about to be cloned on proxmox_vm_node, so that
+# is the default; the clone itself always goes there.
+proxmox_vm_found_node: >-
+  {{ proxmox_vm_lookup.proxmox_vms[0].node | default(proxmox_vm_node, true) }}
 
 # Internal: the address the guest agent reports for the VM's own NIC, or ""
 # while the agent has not answered yet. Jinja is lazy, so this is only
@@ -26,33 +46,57 @@ proxmox_vm_reported_address: >-
 # tags with ";" on the wire, so split on that; the "," is only there because
 # proxmox_kvm sends them comma-joined and some versions echo that back.
 # Matching whole elements, not a substring, is what keeps "claude-on-proxmox"
-# from matching "claude-on-proxmox-staging".
+# from matching "claude-on-proxmox-staging". Lowercased, because Proxmox
+# stores tags lowercased by default: a tag configured as "Claude-On-Proxmox"
+# comes back as "claude-on-proxmox", and main.yml lowercases its side of the
+# comparison to match.
 proxmox_vm_found_tags: >-
   {{ proxmox_vm_lookup.proxmox_vms[0].tags
      | default('', true) | replace(',', ';') | split(';')
-     | map('trim') | select | list }}
+     | map('trim') | select | map('lower') | list }}
 
-# Internal: whether the VM still needs its settings applied. Existence alone is
-# not convergence - if a run died between the clone and the settings call, the
-# VM exists but has no cloud-init user, no SSH keys, no agent and no tag, and
-# keying off existence would skip the repair forever and then wait five minutes
-# for an agent that was never enabled. The tag is written by that same call, so
-# its absence is the marker that the call did not complete.
+# Internal: the tags this role writes - proxmox_vm_tags, lowercased the way
+# Proxmox stores them, so that what is sent is what the lookup finds again
+# even on a datacenter whose tag style keeps case.
+proxmox_vm_sent_tags: "{{ proxmox_vm_tags | map('lower') | list }}"
+
+# Internal: the tag a VM carries from the settings call until the start that
+# follows it has succeeded. See proxmox_vm_needs_configuration.
+proxmox_vm_unfinished_tag: "{{ proxmox_vm_sent_tags[0] }}-unfinished"
+
+# Internal: whether the VM still needs its settings applied, its disk resized
+# and a start. Existence alone is not convergence - if a run died between the
+# clone and the settings call, the VM exists but has no cloud-init user, no SSH
+# keys and no agent, and keying off existence would skip the repair forever and
+# then wait out the whole agent poll budget for an agent that was never enabled.
+#
+# Two markers, because the settings call is not the last step. The cloud-init
+# user says the settings call never ran: only that call writes it, and the
+# template has none. proxmox_vm_unfinished_tag says it ran but the resize or
+# the start after it did not - a disk size Proxmox refused, a start the host
+# had no memory for, Ctrl-C. Nothing else in the lookup tells that VM apart
+# from a finished one someone shut down, and it must not be left stopped.
+# The settings call adds the tag and present.yml removes it only once the start
+# has succeeded, so a VM without it is one this project finished (or one made
+# before the tag existed) and a stopped one stays stopped.
+#
+# Neither marker is the ownership tag. present.yml tags a VM the moment it is
+# cloned, so that a half-built VM is still recognisably this project's - and
+# main.yml refuses to touch an existing VM without the tag, so "untagged" can
+# no longer mean "ours, but unfinished".
 proxmox_vm_needs_configuration: >-
   {{ (not proxmox_vm_exists)
      or (proxmox_vm_force_update | bool)
-     or (proxmox_vm_tags[0] not in proxmox_vm_found_tags) }}
+     or ((proxmox_vm_lookup.proxmox_vms[0].config | default({}, true)).ciuser
+         | default('', true) | length == 0)
+     or (proxmox_vm_unfinished_tag in proxmox_vm_found_tags) }}
 
 # Internal: the address whose host key should be forgotten when the VM is
-# deleted. The guest agent cannot answer for a VM that is stopped, hung or
-# agent-less - which is most VMs at the point someone destroys them - so fall
-# back to whatever discovery or provisioning already recorded for this name.
+# deleted, as the guest agent reports it while the VM still exists. A VM that is
+# stopped, hung or agent-less reports nothing, and destroy.yml runs no discovery
+# that could supply an address instead - so such a VM gets the "could not
+# determine its address" warning, and its stale key is left for ssh-keygen -R.
+# There are no cached facts to evict: the project gathers facts afresh on every
+# configure run (ansible.cfg says why there is no fact cache).
 proxmox_vm_forget_address: >-
-  {{ proxmox_vm_reported_address if (proxmox_vm_reported_address | length > 0)
-     else (hostvars[proxmox_vm_name].ansible_host | default('', true)) }}
-
-# Internal: where this VM's cached facts live, or "" when fact caching is off
-# or not the jsonfile backend.
-proxmox_vm_fact_cache: >-
-  {{ (lookup('ansible.builtin.config', 'CACHE_PLUGIN') == 'jsonfile')
-     | ternary(lookup('ansible.builtin.config', 'CACHE_PLUGIN_CONNECTION') ~ '/' ~ proxmox_vm_name, '') }}
+  {{ proxmox_vm_reported_address }}

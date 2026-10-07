@@ -1,0 +1,28 @@
+---
+# One attempt at a VM whose tags only resemble this project's: the role must
+# refuse it, for the ownership reason, whichever way it is asked.
+- name: lookalike | Try to run the role against {{ proxmox_vm_lookalike.name ~ ' with state ' ~ proxmox_vm_lookalike.state }}
+  block:
+    - name: lookalike | Run the role against the lookalike
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: "{{ proxmox_vm_lookalike.name }}"
+        proxmox_vm_state: "{{ proxmox_vm_lookalike.state }}"
+
+    - name: lookalike | The role should not have got this far
+      ansible.builtin.fail:
+        msg: >-
+          proxmox_vm accepted "{{ proxmox_vm_lookalike.name }}" (tags
+          {{ proxmox_vm_lookalike.tags }}) for state {{ proxmox_vm_lookalike.state }}.
+          The ownership tag is being matched as a substring, not a whole tag.
+  rescue:
+    - name: lookalike | Assert it refused because the VM is not this project's
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_result.msg is search('did not create it')
+          - ansible_failed_result.msg is search(proxmox_vm_lookalike.name)
+        fail_msg: >-
+          Expected an ownership refusal for {{ proxmox_vm_lookalike.name }}, got:
+          {{ ansible_failed_result.msg }}
+        quiet: true

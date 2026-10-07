@@ -57,6 +57,9 @@
       community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
         type: qemu
         name: "{{ proxmox_vm_name }}"
+        # The config is what tells a VM this project finished configuring from
+        # one a run left half-built; see proxmox_vm_needs_configuration.
+        config: current
       register: proxmox_vm_lookup
 
     # Proxmox permits duplicate names; this role cannot tell which one is meant.
@@ -74,6 +77,40 @@
         proxmox_vm_exists: "{{ proxmox_vm_lookup.proxmox_vms | length > 0 }}"
         proxmox_vm_resolved_id: "{{ proxmox_vm_lookup.proxmox_vms[0].vmid | default('') }}"
 
+    # A name does not prove ownership on the way in either. Configuring an
+    # existing VM rewrites its cores, memory, network, keys and disk and stamps
+    # the ownership tag - after which the delete guard below would let
+    # `make destroy` remove it too. So only a VM that already carries the tag is
+    # ever changed, and a template never is.
+    - name: Refuse to configure a template
+      ansible.builtin.assert:
+        that: not (proxmox_vm_lookup.proxmox_vms[0].template | default(false) | bool)
+        fail_msg: >-
+          "{{ proxmox_vm_name }}" is the name of a template (VMID {{ proxmox_vm_resolved_id }}).
+          Refusing to configure it. Pick a different VM_NAME.
+        quiet: true
+      when:
+        - proxmox_vm_state == 'present'
+        - proxmox_vm_exists
+
+    # Both sides lowercased (proxmox_vm_found_tags, proxmox_vm_sent_tags):
+    # Proxmox stores tags lowercased, so a mixed-case proxmox_vm_tags would
+    # otherwise never match the VM it had itself stamped.
+    - name: Refuse to change a VM this project does not own
+      ansible.builtin.assert:
+        that: proxmox_vm_sent_tags[0] in proxmox_vm_found_tags
+        fail_msg: >-
+          A VM named "{{ proxmox_vm_name }}" already exists (VMID {{ proxmox_vm_resolved_id }})
+          and is not tagged "{{ proxmox_vm_tags[0] }}", so this project did not create it.
+          Its tags are: {{ proxmox_vm_found_tags | join(', ') | default('(none)', true) }}.
+          Refusing to change it. Pick a different VM_NAME - or, if this project should
+          manage it (a VM created before tagging, or one a run left behind mid-clone),
+          add the "{{ proxmox_vm_tags[0] }}" tag to it in the Proxmox UI and run this again.
+        quiet: true
+      when:
+        - proxmox_vm_state == 'present'
+        - proxmox_vm_exists
+
     - name: Create the VM
       ansible.builtin.include_tasks: present.yml
       when: proxmox_vm_state == 'present'
@@ -82,14 +119,28 @@
     # Proxmox lets any VM carry any name, so `make destroy VM_NAME=nas` would
     # otherwise match an unrelated VM. The tag is what this project stamps on
     # everything it creates, and a template is never one of them.
+    # Separate from the tag check on purpose: proxmox_vm_allow_untagged_delete
+    # is an escape hatch for VMs created before this project tagged them, and
+    # it must never reach a template. Every VM is cloned from one, and while
+    # both rules shared a task, setting the flag skipped this one too.
+    - name: Refuse to delete a template
+      ansible.builtin.assert:
+        that: not (proxmox_vm_lookup.proxmox_vms[0].template | default(false) | bool)
+        fail_msg: >-
+          "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}) is a template, and every
+          VM is cloned from one. Refusing to delete it, with or without
+          proxmox_vm_allow_untagged_delete. Remove it in the Proxmox UI if it really should go.
+        quiet: true
+      when:
+        - proxmox_vm_state == 'absent'
+        - proxmox_vm_exists
+
     - name: Refuse to delete a VM this project does not own
       ansible.builtin.assert:
-        that:
-          - not (proxmox_vm_lookup.proxmox_vms[0].template | default(false) | bool)
-          - proxmox_vm_tags[0] in proxmox_vm_found_tags
+        that: proxmox_vm_sent_tags[0] in proxmox_vm_found_tags
         fail_msg: >-
-          "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}) is a template or is
-          not tagged "{{ proxmox_vm_tags[0] }}", so this project did not create it.
+          "{{ proxmox_vm_name }}" (VMID {{ proxmox_vm_resolved_id }}) is not tagged
+          "{{ proxmox_vm_tags[0] }}", so this project did not create it.
           Refusing to delete. Its tags are: {{ proxmox_vm_found_tags | join(', ') | default('(none)', true) }}.
           Set proxmox_vm_allow_untagged_delete=true to delete it anyway.
         quiet: true

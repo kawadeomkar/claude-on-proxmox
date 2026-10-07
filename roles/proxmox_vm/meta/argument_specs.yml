@@ -6,7 +6,14 @@ argument_specs:
       - Looks the VM up by name, clones it from a cloud-init template if missing,
         applies hardware and cloud-init settings, resizes the root disk, starts it
         and waits for the guest agent to report an address.
-      - Deleting refuses any VM that does not carry the ownership tag.
+      - An existing VM that is stopped is left stopped unless
+        proxmox_vm_start_existing is set. It is not waited on; the role sets
+        proxmox_vm_stopped and an empty proxmox_vm_address instead.
+      - A VM an earlier run did not finish is finished instead - configured,
+        resized and started - whatever its status. The settings call tags it
+        "<first tag>-unfinished", and only a successful start removes that tag.
+      - Deleting refuses any VM that does not carry the ownership tag, and
+        creating refuses an existing VM that lacks it or is a template.
       - All API calls are delegated to the controller.
     options:
       proxmox_vm_api_host:
@@ -60,6 +67,8 @@ argument_specs:
         description:
           - Start an already-configured VM that is stopped. Off by default so a
             re-run does not boot a VM that was shut down deliberately.
+          - When off, such a VM is reported as stopped (proxmox_vm_stopped) with an
+            empty proxmox_vm_address, without waiting for its guest agent.
       proxmox_vm_nic:
         type: str
         default: net0
@@ -88,6 +97,10 @@ argument_specs:
         description:
           - Pin the VM to a specific VMID. Left empty, Proxmox assigns the next free one.
           - The VM is identified by name, not by ID, so this is rarely needed.
+          - Run across several hosts at once, the role clones one VM at a time
+            unless each has a distinct VMID here, because concurrent clones that
+            ask Proxmox for one are handed the same. provision.yml sets one for
+            every new VM of a fleet.
           - Declared raw so the role can validate it and report a helpful message.
       proxmox_vm_cores:
         type: int
@@ -104,7 +117,9 @@ argument_specs:
         type: str
         default: 32G
         description:
-          - Absolute root disk size with unit suffix (K, M, G, T). Applied on creation only.
+          - Absolute root disk size with unit suffix (K, M, G, T). Applied when the VM is
+            created or an unfinished one is repaired, and with proxmox_vm_force_update.
+            Proxmox cannot shrink a disk, so a size below the current one fails.
           - Defaults to the vm_disk_size host var, else 32G.
       proxmox_vm_onboot:
         type: bool
@@ -115,8 +130,8 @@ argument_specs:
         default: [claude-on-proxmox]
         description:
           - Tags stamped on every VM this role creates. The first one is the
-            ownership marker - discovery finds VMs by it, and deleting refuses
-            to touch a VM that does not carry it.
+            ownership marker - discovery finds VMs by it, and both deleting and
+            provisioning refuse to touch an existing VM that does not carry it.
       proxmox_vm_user:
         type: str
         default: dev
@@ -138,6 +153,8 @@ argument_specs:
           - Proxmox ipconfig0 string. DHCP by default, with the address read back
             from the guest agent.
           - Set to something like "ip=192.0.2.50/24,gw=192.0.2.1" to assign a fixed address.
+          - One value for every VM it applies to. Set fleet-wide (local.yml, -e), every VM a
+            run provisions is given that same address, so use it only for a single VM.
       proxmox_vm_nameservers:
         type: list
         elements: str
@@ -150,7 +167,12 @@ argument_specs:
       proxmox_vm_agent_retries:
         type: int
         default: 60
-        description: How many times to poll the guest agent for an address.
+        description:
+          - How many times to poll the guest agent for an address.
+          - A count, not a wall-clock budget. With the defaults the wait is five
+            minutes of delay plus the time each poll takes; a running VM with no
+            agent answers each poll only after Proxmox's own ~3 s agent ping, so
+            the role gives up on it after about nine minutes.
       proxmox_vm_agent_delay:
         type: int
         default: 5
@@ -158,3 +180,9 @@ argument_specs:
       proxmox_vm_force_update:
         type: bool
         default: false
+        description:
+          - Re-apply the hardware and cloud-init settings to a VM that exists.
+            Off by default because Proxmox reports every update as a change.
+          - On, every VM the run covers has its settings re-applied, its tag list
+            replaced with proxmox_vm_tags (tags added by hand are dropped), and
+            is started, whether or not it was shut down on purpose.

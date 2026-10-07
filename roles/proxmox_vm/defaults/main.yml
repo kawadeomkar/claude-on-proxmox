@@ -50,7 +50,9 @@ proxmox_vm_ssh_public_keys: []
 # Cloud-init: networking. DHCP by default - whatever already serves your LAN
 # assigns the address, and the role reads it back from the guest agent. Set
 # proxmox_vm_ipconfig to something like "ip=192.0.2.50/24,gw=192.0.2.1" to
-# assign a fixed address instead.
+# assign a fixed address instead - but it is one value, so set in local.yml or
+# with -e it gives every VM a run provisions that same address. Use it only
+# for a run that provisions a single VM.
 proxmox_vm_ipconfig: ip=dhcp
 proxmox_vm_nameservers: "{{ vm_nameservers | default([]) }}"
 proxmox_vm_searchdomain: "{{ vm_searchdomain | default('') }}"
@@ -62,14 +64,23 @@ proxmox_vm_lookup_delay: 5
 
 # How long to wait for the guest agent to report an address after first boot.
 # The agent starts early, but the guest still has to complete a DHCP exchange.
+# A count of polls, not a wall-clock budget: 60 polls 5 s apart is five
+# minutes of waiting plus whatever each poll takes, and a running VM with no
+# agent at all answers each one only after Proxmox has pinged the agent for
+# about 3 s - closer to nine minutes before the role gives up on it.
 proxmox_vm_agent_retries: 60
 proxmox_vm_agent_delay: 5
 
 # Start an already-configured VM that is currently stopped. Off by default so
 # re-running provision over a fleet does not boot a VM someone shut down on
-# purpose; a VM this run creates or repairs is always started.
+# purpose; a VM this run creates or repairs is always started. A VM left
+# stopped is not waited on: the role sets proxmox_vm_stopped and an empty
+# proxmox_vm_address, and provision.yml reports it instead of publishing it.
 proxmox_vm_start_existing: false
 
 # Re-apply hardware/cloud-init settings to an existing VM. Off by default
 # because Proxmox reports every update as a change, breaking idempotence.
+# On, every VM the run covers is treated as unfinished: its settings are
+# re-applied, its tag list is replaced with proxmox_vm_tags (tags added by
+# hand are dropped), and it is started, stopped or not.
 proxmox_vm_force_update: false
