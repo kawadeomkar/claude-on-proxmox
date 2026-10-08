@@ -19,10 +19,10 @@
   ansible.builtin.assert:
     that:
       - vscode_server_tools.rc == 0
-      - ansible_facts.architecture in ['x86_64', 'aarch64']
+      - ansible_facts['architecture'] in ['x86_64', 'aarch64']
     fail_msg: >-
       {{ inventory_hostname }} cannot run VS Code Server: it needs bash, tar and curl or wget on
-      an x86_64 or aarch64 glibc system, and this host is {{ ansible_facts.architecture }} with
+      an x86_64 or aarch64 glibc system, and this host is {{ ansible_facts['architecture'] }} with
       {{ 'all of those tools' if vscode_server_tools.rc == 0 else 'some of those tools missing' }}.
       The common role installs curl and wget; check that it ran.
     quiet: true
@@ -117,8 +117,8 @@
     name: fs.inotify.max_user_watches
     value: "{{ vscode_server_inotify_watches }}"
     sysctl_file: /etc/sysctl.d/60-vscode-server.conf
-    sysctl_set: "{{ ansible_virtualization_type not in vscode_server_container_virt_types }}"
-    reload: "{{ ansible_virtualization_type not in vscode_server_container_virt_types }}"
+    sysctl_set: "{{ ansible_facts['virtualization_type'] not in vscode_server_container_virt_types }}"
+    reload: "{{ ansible_facts['virtualization_type'] not in vscode_server_container_virt_types }}"
     state: present
   when: vscode_server_enabled | bool
 

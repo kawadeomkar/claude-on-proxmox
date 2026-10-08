@@ -6,4 +6,4 @@
   ansible.builtin.service:
     name: ssh
     state: restarted
-  when: ansible_service_mgr == 'systemd'
+  when: ansible_facts['service_mgr'] == 'systemd'
