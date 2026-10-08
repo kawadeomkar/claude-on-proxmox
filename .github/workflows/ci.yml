@@ -35,7 +35,7 @@ jobs:
       # v8.30.0, the same release .pre-commit-config.yaml pins.
       GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # All of it: the commit scan at the end of this job reads every
           # commit a push or pull request brings in, and the one it starts from.
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
@@ -142,7 +142,7 @@ jobs:
       matrix:
         role: [common, dev_tools, claude_code, github_projects, proxmox_template, proxmox_vm]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Molecule test
         run: make molecule MOLECULE_ROLES=${{ matrix.role }}
@@ -159,7 +159,7 @@ jobs:
     env:
       MOLECULE_IMAGE: geerlingguy/docker-ubuntu2404-ansible:latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The Molecule scenarios never fetch the real cloud image: the template
       # scenario serves a random file from 127.0.0.1. So the image URL and the
@@ -192,7 +192,7 @@ jobs:
       matrix:
         scenario: [configure, provision]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Molecule test
         run: make molecule-scenario SCENARIO=${{ matrix.scenario }}
