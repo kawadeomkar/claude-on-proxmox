@@ -1293,6 +1293,13 @@
             "editor.fontSize": 14,
           }
 
+    # make code reads these settings and must never write them: their bytes
+    # and mtime are compared after every run that can see them.
+    - name: Stat the VS Code settings before make code reads them
+      ansible.builtin.stat:
+        path: "{{ verify_code_vars.vscode_user_settings_file }}"
+      register: verify_settings_on
+
     - name: Open the project again with automatic tasks allowed
       ansible.builtin.command:
         argv: >-
@@ -1308,11 +1315,21 @@
         path: "{{ verify_code_ws_dir }}/project/discord-music-bot.code-workspace"
       register: verify_ws_after
 
+    - name: Stat the VS Code settings after make code read them
+      ansible.builtin.stat:
+        path: "{{ verify_code_vars.vscode_user_settings_file }}"
+      register: verify_settings_on_after
+
     - name: Turn automatic tasks off in the VS Code settings
       ansible.builtin.copy:
         dest: "{{ verify_code_vars.vscode_user_settings_file }}"
         mode: "0644"
         content: '{"task.allowAutomaticTasks": "off"}'
+
+    - name: Stat the VS Code settings with automatic tasks off
+      ansible.builtin.stat:
+        path: "{{ verify_code_vars.vscode_user_settings_file }}"
+      register: verify_settings_off
 
     - name: Open the whole directory with automatic tasks off, then a project with the terminal switched off
       ansible.builtin.command:
@@ -1348,6 +1365,9 @@
           - verify_code_allowed.stdout is not search('choose Allow')
           - verify_ws_after.stat.mtime == verify_ws_before.stat.mtime
           - verify_ws_after.stat.checksum == verify_ws_before.stat.checksum
+          # The user's settings were read, never written.
+          - verify_settings_on_after.stat.mtime == verify_settings_on.stat.mtime
+          - verify_settings_on_after.stat.checksum == verify_settings_on.stat.checksum
           # Off: said, with where.
           - >-
             verify_off.stdout is search('It will not start on its own: task.allowAutomaticTasks is \\W+off\\W+ in \\S+/vscode/settings.json')
@@ -1461,6 +1481,61 @@
         fail_msg: >-
           VS Code was asked for more than the six runs above, or a refusal left a workspace file
           ({{ verify_ws_files_final.files | map(attribute='path') | list }}): {{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log') }}
+        quiet: true
+
+    # A workspace directory of the user's own, named with a trailing slash,
+    # as vm_projects_dir is here too: both slashes are dropped, the file
+    # lands in the directory named, and a directory that already exists
+    # keeps the mode it had.
+    - name: Make a workspace directory of the user's own, with a mode of its own
+      ansible.builtin.file:
+        path: "{{ verify_ssh_dir }}/kept"
+        state: directory
+        mode: "0750"
+
+    - name: Open the whole directory with the workspace files kept elsewhere, both paths with a trailing slash
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', verify_code_vars | combine({'vm_projects_dir': verify_ssh_dir ~ '/projects/',
+                                                            'vscode_workspaces_dir': verify_ssh_dir ~ '/kept/'}) | to_json,
+                verify_code_playbook] }}
+      environment: "{{ verify_code_env }}"
+      register: verify_code_kept
+      changed_when: false
+      failed_when: false
+
+    - name: Stat the directory of the user's own, the file in it, and the VS Code settings at the end
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ verify_ssh_dir }}/kept"
+        - "{{ verify_ssh_dir }}/kept/projects.code-workspace"
+        - "{{ verify_code_vars.vscode_user_settings_file }}"
+      register: verify_kept
+
+    - name: Assert the slashes were dropped, the directory kept its mode, and the settings were never written
+      vars:
+        verify_ws: "{{ verify_ssh_dir }}/projects"
+        verify_code_log_kept: "{{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() }}"
+      ansible.builtin.assert:
+        that:
+          - verify_code_kept.rc == 0
+          - verify_code_log_kept | length == 15
+          - verify_code_log_kept[-1] == '--remote ssh-remote+alpha ' ~ verify_ssh_dir ~ '/kept/projects.code-workspace'
+          - verify_code_kept.stdout is search(('VS Code is opening ' ~ verify_ws ~ ' on alpha') | regex_escape)
+          - verify_kept.results[1].stat.exists
+          - verify_kept.results[0].stat.mode == '0750'
+          # Every run since "off" was written saw the same bytes, and they are still exactly what was written.
+          - verify_kept.results[2].stat.mtime == verify_settings_off.stat.mtime
+          - verify_kept.results[2].stat.checksum == verify_settings_off.stat.checksum
+          - >-
+            lookup('ansible.builtin.file', verify_code_vars.vscode_user_settings_file) == '{"task.allowAutomaticTasks": "off"}'
+        fail_msg: >-
+          make code with the workspace files kept elsewhere exited {{ verify_code_kept.rc }}, asked for
+          {{ verify_code_log_kept[-2:] }}, left {{ verify_kept.results | map(attribute='stat.exists') | list }}
+          with mode {{ verify_kept.results[0].stat.mode | default('none') }}:
+          {{ verify_code_kept.stdout | regex_findall('(\\[ERROR\\]: [^\\n]*|VS Code is opening[^\\n]*)') }}
         quiet: true
 
     - name: Stat the user ssh config that must never have been written

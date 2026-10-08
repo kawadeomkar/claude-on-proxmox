@@ -459,8 +459,10 @@ from the explorer of the window that shows it, and holds one task, `Claude`: a `
 folderOpen`, presented in a dedicated, focused terminal. A login shell, because VS Code starts task
 shells non-login and `claude` is on the login `PATH` only (`make claude-login` uses `bash -lc` for
 the same reason). The script checks `claude` is installed, runs `claude auth login` when
-`claude auth status` fails, and then `exec claude`; its two messages arrive as arguments, never as
-script text, and `tests/unit/test_code_session.py` runs it against a stand-in `claude`. `${workspaceFolder}`
+`claude auth status` fails, and then `exec claude --continue` - the folder's latest conversation, or
+a new one, because a task terminal does not survive a window reload, after which the task runs
+again; its two messages arrive as arguments, never as script text, and
+`tests/unit/test_code_session.py` runs it against a stand-in `claude`. `${workspaceFolder}`
 is not used: in a task that belongs to a workspace file rather than a folder it is ambiguous.
 
 Sign-in is not scripted, because it cannot be: it is a browser flow. VS Code Server puts its
@@ -486,9 +488,11 @@ workspace. The defaults moved twice in 2026 (1.109, 1.126); CI cannot watch the 
 manual run of `make code` is the check when they move again.
 
 The workspace file is the one thing written on the VM, last, as the VM user, so every refusal above
-leaves the VM as it was; `tests/unit/test_code_session.py` fails if a task in `code.yml` writes
-anything other than on the VM. `PROJECT=.claude-on-proxmox`, which names the files' own directory,
-is refused. Cloud-init placed the key, so a VM that was provisioned but never configured still
+leaves the VM as it was; a workspace directory that already exists keeps its mode, since
+`vscode_workspaces_dir` may name one of the user's own. `tests/unit/test_code_session.py` holds
+every task in `code.yml` to an allowlist - read-only here, or delegated to the VM - and the
+`provision` scenario checks the settings file it planted is byte-for-byte untouched after every
+run. `PROJECT=.claude-on-proxmox`, which names the files' own directory, is refused. Cloud-init placed the key, so a VM that was provisioned but never configured still
 opens once it has a workspace, and its terminal says to run `make configure`.
 
 ## 5. Roles

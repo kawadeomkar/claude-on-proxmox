@@ -707,9 +707,13 @@ waits for exactly that login, and the terminal says so:
 `make configure VM_NAME=alpha TAGS=claude_code` starts it. A VM configured with an API key is
 already signed in, and goes straight to `claude`.
 
-**Every window is a session.** Two `make code` windows on one project are two Claude sessions in one
-working tree. Opening a window that is already open focuses it rather than starting a second
-session. Quitting `claude` ends the task; *Tasks: Run Task*, *Claude* starts another.
+**Every window picks the folder's conversation up.** The terminal runs `claude --continue`: the
+folder's most recent conversation, or a new one when there is none. A window reload (*Developer:
+Reload Window*, or the *Reload Required* an extension install can ask for) ends the task's process
+and runs the task again, so nothing is lost but the reply in flight; `/clear` starts a fresh
+conversation. Opening a window that is already open focuses it rather than starting a second
+session; two windows on one project would share the conversation. Quitting `claude` ends the task;
+*Tasks: Run Task*, *Claude* starts another.
 
 **Switches.** `vscode_claude_terminal: false` opens the bare folder, as before, and writes nothing
 on the VM; for one run, `make code VM_NAME=alpha ANSIBLE_ARGS="-e vscode_claude_terminal=false"`.

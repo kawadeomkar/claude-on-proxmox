@@ -6,6 +6,15 @@ window opens. The script is run here as it is, against a stand-in `claude` that
 records what it was asked: PATH holds the stand-in alone, and the script uses
 only shell builtins besides it, so nothing on this machine is reached. The
 Molecule provision scenario checks the workspace file and the task around it.
+
+The second half holds every task in `code.yml` to an allowlist, because the
+playbook reads the user's own VS Code settings and must never write them. On
+this machine a task may assert, debug, set facts, add the host, import the
+project's task files, or run `which` and `code`; on the VM, reached only
+through `delegate_to`, it may stat, getent and find, and make the one
+directory and the one file. `tasks/ssh_config.yml` (the alias) is held to its
+own rules by test_ssh_config.py, and `code --install-extension` fills VS
+Code's own extension store, by design.
 """
 
 from __future__ import annotations
@@ -78,17 +87,19 @@ def test_without_claude_it_says_how_to_install_it_and_fails(tmp_path):
     assert asked == []
 
 
-def test_a_signed_in_vm_goes_straight_to_claude(tmp_path):
+def test_a_signed_in_vm_picks_the_folder_s_conversation_up(tmp_path):
+    # --continue: the folder's latest conversation, or a new one. A task
+    # terminal does not survive a window reload, and the task then runs again.
     result, asked = _run(tmp_path, status_rc=0)
     assert result.returncode == 0
-    assert asked == ["claude auth status", "claude"]
+    assert asked == ["claude auth status", "claude --continue"]
     assert result.stdout == ""
 
 
 def test_a_vm_not_signed_in_signs_in_then_starts_claude(tmp_path):
     result, asked = _run(tmp_path, status_rc=1, login_rc=0)
     assert result.returncode == 0
-    assert asked == ["claude auth status", "claude auth login", "claude"]
+    assert asked == ["claude auth status", "claude auth login", "claude --continue"]
     assert "Signing in to Claude first" in result.stdout
     assert result.stdout.rstrip().endswith(SIGNED_IN)
 
@@ -102,7 +113,7 @@ def test_a_failed_sign_in_stops_there(tmp_path):
 
 def test_no_remote_control_hint_when_there_is_none_to_give(tmp_path):
     result, asked = _run(tmp_path, status_rc=1, login_rc=0, signed_in="")
-    assert asked[-1] == "claude"
+    assert asked[-1] == "claude --continue"
     assert result.stdout.strip().splitlines() == [
         "Signing in to Claude first. Your browser opens the sign-in page; if it shows a code, paste it here."
     ]
@@ -116,31 +127,91 @@ def test_the_task_passes_the_script_and_its_messages_as_arguments():
     assert task["runOptions"] == {"runOn": "folderOpen"}
 
 
-WRITERS = {
-    "ansible.builtin.copy",
-    "ansible.builtin.file",
-    "ansible.builtin.template",
-    "ansible.builtin.lineinfile",
-    "ansible.builtin.blockinfile",
+# The task keywords code.yml uses; the one other key of a task is its action.
+# A keyword missing here makes a task fail loudly, which is the point.
+KEYWORDS = {
+    "name",
+    "vars",
+    "when",
+    "register",
+    "delegate_to",
+    "changed_when",
+    "failed_when",
+    "ignore_unreachable",
+    "ignore_errors",
+    "loop",
+    "loop_control",
+    "environment",
+    "no_log",
+    "tags",
+    "until",
+    "retries",
+    "delay",
+    "throttle",
+    "run_once",
 }
+ON_VM = "{{ claude_vm_names[0] }}"
+READS_HERE = {
+    "ansible.builtin.assert",
+    "ansible.builtin.debug",
+    "ansible.builtin.set_fact",
+    "ansible.builtin.add_host",
+    "ansible.builtin.import_tasks",
+}
+COMMANDS_HERE = {
+    ("which", "code"),
+    ("code", "--list-extensions"),
+    ("code", "--install-extension"),
+    ("code", "--remote"),
+}
+READS_ON_VM = {"ansible.builtin.getent", "ansible.builtin.stat", "ansible.builtin.find"}
+WRITES_ON_VM = {"ansible.builtin.file", "ansible.builtin.copy"}
 
 
-@pytest.mark.parametrize(
-    "task",
-    [t for t in _play()["tasks"] if WRITERS & t.keys()],
-    ids=lambda t: t["name"],
-)
-def test_make_code_writes_only_on_the_vm(task):
-    # On this machine, code.yml writes the SSH alias through
-    # tasks/ssh_config.yml and nothing else: never the user's VS Code
-    # settings, whose automatic-tasks answer is theirs to give.
-    assert task.get("delegate_to") == "{{ claude_vm_names[0] }}"
-    assert task.get("when") == "claude_code_terminal"
+def _tasks(items):
+    # Every task, through block/rescue/always; a block itself has no action.
+    for item in items:
+        if "block" in item:
+            for section in ("block", "rescue", "always"):
+                yield from _tasks(item.get(section) or [])
+        else:
+            yield item
 
 
-def test_make_code_writes_something():
-    # The parametrised test above must not pass by finding nothing.
-    assert [t["name"] for t in _play()["tasks"] if WRITERS & t.keys()] == [
+def _every_task():
+    play = _play()
+    for section in ("pre_tasks", "tasks", "post_tasks", "handlers"):
+        yield from _tasks(play.get(section) or [])
+
+
+def _action(task):
+    keys = set(task) - KEYWORDS
+    assert len(keys) == 1, f"{task.get('name')}: {sorted(keys)}"
+    return keys.pop()
+
+
+@pytest.mark.parametrize("task", list(_every_task()), ids=lambda t: t.get("name", "?"))
+def test_every_task_reads_this_machine_or_is_delegated_to_the_vm(task):
+    action = _action(task)
+    assert "connection" not in task
+    assert "ansible_connection" not in (task.get("vars") or {})
+    if action in READS_HERE:
+        assert "delegate_to" not in task
+    elif action == "ansible.builtin.command":
+        assert "delegate_to" not in task
+        assert tuple(task[action]["argv"][:2]) in COMMANDS_HERE
+    elif action in READS_ON_VM:
+        assert task.get("delegate_to") == ON_VM
+    elif action in WRITES_ON_VM:
+        assert task.get("delegate_to") == ON_VM
+        assert task.get("when") == "claude_code_terminal"
+    else:
+        pytest.fail(f"{task.get('name')} uses {action}, which make code may not")
+
+
+def test_make_code_writes_exactly_the_directory_and_the_file():
+    # The allowlist must not pass by finding no writer.
+    assert [t["name"] for t in _every_task() if _action(t) in WRITES_ON_VM] == [
         "Make the directory for VS Code workspace files on the VM",
         "Write the VS Code workspace on the VM",
     ]

@@ -79,8 +79,11 @@
     # PATH only. `claude auth status` exits non-zero until the VM is signed in,
     # by claude.ai or by an API key; `claude auth login` is the browser flow,
     # and the browser is the one on this machine, through the BROWSER helper
-    # VS Code Server sets in every terminal it starts. The messages are
-    # arguments, never script text.
+    # VS Code Server sets in every terminal it starts. --continue picks the
+    # folder's latest conversation up, or starts one when there is none: a
+    # task terminal does not survive a window reload, after which the task
+    # runs again, so without it a reload would end the conversation (/clear
+    # starts a fresh one). The messages are arguments, never script text.
     claude_code_session: |-
       if ! command -v claude >/dev/null 2>&1; then
         printf '%s\n' "$1"
@@ -91,7 +94,7 @@
         claude auth login || exit 1
         [ -z "$2" ] || printf '%s\n' "$2"
       fi
-      exec claude
+      exec claude --continue
     claude_code_not_installed: >-
       Claude Code is not installed on {{ claude_vm_names[0] }} yet. On your machine, run
       make configure VM_NAME={{ claude_vm_names[0] }}, then "Tasks: Run Task", Claude here.
@@ -239,9 +242,11 @@
           {{ vm_projects_dir | default('', true)
              or claude_code_home.ansible_facts.getent_passwd[vm_user][4] ~ '/projects' }}
         claude_code_root: "{{ claude_code_workspace | regex_replace('(.)/+$', '\\1') }}"
+        # A folded scalar keeps its backslashes, so the group is written once:
+        # '\\1' here would reach the regex as a backslash and a 1.
         claude_code_ws_dir: >-
           {{ (vscode_workspaces_dir | default('', true) or claude_code_root ~ '/.claude-on-proxmox')
-             | regex_replace('(.)/+$', '\\1') }}
+             | regex_replace('(.)/+$', '\1') }}
       ansible.builtin.set_fact:
         claude_code_project: "{{ vm_project | default('', true) | string }}"
         claude_code_root: "{{ claude_code_root }}"
@@ -371,12 +376,22 @@
 
     # The one write on the VM, as the VM user, last: every refusal above
     # leaves the VM as it was. An unchanged file is not rewritten, so a run
-    # that only reopens a window reports no change there.
+    # that only reopens a window reports no change there, and a directory
+    # that already exists keeps its mode: vscode_workspaces_dir may name one
+    # of the user's own, the home directory included.
+    - name: Look for the directory for VS Code workspace files on the VM
+      ansible.builtin.stat:
+        path: "{{ claude_code_ws_file | dirname }}"
+        get_checksum: false
+      delegate_to: "{{ claude_vm_names[0] }}"
+      register: claude_code_ws_dir_found
+      when: claude_code_terminal
+
     - name: Make the directory for VS Code workspace files on the VM
       ansible.builtin.file:
         path: "{{ claude_code_ws_file | dirname }}"
         state: directory
-        mode: "0755"
+        mode: "{{ omit if claude_code_ws_dir_found.stat.exists | default(false) else '0755' }}"
       delegate_to: "{{ claude_vm_names[0] }}"
       when: claude_code_terminal
 
