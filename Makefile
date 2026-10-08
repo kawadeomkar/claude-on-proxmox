@@ -27,7 +27,8 @@ VM_NAME    ?=
 # has already rejected anything that could break out of this quoting.
 VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
 # Re-run part of configure: make configure VM_NAME=alpha TAGS=claude_code
-# Role tags are common, dev_tools, claude_code, github_projects. Discovery is
+# Role tags are common, vscode_server, dev_tools, claude_code and
+# github_projects. Discovery is
 # tagged "always", so it runs whichever of these you pick. Only configure and
 # check take TAGS. deploy refuses it: nothing that builds the template or
 # creates a VM is tagged, so --tags would skip all of that and exit 0 having
@@ -35,7 +36,7 @@ VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
 # deploy, template build over root SSH included.
 TAGS       ?=
 TAG_ARGS   := $(if $(TAGS),--tags $(TAGS),)
-ROLES      := common dev_tools claude_code github_projects proxmox_template proxmox_vm
+ROLES      := common vscode_server dev_tools claude_code github_projects proxmox_template proxmox_vm
 MOLECULE_ROLES ?= $(ROLES)
 # Hooks make lint already runs. make test skips them in pre-commit so the
 # production-profile ansible-lint and ruff do not run a second time (ruff-format
@@ -145,6 +146,24 @@ claude-login: vault-check vm-name-check ## Show how to sign Claude Code in on th
 .PHONY: check
 check: vault-check vm-name-check ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
+
+# The SSH aliases this project keeps in ~/.ssh/claude-on-proxmox.conf, so
+# `ssh <name>` and VS Code's host picker follow each VM's address. deploy and
+# configure refresh the VMs they touch; this one refreshes the fleet and,
+# without VM_NAME, prunes the aliases of VMs that no longer exist.
+.PHONY: ssh-config
+ssh-config: vault-check vm-name-check ## Refresh the SSH alias of every VM this project created (all, unless VM_NAME; fleet-wide also prunes)
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/ssh_config.yml
+
+# One VM at a time: VS Code opens one window per workspace, and "open it in
+# the editor" does not mean a fleet. Read through the environment like
+# vm-name-check, so the value is never interpolated into the recipe.
+.PHONY: code
+code: export VM_NAME_CHECK := $(value VM_NAME)
+code: vault-check vm-name-check ## Refresh one VM's SSH alias and open its workspace in VS Code: make code VM_NAME=alpha
+	@test -n "$$VM_NAME_CHECK" || { echo "error: code opens one VM: make code VM_NAME=<name>"; exit 1; }
+	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
 
 # ------------------------------------------------------------ quality -----
 .PHONY: lint

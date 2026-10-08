@@ -104,3 +104,20 @@
   roles:
     - role: proxmox_vm
       proxmox_vm_state: absent
+
+# The alias this project keeps for each VM on this machine goes with the VM,
+# as its host key does (README, "Using VS Code on the VM"). After the
+# deletions, so a run refused above leaves every alias in place; removing a
+# block that is not there is a no-op.
+- name: Forget the SSH alias of each deleted VM
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Remove the aliases
+      ansible.builtin.import_tasks: tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: absent
+        claude_ssh_vms: >-
+          {{ groups['claude_vm_doomed'] | default([]) | map('community.general.dict_kv', 'name') | list }}
+      when: claude_ssh_config | default(true) | bool

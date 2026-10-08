@@ -1,0 +1,28 @@
+---
+argument_specs:
+  main:
+    short_description: Make a VM ready for VS Code's Remote - SSH extension
+    description:
+      - Writes an sshd drop-in that keeps the port forwarding VS Code Server is reached through
+        enabled and adds keepalives, asserts the values sshd actually runs with, and raises the
+        inotify watch limit VS Code's file watcher needs. Disabled, it removes both files.
+    options:
+      vscode_server_enabled:
+        type: bool
+        default: true
+      vscode_server_user:
+        type: str
+        default: dev
+      vscode_server_client_alive_interval:
+        type: int
+        default: 60
+      vscode_server_client_alive_count_max:
+        type: int
+        default: 3
+      vscode_server_inotify_watches:
+        type: int
+        default: 524288
+      vscode_server_container_virt_types:
+        type: list
+        elements: str
+        default: [docker, container, containerd, podman, lxc]

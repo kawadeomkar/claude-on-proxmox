@@ -49,6 +49,12 @@ NODE = "pve"
 # Listed by /nodes and /cluster/resources, but every request to it fails the
 # way pveproxy fails one it cannot forward to a node that is powered off.
 DOWN_NODE = "pve2"
+# Whether that node currently reports. Off, as above, until a fixture turns
+# it on with PUT /api2/json/fake/nodes/pve2?status=online - the one thing
+# the playbooks' "a node is down" paths cannot otherwise be shown to recover
+# from. While it is on, its guests are listed with their names and as
+# stopped, the way Proxmox lists guests on a node that has just come back.
+NODES_ONLINE = {DOWN_NODE: False}
 
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 VMS = {
@@ -171,9 +177,11 @@ def resource(vm):
     # statistics, which the cluster drops five minutes after a node stops
     # reporting. A guest on a node that is down is therefore listed with
     # neither, and consumers that index `name` without a default fall over.
-    if vm["node"] != DOWN_NODE:
+    if vm["node"] != DOWN_NODE or NODES_ONLINE[DOWN_NODE]:
         entry["name"] = vm["name"]
         entry["template"] = vm["template"]
+    if vm["node"] == DOWN_NODE and NODES_ONLINE[DOWN_NODE]:
+        entry["status"] = "stopped"
     # PVE leaves the key out for a guest with no tags, rather than sending "".
     # Always sending it hid that anything filtering on tags has to allow for
     # a VM without the attribute at all.
@@ -247,13 +255,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(403, None, f"Permission check failed (/vms/{vmid}, VM.GuestAgent.Audit)")
         if parts == ["version"]:
             return self._reply(200, {"version": "8.2.4", "release": "8.2", "repoid": "fake"})
+        if parts[:2] == ["fake", "nodes"] and method == "PUT" and len(parts) == 3:
+            # Not a PVE endpoint: a fixture's switch for the node that is down.
+            NODES_ONLINE[parts[2]] = params.get("status") == "online"
+            return self._reply(200, {"node": parts[2], "status": params.get("status")})
         if parts == ["nodes"]:
-            return self._reply(200, [{"node": NODE, "status": "online"}, {"node": DOWN_NODE, "status": "offline"}])
+            return self._reply(
+                200,
+                [
+                    {"node": NODE, "status": "online"},
+                    {"node": DOWN_NODE, "status": "online" if NODES_ONLINE[DOWN_NODE] else "offline"},
+                ],
+            )
         if parts == ["cluster", "resources"]:
             return self._reply(200, [resource(vm) for vm in VMS.values()])
         if parts == ["cluster", "nextid"]:
             return self._reply(200, str(next(i for i in range(NEXTID_LOWER, NEXTID_LOWER + 10000) if i not in VMS)))
-        if parts[:2] == ["nodes", DOWN_NODE]:
+        if parts[:2] == ["nodes", DOWN_NODE] and not NODES_ONLINE[DOWN_NODE]:
             return self._reply_empty(595, "No route to host")
         if parts[:2] != ["nodes", NODE]:
             return self._reply(404, None)

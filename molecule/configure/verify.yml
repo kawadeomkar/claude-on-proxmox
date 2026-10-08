@@ -123,3 +123,50 @@
           RestartMaxDelayUSec={{ verify_rc_service.status.RestartMaxDelayUSec | default('?') }}
           StartLimitIntervalUSec={{ verify_rc_service.status.StartLimitIntervalUSec | default('?') }}
         quiet: true
+
+# The alias configure.yml left on the controller, in the ephemeral directory
+# host_vars/localhost.yml points it at. Resolved with the real ssh client, as
+# VS Code's Remote - SSH would.
+- name: Verify the SSH alias written on the controller
+  hosts: localhost
+  gather_facts: false
+  vars:
+    verify_ssh_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+  tasks:
+    - name: Read the managed ssh config
+      ansible.builtin.slurp:
+        src: "{{ verify_ssh_dir }}/claude-on-proxmox.conf"
+      register: verify_ssh_managed
+
+    - name: Stat the managed file and the user config that must not exist
+      ansible.builtin.stat:
+        path: "{{ verify_ssh_dir }}/{{ item }}"
+      register: verify_ssh_stats
+      loop: [claude-on-proxmox.conf, ssh_config]
+
+    - name: Resolve the alias with the real ssh client
+      ansible.builtin.command:
+        argv: [ssh, -G, -F, "{{ verify_ssh_dir }}/claude-on-proxmox.conf", claude-dev]
+      register: verify_ssh_resolved
+      changed_when: false
+
+    - name: Assert the alias is what VS Code would use
+      vars:
+        verify_ssh_text: "{{ verify_ssh_managed.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'# BEGIN claude-on-proxmox: claude-dev' in verify_ssh_text"
+          - "'# END claude-on-proxmox: claude-dev' in verify_ssh_text"
+          # The container's home for dev, resolved on the host, not guessed
+          - "'# workspace /home/dev/projects' in verify_ssh_text"
+          - "'Host claude-dev' in verify_ssh_text"
+          - "'HostName claude-dev' in verify_ssh_text"
+          - "'User dev' in verify_ssh_text"
+          - "'ServerAliveInterval 30' in verify_ssh_text"
+          - "'ForwardAgent' not in verify_ssh_text"
+          - verify_ssh_stats.results[0].stat.mode == '0600'
+          - not verify_ssh_stats.results[1].stat.exists
+          - "'hostname claude-dev' in verify_ssh_resolved.stdout_lines"
+          - "'user dev' in verify_ssh_resolved.stdout_lines"
+        fail_msg: "Unexpected managed ssh config:\n{{ verify_ssh_text }}"
+        quiet: true

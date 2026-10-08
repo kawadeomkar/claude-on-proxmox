@@ -146,3 +146,42 @@ def test_deploy_refuses_tags(tmp_path: Path) -> None:
     assert "deploy takes no TAGS" in output
     assert "make configure VM_NAME=<name> TAGS=claude_code" in output
     assert "ansible-playbook" not in output
+
+
+# ssh-config takes VM_NAME like every fleet target; code takes exactly one.
+def test_ssh_config_passes_vm_name_as_json() -> None:
+    result = _make("-n", "ssh-config", "VM_NAME=alpha,beta")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert """-e '{"vm_name": "alpha,beta"}'""" in result.stdout
+    assert "playbooks/ssh_config.yml" in result.stdout
+
+
+def test_code_passes_one_vm_name(tmp_path: Path) -> None:
+    result = _make("-n", "code", "VM_NAME=alpha")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert """-e '{"vm_name": "alpha"}'""" in result.stdout
+    assert "playbooks/code.yml" in result.stdout
+
+
+def test_code_refuses_no_vm_name(tmp_path: Path) -> None:
+    result = _make("code", *_safe_overrides(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "code opens one VM: make code VM_NAME=<name>" in output
+    assert "ansible-playbook" not in output
+
+
+def test_code_refuses_several_vm_names(tmp_path: Path) -> None:
+    result = _make("code", "VM_NAME=alpha,beta", *_safe_overrides(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "code opens one VM at a time, not [alpha,beta]" in output
+    assert "ansible-playbook" not in output
+
+
+def test_code_runs_the_name_check_before_anything_else(tmp_path: Path) -> None:
+    result = _make("code", "VM_NAME=a;b", *_safe_overrides(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert NAME_ERROR in output
+    assert "ansible-playbook" not in output

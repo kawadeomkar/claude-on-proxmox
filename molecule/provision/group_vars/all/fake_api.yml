@@ -21,3 +21,11 @@ vm_ssh_public_keys:
 
 # The fake refuses the first polls on purpose; keep the retries quick.
 proxmox_vm_agent_delay: 1
+
+# destroy.yml and ssh_config.yml write the SSH aliases on the controller,
+# which here is the developer's own machine. Into Molecule's ephemeral
+# directory, never ~/.ssh, with the Include line off.
+# tests/unit/test_ssh_config.py checks every scenario does this.
+claude_ssh_config_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/claude-on-proxmox.conf"
+claude_ssh_user_config: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ssh_config"
+claude_ssh_config_include: false

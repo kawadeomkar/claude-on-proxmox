@@ -1,0 +1,131 @@
+---
+# What VS Code's Remote - SSH extension needs on the host, from its own
+# documentation: bash, tar and curl or wget to install the server; a glibc
+# system on x86_64 or aarch64; an sshd that allows the port forward the server
+# is reached through; and an inotify limit large enough to watch a workspace.
+# The image and the common role provide the first two; this role writes the
+# other two, and checks the sshd one against what sshd actually runs with.
+
+- name: Look for the tools the server installer needs
+  ansible.builtin.command:
+    argv: [bash, -c, 'command -v bash tar && { command -v curl || command -v wget; }']
+  register: vscode_server_tools
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: vscode_server_enabled | bool
+
+- name: Fail when the host cannot run VS Code Server
+  ansible.builtin.assert:
+    that:
+      - vscode_server_tools.rc == 0
+      - ansible_facts.architecture in ['x86_64', 'aarch64']
+    fail_msg: >-
+      {{ inventory_hostname }} cannot run VS Code Server: it needs bash, tar and curl or wget on
+      an x86_64 or aarch64 glibc system, and this host is {{ ansible_facts.architecture }} with
+      {{ 'all of those tools' if vscode_server_tools.rc == 0 else 'some of those tools missing' }}.
+      The common role installs curl and wget; check that it ran.
+    quiet: true
+  when: vscode_server_enabled | bool
+
+# sshd -t needs its privilege-separation directory, which only exists once
+# sshd has started (not yet the case in a fresh container).
+- name: Ensure sshd privilege separation directory exists
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: vscode_server_enabled | bool
+
+# A drop-in of its own, after the common role's 10-claude-on-proxmox.conf: one
+# file per owner, and sshd reads sshd_config.d in lexical order.
+- name: Allow the port forward VS Code Server is reached through
+  ansible.builtin.template:
+    src: 20-vscode-server.conf.j2
+    dest: /etc/ssh/sshd_config.d/20-vscode-server.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  when: vscode_server_enabled | bool
+  notify: Restart ssh for VS Code
+
+- name: Remove the sshd drop-in
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/20-vscode-server.conf
+    state: absent
+  when: not vscode_server_enabled | bool
+  notify: Restart ssh for VS Code
+
+# The check below reads the running configuration, so the restart the
+# template notified has to happen first rather than at the end of the play.
+- name: Apply the sshd change before checking it
+  ansible.builtin.meta: flush_handlers
+
+# sshd keeps the first value it reads for a keyword, so a drop-in sorted
+# before ours, or /etc/ssh/sshd_config itself, wins over the file this role
+# just wrote - silently. Reading the effective configuration back is what
+# turns that into a named failure instead of a VS Code window that cannot
+# connect. Not in check mode on a host without the drop-in yet: there is
+# nothing to read that this run would have written.
+- name: Read the configuration sshd runs with
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -T]
+  register: vscode_server_sshd
+  changed_when: false
+  check_mode: false
+  when: vscode_server_enabled | bool
+
+- name: Find what turns forwarding off, if anything does
+  ansible.builtin.shell:
+    cmd: >-
+      grep -lis -E -e '^[[:space:]]*AllowTcpForwarding[[:space:]]+no'
+      -e '^[[:space:]]*AllowStreamLocalForwarding[[:space:]]+no'
+      /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*
+  register: vscode_server_forwarding_off
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: vscode_server_enabled | bool
+
+- name: Fail when sshd does not allow the forwarding VS Code needs
+  vars:
+    vscode_server_effective: >-
+      {{ vscode_server_sshd.stdout_lines
+         | select('match', '^(allowtcpforwarding|allowstreamlocalforwarding) ') | list }}
+  ansible.builtin.assert:
+    that:
+      - "'allowtcpforwarding yes' in vscode_server_sshd.stdout_lines"
+      - "'allowstreamlocalforwarding yes' in vscode_server_sshd.stdout_lines"
+    fail_msg: >-
+      sshd on {{ inventory_hostname }} runs with "{{ vscode_server_effective | join('", "') }}", so
+      VS Code's Remote - SSH cannot reach the server it starts there. sshd keeps the first value it
+      reads for a keyword, so something read before /etc/ssh/sshd_config.d/20-vscode-server.conf
+      sets it{{ ': ' ~ (vscode_server_forwarding_off.stdout_lines | join(', '))
+                if vscode_server_forwarding_off.stdout_lines | default([]) | length > 0
+                else ' - a drop-in sorted before it, or /etc/ssh/sshd_config itself' }}.
+      Remove that setting, or set vscode_remote: false to leave sshd alone.
+    quiet: true
+  when: vscode_server_enabled | bool
+
+# Written for the record wherever the role runs, applied only where /proc/sys
+# is writable. ansible.posix.sysctl reads the live value only when it sets it.
+- name: Raise the inotify watch limit for VS Code's file watcher
+  ansible.posix.sysctl:
+    name: fs.inotify.max_user_watches
+    value: "{{ vscode_server_inotify_watches }}"
+    sysctl_file: /etc/sysctl.d/60-vscode-server.conf
+    sysctl_set: "{{ ansible_virtualization_type not in vscode_server_container_virt_types }}"
+    reload: "{{ ansible_virtualization_type not in vscode_server_container_virt_types }}"
+    state: present
+  when: vscode_server_enabled | bool
+
+# The live value stays raised until the next boot; a limit is harmless to
+# leave high, and lowering it under a running watcher is not.
+- name: Remove the inotify setting
+  ansible.builtin.file:
+    path: /etc/sysctl.d/60-vscode-server.conf
+    state: absent
+  when: not vscode_server_enabled | bool

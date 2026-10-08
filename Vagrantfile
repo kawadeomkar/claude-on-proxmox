@@ -36,6 +36,9 @@ Vagrant.configure("2") do |config|
       # API here, so skip discovery; otherwise configure.yml fails resolving
       # proxmox_api_host, which lives in inventory/group_vars Vagrant does not load.
       claude_vm_discovery: false,
+      # Vagrant reaches this VM on a forwarded port that an alias would not
+      # carry, and a test must never write into the developer's ~/.ssh.
+      claude_ssh_config: false,
       configure_wait_for_cloud_init: false,
       common_manage_hostname: false,
       common_user_ssh_public_keys: [SSH_PUBLIC_KEY],

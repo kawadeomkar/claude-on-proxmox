@@ -2,3 +2,14 @@
 # There is no Proxmox API in this scenario: the container is already in the
 # claude_vms group, so skip the discovery play configure.yml starts with.
 claude_vm_discovery: false
+
+# The alias play at the end of configure.yml writes on the controller, which
+# here is the developer's own machine. Into Molecule's ephemeral directory,
+# never ~/.ssh: both paths point there and the Include line is off, so even a
+# bug in the task file cannot reach the developer's ssh config.
+# tests/unit/test_ssh_config.py checks every scenario does this.
+claude_ssh_config: true
+claude_ssh_config_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/claude-on-proxmox.conf"
+claude_ssh_user_config: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ssh_config"
+claude_ssh_config_include: false
+vm_user: dev

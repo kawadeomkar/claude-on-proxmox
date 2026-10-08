@@ -746,6 +746,20 @@
     # passes no confirmation at all, so it gets the prompt's default, as a run
     # with no terminal does. The last case is the tagged container: not a VM,
     # so not this project's to delete, even through the escape hatch.
+    # Aliases for the VMs about to be refused and deleted, written the way
+    # configure.yml writes them, into the ephemeral directory group_vars
+    # points the managed file at. A refusal must leave every one of them; a
+    # deletion must take exactly its own.
+    - name: Keep an SSH alias for the VMs destroy.yml is about to see
+      ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_vms:
+          - {name: commas, address: 192.0.2.58, user: dev, vmid: 9008, workspace: /home/dev/projects}
+          - {name: parked, address: 192.0.2.13, user: dev, vmid: 4013, workspace: /home/dev/projects}
+          - {name: legacy, address: 192.0.2.10, user: dev, vmid: 9010, workspace: /home/dev/projects}
+          - {name: alpha, address: 192.0.2.51, user: dev, vmid: 9001, workspace: /home/dev/projects}
+
     - name: Run destroy.yml where it must refuse
       ansible.builtin.command:
         argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_case.vars | to_json, playbook_dir ~ '/../../playbooks/destroy.yml'] }}"
@@ -776,6 +790,12 @@
 
     # A refusal is a task failure, printed to stderr under Molecule and to
     # stdout in a plain run, so both streams are searched.
+    - name: Read the aliases after the refusals
+      ansible.builtin.set_fact:
+        verify_aliases_after_refusals: >-
+          {{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') ~ '/claude-on-proxmox.conf')
+             | ssh_config_blocks | map(attribute='name') | list }}
+
     - name: Assert destroy.yml refused each for the right reason, and deleted nothing
       vars:
         verify_outputs: >-
@@ -784,6 +804,7 @@
       ansible.builtin.assert:
         that:
           - verify_refused_destroys.results | map(attribute='rc') | reject('equalto', 0) | list | length == 4
+          - verify_aliases_after_refusals == ['commas', 'parked', 'legacy', 'alpha']
           - verify_outputs[0] is search(verify_refused_destroys.results[0].verify_case.expect)
           - verify_outputs[1] is search(verify_refused_destroys.results[1].verify_case.expect)
           - verify_outputs[2] is search(verify_refused_destroys.results[2].verify_case.expect)
@@ -820,12 +841,27 @@
         headers: "{{ verify_headers }}"
       register: verify_after_destroys
 
+    # Each deleted VM's alias went with it, as its host key does; alpha,
+    # untouched, keeps its block, with the Include line never written here.
+    - name: Read the aliases after the deletions
+      ansible.builtin.set_fact:
+        verify_aliases_after_destroys: >-
+          {{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') ~ '/claude-on-proxmox.conf')
+             | ssh_config_blocks | map(attribute='name') | list }}
+
+    - name: Stat the user ssh config that must not have been written
+      ansible.builtin.stat:
+        path: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ssh_config"
+      register: verify_user_ssh_config
+
     - name: Assert exactly those VMs were deleted
       vars:
         verify_left: "{{ verify_after_destroys.json.data | map(attribute='name', default='') | list }}"
       ansible.builtin.assert:
         that:
           - verify_destroys.results | map(attribute='rc') | list == [0, 0]
+          - verify_aliases_after_destroys == ['alpha']
+          - not verify_user_ssh_config.stat.exists
           - verify_left | intersect(['commas', 'parked', 'legacy']) | length == 0
           - verify_left | intersect(['alpha', 'beta', 'solo', 'nonic', 'netone', 'stranger', 'bystander', 'ubuntu-24.04-cloudinit',
                                      'ours-container']) | length == 9
@@ -896,3 +932,285 @@
           requests of the playbook's own, {{ provision_verify_solo | selectattr('path', 'search', '/cluster/nextid$') | list | length }}
           nextid requests, and these clones: {{ provision_verify_solo_clones | map(attribute='params') | list }}
         quiet: true
+
+# The aliases on this machine follow the fleet: `make ssh-config` against
+# this cluster with the node that is down first off and then on, one VM at a
+# time, and `make code` against a stand-in VS Code that only records what it
+# was asked. Last, because the node switch changes what the listing shows,
+# and the twins go first: two tagged VMs of one name are refused here as
+# discovery refuses them. The managed file is the one group_vars points
+# into the ephemeral directory; the Include line is off there, and the user
+# config it would go in must still not exist at the end.
+- name: Verify the SSH aliases follow the fleet
+  hosts: localhost
+  gather_facts: false
+  vars:
+    verify_api_root: "https://127.0.0.1:18007/api2/json"
+    verify_headers:
+      Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
+    verify_playbook_cmd: >-
+      {{ [ansible_playbook_python | dirname ~ '/ansible-playbook']
+         + (ansible_inventory_sources | map('regex_replace', '^', '--inventory=') | list) }}
+    verify_playbook_env:
+      ANSIBLE_CALLBACK_RESULT_FORMAT: json
+      ANSIBLE_NOCOLOR: "1"
+    verify_ssh_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+    verify_ssh_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/claude-on-proxmox.conf"
+    verify_ssh_playbook: "{{ playbook_dir }}/../../playbooks/ssh_config.yml"
+    verify_code_playbook: "{{ playbook_dir }}/../../playbooks/code.yml"
+  tasks:
+    - name: Remove the twins
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api_root }}/nodes/pve/qemu/{{ item }}"
+        method: DELETE
+        headers: "{{ verify_headers }}"
+      loop: [9006, 9007]
+
+    # An alias for a VM that no longer exists anywhere, and one for the
+    # untagged lookalike. The first is what pruning is for; the second is
+    # what it must leave alone.
+    - name: Seed aliases for a VM that is gone and for the untagged lookalike
+      ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_config_file: "{{ verify_ssh_file }}"
+        claude_ssh_user_config: "{{ verify_ssh_dir }}/ssh_config"
+        claude_ssh_config_include: false
+        claude_ssh_vms:
+          - {name: gone, address: 192.0.2.99, user: dev, vmid: 9999}
+          - {name: stranger, address: 192.0.2.61, user: dev, vmid: 9011}
+
+    - name: Run ssh-config fleet-wide while the node is down
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + [verify_ssh_playbook] }}"
+      environment: "{{ verify_playbook_env }}"
+      register: verify_ssh_down
+      changed_when: false
+      failed_when: false
+
+    - name: Read the aliases with the node down
+      ansible.builtin.set_fact:
+        verify_aliases_down: "{{ lookup('ansible.builtin.file', verify_ssh_file) | ssh_config_blocks }}"
+
+    - name: Resolve alpha's alias with the real ssh client
+      ansible.builtin.command:
+        argv: [ssh, -G, -F, "{{ verify_ssh_file }}", alpha]
+      register: verify_alpha_resolved
+      changed_when: false
+
+    # Nothing pruned while a tagged VM is listed without a name; the running
+    # VMs refreshed; the stopped ones named; the lookalike never written to.
+    - name: Assert nothing was pruned while the node was down
+      vars:
+        verify_down_names: "{{ verify_aliases_down | map(attribute='name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - verify_ssh_down.rc == 0
+          - "verify_ssh_down.stdout is search('Nothing pruned: VMID 8001 is tagged')"
+          - verify_ssh_down.stdout is search('gone could be its')
+          - "verify_ssh_down.stdout is search('Not refreshed, no address[^:]*: .*beta')"
+          - "'gone' in verify_down_names"
+          - "'stranger' in verify_down_names"
+          - "'alpha' in verify_down_names"
+          - "'solo' in verify_down_names"
+          - "'beta' not in verify_down_names"
+          - "'nonic' not in verify_down_names"
+          - "'hostname 192.0.2.51' in verify_alpha_resolved.stdout_lines"
+          - "'user dev' in verify_alpha_resolved.stdout_lines"
+          # The workspace configure recorded (seeded above with the destroy
+          # fixtures) survives a refresh that cannot know it.
+          - (verify_aliases_down | selectattr('name', 'equalto', 'alpha') | first).workspace == '/home/dev/projects'
+          - (verify_aliases_down | selectattr('name', 'equalto', 'alpha') | first).vmid == '9001'
+        fail_msg: >-
+          ssh-config with the node down exited {{ verify_ssh_down.rc }}, leaving {{ verify_down_names }}:
+          {{ (verify_ssh_down.stdout ~ '\n' ~ verify_ssh_down.stderr).splitlines()[-25:] }}
+        quiet: true
+
+    - name: Bring the node that was down back
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api_root }}/fake/nodes/pve2?status=online"
+        method: PUT
+        headers: "{{ verify_headers }}"
+
+    - name: Run ssh-config fleet-wide with every node reporting
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + [verify_ssh_playbook] }}"
+      environment: "{{ verify_playbook_env }}"
+      register: verify_ssh_up
+      changed_when: false
+      failed_when: false
+
+    - name: Read the aliases with the node up
+      ansible.builtin.set_fact:
+        verify_aliases_up: "{{ lookup('ansible.builtin.file', verify_ssh_file) | ssh_config_blocks | map(attribute='name') | list }}"
+
+    - name: Assert the vanished VM was pruned and the lookalike left alone
+      ansible.builtin.assert:
+        that:
+          - verify_ssh_up.rc == 0
+          - "verify_ssh_up.stdout is search('Pruned, no VM of that name exists any more: gone\\.')"
+          - "verify_ssh_up.stdout is search('Left alone: stranger\\.')"
+          - verify_ssh_up.stdout is not search('Nothing pruned')
+          - "'gone' not in verify_aliases_up"
+          - "'stranger' in verify_aliases_up"
+          - "'alpha' in verify_aliases_up"
+          - "'ours-on-a-node-that-is-down' not in verify_aliases_up"
+        fail_msg: >-
+          ssh-config with the node up exited {{ verify_ssh_up.rc }}, leaving {{ verify_aliases_up }}:
+          {{ (verify_ssh_up.stdout ~ '\n' ~ verify_ssh_up.stderr).splitlines()[-25:] }}
+        quiet: true
+
+    - name: Seed an alias for another VM that is gone
+      ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_config_file: "{{ verify_ssh_file }}"
+        claude_ssh_user_config: "{{ verify_ssh_dir }}/ssh_config"
+        claude_ssh_config_include: false
+        claude_ssh_vms:
+          - {name: gone-too, address: 192.0.2.98, user: dev, vmid: 9998}
+
+    - name: Run ssh-config for one VM
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', '{\"vm_name\": \"alpha\"}', verify_ssh_playbook] }}"
+      environment: "{{ verify_playbook_env }}"
+      register: verify_ssh_one
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a single-VM refresh prunes nothing
+      vars:
+        verify_one_names: "{{ lookup('ansible.builtin.file', verify_ssh_file) | ssh_config_blocks | map(attribute='name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - verify_ssh_one.rc == 0
+          - verify_ssh_one.stdout is search('Only the VMs named in VM_NAME were refreshed')
+          - "'gone-too' in verify_one_names"
+          - "'alpha' in verify_one_names"
+        fail_msg: >-
+          ssh-config VM_NAME=alpha exited {{ verify_ssh_one.rc }}, leaving {{ verify_one_names }}:
+          {{ (verify_ssh_one.stdout ~ '\n' ~ verify_ssh_one.stderr).splitlines()[-25:] }}
+        quiet: true
+
+    # A VS Code that records what it was asked and reports the extensions a
+    # file says it has, so `make code` can be run without an editor.
+    - name: Make a directory for the stand-in VS Code
+      ansible.builtin.file:
+        path: "{{ verify_ssh_dir }}/bin"
+        state: directory
+        mode: "0755"
+
+    - name: Put a stand-in VS Code on PATH
+      ansible.builtin.copy:
+        dest: "{{ verify_ssh_dir }}/bin/code"
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          echo "$*" >> "{{ verify_ssh_dir }}/code.log"
+          [ "$1" = "--list-extensions" ] && cat "{{ verify_ssh_dir }}/extensions" 2>/dev/null
+          exit 0
+
+    - name: Let the stand-in report no extensions
+      ansible.builtin.copy:
+        dest: "{{ verify_ssh_dir }}/extensions"
+        mode: "0644"
+        content: ""
+
+    - name: Run make code's playbook for alpha with the extension missing
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', '{\"vm_name\": \"alpha\"}', verify_code_playbook] }}"
+      environment: "{{ verify_playbook_env | combine({'PATH': verify_ssh_dir ~ '/bin:' ~ lookup('ansible.builtin.env', 'PATH')}) }}"
+      register: verify_code_first
+      changed_when: false
+      failed_when: false
+
+    - name: Let the stand-in report the extension
+      ansible.builtin.copy:
+        dest: "{{ verify_ssh_dir }}/extensions"
+        mode: "0644"
+        content: "ms-vscode-remote.remote-ssh\n"
+
+    - name: Run make code's playbook for alpha with the extension present
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', '{\"vm_name\": \"alpha\"}', verify_code_playbook] }}"
+      environment: "{{ verify_playbook_env | combine({'PATH': verify_ssh_dir ~ '/bin:' ~ lookup('ansible.builtin.env', 'PATH')}) }}"
+      register: verify_code_second
+      changed_when: false
+      failed_when: false
+
+    - name: Read what the stand-in VS Code was asked
+      ansible.builtin.set_fact:
+        verify_code_log: "{{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() }}"
+        verify_code_runs:
+          results: ["{{ verify_code_first }}", "{{ verify_code_second }}"]
+
+    - name: Assert make code installed the extension once and opened the recorded workspace
+      ansible.builtin.assert:
+        that:
+          - verify_code_first.rc == 0
+          - verify_code_second.rc == 0
+          - verify_code_log == ['--list-extensions',
+                                '--install-extension ms-vscode-remote.remote-ssh',
+                                '--remote ssh-remote+alpha /home/dev/projects',
+                                '--list-extensions',
+                                '--remote ssh-remote+alpha /home/dev/projects']
+          - verify_code_runs.results[0].stdout is search('VS Code is opening /home/dev/projects on alpha \(192\.0\.2\.51\)\.')
+          - verify_code_runs.results[0].stdout is not search('assumed')
+        fail_msg: >-
+          make code exited {{ verify_code_runs.results | map(attribute='rc') | list }} and asked for
+          {{ verify_code_log }}:
+          {{ verify_code_runs.results | map(attribute='stdout') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+        quiet: true
+
+    - name: Run make code's playbook where it must refuse
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_case.vars | to_json, verify_code_playbook] }}"
+      environment: "{{ verify_playbook_env | combine({'PATH': verify_ssh_dir ~ '/bin:' ~ lookup('ansible.builtin.env', 'PATH')}) }}"
+      register: verify_code_refusals
+      changed_when: false
+      failed_when: false
+      loop:
+        - {expect: 'A VM of that name exists but is not tagged', vars: {vm_name: stranger}}
+        - {expect: 'nonic is running and reported\s+no address', vars: {vm_name: nonic}}
+        - {expect: 'No VM named missing is tagged', vars: {vm_name: missing}}
+        - {expect: 'VS Code opens one VM at a time', vars: {vm_name: "alpha,solo"}}
+      loop_control:
+        loop_var: verify_case
+        label: "{{ verify_case.vars }}"
+
+    - name: Assert each refusal said why, and opened nothing
+      vars:
+        verify_code_outputs: >-
+          {{ verify_code_refusals.results | map(attribute='stdout')
+             | zip(verify_code_refusals.results | map(attribute='stderr')) | map('join', '\n') | list }}
+      ansible.builtin.assert:
+        that:
+          - verify_code_refusals.results | map(attribute='rc') | reject('equalto', 0) | list | length == 4
+          - verify_code_outputs[0] is search(verify_code_refusals.results[0].verify_case.expect)
+          - verify_code_outputs[1] is search(verify_code_refusals.results[1].verify_case.expect)
+          - verify_code_outputs[2] is search(verify_code_refusals.results[2].verify_case.expect)
+          - verify_code_outputs[3] is search(verify_code_refusals.results[3].verify_case.expect)
+          - lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() | length == 5
+        fail_msg: >-
+          make code exited {{ verify_code_refusals.results | map(attribute='rc') | list }}:
+          {{ verify_code_outputs | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+        quiet: true
+
+    - name: Stat the user ssh config that must never have been written
+      ansible.builtin.stat:
+        path: "{{ verify_ssh_dir }}/ssh_config"
+      register: verify_ssh_user_config_final
+
+    - name: Assert nothing reached the user's ssh config
+      ansible.builtin.assert:
+        that: not verify_ssh_user_config_final.stat.exists
+        quiet: true
+
+    - name: Take the node down again
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api_root }}/fake/nodes/pve2?status=offline"
+        method: PUT
+        headers: "{{ verify_headers }}"

@@ -1,0 +1,23 @@
+---
+# Make the VM meet what VS Code's Remote - SSH extension needs on the host,
+# and prove it, rather than hope OpenSSH's defaults hold. False removes what
+# an earlier run wrote.
+vscode_server_enabled: true
+# The login VS Code connects as. Only named in messages; the common role owns
+# the user itself. Wired from vm_user.
+vscode_server_user: dev
+
+# sshd keepalives for the editor's connection. An editor left open on a laptop
+# that went to sleep is reaped after interval * count seconds instead of
+# holding a session, and its server, for hours.
+vscode_server_client_alive_interval: 60
+vscode_server_client_alive_count_max: 3
+
+# VS Code's documented figure for watching a large workspace. The kernel's
+# default scales with memory and is far lower on a 4 GB VM, at which point
+# VS Code warns that it cannot watch for file changes.
+vscode_server_inotify_watches: 524288
+
+# Virtualisation types under which /proc/sys is read-only, so the sysctl file
+# is written for the record but not applied.
+vscode_server_container_virt_types: [docker, container, containerd, podman, lxc]
