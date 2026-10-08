@@ -94,7 +94,6 @@
                'name': claude_ssh_host,
                'address': claude_ssh_vm_vars.ansible_host | default(claude_ssh_host),
                'user': claude_ssh_vm_vars.vm_user | default(vm_user),
-               'vmid': claude_ssh_vm_vars.proxmox_vm_id | default(''),
                'workspace': claude_ssh_vm_vars.claude_vm_workspace,
              }] }}
       loop: "{{ groups['claude_vms'] | default([]) }}"

@@ -105,10 +105,20 @@
     - role: proxmox_vm
       proxmox_vm_state: absent
 
+  # A host that failed in the role - a stop that timed out, a VM with
+  # protection on, an API error - leaves the play and never gets here, so
+  # this fact marks exactly the VMs that are gone. The play below reads it.
+  post_tasks:
+    - name: Record that the VM was deleted
+      ansible.builtin.set_fact:
+        claude_vm_deleted: true
+
 # The alias this project keeps for each VM on this machine goes with the VM,
-# as its host key does (README, "Using VS Code on the VM"). After the
-# deletions, so a run refused above leaves every alias in place; removing a
-# block that is not there is a no-op.
+# as its host key does (README, "Using VS Code on the VM"), and only with a
+# VM that is actually gone: one whose deletion failed above keeps its alias,
+# since it is still there to connect to. A run refused before anything was
+# deleted never reaches this play; removing a block that is not there is a
+# no-op.
 - name: Forget the SSH alias of each deleted VM
   hosts: localhost
   gather_facts: false
@@ -119,5 +129,26 @@
       vars:
         claude_ssh_state: absent
         claude_ssh_vms: >-
-          {{ groups['claude_vm_doomed'] | default([]) | map('community.general.dict_kv', 'name') | list }}
+          {{ groups['claude_vm_doomed'] | default([])
+             | map('extract', hostvars)
+             | selectattr('claude_vm_deleted', 'defined')
+             | map(attribute='inventory_hostname')
+             | map('community.general.dict_kv', 'name') | list }}
       when: claude_ssh_config | default(true) | bool
+
+    - name: Say which aliases were kept, and why
+      vars:
+        claude_ssh_kept: >-
+          {{ groups['claude_vm_doomed'] | default([])
+             | reject('in', groups['claude_vm_doomed'] | default([])
+                           | map('extract', hostvars) | selectattr('claude_vm_deleted', 'defined')
+                           | map(attribute='inventory_hostname') | list)
+             | list }}
+      ansible.builtin.debug:
+        msg: >-
+          Kept the SSH alias of {{ claude_ssh_kept | join(', ') }}: its deletion failed above, so the VM is
+          still there. `make destroy VM_NAME={{ claude_ssh_kept | join(',') }}` again once the cause is fixed
+          removes it with the VM.
+      when:
+        - claude_ssh_config | default(true) | bool
+        - claude_ssh_kept | length > 0

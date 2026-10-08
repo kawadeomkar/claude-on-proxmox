@@ -286,14 +286,11 @@ ssh_config_blocks = proxmox_filters.ssh_config_blocks
 ssh_config_prune = proxmox_filters.ssh_config_prune
 
 MANAGED = """# BEGIN claude-on-proxmox: alpha
-# vmid 9001
-# workspace /home/dev/projects
 Host alpha
     HostName 192.0.2.51
     User dev
 # END claude-on-proxmox: alpha
 # BEGIN claude-on-proxmox: beta
-# vmid 9002
 Host beta
     HostName 192.0.2.52
     User dev
@@ -318,12 +315,8 @@ def vm(name, vmid, tags="claude-on-proxmox", kind="qemu"):
 
 
 class TestSshConfigBlocks:
-    def test_reads_every_block_with_its_comments(self):
-        assert ssh_config_blocks(MANAGED) == [
-            {"name": "alpha", "vmid": "9001", "workspace": "/home/dev/projects"},
-            {"name": "beta", "vmid": "9002", "workspace": ""},
-            {"name": "old", "vmid": "", "workspace": ""},
-        ]
+    def test_reads_every_block_in_file_order(self):
+        assert ssh_config_blocks(MANAGED) == [{"name": "alpha"}, {"name": "beta"}, {"name": "old"}]
 
     def test_empty_for_nothing(self):
         assert ssh_config_blocks("") == []
@@ -340,7 +333,7 @@ class TestSshConfigBlocks:
 
 
 class TestSshConfigPrune:
-    BLOCKS = [{"name": "alpha", "vmid": "9001"}, {"name": "beta", "vmid": "9002"}, {"name": "old", "vmid": ""}]
+    BLOCKS = [{"name": "alpha"}, {"name": "beta"}, {"name": "old"}]
 
     def test_prunes_only_a_name_no_vm_carries(self):
         fleet = [vm("alpha", 9001), vm("beta", 9002), vm("ubuntu-24.04-cloudinit", 9000, tags=None)]
@@ -352,7 +345,7 @@ class TestSshConfigPrune:
         }
 
     def test_keeps_a_block_whose_vm_was_rebuilt_under_a_new_vmid(self):
-        # The present pass rewrites it with the new VMID; nothing to prune.
+        # The present pass rewrites it for the new VM; nothing to prune.
         fleet = [vm("alpha", 9044), vm("beta", 9002), vm("old", 9050)]
         assert ssh_config_prune(self.BLOCKS, fleet, TAG)["prune"] == []
 

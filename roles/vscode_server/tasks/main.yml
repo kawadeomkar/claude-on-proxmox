@@ -59,53 +59,80 @@
   when: not vscode_server_enabled | bool
   notify: Restart ssh for VS Code
 
-# The check below reads the running configuration, so the restart the
-# template notified has to happen first rather than at the end of the play.
-- name: Apply the sshd change before checking it
-  ansible.builtin.meta: flush_handlers
-
-# sshd keeps the first value it reads for a keyword, so a drop-in sorted
-# before ours, or /etc/ssh/sshd_config itself, wins over the file this role
-# just wrote - silently. Reading the effective configuration back is what
-# turns that into a named failure instead of a VS Code window that cannot
-# connect. Not in check mode on a host without the drop-in yet: there is
-# nothing to read that this run would have written.
-- name: Read the configuration sshd runs with
+# Where VS Code's connection will come from: this machine, as Ansible's own
+# SSH connection shows. sudo drops SSH_CONNECTION, hence no become. Without
+# an SSH connection - a container, a local run - there is nothing to read,
+# and the loopback address stands in.
+- name: Find where the editor's connection will come from
   ansible.builtin.command:
-    argv: [/usr/sbin/sshd, -T]
-  register: vscode_server_sshd
-  changed_when: false
-  check_mode: false
-  when: vscode_server_enabled | bool
-
-- name: Find what turns forwarding off, if anything does
-  ansible.builtin.shell:
-    cmd: >-
-      grep -lis -E -e '^[[:space:]]*AllowTcpForwarding[[:space:]]+no'
-      -e '^[[:space:]]*AllowStreamLocalForwarding[[:space:]]+no'
-      /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*
-  register: vscode_server_forwarding_off
+    argv: [printenv, SSH_CONNECTION]
+  become: false
+  register: vscode_server_ssh_connection
   changed_when: false
   check_mode: false
   failed_when: false
   when: vscode_server_enabled | bool
 
+# What sshd will apply to that connection: `sshd -T` parses the files on
+# disk, so this is the configuration the restart notified above puts in
+# place at the end of the play, and nothing has to be restarted first. -C
+# evaluates Match blocks for the user and addresses given; without it they
+# are skipped, and a `Match User dev` that turns forwarding off would pass.
+- name: Read the configuration sshd applies to the editor's connection
+  vars:
+    vscode_server_conn: "{{ (vscode_server_ssh_connection.stdout | default('')).split() }}"
+    vscode_server_spec: >-
+      {{ 'user=' ~ vscode_server_user ~ ',host=' ~ vscode_server_conn[0] ~ ',addr=' ~ vscode_server_conn[0]
+         ~ ',laddr=' ~ vscode_server_conn[2] ~ ',lport=' ~ vscode_server_conn[3]
+         if vscode_server_conn | length == 4
+         else 'user=' ~ vscode_server_user ~ ',host=127.0.0.1,addr=127.0.0.1' }}
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -T, -C, "{{ vscode_server_spec }}"]
+  register: vscode_server_sshd
+  changed_when: false
+  check_mode: false
+  when: vscode_server_enabled | bool
+
+# Only to name the culprit when the check below fails. Every setting that can
+# take the forwarding away: either keyword turned off or limited to the
+# remote direction (VS Code forwards from the client, which sshd calls
+# local), and DisableForwarding, which overrides both. Indented lines count,
+# because that is how a setting under a Match block is usually written.
+- name: Find what turns forwarding off, if anything does
+  ansible.builtin.find:
+    paths: [/etc/ssh, /etc/ssh/sshd_config.d]
+    patterns: [sshd_config, "*.conf"]
+    contains: '(?i)^\s*(AllowTcpForwarding\s+(no|remote)|AllowStreamLocalForwarding\s+(no|remote)|DisableForwarding\s+yes)\b'
+  register: vscode_server_forwarding_off
+  check_mode: false
+  when: vscode_server_enabled | bool
+
+# sshd keeps the first value it reads for a keyword, and a Match block sets
+# its own for the connections it matches, so a drop-in sorted before ours,
+# sshd_config itself or a Match block for this user can each override the
+# file this role just wrote - silently. Reading the result back is what turns
+# that into a named failure instead of a VS Code window that cannot connect.
 - name: Fail when sshd does not allow the forwarding VS Code needs
   vars:
+    vscode_server_blocking:
+      - allowtcpforwarding no
+      - allowtcpforwarding remote
+      - allowstreamlocalforwarding no
+      - allowstreamlocalforwarding remote
+      - disableforwarding yes
     vscode_server_effective: >-
       {{ vscode_server_sshd.stdout_lines
-         | select('match', '^(allowtcpforwarding|allowstreamlocalforwarding) ') | list }}
+         | select('match', '^(allowtcpforwarding|allowstreamlocalforwarding|disableforwarding) ') | list }}
+    vscode_server_culprits: "{{ vscode_server_forwarding_off.files | default([]) | map(attribute='path') | sort | list }}"
   ansible.builtin.assert:
-    that:
-      - "'allowtcpforwarding yes' in vscode_server_sshd.stdout_lines"
-      - "'allowstreamlocalforwarding yes' in vscode_server_sshd.stdout_lines"
+    that: vscode_server_sshd.stdout_lines | intersect(vscode_server_blocking) | length == 0
     fail_msg: >-
-      sshd on {{ inventory_hostname }} runs with "{{ vscode_server_effective | join('", "') }}", so
-      VS Code's Remote - SSH cannot reach the server it starts there. sshd keeps the first value it
-      reads for a keyword, so something read before /etc/ssh/sshd_config.d/20-vscode-server.conf
-      sets it{{ ': ' ~ (vscode_server_forwarding_off.stdout_lines | join(', '))
-                if vscode_server_forwarding_off.stdout_lines | default([]) | length > 0
-                else ' - a drop-in sorted before it, or /etc/ssh/sshd_config itself' }}.
+      sshd on {{ inventory_hostname }} applies "{{ vscode_server_effective | join('", "') }}" to
+      {{ vscode_server_user }}'s connections, so VS Code's Remote - SSH cannot reach the server it
+      starts there. sshd keeps the first value it reads for a keyword and a Match block sets its own,
+      so something other than /etc/ssh/sshd_config.d/20-vscode-server.conf decides it{{
+        ': ' ~ (vscode_server_culprits | join(', ')) if vscode_server_culprits | length > 0
+        else ' - a drop-in sorted before it, /etc/ssh/sshd_config itself, or a Match block' }}.
       Remove that setting, or set vscode_remote: false to leave sshd alone.
     quiet: true
   when: vscode_server_enabled | bool

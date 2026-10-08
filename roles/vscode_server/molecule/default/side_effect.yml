@@ -1,14 +1,14 @@
 ---
-# Two things converge.yml cannot show: that the role refuses an sshd that
-# something else has turned forwarding off on, naming the file, and that
-# vscode_server_enabled: false removes what an earlier run wrote. The
+# What converge.yml cannot show: that the role refuses an sshd on which
+# something else has taken VS Code's forwarding away, naming the file, and
+# that vscode_server_enabled: false removes what an earlier run wrote. The
 # container is left as converge.yml made it, so verify.yml checks that state.
 - name: Side effect
   hosts: all
   become: true
   tasks:
-    # sshd keeps the first value it reads, and 05- sorts before 20-.
-    - name: Turn forwarding off in a drop-in sorted before the role's
+    # A drop-in sorted before the role's own: sshd keeps the first value it reads.
+    - name: Write 05-molecule-hardening.conf
       ansible.builtin.copy:
         content: "AllowTcpForwarding no\n"
         dest: /etc/ssh/sshd_config.d/05-molecule-hardening.conf
@@ -16,28 +16,96 @@
         group: root
         mode: "0644"
 
-    - name: Run the role against the competing drop-in
+    - name: Run the role against 05-molecule-hardening.conf
       block:
-        - name: Include the role
+        - name: Include the role with 05-molecule-hardening.conf in place
           ansible.builtin.include_role:
             name: vscode_server
 
-        - name: Fail because the role did not notice
+        - name: Fail because the role accepted 05-molecule-hardening.conf
           ansible.builtin.fail:
-            msg: The role accepted an sshd with AllowTcpForwarding no.
+            msg: The role accepted 05-molecule-hardening.conf.
       rescue:
-        - name: Assert the role named the file that turns forwarding off
+        - name: Assert the role named the setting and 05-molecule-hardening.conf
           ansible.builtin.assert:
             that:
               - ansible_failed_result.msg is search('allowtcpforwarding no')
-              - ansible_failed_result.msg is search('05-molecule-hardening\.conf')
-              - ansible_failed_result.msg is not search('did not notice')
+              - ansible_failed_result.msg is search('05-molecule-hardening\\.conf')
+              - ansible_failed_result.msg is not search('The role accepted')
             fail_msg: "Unexpected failure: {{ ansible_failed_result.msg }}"
             quiet: true
 
-    - name: Remove the competing drop-in
+    - name: Remove 05-molecule-hardening.conf
       ansible.builtin.file:
         path: /etc/ssh/sshd_config.d/05-molecule-hardening.conf
+        state: absent
+
+    # DisableForwarding, which overrides both forwarding keywords whatever they say.
+    - name: Write 05-molecule-disable.conf
+      ansible.builtin.copy:
+        content: "DisableForwarding yes\n"
+        dest: /etc/ssh/sshd_config.d/05-molecule-disable.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Run the role against 05-molecule-disable.conf
+      block:
+        - name: Include the role with 05-molecule-disable.conf in place
+          ansible.builtin.include_role:
+            name: vscode_server
+
+        - name: Fail because the role accepted 05-molecule-disable.conf
+          ansible.builtin.fail:
+            msg: The role accepted 05-molecule-disable.conf.
+      rescue:
+        - name: Assert the role named the setting and 05-molecule-disable.conf
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('disableforwarding yes')
+              - ansible_failed_result.msg is search('05-molecule-disable\\.conf')
+              - ansible_failed_result.msg is not search('The role accepted')
+            fail_msg: "Unexpected failure: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Remove 05-molecule-disable.conf
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/05-molecule-disable.conf
+        state: absent
+
+    # A Match block for the VM user, sorted last. A global `sshd -T` does not apply
+    # Match blocks, so this is only caught because the role reads the
+    # configuration for dev's own connection.
+    - name: Write 99-molecule-match.conf
+      ansible.builtin.copy:
+        content: "Match User dev\n    AllowTcpForwarding remote\n"
+        dest: /etc/ssh/sshd_config.d/99-molecule-match.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Run the role against 99-molecule-match.conf
+      block:
+        - name: Include the role with 99-molecule-match.conf in place
+          ansible.builtin.include_role:
+            name: vscode_server
+
+        - name: Fail because the role accepted 99-molecule-match.conf
+          ansible.builtin.fail:
+            msg: The role accepted 99-molecule-match.conf.
+      rescue:
+        - name: Assert the role named the setting and 99-molecule-match.conf
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('allowtcpforwarding remote')
+              - ansible_failed_result.msg is search('99-molecule-match\\.conf')
+              - ansible_failed_result.msg is not search('The role accepted')
+            fail_msg: "Unexpected failure: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Remove 99-molecule-match.conf
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/99-molecule-match.conf
         state: absent
 
     - name: Run the role switched off

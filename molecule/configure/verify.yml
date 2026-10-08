@@ -157,8 +157,9 @@
         that:
           - "'# BEGIN claude-on-proxmox: claude-dev' in verify_ssh_text"
           - "'# END claude-on-proxmox: claude-dev' in verify_ssh_text"
-          # The container's home for dev, resolved on the host, not guessed
-          - "'# workspace /home/dev/projects' in verify_ssh_text"
+          # What ssh reads, and no state of this project's
+          - "'# workspace' not in verify_ssh_text"
+          - "'# vmid' not in verify_ssh_text"
           - "'Host claude-dev' in verify_ssh_text"
           - "'HostName claude-dev' in verify_ssh_text"
           - "'User dev' in verify_ssh_text"

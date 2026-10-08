@@ -31,8 +31,8 @@ ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
 TASK_FILE = REPO / "playbooks" / "tasks" / "ssh_config.yml"
 SSH = "ssh"
 
-ALPHA = {"name": "alpha", "address": "192.0.2.51", "user": "dev", "vmid": 9001, "workspace": "/home/dev/projects"}
-BETA = {"name": "beta", "address": "192.0.2.52", "user": "dev", "vmid": 9002, "workspace": "/home/dev/projects"}
+ALPHA = {"name": "alpha", "address": "192.0.2.51", "user": "dev", "workspace": "/home/dev/projects"}
+BETA = {"name": "beta", "address": "192.0.2.52", "user": "dev", "workspace": "/home/dev/projects"}
 
 
 def _paths(tmp_path: Path) -> dict[str, str]:
@@ -62,7 +62,9 @@ def _run(tmp_path: Path, vms: list[dict], state: str = "present", **extra) -> su
     # in a vault this cannot open, and the defaults under test are passed here.
     (tmp_path / "ansible.cfg").write_text("")
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
-    env.update(ANSIBLE_CONFIG=str(tmp_path / "ansible.cfg"), ANSIBLE_NOCOLOR="1")
+    # HOME is the temporary one too: the task file recognises the ~/... and
+    # ${HOME}/... spellings of the Include by it.
+    env.update(ANSIBLE_CONFIG=str(tmp_path / "ansible.cfg"), ANSIBLE_NOCOLOR="1", HOME=str(tmp_path / "home"))
     # The project default for the options, from inventory/group_vars, which
     # the wrapper does not load; the task file itself defaults to none.
     extra_vars = {
@@ -119,7 +121,10 @@ def test_present_writes_one_block_per_vm_and_the_include_at_the_top(tmp_path: Pa
 
     managed = _managed(tmp_path)
     assert _blocks(managed) == ["alpha", "beta"]
-    assert "# vmid 9001\n# workspace /home/dev/projects\nHost alpha\n    HostName 192.0.2.51\n    User dev\n" in managed
+    assert "# BEGIN claude-on-proxmox: alpha\nHost alpha\n    HostName 192.0.2.51\n    User dev\n" in managed
+    # The block holds what ssh reads, and no state of this project's.
+    assert "# vmid" not in managed
+    assert "# workspace" not in managed
     assert "ForwardAgent" not in managed
     assert "IdentityFile" not in managed
     assert managed.endswith("# END claude-on-proxmox: beta\n")
@@ -244,13 +249,51 @@ def test_identity_file_agent_forwarding_and_options_are_written_when_set(tmp_pat
     assert resolved["connecttimeout"] == "5"
 
 
-def test_a_vm_without_vmid_or_workspace_gets_a_plain_block_and_a_guessed_path(tmp_path: Path) -> None:
+def test_without_a_workspace_the_connect_line_says_make_code_and_guesses_no_path(tmp_path: Path) -> None:
     result = _run(tmp_path, [{"name": "solo", "address": "192.0.2.60", "user": "dev"}])
     assert result.returncode == 0, result.stdout + result.stderr
-    managed = _managed(tmp_path)
-    assert "# vmid" not in managed
-    assert "# workspace" not in managed
-    assert "solo: ssh solo   |   code --remote ssh-remote+solo /home/dev/projects" in result.stdout
+    assert "solo: ssh solo   |   make code VM_NAME=solo" in result.stdout
+    assert "/home/dev/projects" not in result.stdout
+
+
+def test_the_mode_of_an_existing_user_config_is_left_alone(tmp_path: Path) -> None:
+    user_config = _user_config(tmp_path)
+    user_config.parent.mkdir(parents=True)
+    user_config.write_text("Host github.com\n    User git\n")
+    user_config.chmod(0o644)
+    result = _run(tmp_path, [ALPHA])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert user_config.read_text().startswith("Include ")
+    assert oct(user_config.stat().st_mode & 0o777) == "0o644"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Include ~/.ssh/claude-on-proxmox.conf",
+        "Include ${HOME}/.ssh/claude-on-proxmox.conf",
+        "Include claude-on-proxmox.conf",
+        "  include   ~/.ssh/claude-on-proxmox.conf  ",
+    ],
+)
+def test_an_include_already_there_in_another_spelling_is_not_added_again(tmp_path: Path, line: str) -> None:
+    user_config = _user_config(tmp_path)
+    user_config.parent.mkdir(parents=True)
+    before = f"{line}\n\nHost github.com\n    User git\n"
+    user_config.write_text(before)
+    result = _run(tmp_path, [ALPHA])
+    assert result.returncode == 0, result.stdout + result.stderr
+    # Not added again, and the user's own line not rewritten either.
+    assert user_config.read_text() == before
+    # And ssh itself resolves that spelling to the managed file.
+    probe = subprocess.run(
+        [SSH, "-G", "-F", str(user_config), "alpha"],
+        env={**os.environ, "HOME": str(tmp_path / "home")},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "hostname 192.0.2.51" in probe.stdout
 
 
 def test_a_bad_option_fails_validation_and_leaves_the_file_alone(tmp_path: Path) -> None:
@@ -319,3 +362,23 @@ def test_no_playbook_sets_the_task_files_inputs_as_facts() -> None:
                 if isinstance(facts, dict) and {"claude_ssh_vms", "claude_ssh_state"} & facts.keys():
                     offenders.append(f"{path.relative_to(REPO)}: {task.get('name')}")
     assert offenders == []
+
+
+def test_an_include_ssh_does_not_expand_is_not_taken_for_ours(tmp_path: Path) -> None:
+    """ssh expands ${HOME} but not $HOME, so that line includes nothing and ours is added."""
+    user_config = _user_config(tmp_path)
+    user_config.parent.mkdir(parents=True)
+    user_config.write_text("Include $HOME/.ssh/claude-on-proxmox.conf\n")
+    result = _run(tmp_path, [ALPHA])
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = user_config.read_text().splitlines()
+    assert lines[0] == f"Include {_paths(tmp_path)['claude_ssh_config_file']}"
+    assert "Include $HOME/.ssh/claude-on-proxmox.conf" in lines
+    probe = subprocess.run(
+        [SSH, "-G", "-F", str(user_config), "alpha"],
+        env={**os.environ, "HOME": str(tmp_path / "home")},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "hostname 192.0.2.51" in probe.stdout

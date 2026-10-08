@@ -64,26 +64,23 @@
       vars:
         claude_vm_query: "{{ claude_ssh_requested }}"
 
-    # What is kept already. A workspace a configure run recorded is carried
-    # over, since only the VM itself knows it; a refresh never loses it.
+    # What is kept already, for the prune below.
     - name: Read the aliases already kept
       ansible.builtin.set_fact:
         claude_ssh_existing: >-
           {{ (lookup('ansible.builtin.file', claude_ssh_config_file, errors='ignore') or '') | ssh_config_blocks }}
 
+    # The workspace is only shown in the connect line, and this play never
+    # connects to a VM to read its home: vm_projects_dir when it is set, and
+    # otherwise the line says `make code`, which does.
     - name: Build an alias for each VM that can be reached
-      vars:
-        claude_ssh_known: >-
-          {{ claude_ssh_existing | selectattr('name', 'equalto', claude_ssh_vm.name)
-             | map(attribute='workspace') | first | default('', true) }}
       ansible.builtin.set_fact:
         claude_ssh_refresh: >-
           {{ claude_ssh_refresh | default([]) + [{
                'name': claude_ssh_vm.name,
                'address': claude_ssh_vm.address,
                'user': vm_user,
-               'vmid': claude_ssh_vm.vmid,
-               'workspace': vm_projects_dir | default('', true) or claude_ssh_known,
+               'workspace': vm_projects_dir | default('', true),
              }] }}
       loop: "{{ claude_vm_addressed }}"
       loop_control:

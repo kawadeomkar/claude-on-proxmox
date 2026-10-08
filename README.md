@@ -217,8 +217,7 @@ beta                        9002  running   192.0.2.52
 gamma                       9003  stopped   -
 
 3 VMs tagged "claude-on-proxmox".
-VS Code: make code VM_NAME=<name> [PROJECT=<repo>], or code --remote ssh-remote+<name> /home/dev/projects
-(make ssh-config refreshes the aliases).
+VS Code: make code VM_NAME=<name> [PROJECT=<repo>] (make ssh-config refreshes the aliases).
 No address for gamma: the guest agent has not reported one.
 Those VMs may be stopped, still booting, built without the agent, or on a node that is down.
 ```
@@ -597,8 +596,10 @@ in the extension's host picker (*Remote-SSH: Connect to Host…*) and open any f
 
 **Where the alias lives.** In `~/.ssh/claude-on-proxmox.conf`, one block per VM, included from the
 top of `~/.ssh/config` with a single `Include` line. That file and that line are the only things this
-project writes in `~/.ssh` besides `known_hosts`; the body of `~/.ssh/config` is never touched, and
-the `Include` stays once added (an `Include` of a missing file is harmless). The alias is the VM's
+project writes in `~/.ssh` besides `known_hosts`; the body of `~/.ssh/config` is never touched, its
+permissions are left as they are, and the `Include` stays once added (an `Include` of a missing file
+is harmless). An `Include` of the same file that you already have, as `~/.ssh/claude-on-proxmox.conf`,
+`${HOME}/...` or the bare name, counts, and is left exactly as you wrote it. The alias is the VM's
 name. If your own `~/.ssh/config` already has a `Host` entry of that name, the run refuses to write
 the alias and names the line: rename the VM, or the entry, since the managed file is included first
 and would otherwise override yours silently. Set `claude_ssh_config: false` to keep the project out
@@ -608,8 +609,6 @@ yourself.
 ```
 # ~/.ssh/claude-on-proxmox.conf
 # BEGIN claude-on-proxmox: alpha
-# vmid 9001
-# workspace /home/dev/projects
 Host alpha
     HostName 192.0.2.51
     User dev
@@ -618,7 +617,8 @@ Host alpha
 ```
 
 **Keeping it current.** `make deploy` and `make configure` write the alias of each VM they finish,
-`make destroy` removes it with the VM (as it already forgets the host key), and `make ssh-config`
+`make destroy` removes it with the VM (as it already forgets the host key; a VM whose deletion
+fails keeps its alias, since it is still there), and `make ssh-config`
 brings the whole fleet back in step at any time: a lease that moved, a VM deleted in the Proxmox UI,
 a second machine. Fleet-wide it also prunes the aliases of VMs that no longer exist. Pruning only
 ever removes blocks from the managed file, never VMs, and a block is only ever written for a VM
@@ -641,9 +641,11 @@ turns it on if you have decided otherwise.
 **What the VM gets.** The `vscode_server` role writes `/etc/ssh/sshd_config.d/20-vscode-server.conf`,
 which keeps `AllowTcpForwarding` and `AllowStreamLocalForwarding` on (the server is reached through
 a port forward over the SSH connection) and adds a keepalive so an editor left open on a laptop that
-went to sleep is reaped in minutes, then reads the configuration sshd actually runs with and fails,
-naming the file, if something sorted earlier turns forwarding off: sshd keeps the first value it
-reads, so a `05-*.conf` of yours wins over ours without a word. It also raises
+went to sleep is reaped in minutes. Then it asks sshd what it will apply to your connection - as
+the VM user, from your machine's address, so `Match` blocks count - and fails, naming the file, if
+forwarding ends up off, limited to the remote direction, or removed by `DisableForwarding`: sshd
+keeps the first value it reads, so a `05-*.conf` of yours wins over ours without a word, and a
+`Match User dev` block applies whatever sorts first. It also raises
 `fs.inotify.max_user_watches` to the 524288 VS Code recommends, or the editor warns that it cannot
 watch a large workspace. `vscode_remote: false` removes both files. The Claude Code extension
 (`anthropic.claude-code`) installs on the VM's side of the connection like any other extension and

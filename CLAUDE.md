@@ -75,7 +75,9 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   `~/.ssh/config` that is added once and never removed. Nothing else in `~/.ssh` is ever edited.
   Everything goes through `playbooks/tasks/ssh_config.yml`, which validates each write with
   `ssh -G` and refuses an alias the user's own config already names. A block is only ever written
-  for a tagged VM, and pruning (`ssh_config.yml`) removes blocks, never VMs.
+  for a tagged VM, holds only what ssh reads (no state of this project's - `make code` reads the
+  workspace on the VM), and pruning (`ssh_config.yml`) removes blocks, never VMs. The `Include` is
+  added only when no spelling of it is there, and never rewrites or changes the mode of the user's file.
 - **Tests never write into the developer's `~/.ssh`.** The `configure` scenario runs the real
   playbook and its `localhost` is the developer's machine, so every playbook scenario points
   `claude_ssh_config_file` and `claude_ssh_user_config` into `MOLECULE_EPHEMERAL_DIRECTORY` with
@@ -153,11 +155,16 @@ after a successful start removes it, so a re-run finishes that VM while a finish
 down stays stopped. Do not decide the start from `status` alone, and do not run the resize on every
 run: `proxmox_disk` compares size strings, and Proxmox cannot shrink a hand-grown disk.
 
-**Assert what sshd runs with, not the file we wrote.** sshd keeps the first value it reads for a
-keyword, so a drop-in sorted before `20-vscode-server.conf`, or `/etc/ssh/sshd_config` itself, wins
-over it silently. `roles/vscode_server` therefore flushes its restart handler and reads `sshd -T`
-back, failing with the offending file named. Keep the two drop-ins with two owners: `10-` is
-`common`'s hardening, `20-` is VS Code's forwarding and keepalives.
+**Assert what sshd will apply to the editor's connection, not the file we wrote.** sshd keeps the
+first value it reads for a keyword, and a `Match` block sets its own for the connections it matches,
+so a drop-in sorted before `20-vscode-server.conf`, `/etc/ssh/sshd_config` itself or a `Match User`
+block can each override it silently. `roles/vscode_server` therefore reads
+`sshd -T -C user=<vm_user>,addr=...` - for the VM user, from the address in Ansible's own
+`SSH_CONNECTION` - and fails on forwarding that is off, limited to the remote direction, or removed
+by `DisableForwarding`, naming the file. Plain `sshd -T` skips `Match` blocks entirely. `sshd -T`
+parses the files on disk, so nothing is restarted before the check; do not add a `flush_handlers`
+back. Keep the two drop-ins with two owners: `10-` is `common`'s hardening, `20-` is VS Code's
+forwarding and keepalives.
 
 **The alias play reads a fact the configure play set last.** `configure.yml`'s second play ends
 with a `getent` of `vm_user` and a `claude_vm_workspace` fact, both tagged `always`; the third play

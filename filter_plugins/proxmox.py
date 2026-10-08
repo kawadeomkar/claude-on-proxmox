@@ -146,39 +146,20 @@ def proxmox_access_denied(msg):
 
 
 # The managed SSH config on the controller (playbooks/tasks/ssh_config.yml):
-# one blockinfile block per VM, keyed by the VM's name, with the VMID and the
-# workspace as comments for the next run to read back.
+# one blockinfile block per VM, keyed by the VM's name.
 BLOCK_RE = re.compile(
     r"^# BEGIN claude-on-proxmox: (?P<name>\S+)$\n(?P<body>.*?)^# END claude-on-proxmox: (?P=name)$",
     re.M | re.S,
 )
-VMID_RE = re.compile(r"^# vmid (\S+)\s*$", re.M)
-WORKSPACE_RE = re.compile(r"^# workspace (.+?)\s*$", re.M)
 
 
 def ssh_config_blocks(content):
-    """The alias blocks in a managed ssh config, as ``{name, vmid, workspace}``.
-
-    A block without the comment lines (one written before they existed, or
-    by hand) gets empty strings, so a consumer can read every key.
-    """
+    """The alias blocks in a managed ssh config, as ``{name}``, in file order."""
     if content is None:
         content = ""
     if not isinstance(content, str):
         raise AnsibleFilterError(f"ssh_config_blocks expects the file's text, got {type(content).__name__}")
-    blocks = []
-    for match in BLOCK_RE.finditer(content):
-        body = match.group("body")
-        vmid = VMID_RE.search(body)
-        workspace = WORKSPACE_RE.search(body)
-        blocks.append(
-            {
-                "name": match.group("name"),
-                "vmid": vmid.group(1) if vmid else "",
-                "workspace": workspace.group(1) if workspace else "",
-            }
-        )
-    return blocks
+    return [{"name": match.group("name")} for match in BLOCK_RE.finditer(content)]
 
 
 def ssh_config_prune(blocks, resources, tag_pattern):

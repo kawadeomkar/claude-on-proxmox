@@ -47,7 +47,6 @@
       vars:
         claude_list_unaddressed: >-
           {{ claude_list_rows | selectattr('address', 'equalto', '') | list }}
-        claude_list_workspace: "{{ vm_projects_dir | default('', true) or '/home/' ~ vm_user ~ '/projects' }}"
       ansible.builtin.debug:
         msg: |-
           {% if claude_list_rows | length == 0 %}
@@ -61,8 +60,7 @@
           {% endfor %}
 
           {{ claude_list_rows | length }} VM{{ '' if claude_list_rows | length == 1 else 's' }} tagged "{{ claude_vm_tag }}".
-          VS Code: make code VM_NAME=<name> [PROJECT=<repo>], or code --remote ssh-remote+<name> {{ claude_list_workspace }}
-          (make ssh-config refreshes the aliases).
+          VS Code: make code VM_NAME=<name> [PROJECT=<repo>] (make ssh-config refreshes the aliases).
           {% if claude_list_unaddressed | length > 0 %}
           No address for {{ claude_list_unaddressed | map(attribute='name', default='(no name)') | join(', ') }}: the guest agent has not reported one.
           Those VMs may be stopped, still booting, built without the agent, or on a node that is down.

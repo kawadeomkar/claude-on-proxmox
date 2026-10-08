@@ -292,6 +292,10 @@ class Handler(BaseHTTPRequestHandler):
         vm = VMS[vmid]
 
         if method == "DELETE" and not sub:
+            # Proxmox refuses to remove a VM with protection on, which is the
+            # simplest way for one deletion of a fleet to fail.
+            if str(vm["config"].get("protection", "0")) == "1":
+                return self._reply(500, None, f"can't remove VM {vmid} - protection mode enabled")
             del VMS[vmid]
             save_state()
             return self._reply(200, new_task())

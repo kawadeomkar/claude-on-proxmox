@@ -320,10 +320,12 @@ placeholders, fanning out over `forks`; it looks each VM up again and applies th
 VM. Its `known_hosts` task is `throttle: 1`, because parallel deletes would otherwise each rewrite
 the same file and restore a key another had just removed.
 
-**Play 3 — forget the alias (localhost).** `tasks/ssh_config.yml` with `state: absent` for every
-name in `claude_vm_doomed`: the alias goes with the VM, as its host key does. After the deletions,
-so a run refused in play 1 leaves every alias in place; removing a block that is not there is a
-no-op. A localhost play rather than a task in the role, so the role stays free of the controller's
+**Play 3 — forget the alias (localhost).** `tasks/ssh_config.yml` with `state: absent` for the VMs
+that are actually gone: play 2 ends with a `post_tasks` fact, `claude_vm_deleted`, which a host that
+failed in the role never reaches, and play 3 removes only the aliases of hosts that have it. A VM
+whose deletion failed - a stop that timed out, protection on, an API error - keeps its alias,
+because it is still there to connect to, and the run names it. A run refused in play 1 never
+reaches play 3; removing a block that is not there is a no-op. A localhost play rather than a task in the role, so the role stays free of the controller's
 ssh config and the one writer per run needs no throttle.
 
 ### 4.6 `playbooks/list.yml`
@@ -372,13 +374,13 @@ is API and VM traffic only.
 
 The aliases are the one thing this project writes on the controller besides `known_hosts`, and
 every writer goes through one task file so the block format cannot drift. Inputs: a list of
-`{name, address, user, vmid?, workspace?}` and a state. The managed file,
-`~/.ssh/claude-on-proxmox.conf` (`claude_ssh_config_file`), holds one `blockinfile` block per VM:
+`{name, address, user, workspace?}` and a state; `workspace` only feeds the connect line, and only
+`configure`, which has read it on the VM, passes it. The managed file,
+`~/.ssh/claude-on-proxmox.conf` (`claude_ssh_config_file`), holds one `blockinfile` block per VM,
+with what ssh reads and nothing else - no state of this project's is kept in a user's ssh config:
 
 ```
 # BEGIN claude-on-proxmox: alpha
-# vmid 9001                      ← tells "same VM, new address" from "another VM with this name"
-# workspace /home/dev/projects   ← read back by make code
 Host alpha
     HostName 192.0.2.51          ← or alpha.<claude_ssh_host_domain>
     User dev
@@ -388,8 +390,12 @@ Host alpha
 
 The user's own `~/.ssh/config` gets exactly one line, `Include <managed file>`, inserted at the top
 (`lineinfile`, `insertbefore: BOF`): an `Include` below a `Host` block is scoped to that block. It is
-added once and never removed, since removing it would mean editing the user's file on destroy and an
-`Include` of a missing file is harmless. Nothing else in `~/.ssh` is ever edited.
+added only when no spelling of it is there already - the absolute path, `~/...`, `${HOME}/...`, or
+the bare name for a file in `~/.ssh` - and an existing one is left exactly as written, not rewritten
+into this form. `$HOME/...` is not one of those spellings: ssh expands only `${...}`, so such a line
+includes nothing. The file's mode is set only when this task creates it. The `Include` is never
+removed, since that would mean editing the user's file on destroy, and an `Include` of a missing
+file is harmless. Nothing else in `~/.ssh` is ever edited.
 
 Three guards, in order: the alias is the VM's name, so a `Host` line in the user's config that
 already names it is refused by file and line (the managed file is included first, so writing would
@@ -417,18 +423,22 @@ no other playbook does, launching the editor. In order:
    the projects directory, or nested in it, can be opened. The Makefile's `project-name-check` refuses
    the same before a shell sees the value; this is for a direct `ansible-playbook` run.
 2. Find the VM by tag, naming an untagged VM of that name as not this project's; ask its agent for
-   the address, failing with the `make list` hint for a stopped VM.
-3. Refresh the alias, carrying over the workspace a configure run recorded, or assuming
-   `/home/<user>/projects` and saying so.
-4. Look for the folder to open - the workspace, or `<workspace>/<project>` - with `stat`, delegated
-   over SSH to the VM, added with `add_host` the way configure reaches it (Ansible's own connection
-   and `accept-new`, not the user's ssh config). Read-only. Unreachable, missing and not-a-folder
-   are each their own message: a missing project lists what the workspace holds and, for a name
-   that differs only in case, suggests the right one, since the VM's paths are case-sensitive; a
-   missing workspace means a VM never configured, and says to run `make configure`. This is the one
-   step that connects to the VM, and it is there so a typo is said in the terminal, not in a VS Code
-   window opened on a folder that does not exist.
-5. Check `code` is on `PATH`, install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
+   the address. Settle where it is reached exactly as the alias's `HostName` does - the address, or
+   `<name>.<claude_ssh_host_domain>` - so this run and VS Code connect to the same target, and refuse
+   a VM that is not running, whatever its name resolves to.
+3. Add it to `claude_vms` with `add_host`, the way configure reaches it: Ansible's own connection and
+   `accept-new`, not the user's ssh config, and the group's connection variables from the inventory
+   (a key, a port) apply as they do to `make configure`.
+4. Read the VM user's home on the VM with `getent`, delegated over SSH, unless `vm_projects_dir`
+   says where the code is. Nothing is guessed on the controller, and nothing is read back out of the
+   alias: the workspace is `vm_projects_dir` or `<home>/projects`.
+5. Refresh the alias, then look for the folder to open - the workspace, or `<workspace>/<project>` -
+   with `stat` on the VM. Read-only. Unreachable, missing and not-a-folder are each their own
+   message: a missing project lists what the workspace holds and, for a name that differs only in
+   case, suggests the right one, since the VM's paths are case-sensitive; a missing workspace means a
+   VM never configured, and says to run `make configure`. These are there so a typo is said in the
+   terminal, not in a VS Code window opened on a folder that does not exist.
+6. Check `code` is on `PATH`, install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
    lacks it, and run `code --remote ssh-remote+alpha <folder>`.
 
 Nothing on the VM is changed: cloud-init placed the key, so a VM that was provisioned but never
@@ -706,12 +716,17 @@ two, and proves the sshd one.
 - **A second drop-in, `20-vscode-server.conf`**, with `AllowTcpForwarding yes`,
   `AllowStreamLocalForwarding yes` and `ClientAliveInterval`/`CountMax`, validated with `sshd -t`.
   Two files, two owners: `10-` is `common`'s hardening, `20-` is this.
-- **`sshd -T` after `meta: flush_handlers`.** sshd keeps the first value it reads for a keyword, so
-  a drop-in sorted before `20-`, or `sshd_config` itself, silently wins over the file this role just
-  wrote. The restart is flushed, the effective configuration read back, and both forwarding
-  keywords asserted `yes`, with the file that sets them `no` named (a `grep -l` over
-  `sshd_config` and the drop-ins). The role's side effect proves it: a `05-molecule-hardening.conf`
-  with `AllowTcpForwarding no` fails the role with that file in the message.
+- **`sshd -T -C` for the editor's connection.** sshd keeps the first value it reads for a keyword,
+  and a `Match` block sets its own for the connections it matches, so a drop-in sorted before `20-`,
+  `sshd_config` itself or a `Match User dev` block can each silently override the file this role
+  just wrote. The role reads where the editor will connect from out of Ansible's own
+  `SSH_CONNECTION` (without `become`, which drops it), asks `sshd -T -C user=<vm_user>,host=,addr=,
+  laddr=,lport=` what applies to that connection - plain `sshd -T` skips `Match` blocks - and fails
+  on forwarding that is off, limited to the remote direction, or removed by `DisableForwarding`,
+  naming the file that does it (a `find` over `sshd_config` and the drop-ins, indented lines
+  included, since that is how a `Match` block's settings are written). `sshd -T` parses the files
+  on disk, so this checks the configuration the end-of-play restart will load; nothing is restarted
+  first.
 - **`fs.inotify.max_user_watches` = 524288** through `ansible.posix.sysctl`, written for the record
   everywhere and applied only where `/proc/sys` is writable (`vscode_server_container_virt_types`).
 - **Off removes both files**, as Remote Control's off path removes its unit. The live sysctl stays
@@ -848,8 +863,7 @@ caller sweeping the fleet skips that VM. Both playbooks pass `proxmox_nic`; they
 a VMID in the detail — `500 Internal Server Error: VM 4013 is not running` — which failed
 `make list` and `make configure` for the whole fleet over one stopped VM.
 
-**`ssh_config_blocks(content)`** — the alias blocks in the managed file, as `{name, vmid, workspace}`,
-with empty strings for a block that lacks the comment lines. **`ssh_config_prune(blocks, resources,
+**`ssh_config_blocks(content)`** — the alias blocks in the managed file, as `{name}`, in file order. **`ssh_config_prune(blocks, resources,
 tag_pattern)`** — the decision `make ssh-config` makes fleet-wide, as data: `prune` (no VM of that
 name anywhere), `untagged` (a VM of that name exists without the tag; left alone), and `nameless`
 (tagged VMs the listing shows without a name, a node that is down), which when non-empty empties
@@ -1097,12 +1111,12 @@ Three tiers. **No test ever talks to a real Proxmox, a real GitHub, or a real hy
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 284 tests — 58 for the filters, 26 for `github_repos`, 81 for the
+pytest over `tests/unit/`: 290 tests — 58 for the filters, 26 for `github_repos`, 81 for the
 tracked-file guard, 35 that run `claude_login.yml` and `remote_control.yml` against canned logins and
-stand-ins, 2 that `--tags claude_code` still runs discovery and the alias play, 18 that run
+stand-ins, 2 that `--tags claude_code` still runs discovery and the alias play, 24 that run
 `tasks/ssh_config.yml` for real against a temporary home and resolve the result with `ssh -G` (and
 guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, and that no
-playbook sets the task file's inputs as facts), and 64 that run
+playbook sets the task file's inputs as facts, and that the user's own Include and file mode are left alone), and 64 that run
 `make` against the Makefile's guards and its run logs: `vm-name-check` accepts DNS-like names and refuses whitespace,
 quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision` and
 `ssh-config` pass `VM_NAME` as one JSON extra-var and run the check before the playbook; `deploy`
@@ -1118,10 +1132,13 @@ One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting d
 from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
 side_effect → verify → destroy.
 
-`vscode_server`'s side effect writes a `05-molecule-hardening.conf` with `AllowTcpForwarding no`,
-runs the role inside a `block`/`rescue` and asserts the failure names that file; then runs the role
-switched off and asserts both files are gone, and switched on again for verify, which reads the
-drop-in, the sysctl file and `sshd -T` (forwarding on, converge's keepalive values in effect).
+`vscode_server`'s side effect takes the forwarding away three ways, each in a drop-in of its own,
+runs the role inside a `block`/`rescue`, and asserts the failure names the setting and the file:
+`AllowTcpForwarding no` sorted before the role's drop-in, `DisableForwarding yes`, and a
+`Match User dev` block sorted last that limits forwarding to the remote direction - the case a
+global `sshd -T` cannot see. Then it runs the role switched off and asserts both files are gone, and
+switched on again for verify, which reads the drop-in, the sysctl file and `sshd -T` (forwarding on,
+converge's keepalive values in effect).
 
 `proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
 came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —
@@ -1189,7 +1206,10 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   `legacy` with the hint to tag it, and refuse the template even with
   `proxmox_vm_allow_untagged_delete` — deleting nothing — then delete `commas` and `parked` in one
   run and `legacy` with the flag, leaving every other VM in place. Aliases seeded for all of them
-  beforehand survive every refusal, and each deletion takes exactly its own.
+  beforehand survive every refusal, and each deletion takes exactly its own. `guarded`, tagged and
+  with protection on, joins the `commas,parked` run: Proxmox refuses to delete it (the fake does as
+  Proxmox does), the run exits non-zero, the other two are still deleted, and `guarded` keeps both
+  its VM and its alias.
 - `ssh_config.yml` fleet-wide, with aliases seeded for a VM that exists nowhere and for the untagged
   `stranger`: with the node that is down still down it prunes nothing and says which VMID holds it;
   with that node switched back on (§11.4) it prunes the vanished one, leaves `stranger` alone and
@@ -1197,12 +1217,14 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   it prunes nothing.
 - `code.yml` against a stand-in `code` on `PATH` that records its arguments and lists what a file
   says. The VM side is read with Ansible's local connection, against a projects directory made in
-  the ephemeral directory and recorded as `alpha`'s workspace, because the fake fleet's addresses
+  the ephemeral directory and given as `vm_projects_dir`, because the fake fleet's addresses
   answer nothing: the first run installs the Remote - SSH extension and opens the workspace, the
   second only opens it, the third opens `discord-music-bot` in it. Refused, each with its own
-  message and nothing opened: `stranger`, `nonic` (no address), a missing name, two names, a
+  message and nothing opened: `stranger`, `nonic` (no address), a missing name, two names, the
+  stopped `beta` with `claude_ssh_host_domain` set (its name would still resolve), a
   mistyped project (the projects are listed, the file among them is not), `parkbnb` for `ParkBnb`
-  (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file, `../etc` and `..` (the playbook's own check), a VM with no projects directory,
+  (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file,
+  `../etc` and `..` (the playbook's own check), a VM with no projects directory,
   an empty one, and one case over real SSH to an address nothing answers on. The user ssh config in
   the ephemeral directory never exists.
 

@@ -746,19 +746,41 @@
     # passes no confirmation at all, so it gets the prompt's default, as a run
     # with no terminal does. The last case is the tagged container: not a VM,
     # so not this project's to delete, even through the escape hatch.
+    # A VM of this project's that Proxmox will refuse to delete, because
+    # protection is on: one deletion of a fleet that fails. Made here rather
+    # than with the seeds, so the fleet-wide assertions above are unchanged.
+    - name: Clone a VM that will refuse to be deleted
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api }}/9000/clone"
+        method: POST
+        headers: "{{ verify_headers }}"
+        body_format: form-urlencoded
+        body: {newid: 9030, name: guarded}
+
+    - name: Tag it and turn protection on
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api }}/9030/config"
+        method: PUT
+        headers: "{{ verify_headers }}"
+        body_format: form-urlencoded
+        body: {tags: claude-on-proxmox, protection: 1}
+
     # Aliases for the VMs about to be refused and deleted, written the way
     # configure.yml writes them, into the ephemeral directory group_vars
     # points the managed file at. A refusal must leave every one of them; a
-    # deletion must take exactly its own.
+    # deletion must take exactly its own, and a deletion that fails none.
     - name: Keep an SSH alias for the VMs destroy.yml is about to see
       ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
       vars:
         claude_ssh_state: present
         claude_ssh_vms:
-          - {name: commas, address: 192.0.2.58, user: dev, vmid: 9008, workspace: /home/dev/projects}
-          - {name: parked, address: 192.0.2.13, user: dev, vmid: 4013, workspace: /home/dev/projects}
-          - {name: legacy, address: 192.0.2.10, user: dev, vmid: 9010, workspace: /home/dev/projects}
-          - {name: alpha, address: 192.0.2.51, user: dev, vmid: 9001, workspace: /home/dev/projects}
+          - {name: commas, address: 192.0.2.58, user: dev}
+          - {name: parked, address: 192.0.2.13, user: dev}
+          - {name: legacy, address: 192.0.2.10, user: dev}
+          - {name: alpha, address: 192.0.2.51, user: dev}
+          - {name: guarded, address: 192.0.2.80, user: dev}
 
     - name: Run destroy.yml where it must refuse
       ansible.builtin.command:
@@ -804,7 +826,7 @@
       ansible.builtin.assert:
         that:
           - verify_refused_destroys.results | map(attribute='rc') | reject('equalto', 0) | list | length == 4
-          - verify_aliases_after_refusals == ['commas', 'parked', 'legacy', 'alpha']
+          - verify_aliases_after_refusals == ['commas', 'parked', 'legacy', 'alpha', 'guarded']
           - verify_outputs[0] is search(verify_refused_destroys.results[0].verify_case.expect)
           - verify_outputs[1] is search(verify_refused_destroys.results[1].verify_case.expect)
           - verify_outputs[2] is search(verify_refused_destroys.results[2].verify_case.expect)
@@ -817,9 +839,10 @@
           {{ verify_outputs | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
         quiet: true
 
-    # Two tagged VMs in one run - one with comma-joined tags, one stopped - so
-    # every VM asked for is deleted, not only the first; then legacy, through
-    # the escape hatch.
+    # Three tagged VMs in one run - one with comma-joined tags, one stopped,
+    # one protected - so every VM that can be deleted is, not only the first,
+    # and the one Proxmox refuses fails on its own; then legacy, through the
+    # escape hatch.
     - name: Run destroy.yml where it must delete
       ansible.builtin.command:
         argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_case | to_json, playbook_dir ~ '/../../playbooks/destroy.yml'] }}"
@@ -828,7 +851,7 @@
       changed_when: false
       failed_when: false
       loop:
-        - {vm_name: "commas,parked", confirm_destroy: "yes"}
+        - {vm_name: "commas,parked,guarded", confirm_destroy: "yes"}
         - {vm_name: legacy, confirm_destroy: "yes", proxmox_vm_allow_untagged_delete: true}
       loop_control:
         loop_var: verify_case
@@ -859,8 +882,12 @@
         verify_left: "{{ verify_after_destroys.json.data | map(attribute='name', default='') | list }}"
       ansible.builtin.assert:
         that:
-          - verify_destroys.results | map(attribute='rc') | list == [0, 0]
-          - verify_aliases_after_destroys == ['alpha']
+          - verify_destroys.results | map(attribute='rc') | list == [2, 0]
+          - (verify_destroys.results[0].stdout ~ verify_destroys.results[0].stderr) is search('protection mode enabled')
+          - (verify_destroys.results[0].stdout ~ verify_destroys.results[0].stderr) is search('Kept the SSH alias of guarded')
+          # The VM that is still there keeps its alias; the deleted ones lose theirs.
+          - verify_aliases_after_destroys == ['alpha', 'guarded']
+          - "'guarded' in verify_left"
           - not verify_user_ssh_config.stat.exists
           - verify_left | intersect(['commas', 'parked', 'legacy']) | length == 0
           - verify_left | intersect(['alpha', 'beta', 'solo', 'nonic', 'netone', 'stranger', 'bystander', 'ubuntu-24.04-cloudinit',
@@ -962,6 +989,7 @@
     # interpreter is this run's own, which has every module code.yml needs.
     verify_code_vars:
       vm_name: alpha
+      vm_projects_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/projects"
       ansible_connection: local
       ansible_python_interpreter: "{{ ansible_playbook_python }}"
     verify_code_env: >-
@@ -986,8 +1014,8 @@
         claude_ssh_user_config: "{{ verify_ssh_dir }}/ssh_config"
         claude_ssh_config_include: false
         claude_ssh_vms:
-          - {name: gone, address: 192.0.2.99, user: dev, vmid: 9999}
-          - {name: stranger, address: 192.0.2.61, user: dev, vmid: 9011}
+          - {name: gone, address: 192.0.2.99, user: dev}
+          - {name: stranger, address: 192.0.2.61, user: dev}
 
     - name: Run ssh-config fleet-wide while the node is down
       ansible.builtin.command:
@@ -1026,10 +1054,9 @@
           - "'nonic' not in verify_down_names"
           - "'hostname 192.0.2.51' in verify_alpha_resolved.stdout_lines"
           - "'user dev' in verify_alpha_resolved.stdout_lines"
-          # The workspace configure recorded (seeded above with the destroy
           # fixtures) survives a refresh that cannot know it.
-          - (verify_aliases_down | selectattr('name', 'equalto', 'alpha') | first).workspace == '/home/dev/projects'
-          - (verify_aliases_down | selectattr('name', 'equalto', 'alpha') | first).vmid == '9001'
+          # The managed file holds what ssh reads and no state of this project's.
+          - lookup('ansible.builtin.file', verify_ssh_file) is not search('^# (vmid|workspace) ', multiline=True)
         fail_msg: >-
           ssh-config with the node down exited {{ verify_ssh_down.rc }}, leaving {{ verify_down_names }}:
           {{ (verify_ssh_down.stdout ~ '\n' ~ verify_ssh_down.stderr).splitlines()[-25:] }}
@@ -1078,7 +1105,7 @@
         claude_ssh_user_config: "{{ verify_ssh_dir }}/ssh_config"
         claude_ssh_config_include: false
         claude_ssh_vms:
-          - {name: gone-too, address: 192.0.2.98, user: dev, vmid: 9998}
+          - {name: gone-too, address: 192.0.2.98, user: dev}
 
     - name: Run ssh-config for one VM
       ansible.builtin.command:
@@ -1120,12 +1147,12 @@
           [ "$1" = "--list-extensions" ] && cat "{{ verify_ssh_dir }}/extensions" 2>/dev/null
           exit 0
 
-    # The VM side of `make code` - is the folder there, and what else is - is
-    # read over SSH, and the fake fleet's addresses are documentation ones
-    # that nothing answers on. So these runs reach "alpha" with Ansible's own
-    # local connection instead, against a projects directory made here, and
-    # alpha's alias records that directory as its workspace, as configure
-    # would. One case below keeps real SSH, to see that failure said.
+    # The VM side of `make code` - the home directory, is the folder there,
+    # what else is - is read over SSH, and the fake fleet's addresses are
+    # documentation ones that nothing answers on. So these runs reach "alpha"
+    # with Ansible's own local connection instead, and vm_projects_dir points
+    # at a projects directory made here (with it set, the home directory is
+    # not looked up). One case below keeps real SSH, to see that failure said.
     - name: Make a projects directory for alpha to hold
       ansible.builtin.file:
         path: "{{ verify_ssh_dir }}/{{ item }}"
@@ -1138,16 +1165,6 @@
         dest: "{{ verify_ssh_dir }}/projects/notes.txt"
         content: "not a project\n"
         mode: "0644"
-
-    - name: Record that directory as alpha's workspace
-      ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
-      vars:
-        claude_ssh_state: present
-        claude_ssh_config_file: "{{ verify_ssh_file }}"
-        claude_ssh_user_config: "{{ verify_ssh_dir }}/ssh_config"
-        claude_ssh_config_include: false
-        claude_ssh_vms:
-          - {name: alpha, address: 192.0.2.51, user: dev, vmid: 9001, workspace: "{{ verify_ssh_dir }}/projects"}
 
     - name: Let the stand-in report no extensions
       ansible.builtin.copy:
@@ -1200,7 +1217,6 @@
                                 '--remote ssh-remote+alpha ' ~ verify_ws ~ '/discord-music-bot']
           - verify_runs[0].stdout is search(('VS Code is opening ' ~ verify_ws ~ ' on alpha (192.0.2.51).') | regex_escape)
           - verify_runs[2].stdout is search(('VS Code is opening ' ~ verify_ws ~ '/discord-music-bot on alpha') | regex_escape)
-          - verify_runs[0].stdout is not search('assumed')
         fail_msg: >-
           make code exited {{ verify_runs | map(attribute='rc') | list }} and asked for {{ verify_code_log }}:
           {{ verify_runs | map(attribute='stdout') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
@@ -1222,6 +1238,8 @@
           - {expect: 'nonic is running and reported\s+no address', vars: {vm_name: nonic}}
           - {expect: 'No VM named missing is tagged', vars: {vm_name: missing}}
           - {expect: 'VS Code opens one VM at a time', vars: {vm_name: "alpha,solo"}}
+          # Stopped: refused even when its name would still resolve.
+          - {expect: 'beta is stopped, so there is nothing to connect to', vars: {vm_name: beta, claude_ssh_host_domain: lan}}
           # Mistyped: what is there is listed, in a case-blind order, and the
           # file among it is not.
           - expect: 'There is no project named nope in \S+/projects on alpha\.\s+The projects there are: discord-music-bot, ParkBnb\.'
