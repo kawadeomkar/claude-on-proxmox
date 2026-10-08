@@ -19,30 +19,11 @@
   gather_facts: false
 
   tasks:
-    - name: Check whether this VM is already logged in
-      ansible.builtin.command:
-        argv: [bash, -lc, "claude auth status"]
-      register: claude_login_status
-      failed_when: false
-      changed_when: false
-      check_mode: false
-
+    # The decision is the claude_code role's, so this and `make configure`
+    # cannot disagree about whether a VM is signed in the way Remote Control
+    # needs. tests/unit/test_remote_control_playbooks.py runs this playbook
+    # against canned logins.
     - name: Report the login state and what to do about it
-      vars:
-        claude_login_json: >-
-          {{ (claude_login_status.stdout | from_json)
-             if claude_login_status.rc == 0 and (claude_login_status.stdout | trim | length > 0)
-             else {} }}
-        claude_login_target: "{{ vm_user }}@{{ ansible_host | default(inventory_hostname) }}"
-      ansible.builtin.debug:
-        msg: >-
-          {{ inventory_hostname }}:
-          {{ 'already signed in as ' ~ (claude_login_json.email | default('?'))
-             ~ ' (' ~ (claude_login_json.authMethod | default('?')) ~ ', '
-             ~ (claude_login_json.subscriptionType | default('?')) ~ ' plan).'
-             ~ ' Run: make configure VM_NAME=' ~ inventory_hostname
-             if (claude_login_json.loggedIn | default(false)) | bool
-             else 'not signed in. Run this, approve in the browser, and paste back the'
-                  ~ ' code it shows: ssh -t ' ~ claude_login_target
-                  ~ ' "claude auth login". Then: make configure VM_NAME='
-                  ~ inventory_hostname }}
+      ansible.builtin.include_role:
+        name: claude_code
+        tasks_from: login

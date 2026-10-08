@@ -74,6 +74,67 @@ def guest_ipv4(interfaces, mac=None):
     return None
 
 
+def guest_address(vm_info, nic="net0"):
+    """Return the address a VM's guest agent reports on one of its NICs, or "".
+
+    ``vm_info`` is what ``proxmox_vm_info`` registers for a single VM read with
+    ``config: current`` and ``network: true``. The NIC's MAC is read from
+    ``config[nic]`` and picks the agent's matching interface, so a bridge the
+    guest grew later (docker0) is never returned. ``nic`` is the one setting
+    that decides this, which is why every caller passes ``proxmox_nic``.
+
+    Anything that leaves one VM without an address - the call failed, the VM is
+    stopped, the agent has not answered, the VM has no such NIC - gives "",
+    never an error: callers sweep a whole fleet and skip that VM rather than
+    abort for every other one, and never guess an address without the MAC.
+    """
+    vms = vm_info.get("proxmox_vms") if isinstance(vm_info, dict) else None
+    vm = vms[0] if isinstance(vms, list) and vms else None
+    if not isinstance(vm, dict) or not isinstance(vm.get("config"), dict):
+        return ""
+    mac = net_mac(vm["config"].get(nic), "")
+    if not mac or not isinstance(vm.get("network"), list):
+        return ""
+    return guest_ipv4(vm["network"], mac) or ""
+
+
+def guest_addresses(vms, configs, networks, nic="net0"):
+    """Pair each VM of a cluster listing with the address its agent reports.
+
+    ``vms`` is a list of ``/cluster/resources`` entries; ``configs`` and
+    ``networks`` are the registered results of a ``uri`` loop over them, one
+    per VM in the same order, reading ``/config`` and
+    ``/agent/network-get-interfaces``. Returns the entries with an ``address``
+    key added: the IPv4 the agent reports on ``nic``, or "" for a VM whose
+    request failed, was skipped, or whose NIC or agent gave nothing - never an
+    error, for the reasons ``guest_address`` gives.
+    """
+    if not isinstance(vms, list) or not isinstance(configs, list) or not isinstance(networks, list):
+        raise AnsibleFilterError("guest_addresses expects three lists")
+    if not len(vms) == len(configs) == len(networks):
+        raise AnsibleFilterError(
+            f"guest_addresses got {len(vms)} VMs, {len(configs)} configs and {len(networks)} network replies"
+        )
+
+    def body(result):
+        data = result.get("json") if isinstance(result, dict) else None
+        return data.get("data") if isinstance(data, dict) else None
+
+    rows = []
+    for vm, config, network in zip(vms, configs, networks, strict=True):
+        interfaces = body(network)
+        vm_info = {
+            "proxmox_vms": [
+                {
+                    "config": body(config),
+                    "network": interfaces.get("result") if isinstance(interfaces, dict) else None,
+                }
+            ]
+        }
+        rows.append({**vm, "address": guest_address(vm_info, nic)})
+    return rows
+
+
 def proxmox_access_denied(msg):
     """Whether a community.proxmox error means the API refused the token.
 
@@ -89,5 +150,7 @@ class FilterModule:
         return {
             "net_mac": net_mac,
             "guest_ipv4": guest_ipv4,
+            "guest_address": guest_address,
+            "guest_addresses": guest_addresses,
             "proxmox_access_denied": proxmox_access_denied,
         }

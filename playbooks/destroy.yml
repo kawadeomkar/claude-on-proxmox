@@ -5,20 +5,19 @@
 #   make destroy VM_NAME=alpha,beta
 #
 # Without VM_NAME this targets claude-on-proxmox-default, the same name
-# `make provision` uses when none is given. It checks first that the VMs it
-# was asked for actually exist, so that asking for the wrong name is an error
-# rather than a confirmation prompt followed by silence.
-- name: Destroy VMs on Proxmox
+# `make provision` uses when none is given. The confirmation prompt runs first,
+# since it is a play-level vars_prompt; the task right after it then checks that
+# every VM asked for actually exists, so a wrong name fails loudly rather than
+# being "deleted" silently once confirmed.
+#
+# Two plays, in provision.yml's shape and for the same reason: stopping a VM
+# and removing its disks takes time on a real host, and none of it depends on
+# another VM. The first play confirms, checks and turns each name into a host;
+# the second runs the role across those hosts, so Ansible deletes them in
+# parallel across `forks`. A loop over include_role deleted them one at a time.
+- name: Confirm and check what to destroy
   hosts: localhost
   gather_facts: false
-  module_defaults:
-    group/community.proxmox.proxmox:
-      api_host: "{{ proxmox_api_host }}"
-      api_port: "{{ proxmox_api_port }}"
-      api_user: "{{ proxmox_api_user }}"
-      api_token_id: "{{ proxmox_api_token_id }}"
-      api_token_secret: "{{ proxmox_api_token_secret }}"
-      validate_certs: "{{ proxmox_validate_certs }}"
 
   vars_prompt:
     - name: confirm_destroy
@@ -35,32 +34,73 @@
         fail_msg: "Destroy not confirmed."
         quiet: true
 
-    - name: List the VMs this project created
-      community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
-        type: qemu
-      register: claude_vm_all
-      changed_when: false
+    - name: List every VM in the cluster
+      ansible.builtin.import_tasks: tasks/cluster_vms.yml
 
+    # The role refuses a VM it does not own as well; checking here first names
+    # the VMs that do exist, once, instead of one refusal per host.
+    #
+    # A guest on a node that is down is listed without a name (see
+    # tasks/cluster_vms.yml). It cannot be what VM_NAME means, and it must not
+    # take the check down for the VMs that can be: every `name` is read with
+    # a default and the blanks dropped.
+    #
+    # proxmox_vm_allow_untagged_delete is the role's escape hatch for a VM
+    # created before this project tagged its VMs, so it widens this check to
+    # an untagged VM of that name too. Never to a template, tagged or not:
+    # every VM is cloned from one.
     - name: Check that every VM asked for exists
       vars:
-        claude_vm_fleet: "{{ claude_vm_tagged | map(attribute='name') | sort | list }}"
-        claude_vm_missing: "{{ claude_vm_names | difference(claude_vm_fleet) | list }}"
+        claude_vm_untagged_ok: "{{ proxmox_vm_allow_untagged_delete | default(false) | bool }}"
+        claude_vm_qemu: "{{ claude_vm_all.json.data | selectattr('type', 'equalto', 'qemu') | list }}"
+        claude_vm_templates: >-
+          {{ claude_vm_qemu | selectattr('template', 'defined') | selectattr('template', 'truthy')
+             | map(attribute='name', default='') | select | list }}
+        claude_vm_fleet: >-
+          {{ claude_vm_tagged | map(attribute='name', default='') | select
+             | difference(claude_vm_templates) | sort | list }}
+        claude_vm_untagged: >-
+          {{ claude_vm_qemu | map(attribute='name', default='') | select
+             | difference(claude_vm_fleet + claude_vm_templates) | list }}
+        claude_vm_deletable: "{{ claude_vm_fleet + (claude_vm_untagged if claude_vm_untagged_ok else []) }}"
+        claude_vm_missing: "{{ claude_vm_names | difference(claude_vm_deletable) | list }}"
+        claude_vm_created: >-
+          {{ 'It created: ' ~ (claude_vm_fleet | join(', ')) ~ '. Name what to delete with VM_NAME=.'
+             if claude_vm_fleet else 'It has not created any VMs on this host.' }}
+        claude_vm_missing_untagged: "{{ claude_vm_missing | intersect(claude_vm_untagged) }}"
+        claude_vm_untagged_hint: >-
+          {{ claude_vm_missing_untagged | join(', ') }} does exist, but is not tagged "{{ claude_vm_tag }}".
+          If this project created it before it tagged its VMs, add that tag in the Proxmox UI and run this
+          again, or set proxmox_vm_allow_untagged_delete=true to delete it anyway.
+        claude_vm_hints: >-
+          {{ (['A template is never deleted.'] if claude_vm_missing | intersect(claude_vm_templates) else [])
+             + ([claude_vm_untagged_hint] if claude_vm_missing_untagged else []) }}
       ansible.builtin.assert:
         that: claude_vm_missing | length == 0
         fail_msg: >-
-          No VM named {{ claude_vm_missing | join(', ') }} was created by this project.
-          {{ 'It created: ' ~ (claude_vm_fleet | join(', ')) ~ '. Name what to delete with VM_NAME=.'
-             if claude_vm_fleet | length > 0
-             else 'It has not created any VMs on this host.' }}
+          No VM named {{ claude_vm_missing | join(', ') }} was created by this project. {{ claude_vm_created }}
+          {{ claude_vm_hints | join(' ') }}
         quiet: true
 
-    - name: Delete each VM
-      ansible.builtin.include_role:
-        name: proxmox_vm
-      vars:
-        proxmox_vm_name: "{{ claude_vm_name_item }}"
-        proxmox_vm_state: absent
+    - name: Add each VM as a host to delete
+      ansible.builtin.add_host:
+        name: "{{ claude_vm_name_item }}"
+        groups: claude_vm_doomed
+        # Every task in the proxmox_vm role is delegated to the controller and
+        # talks to the Proxmox API, so nothing ever connects to this host.
+        ansible_connection: local
+      changed_when: false
       loop: "{{ claude_vm_names }}"
       loop_control:
         loop_var: claude_vm_name_item
         label: "{{ claude_vm_name_item }}"
+
+# The role checks ownership again for each VM, against the VM it looks up by
+# name at that moment, and refuses a template or an untagged VM without the
+# escape hatch. proxmox_vm_name defaults to inventory_hostname, the VM name.
+- name: Delete the VMs on Proxmox
+  hosts: claude_vm_doomed
+  gather_facts: false
+  roles:
+    - role: proxmox_vm
+      proxmox_vm_state: absent

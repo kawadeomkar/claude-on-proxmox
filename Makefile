@@ -8,18 +8,32 @@ PYTHON     ?= python3
 VAULT_PASS := .vault_pass
 VAULT_ARGS := $(if $(wildcard $(VAULT_PASS)),--vault-password-file $(VAULT_PASS),)
 ANSIBLE_ARGS ?=
-# Name(s) of the VM(s) to act on, comma-separated. Defaults to
-# claude-on-proxmox-default (set in inventory/group_vars/all/defaults.yml).
-# This selects for every target, so `make configure VM_NAME=alpha` narrows the
-# run to alpha. There is deliberately no LIMIT: --limit is applied before the
-# plays run, and these VMs only enter the inventory once discovery has found
-# them, so it could never match.
+# Name(s) of the VM(s) to act on, comma-separated. Given, it narrows every
+# target to those names, so `make configure VM_NAME=alpha` touches only alpha.
+# Left out, what it means depends on the target:
+#   deploy, provision, destroy            -> claude-on-proxmox-default
+#                                            (claude_vm_default_name, in
+#                                            inventory/group_vars/all/defaults.yml)
+#   configure, check, list, claude-login  -> every VM tagged claude-on-proxmox
+# `make deploy` configures only what it provisioned, never the rest of the fleet.
+# There is deliberately no LIMIT: --limit is applied before the plays run, and
+# these VMs only enter the inventory once discovery has found them, so it could
+# never match.
 VM_NAME    ?=
 # Passed as JSON, not key=value. Ansible's key=value parser splits extra-vars
 # on whitespace, so VM_NAME="alpha beta" silently became just alpha and only
 # half the fleet was created. As JSON the value arrives whole and reaches the
-# name check in provision.yml, which explains the problem.
+# name check in the proxmox_vm role, which explains the problem.
 VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
+# Re-run part of configure: make configure VM_NAME=alpha TAGS=claude_code
+# Role tags are common, dev_tools, claude_code, github_projects. Discovery is
+# tagged "always", so it runs whichever of these you pick. Only configure and
+# check take TAGS. deploy refuses it: nothing that builds the template or
+# creates a VM is tagged, so --tags would skip all of that and exit 0 having
+# done nothing, and ignoring it instead would turn a one-role push into a full
+# deploy, template build over root SSH included.
+TAGS       ?=
+TAG_ARGS   := $(if $(TAGS),--tags $(TAGS),)
 ROLES      := common dev_tools claude_code github_projects proxmox_template proxmox_vm
 MOLECULE_ROLES ?= $(ROLES)
 
@@ -51,8 +65,8 @@ init: deps ## One-time local setup: venv, collections, local config from example
 	@echo ""
 	@echo "Now edit these (they are git-ignored):"
 	@echo "  inventory/hosts.yml                  - the address of your Proxmox host"
-	@echo "  inventory/group_vars/all/local.yml   - GitHub username, Proxmox node/storage, package choices"
-	@echo "  inventory/group_vars/all/vault.yml   - secrets; then: make vault-encrypt"
+	@echo "  inventory/group_vars/all/local.yml   - Proxmox node/storage, package choices, which repos to skip"
+	@echo "  inventory/group_vars/all/vault.yml   - secrets: API token, GitHub username/token; then: make vault-encrypt"
 
 .PHONY: vault-encrypt
 vault-encrypt: ## Encrypt inventory/group_vars/all/vault.yml with ansible-vault
@@ -74,32 +88,36 @@ template: vault-check ## Build the cloud-init VM template on the Proxmox host (o
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/template.yml
 
 .PHONY: provision
-provision: vault-check ## Create and start VM(s): make provision VM_NAME=alpha,beta
+provision: vault-check ## Create and start VM(s): make provision VM_NAME=alpha,beta (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
 
-.PHONY: configure
-configure: vault-check ## Configure the VM(s): packages, tools, Claude Code, GitHub projects
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
+.PHONY: list
+list: vault-check ## Show the VMs this project created, and their addresses (all, unless VM_NAME)
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/list.yml
 
-.PHONY: site
-site: vault-check ## Provision + configure (full run)
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) site.yml
+.PHONY: configure
+configure: vault-check ## Configure the VM(s): packages, tools, Claude Code, GitHub projects (every tagged VM, unless VM_NAME)
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
+
+.PHONY: deploy
+deploy: vault-check ## Everything: template (if missing) + provision + configure, for VM_NAME only (default: claude-on-proxmox-default)
+	@test -z "$(TAGS)" || { echo "error: deploy takes no TAGS. To re-run one role: make configure VM_NAME=<name> TAGS=$(TAGS)"; exit 1; }
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) deploy.yml
 
 .PHONY: destroy
-destroy: vault-check ## Stop and delete the VM(s) on Proxmox
+destroy: vault-check ## Stop and delete the VM(s) on Proxmox (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
-	@rm -rf .cache/facts
 
 # Remote Control needs a claude.ai login on the VM, and Anthropic supports no
 # non-interactive way to create one, so this prints the command rather than
 # pretending to do it.
 .PHONY: claude-login
-claude-login: vault-check ## Show how to sign Claude Code in on the VM(s), for Remote Control
+claude-login: vault-check ## Show how to sign Claude Code in on the VM(s), for Remote Control (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
 
 .PHONY: check
-check: vault-check ## Dry-run configure against real hosts (--check --diff)
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
+check: vault-check ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
 
 # ------------------------------------------------------------ quality -----
 .PHONY: lint
@@ -111,7 +129,7 @@ lint: ## Run yamllint + ansible-lint + ruff
 
 .PHONY: syntax
 syntax: ## ansible-playbook --syntax-check on every playbook
-	@for pb in site.yml playbooks/*.yml; do \
+	@for pb in deploy.yml playbooks/*.yml; do \
 	  echo "== $$pb"; \
 	  $(BIN)/ansible-playbook --syntax-check $$pb || exit 1; \
 	done
@@ -148,8 +166,7 @@ molecule-provision: ## Run provision.yml + discover.yml against a fake Proxmox A
 
 # Includes pre-commit so that `make test` really is a superset of the CI gate;
 # it was possible to pass everything locally and still be failed by CI.
-.PHONY: test
-test: lint syntax unit pre-commit molecule molecule-integration molecule-provision ## Run everything
+test: lint syntax unit pre-commit molecule molecule-integration molecule-provision ## Run everything (the local quality gate)
 
 .PHONY: vagrant-up
 vagrant-up: ## End-to-end test of configure.yml on a real VirtualBox VM

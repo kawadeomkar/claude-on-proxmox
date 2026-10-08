@@ -1,0 +1,67 @@
+---
+# Show the VMs this project created, and how to reach them.
+#
+#   make list
+#   make list VM_NAME=alpha,beta
+#
+# Read-only. Proxmox is the register - nothing is tracked locally - so this is
+# a query against it, filtered to the ownership tag. Unlike discover.yml it
+# lists a VM whether or not its guest agent answers, because a stopped or
+# half-built VM is exactly what someone running this is usually looking for.
+- name: List the VMs this project created
+  hosts: localhost
+  gather_facts: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ proxmox_api_module_defaults }}"
+
+  tasks:
+    - name: List every VM in the cluster
+      ansible.builtin.import_tasks: tasks/cluster_vms.yml
+
+    # claude_vm_requested (group_vars/all) keeps only the VMs carrying this
+    # project's tag, matched as a whole tag rather than a substring, and
+    # narrows them to VM_NAME the same way discovery does. By name, with the
+    # ones that have none - a VM on a node that is down - at the end.
+    - name: Narrow to the requested VMs
+      ansible.builtin.set_fact:
+        claude_list_vms: >-
+          {{ (claude_vm_requested | selectattr('name', 'defined') | sort(attribute='name') | list)
+             + (claude_vm_requested | rejectattr('name', 'defined') | list) }}
+
+    # Only running VMs can answer. A stopped one is still listed, with no
+    # address, which is the honest answer rather than an omission. Two
+    # requests per VM, to its own node; see tasks/vm_addresses.yml.
+    - name: Ask each running VM's guest agent for an address
+      ansible.builtin.import_tasks: tasks/vm_addresses.yml
+      vars:
+        claude_vm_query: "{{ claude_list_vms }}"
+
+    # One row per VM - what the cluster listing says about it, plus the
+    # address - so the table below and the footnote that explains a blank
+    # address cannot disagree about which VMs have one.
+    - name: Build a row per VM
+      ansible.builtin.set_fact:
+        claude_list_rows: "{{ claude_vm_addressed }}"
+
+    - name: Show the fleet
+      vars:
+        claude_list_unaddressed: >-
+          {{ claude_list_rows | selectattr('address', 'equalto', '') | list }}
+      ansible.builtin.debug:
+        msg: |-
+          {% if claude_list_rows | length == 0 %}
+          No VMs tagged "{{ claude_vm_tag }}"{{ ' match VM_NAME' if vm_name is defined else ' exist on this host' }}.
+          Create one with: make provision VM_NAME=alpha
+          {% else %}
+          {{ '%-24s %7s  %-9s %s' | format('NAME', 'VMID', 'STATUS', 'ADDRESS') }}
+          {% for row in claude_list_rows %}
+          {{ '%-24s %7s  %-9s %s'
+             | format(row.name | default('(no name)'), row.vmid, row.status, row.address if row.address else '-') }}
+          {% endfor %}
+
+          {{ claude_list_rows | length }} VM{{ '' if claude_list_rows | length == 1 else 's' }} tagged "{{ claude_vm_tag }}".
+          {% if claude_list_unaddressed | length > 0 %}
+          No address for {{ claude_list_unaddressed | map(attribute='name', default='(no name)') | join(', ') }}: the guest agent has not reported one.
+          Those VMs may be stopped, still booting, built without the agent, or on a node that is down.
+          {% endif %}
+          {% endif %}
