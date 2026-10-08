@@ -1054,6 +1054,16 @@ forwarding on, which OpenSSH defaults to anyway; the role then asserts the value
 so a hardening drop-in of the user's own that turns them off is a named failure, not a VS Code
 window that cannot connect.
 
+**Run logs:** every Makefile target that runs Ansible exports `ANSIBLE_LOG_PATH` to
+`.logs/<YYYYMMDD-HHMMSS>-<target>.log`, so Ansible mirrors its output, timestamped, into a file per
+run while the terminal is untouched (prompts and colours included). `no_log` applies to the file as
+to the screen. The file name never contains `VM_NAME`, because the path is in the environment of a
+recipe that runs before `vm-name-check` has looked at that value. `.logs/` is git-ignored, blocked
+by the tracked-file guard (with `*.log`), created `0700`, and pruned of files older than
+`LOG_RETENTION_DAYS` (14) by `log-setup` at the start of each logged run, which deletes only files
+named the way the Makefile names them, and only in `LOG_DIR`. A nested `$(MAKE)` inherits the
+exported path, so one `make test` is one file.
+
 **On the controller:** the project writes exactly two things outside the repository,
 `~/.ssh/known_hosts` and the managed SSH config, plus one `Include` line at the top of
 `~/.ssh/config` (§4.8). Every alias write is validated by the real ssh client before it lands, an
@@ -1071,16 +1081,18 @@ Three tiers. **No test ever talks to a real Proxmox, a real GitHub, or a real hy
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 241 tests — 58 for the filters, 26 for `github_repos`, 76 for the
+pytest over `tests/unit/`: 256 tests — 58 for the filters, 26 for `github_repos`, 81 for the
 tracked-file guard, 35 that run `claude_login.yml` and `remote_control.yml` against canned logins and
 stand-ins, 2 that `--tags claude_code` still runs discovery and the alias play, 18 that run
 `tasks/ssh_config.yml` for real against a temporary home and resolve the result with `ssh -G` (and
 guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, and that no
-playbook sets the task file's inputs as facts), and 26 that run
-`make` against the Makefile's guards: `vm-name-check` accepts DNS-like names and refuses whitespace,
+playbook sets the task file's inputs as facts), and 36 that run
+`make` against the Makefile's guards and its run logs: `vm-name-check` accepts DNS-like names and refuses whitespace,
 quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision` and
 `ssh-config` pass `VM_NAME` as one JSON extra-var and run the check before the playbook; `deploy`
-refuses `TAGS`; `code` refuses no name and several.
+refuses `TAGS`; `code` refuses no name and several; every playbook target exports its own
+`ANSIBLE_LOG_PATH` (never named after `VM_NAME`) into a `0700` directory, `LOG_DIR=` turns it off,
+old run logs are pruned and nothing else is, and `logs-clean` deletes only run logs.
 
 ### 11.2 Role scenarios — `make molecule MOLECULE_ROLES="..."`
 
@@ -1276,6 +1288,7 @@ Linting is the ansible-lint **production** profile with `args`, `empty-string-co
 
 ```
 ansible.cfg                       inventory dir, accept-new host keys, forks
+.logs/                            one log per make run that used Ansible (git-ignored, 0700, pruned after 14 days)
 deploy.yml                        template (when missing) + provision + configure
 CLAUDE.md                         agent-facing operating rules
 ARCHITECTURE.md                   this document

@@ -23,6 +23,10 @@ what it stores:
 - **What is written on the controller**: `~/.ssh/known_hosts`, the managed SSH config
   `~/.ssh/claude-on-proxmox.conf` and the one `Include` line at the top of `~/.ssh/config`
   (`playbooks/tasks/ssh_config.yml`). A bug there reaches every `ssh` on the user's machine.
+  Inside the checkout, `.logs/` holds a copy of every Ansible run: `no_log` output is hidden there
+  as on screen, but the files name hosts and addresses, so the directory is git-ignored, blocked by
+  `tests/check_no_local_files.sh`, created `0700`, and pruned after `LOG_RETENTION_DAYS`. A secret
+  that appears in a log is a `no_log` that is missing, and in scope.
 
 Findings in any of those are in scope, as is anything that would cause a secret to be written to a log or
 the repository.

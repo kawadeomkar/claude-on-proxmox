@@ -31,6 +31,10 @@ first.
 | `make molecule-provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
 | `make vagrant-up` | `configure.yml` on a real VirtualBox VM |
 
+Every run of these through `make` that uses Ansible, Molecule included, is also written to `.logs/`
+(`make logs` lists them), which is the place to read a failure back once the terminal has scrolled.
+The directory is git-ignored and blocked by the tracked-file guard: logs name hosts and addresses.
+
 Every role has a Molecule scenario, and a change to a role should keep its scenario passing - including the
 idempotence stage, which reruns the converge and fails on any changed task.
 

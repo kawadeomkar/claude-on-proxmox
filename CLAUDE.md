@@ -26,7 +26,16 @@ make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push 
 make list            # read-only: the VMs this project created, and their addresses
 make ssh-config      # refresh the SSH alias per VM on this machine; fleet-wide also prunes
 make code VM_NAME=alpha   # refresh one alias from Proxmox, then open the VM in VS Code
+make logs            # the run logs, newest first: read these instead of asking for terminal output
 ```
+
+Every target that runs Ansible, Molecule included, writes its whole run to
+`.logs/<YYYYMMDD-HHMMSS>-<target>.log` through `ANSIBLE_LOG_PATH`. When a user says they ran
+something, read the newest log for that target before asking them to paste anything. Logs name the
+Proxmox host and VMs by address, so `.logs/` is git-ignored and blocked by
+`tests/check_no_local_files.sh`; a log file is never committed, quoted into a doc, or attached to a
+pull request. The file name is built from the date and the target only, never from `VM_NAME`,
+which is the one value a user types that reaches the shell.
 
 Scenarios are slow and disk-hungry. Run the ones your change touches, one at a time, rather than
 `make test`, until you are ready to finish.

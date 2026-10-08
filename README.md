@@ -643,6 +643,29 @@ VS Code is on, copy the managed file and the key there; a VS Code on Windows rea
 (`\\wsl.localhost\<distro>\home\<you>\.ssh\claude-on-proxmox.conf`) and keep the key readable from
 Windows.
 
+### Run logs
+
+Every `make` target that runs Ansible keeps a copy of the whole run in `.logs/`, one file per run,
+named after when it started and the target:
+
+```bash
+make deploy VM_NAME=beta
+#   Logging this run to /home/you/claude-on-proxmox/.logs/20261007-203015-deploy.log
+make logs                         # the newest 20, newest first
+make logs-clean                   # delete them all
+```
+
+The terminal shows exactly what it did before; Ansible copies its output to the file with a
+timestamp on every line, so a run can be read back after the terminal has scrolled away or the
+window is gone. Tasks marked `no_log` are hidden in the file as on screen, so the API token and
+the GitHub token never reach it. The files do name the Proxmox host and every VM by address, so
+`.logs/` is git-ignored, refused by the tracked-file guard even with `git add -f`, and readable only
+by you. Logs older than 14 days are deleted whenever a logged run starts (`LOG_RETENTION_DAYS`).
+`LOG_DIR=` turns logging off for one run, `LOG_DIR=/some/where` moves it, and an
+`ANSIBLE_LOG_PATH` of your own is used as it is. Molecule runs (`make molecule`, `make test`) are
+logged the same way. A command you run with `.venv/bin/ansible-playbook` directly is not; put
+`ANSIBLE_LOG_PATH=.logs/<name>.log` in front of it for the same result.
+
 ### Tearing down
 
 ```bash
@@ -739,6 +762,7 @@ generated from the commits since the previous tag.
 
 ```
 ansible.cfg                 project-wide Ansible settings (accept-new host keys, forks, yaml output)
+.logs/                      one log per make run that used Ansible (git-ignored, pruned after 14 days)
 deploy.yml                  template (if missing) + provision + configure
 playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, list.yml, claude_login.yml, destroy.yml,
                             ssh_config.yml (the SSH aliases, fleet-wide), code.yml (one VM in VS Code)

@@ -44,6 +44,33 @@ MOLECULE_ROLES ?= $(ROLES)
 # it because CI scans the tree and the pushed commits separately.
 PRE_COMMIT_SKIP := yamllint,ansible-lint,ruff-check,ruff-format,gitleaks
 
+# Run logs. Every target that runs Ansible also writes everything Ansible
+# prints, with timestamps, to a file of its own in LOG_DIR, named after the
+# moment and the target, so a run can be read back after the terminal has
+# scrolled away:
+#   .logs/20261007-203015-deploy.log
+# The terminal shows what it always did - Ansible copies its output through
+# ANSIBLE_LOG_PATH, so prompts and colours are untouched - and tasks marked
+# no_log are hidden in the file as on screen. The files still name hosts and
+# addresses, so LOG_DIR is git-ignored, refused by tests/check_no_local_files.sh
+# and private to you (0700). Logs older than LOG_RETENTION_DAYS are deleted
+# whenever a logged run starts; `make logs` lists them and `make logs-clean`
+# deletes them all. `LOG_DIR=` (empty) turns logging off for a run, and an
+# ANSIBLE_LOG_PATH of your own is left as it is.
+#
+# The file name is built from the date and the target only, never from
+# VM_NAME, so nothing a user typed reaches a shell before vm-name-check has
+# looked at it. A nested $(MAKE) inherits the exported path, so one run of
+# `make test` is one file.
+LOG_DIR            ?= $(CURDIR)/.logs
+LOG_RETENTION_DAYS ?= 14
+LOG_STAMP          := $(shell date +%Y%m%d-%H%M%S)
+LOGGED_TARGETS     := template provision list configure deploy destroy claude-login check ssh-config code \
+                      molecule molecule-scenario molecule-integration molecule-provision test vagrant-up
+ifneq ($(LOG_DIR),)
+$(LOGGED_TARGETS): export ANSIBLE_LOG_PATH ?= $(LOG_DIR)/$(LOG_STAMP)-$(firstword $(MAKECMDGOALS) $@).log
+endif
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -110,41 +137,74 @@ vm-name-check:
 	  *[!A-Za-z0-9._,-]*) echo "error: VM_NAME may contain only letters, digits and . _ - , (got: [$$VM_NAME_CHECK])"; exit 1;; \
 	esac
 
+# Make LOG_DIR, private, and prune it. Only files named the way this Makefile
+# names them, and only in LOG_DIR: an ANSIBLE_LOG_PATH of your own pointing
+# elsewhere is used as it is and its directory never touched. Read through the
+# environment rather than interpolated into the recipe.
+.PHONY: log-setup
+log-setup: export LOG_DIR_CHECK := $(LOG_DIR)
+log-setup: export LOG_RETENTION_CHECK := $(LOG_RETENTION_DAYS)
+log-setup:
+	@if [ -n "$$ANSIBLE_LOG_PATH" ]; then \
+	  mkdir -p "$$(dirname "$$ANSIBLE_LOG_PATH")"; \
+	  if [ -n "$$LOG_DIR_CHECK" ] && [ -d "$$LOG_DIR_CHECK" ]; then \
+	    chmod 700 "$$LOG_DIR_CHECK"; \
+	    case "$$LOG_RETENTION_CHECK" in \
+	      ''|*[!0-9]*) echo "warning: LOG_RETENTION_DAYS must be a number of days; nothing pruned";; \
+	      *) find "$$LOG_DIR_CHECK" -maxdepth 1 -type f -name '[0-9]*-*.log' -mtime +"$$LOG_RETENTION_CHECK" -delete;; \
+	    esac; \
+	  fi; \
+	  echo "Logging this run to $$ANSIBLE_LOG_PATH"; \
+	fi
+
+.PHONY: logs
+logs: export LOG_DIR_CHECK := $(LOG_DIR)
+logs: ## List the run logs, newest first (in LOG_DIR, default .logs/)
+	@set -- "$$LOG_DIR_CHECK"/[0-9]*-*.log; \
+	if [ -e "$$1" ]; then ls -1t "$$@" | head -20; else echo "No run logs in $$LOG_DIR_CHECK."; fi
+
+.PHONY: logs-clean
+logs-clean: export LOG_DIR_CHECK := $(LOG_DIR)
+logs-clean: ## Delete every run log in LOG_DIR
+	@set -- "$$LOG_DIR_CHECK"/[0-9]*-*.log; \
+	if [ -e "$$1" ]; then rm -f "$$@" && echo "Deleted $$# run log(s) from $$LOG_DIR_CHECK."; else echo "No run logs in $$LOG_DIR_CHECK."; fi; \
+	rmdir "$$LOG_DIR_CHECK" 2>/dev/null || true
+
 # ------------------------------------------------------------ run books ----
 .PHONY: template
-template: vault-check ## Build the cloud-init VM template on the Proxmox host (once)
+template: vault-check log-setup ## Build the cloud-init VM template on the Proxmox host (once)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/template.yml
 
 .PHONY: provision
-provision: vault-check vm-name-check ## Create and start VM(s): make provision VM_NAME=alpha,beta (default: claude-on-proxmox-default)
+provision: vault-check vm-name-check log-setup ## Create and start VM(s): make provision VM_NAME=alpha,beta (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
 
 .PHONY: list
-list: vault-check vm-name-check ## Show the VMs this project created, and their addresses (all, unless VM_NAME)
+list: vault-check vm-name-check log-setup ## Show the VMs this project created, and their addresses (all, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/list.yml
 
 .PHONY: configure
-configure: vault-check vm-name-check ## Configure the VM(s): packages, tools, Claude Code, GitHub projects (every tagged VM, unless VM_NAME)
+configure: vault-check vm-name-check log-setup ## Configure the VM(s): packages, tools, Claude Code, GitHub projects (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: deploy
-deploy: vault-check vm-name-check ## Everything: template (if missing) + provision + configure, for VM_NAME only (default: claude-on-proxmox-default)
+deploy: vault-check vm-name-check log-setup ## Everything: template (if missing) + provision + configure, for VM_NAME only (default: claude-on-proxmox-default)
 	@test -z "$(TAGS)" || { echo "error: deploy takes no TAGS. To re-run one role: make configure VM_NAME=<name> TAGS=$(TAGS)"; exit 1; }
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) deploy.yml
 
 .PHONY: destroy
-destroy: vault-check vm-name-check ## Stop and delete the VM(s) on Proxmox (default: claude-on-proxmox-default)
+destroy: vault-check vm-name-check log-setup ## Stop and delete the VM(s) on Proxmox (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 
 # Remote Control needs a claude.ai login on the VM, and Anthropic supports no
 # non-interactive way to create one, so this prints the command rather than
 # pretending to do it.
 .PHONY: claude-login
-claude-login: vault-check vm-name-check ## Show how to sign Claude Code in on the VM(s), for Remote Control (every tagged VM, unless VM_NAME)
+claude-login: vault-check vm-name-check log-setup ## Show how to sign Claude Code in on the VM(s), for Remote Control (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
 
 .PHONY: check
-check: vault-check vm-name-check ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
+check: vault-check vm-name-check log-setup ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
 
 # The SSH aliases this project keeps in ~/.ssh/claude-on-proxmox.conf, so
@@ -152,7 +212,7 @@ check: vault-check vm-name-check ## Dry-run configure against real hosts (--chec
 # configure refresh the VMs they touch; this one refreshes the fleet and,
 # without VM_NAME, prunes the aliases of VMs that no longer exist.
 .PHONY: ssh-config
-ssh-config: vault-check vm-name-check ## Refresh the SSH alias of every VM this project created (all, unless VM_NAME; fleet-wide also prunes)
+ssh-config: vault-check vm-name-check log-setup ## Refresh the SSH alias of every VM this project created (all, unless VM_NAME; fleet-wide also prunes)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/ssh_config.yml
 
 # One VM at a time: VS Code opens one window per workspace, and "open it in
@@ -160,7 +220,7 @@ ssh-config: vault-check vm-name-check ## Refresh the SSH alias of every VM this 
 # vm-name-check, so the value is never interpolated into the recipe.
 .PHONY: code
 code: export VM_NAME_CHECK := $(value VM_NAME)
-code: vault-check vm-name-check ## Refresh one VM's SSH alias and open its workspace in VS Code: make code VM_NAME=alpha
+code: vault-check vm-name-check log-setup ## Refresh one VM's SSH alias and open its workspace in VS Code: make code VM_NAME=alpha
 	@test -n "$$VM_NAME_CHECK" || { echo "error: code opens one VM: make code VM_NAME=<name>"; exit 1; }
 	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
@@ -188,7 +248,7 @@ unit: ## pytest over tests/unit/: filters, github_repos module, tracked-file gua
 # the venv must come first or a system-wide Ansible would be used instead of
 # the pinned one.
 .PHONY: molecule
-molecule: ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_ROLES="common claude_code"
+molecule: log-setup ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_ROLES="common claude_code"
 	@for role in $(MOLECULE_ROLES); do \
 	  echo "===== molecule: $$role"; \
 	  (cd roles/$$role && PATH="$(ABSBIN):$$PATH" $(ABSBIN)/molecule test) || exit 1; \
@@ -198,7 +258,7 @@ molecule: ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_
 # developer runs. CI used to inline the molecule call, which meant these
 # targets could break without CI noticing.
 .PHONY: molecule-scenario
-molecule-scenario: ## Run one playbook scenario: make molecule-scenario SCENARIO=provision
+molecule-scenario: log-setup ## Run one playbook scenario: make molecule-scenario SCENARIO=provision
 	@test -n "$(SCENARIO)" || { echo "error: set SCENARIO, e.g. make molecule-scenario SCENARIO=provision"; exit 1; }
 	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s $(SCENARIO)
 
@@ -224,10 +284,10 @@ molecule-provision: ## Run provision.yml + discover.yml against a fake Proxmox A
 .NOTPARALLEL:
 .PHONY: test
 test: export SKIP := $(PRE_COMMIT_SKIP)
-test: lint syntax unit pre-commit molecule molecule-integration molecule-provision ## Run everything (the local quality gate)
+test: log-setup lint syntax unit pre-commit molecule molecule-integration molecule-provision ## Run everything (the local quality gate)
 
 .PHONY: vagrant-up
-vagrant-up: ## End-to-end test of configure.yml on a real VirtualBox VM
+vagrant-up: log-setup ## End-to-end test of configure.yml on a real VirtualBox VM
 	vagrant up --provision
 
 .PHONY: vagrant-destroy
@@ -239,6 +299,6 @@ pre-commit: ## Run all pre-commit hooks against the whole tree
 	$(BIN)/pre-commit run --all-files
 
 .PHONY: clean
-clean: ## Remove caches and the virtualenv
+clean: logs-clean ## Remove caches, the virtualenv and the run logs
 	rm -rf $(VENV) .cache .pytest_cache .ruff_cache .ansible .molecule collections
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

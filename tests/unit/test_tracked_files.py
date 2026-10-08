@@ -81,6 +81,12 @@ MUST_BLOCK = [
     ".vault_pass.txt",
     ".env",
     ".env.local",
+    # Run logs name the Proxmox host and every VM by address.
+    ".logs/20261007-203015-deploy.log",
+    ".logs/notes.txt",
+    "roles/common/.logs/20261007-203015-molecule.log",
+    "ansible.log",
+    "molecule/provision/verify.log",
 ]
 
 MUST_ALLOW = [
