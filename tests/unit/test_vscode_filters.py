@@ -48,7 +48,24 @@ class TestJsoncLoads:
         assert jsonc_loads(text) == {"a": 1}
 
     def test_escaped_quotes_stay_inside_their_string(self):
-        assert jsonc_loads(r'{"a": "say \"hi\" // not a comment"}') == {"a": 'say "hi" // not a comment'}
+        # One escaped quote before the "//", so a scanner that took it for the
+        # end of the string would read a comment from there.
+        assert jsonc_loads(r'{"a": "say \"hi // not a comment\""}') == {"a": 'say "hi // not a comment"'}
+
+    def test_an_escaped_quote_does_not_end_the_string(self):
+        assert jsonc_loads(r'{"a": "x\"", "url": "http://x//y"}') == {"a": 'x"', "url": "http://x//y"}
+
+    def test_an_escaped_backslash_before_the_closing_quote(self):
+        assert jsonc_loads(r'{"a": "x\\", "url": "http://x//y"}') == {"a": "x\\", "url": "http://x//y"}
+
+    def test_a_comma_before_a_string_is_kept(self):
+        assert jsonc_loads('["a", "b"]') == ["a", "b"]
+        text = '{"cSpell.words": ["ansible", "proxmox"], "task.allowAutomaticTasks": "off"}'
+        assert vscode_setting(text, KEY) == "off"
+
+    def test_escapes_and_string_arrays_in_one_file(self):
+        text = r'{"a": "x\"", "b": "y\\", "c": ["p", "q"], "url": "http://x//y",}'
+        assert jsonc_loads(text) == {"a": 'x"', "b": "y\\", "c": ["p", "q"], "url": "http://x//y"}
 
     def test_a_byte_order_mark_is_ignored(self):
         assert jsonc_loads('﻿{"a": 1}') == {"a": 1}

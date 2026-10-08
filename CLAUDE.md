@@ -87,9 +87,12 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   `code.yml` reads `task.allowAutomaticTasks` from the user's VS Code settings to say which to
   expect, and must never write it, set trust, or lower `security.workspace.trust.*` or
   `terminal.integrated.allowInUntrustedWorkspace`. The script is fixed text in `code.yml`'s vars;
-  anything variable reaches it as an argument. `tests/unit/test_code_session.py` runs it and fails
-  if a task in `code.yml` writes anywhere but the VM. The `provision` scenario, which runs `code.yml`,
-  points `vscode_user_settings_file` into the ephemeral directory, since the message depends on it.
+  anything variable reaches it as an argument. `tests/unit/test_code_session.py` runs it, and holds
+  every task in `code.yml` to an allowlist: read-only on this machine (plus `which`/`code` and the
+  alias through `tasks/ssh_config.yml`), or `stat`/`getent`/`find` and the two writes delegated to
+  the VM; a `shell`, a writer in a `block`, or a `connection` fails it by name. The `provision`
+  scenario, which runs `code.yml`, points `vscode_user_settings_file` into the ephemeral directory,
+  since the message depends on it, and asserts that file's bytes and mtime after every run.
 - **Tests never write into the developer's `~/.ssh`.** The `configure` scenario runs the real
   playbook and its `localhost` is the developer's machine, so every playbook scenario points
   `claude_ssh_config_file` and `claude_ssh_user_config` into `MOLECULE_EPHEMERAL_DIRECTORY` with
