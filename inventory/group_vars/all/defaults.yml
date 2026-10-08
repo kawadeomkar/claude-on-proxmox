@@ -172,6 +172,23 @@ vscode_remote: true
 # things read it and they must agree.
 vm_projects_dir: ""
 
+# `make code` opens a VS Code workspace file rather than the bare folder, and
+# the file holds one task: once the window is connected, a terminal named
+# Claude runs claude in the folder, signing in to Claude first on a VM that has
+# not been. The file is the one thing make code writes on the VM, in a
+# directory of its own (empty: .claude-on-proxmox in the projects directory),
+# never in a repository. VS Code still asks once to trust the folder and to
+# allow automatic tasks; this project answers neither for you (README, "A
+# Claude session in the window"). Set false to open the bare folder and write
+# nothing on the VM.
+vscode_claude_terminal: true
+vscode_workspaces_dir: ""
+# The VS Code user settings make code reads, and never writes, to say whether
+# that terminal will start on its own. Empty: where VS Code keeps them on this
+# OS, ~/Library/Application Support/Code/User/settings.json on macOS and
+# ~/.config/Code/User/settings.json on Linux.
+vscode_user_settings_file: ""
+
 # An SSH alias per VM on this machine, kept in step with the VM's address:
 # `make deploy` and `make configure` write one for each VM they configure,
 # `make ssh-config` refreshes the whole fleet, `make destroy` removes it. The
