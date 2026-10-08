@@ -7,9 +7,9 @@ name: CI
   pull_request:
   # Weekly canary. Most of what this project installs lives outside the
   # repository - the Ubuntu cloud image, the Docker/NodeSource/GitHub CLI apt
-  # repositories, the Claude Code installer, the uv release and the Galaxy
-  # collections (pinned as ranges). Those break without a commit here, so the
-  # suite runs on a schedule as well as on changes.
+  # repositories, the Claude Code installer and the uv release. Those break
+  # without a commit here, so the suite runs on a schedule as well as on
+  # changes. (The Galaxy collections are pinned to exact versions and cannot.)
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -31,8 +31,15 @@ jobs:
     name: Lint and unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # v8.30.0, the same release .pre-commit-config.yaml pins.
+      GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # All of it: the commit scan at the end of this job reads every
+          # commit a push or pull request brings in, and the one it starts from.
+          fetch-depth: 0
 
       # .gitignore stops the accident; this stops `git add -f`. The patterns
       # live in a script so tests/unit/test_tracked_files.py can assert both
@@ -61,22 +68,55 @@ jobs:
       # whitespace hooks. Without this they only ever run for a developer who
       # installed the git hook.
       #
-      # gitleaks is skipped here and run separately below. Its hook is
+      # gitleaks is skipped here and run by the two steps below. Its hook is
       # `gitleaks git --pre-commit --staged`, which scans the git index - and
       # in a CI checkout the index equals HEAD, so it scans an empty diff and
-      # always passes. Scanning the working tree is what actually catches a
-      # secret arriving in a pull request.
+      # always passes.
       - name: File hygiene
         env:
           SKIP: yamllint,ansible-lint,ruff-check,ruff-format,gitleaks
         run: make pre-commit
 
-      - name: Secret scan
-        # v8.30.0, the same release .pre-commit-config.yaml pins.
+      # The files as the change leaves them. On its own this misses a token
+      # committed in one commit and deleted in the next, which is gone from
+      # the tree but still in the history GitHub publishes.
+      - name: Secret scan (working tree)
         run: |
-          docker run --rm -v "$PWD:/repo" -w /repo \
-            ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9 \
+          docker run --rm -v "$PWD:/repo" -w /repo "$GITLEAKS_IMAGE" \
             dir . --config .gitleaks.toml --redact --no-banner --exit-code 1
+
+      # So this reads the patch of every commit the push or pull request brings
+      # in. A scheduled or manual run brings in none, and the tree scan covers it.
+      - name: Secret scan (new commits)
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            base=$PR_BASE head=$PR_HEAD
+          else
+            base=$PUSH_BEFORE head=$PUSH_AFTER
+          fi
+          # A push that creates the branch has an all-zero "before", and after a
+          # force push "before" can be reachable from no ref, so it was never
+          # fetched. With nothing to compare against, scan all of head's history.
+          if git cat-file -e "$base^{commit}" 2>/dev/null; then
+            range=$base..$head
+          else
+            echo "::notice::Base commit '$base' is not in the clone; scanning all history behind $head"
+            range=$head
+          fi
+          # gitleaks logs a git error but still exits 0, having scanned nothing.
+          # Make the image's own git read the range first, so that fails loudly.
+          echo "Commits in $range:"
+          docker run --rm -v "$PWD:/repo" -w /repo --entrypoint git "$GITLEAKS_IMAGE" \
+            rev-list --count "$range"
+          docker run --rm -v "$PWD:/repo" -w /repo "$GITLEAKS_IMAGE" \
+            git . --log-opts="$range" --config .gitleaks.toml --redact --no-banner --exit-code 1
 
   # Public repository: pull requests can add dependencies. This flags any new
   # one that carries a known advisory before it is merged. It reads the
@@ -88,7 +128,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
 
@@ -120,6 +160,24 @@ jobs:
       MOLECULE_IMAGE: geerlingguy/docker-ubuntu2404-ansible:latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # The Molecule scenarios never fetch the real cloud image: the template
+      # scenario serves a random file from 127.0.0.1. So the image URL and the
+      # SHA256SUMS the role verifies it against are checked here, as the role
+      # has them - a moved image or a renamed checksum file fails this run
+      # instead of a user's first `make deploy`. Nothing is downloaded: a HEAD
+      # on the image and a GET of the (small) checksum list.
+      - name: Check the Ubuntu cloud image is where the role expects it
+        run: |
+          defaults=roles/proxmox_template/defaults/main.yml
+          image=$(sed -n 's/^proxmox_template_image_url: *//p' "$defaults")
+          sums=$(sed -n 's/^proxmox_template_image_checksum: *sha256://p' "$defaults")
+          test -n "$image" && test -n "$sums" || { echo "::error::could not read the image URL and checksum URL from $defaults"; exit 1; }
+          echo "image:    $image"
+          echo "checksum: $sums"
+          curl -fsSIL --retry 3 "$image" > /dev/null
+          curl -fsSL --retry 3 "$sums" | grep -F "$(basename "$image")"
+
       - uses: ./.github/actions/setup
       - name: Molecule test (full configure playbook)
         run: make molecule-integration

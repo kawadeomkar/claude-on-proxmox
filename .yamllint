@@ -2,6 +2,8 @@
 extends: default
 
 ignore: |
+  # Encrypted by ansible-vault (make vault-encrypt), so no longer YAML.
+  inventory/group_vars/all/vault.yml
   .venv/
   .ansible/
   .cache/
