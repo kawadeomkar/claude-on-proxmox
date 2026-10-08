@@ -25,7 +25,7 @@ first.
 |---------|--------------|
 | `make lint` | yamllint, ansible-lint (production profile), ruff |
 | `make syntax` | `--syntax-check` on every playbook, against your `inventory/` |
-| `make unit` | pytest: the custom filters, the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, `deploy`'s refusal of `TAGS`) |
+| `make unit` | pytest: the custom filters, the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the managed SSH config (and that no scenario writes into `~/.ssh`), and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, `deploy`'s refusal of `TAGS`, `code`'s one name) |
 | `make molecule MOLECULE_ROLES="common dev_tools"` | one or more role scenarios |
 | `make molecule-integration` | `playbooks/configure.yml` end to end in a container |
 | `make molecule-provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |

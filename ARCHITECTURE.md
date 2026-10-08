@@ -52,12 +52,15 @@ Three actors:
 | **Controller** | Ansible, all Proxmox API calls | local |
 | **Proxmox host** | `qm`, `virt-customize`, the template build | SSH (`playbooks/template.yml` only) |
 | **VMs** | everything `configure.yml` installs | SSH, at a DHCP address discovered at runtime |
+| **VS Code**, on the controller | the editor window; its server, terminal and extensions run on the VM | SSH, through an alias this project keeps in `~/.ssh/claude-on-proxmox.conf` |
 
 ```mermaid
 flowchart TB
     subgraph C["Controller (your machine)"]
         A["ansible-playbook<br/>.venv/bin"]
         INV["inventory/<br/>hosts.yml + group_vars"]
+        SSHC["~/.ssh/claude-on-proxmox.conf<br/>Host alpha → address"]
+        VSC["VS Code<br/>Remote - SSH"]
     end
     subgraph P["Proxmox VE host"]
         API["REST API :8006<br/>token auth"]
@@ -82,7 +85,9 @@ flowchart TB
     A -->|"SSH: configure"| VM1
     A -->|"SSH: configure"| VM2
     INV --> A
-    A --> FC
+    A -->|"alias per VM"| SSHC
+    SSHC --> VSC
+    VSC -->|"SSH: editor, terminal, claude"| VM1
 ```
 
 The controller never learns a VM's address from configuration. It learns it from the QEMU guest
@@ -138,7 +143,7 @@ stateDiagram-v2
     Cloned --> Configured: apply cloud-init + hardware, resize disk
     Configured --> Running: start
     Running --> Addressed: guest agent reports IPv4
-    Addressed --> Ready: configure.yml — common, dev_tools, claude_code, github_projects
+    Addressed --> Ready: configure.yml — common, vscode_server, dev_tools, claude_code, github_projects
     Ready --> Addressed: re-run configure
     Ready --> [*]: destroy.yml (tag check, then stop + delete)
     Cloned --> Configured: re-run repairs a half-built VM
@@ -262,13 +267,29 @@ Without `VM_NAME`, step 3 keeps every tagged VM, so `make configure`, `make chec
 import_playbook: discover.yml   when: claude_vm_discovery | default(true) | bool
 hosts: claude_vms, become: true
   pre_tasks: wait_for_connection (300s), cloud-init status --wait (rc 0 or 2)
-  roles: common → dev_tools → claude_code → github_projects   (each tagged)
+  roles: common → vscode_server → dev_tools → claude_code → github_projects   (each tagged)
+```
+
+```yaml
+  post_tasks (tagged always): getent vm_user → claude_vm_workspace fact
+hosts: localhost  (tagged always)
+  collect {name, address, user, vmid, workspace} for every claude_vms host that has the fact
+  import tasks/ssh_config.yml  state: present   → the connect line per VM
 ```
 
 `claude_vm_discovery: false` skips the Proxmox API entirely, which is how the Vagrant and Molecule
 paths configure a host that is already in a static inventory, and how `deploy.yml` configures only
 the hosts provisioning published (§4.7). `cloud-init status --wait` accepts exit code 2 ("done with
 recoverable errors").
+
+The third play keeps an SSH alias per VM on the controller (§4.8), so `ssh alpha` and VS Code's host
+picker follow the address DHCP gave it. It reads a fact the second play set *last*: `claude_vm_workspace`,
+`vm_projects_dir` or `~/projects` of `vm_user` as `getent` resolves it on the VM. A host that failed a
+role never reaches that `post_task`, so it never gets an alias; and the workspace is the VM user's real
+home rather than a guess, because Ansible's own `user_dir` fact is the *connecting* user's home, which is
+root's under Molecule. Both the lookup and the play are tagged `always`, like discovery, so a
+`make configure TAGS=claude_code` after a lease moved still refreshes the alias. `claude_ssh_config: false`
+keeps the whole project out of `~/.ssh`.
 
 > `when:` on an `import_playbook` propagates to the imported plays' tasks rather than skipping the
 > import. Equivalent here because `discover.yml` is a single play.
@@ -298,6 +319,12 @@ against 41 s.
 placeholders, fanning out over `forks`; it looks each VM up again and applies the ownership check per
 VM. Its `known_hosts` task is `throttle: 1`, because parallel deletes would otherwise each rewrite
 the same file and restore a key another had just removed.
+
+**Play 3 — forget the alias (localhost).** `tasks/ssh_config.yml` with `state: absent` for every
+name in `claude_vm_doomed`: the alias goes with the VM, as its host key does. After the deletions,
+so a run refused in play 1 leaves every alias in place; removing a block that is not there is a
+no-op. A localhost play rather than a task in the role, so the role stays free of the controller's
+ssh config and the one writer per run needs no throttle.
 
 ### 4.6 `playbooks/list.yml`
 
@@ -341,9 +368,59 @@ is API and VM traffic only.
 
 ---
 
+### 4.8 `playbooks/ssh_config.yml` and `playbooks/tasks/ssh_config.yml`
+
+The aliases are the one thing this project writes on the controller besides `known_hosts`, and
+every writer goes through one task file so the block format cannot drift. Inputs: a list of
+`{name, address, user, vmid?, workspace?}` and a state. The managed file,
+`~/.ssh/claude-on-proxmox.conf` (`claude_ssh_config_file`), holds one `blockinfile` block per VM:
+
+```
+# BEGIN claude-on-proxmox: alpha
+# vmid 9001                      ← tells "same VM, new address" from "another VM with this name"
+# workspace /home/dev/projects   ← read back by make code
+Host alpha
+    HostName 192.0.2.51          ← or alpha.<claude_ssh_host_domain>
+    User dev
+    ServerAliveInterval 30       ← claude_ssh_options, verbatim
+# END claude-on-proxmox: alpha
+```
+
+The user's own `~/.ssh/config` gets exactly one line, `Include <managed file>`, inserted at the top
+(`lineinfile`, `insertbefore: BOF`): an `Include` below a `Host` block is scoped to that block. It is
+added once and never removed, since removing it would mean editing the user's file on destroy and an
+`Include` of a missing file is harmless. Nothing else in `~/.ssh` is ever edited.
+
+Three guards, in order: the alias is the VM's name, so a `Host` line in the user's config that
+already names it is refused by file and line (the managed file is included first, so writing would
+silently override the user's entry); every write is validated by the real client, `ssh -G -F %s
+<alias>`, so a malformed option fails the task instead of every `ssh` on the machine; and a block is
+only ever written for a VM the caller found by its tag.
+
+`ssh_config.yml` (`make ssh-config`) is the fleet-wide resync: the cluster listing, the addresses
+(§4.3 steps 1 and 4), `present` for every tagged VM with an address, keeping a workspace an earlier
+configure recorded, then pruning through `ssh_config_prune` (§7.1). Pruning removes blocks, never
+VMs, and only a block whose name no VM in the cluster carries any more. A name an untagged VM
+carries is left alone and reported, as `destroy.yml` refuses such a VM. While any tagged VM is listed
+without a name, which is what a node that is down looks like (§4.3), nothing is pruned, because any
+block could be that VM's. With `VM_NAME`, only those VMs are refreshed and nothing is pruned. Two
+tagged VMs of one name are refused as discovery refuses them: an alias of that name would point at
+one at random.
+
+### 4.9 `playbooks/code.yml`
+
+`make code VM_NAME=alpha`: the alias step for one VM, then the one step no other playbook does,
+launching the editor. It refuses anything but one name; finds the VM by tag, naming an untagged VM of
+that name as not this project's; asks its agent for the address, failing with the `make list` hint
+for a stopped VM; refreshes the block, carrying over the workspace a configure run recorded or
+assuming `/home/<user>/projects` and saying so; then checks `code` is on `PATH`, installs
+`ms-vscode-remote.remote-ssh` if `code --list-extensions` lacks it, and runs
+`code --remote ssh-remote+alpha <workspace>`. It never configures the VM: cloud-init placed the key,
+so a VM that was provisioned but never configured still opens.
+
 ## 5. Roles
 
-Six roles, no inter-role dependencies (`dependencies: []` everywhere). Ordering is the playbook's
+Seven roles, no inter-role dependencies (`dependencies: []` everywhere). Ordering is the playbook's
 job.
 
 ### 5.1 `proxmox_template` — build the golden image
@@ -602,6 +679,34 @@ For SSH clones it first fetches GitHub's published host keys from `<api_url>/met
 into the user's `known_hosts`, avoiding trust-on-first-use. `update_existing` defaults to **false**
 so a re-run never disturbs local work.
 
+### 5.7 `vscode_server` — what VS Code's Remote - SSH needs on the host
+
+Runs right after `common`, which owns the user and sshd. VS Code's documented requirements for a
+Remote - SSH host are bash, tar and curl or wget, a glibc x86_64 or aarch64 system, an sshd that
+allows the port forward the VS Code Server is reached through, and an inotify limit large enough to
+watch a workspace. The image and `common` give the first two; this role checks them, writes the other
+two, and proves the sshd one.
+
+- **A second drop-in, `20-vscode-server.conf`**, with `AllowTcpForwarding yes`,
+  `AllowStreamLocalForwarding yes` and `ClientAliveInterval`/`CountMax`, validated with `sshd -t`.
+  Two files, two owners: `10-` is `common`'s hardening, `20-` is this.
+- **`sshd -T` after `meta: flush_handlers`.** sshd keeps the first value it reads for a keyword, so
+  a drop-in sorted before `20-`, or `sshd_config` itself, silently wins over the file this role just
+  wrote. The restart is flushed, the effective configuration read back, and both forwarding
+  keywords asserted `yes`, with the file that sets them `no` named (a `grep -l` over
+  `sshd_config` and the drop-ins). The role's side effect proves it: a `05-molecule-hardening.conf`
+  with `AllowTcpForwarding no` fails the role with that file in the message.
+- **`fs.inotify.max_user_watches` = 524288** through `ansible.posix.sysctl`, written for the record
+  everywhere and applied only where `/proc/sys` is writable (`vscode_server_container_virt_types`).
+- **Off removes both files**, as Remote Control's off path removes its unit. The live sysctl stays
+  raised until the next boot: a limit is harmless to leave high, and lowering it under a running
+  watcher is not.
+
+Deliberately absent: a pre-installed server (its build is tied to the client's exact commit, so a
+pre-warmed copy is stale on the first VS Code update), a `.code-workspace` file (opening `~/projects`
+already shows every clone as a nested repository), and extensions (`remote.SSH.defaultExtensions` is
+a client setting).
+
 ---
 
 ## 6. Variable architecture
@@ -647,7 +752,9 @@ per playbook:
 | `proxmox_api_module_defaults` | the `module_defaults: {group/community.proxmox.proxmox: "{{ proxmox_api_module_defaults }}"}` of every localhost play that calls `community.proxmox` modules — a templated group entry, which ansible-core 2.21 accepts |
 | `proxmox_api_url` | the `/cluster/resources` request in `playbooks/tasks/cluster_vms.yml`; brackets a bare IPv6 host, as proxmoxer does |
 | `proxmox_nic` | discovery and `make list` directly, and the role through `proxmox_vm_nic` |
-| `claude_vm_requested` | `discover.yml` and `list.yml`, for what `VM_NAME` selects |
+| `claude_vm_requested` | `discover.yml`, `list.yml`, `ssh_config.yml` and `code.yml`, for what `VM_NAME` selects |
+| `vm_projects_dir` | where the code lives on a VM, read by `github_projects` (`github_projects_dir`), `claude_code` (`claude_code_remote_control_dir`) and the alias play; empty means `~/projects` of `vm_user`, resolved on the VM |
+| `claude_ssh_config`, `claude_ssh_config_file`, `claude_ssh_user_config`, `claude_ssh_config_include`, `claude_ssh_host_domain`, `claude_ssh_identity_file`, `claude_ssh_forward_agent`, `claude_ssh_options` | `tasks/ssh_config.yml`, from every caller (§4.8) |
 
 The role keeps its own `module_defaults`, built from the `proxmox_vm_api_*` wiring, since a role
 cannot depend on a project's group vars.
@@ -699,7 +806,7 @@ because `provision.yml`'s third play reads `proxmox_vm_address`, `proxmox_vm_sto
 
 ### 7.1 `filter_plugins/proxmox.py`
 
-Four filters for reading Proxmox API output.
+Five filters for reading Proxmox API output, and two for the managed SSH config.
 
 **`net_mac(net_config, default=_RAISE)`** — extracts the MAC from `virtio=BC:24:11:0E:72:04,bridge=vmbr0`.
 It **raises by default**, because a caller about to act on one specific VM wants to know its NIC is
@@ -725,7 +832,14 @@ caller sweeping the fleet skips that VM. Both playbooks pass `proxmox_nic`; they
 a VMID in the detail — `500 Internal Server Error: VM 4013 is not running` — which failed
 `make list` and `make configure` for the whole fleet over one stopped VM.
 
-Covered by 38 unit tests in `tests/unit/test_filters.py`.
+**`ssh_config_blocks(content)`** — the alias blocks in the managed file, as `{name, vmid, workspace}`,
+with empty strings for a block that lacks the comment lines. **`ssh_config_prune(blocks, resources,
+tag_pattern)`** — the decision `make ssh-config` makes fleet-wide, as data: `prune` (no VM of that
+name anywhere), `untagged` (a VM of that name exists without the tag; left alone), and `nameless`
+(tagged VMs the listing shows without a name, a node that is down), which when non-empty empties
+`prune` into `held`. Pure, so every rule is a unit test rather than a fake-API fixture.
+
+Covered by 58 unit tests in `tests/unit/test_filters.py`.
 
 ### 7.2 `roles/github_projects/library/github_repos.py`
 
@@ -935,7 +1049,19 @@ is never scanned.
 sudo for the dev user (a deliberate trade-off, recorded in SECURITY.md), and GitHub's host keys
 pre-seeded from the API rather than trusted on first use. `ansible.cfg` uses
 `StrictHostKeyChecking=accept-new`: trust a freshly provisioned VM on first contact, but still refuse
-if a known host's key changes later.
+if a known host's key changes later. The `vscode_server` drop-in keeps TCP and Unix-socket
+forwarding on, which OpenSSH defaults to anyway; the role then asserts the values sshd runs with,
+so a hardening drop-in of the user's own that turns them off is a named failure, not a VS Code
+window that cannot connect.
+
+**On the controller:** the project writes exactly two things outside the repository,
+`~/.ssh/known_hosts` and the managed SSH config, plus one `Include` line at the top of
+`~/.ssh/config` (§4.8). Every alias write is validated by the real ssh client before it lands, an
+alias the user's own config already names is refused, and the Molecule scenarios point the managed
+file into the ephemeral directory with the `Include` off, guarded by a unit test, because the
+`configure` scenario's `localhost` is the developer's machine. SSH agent forwarding to the VM is off
+and documented as a choice: the VM user is root-equivalent and runs an AI agent, and `ForwardAgent`
+would hand it every key in the user's agent.
 
 ---
 
@@ -945,18 +1071,27 @@ Three tiers. **No test ever talks to a real Proxmox, a real GitHub, or a real hy
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 191 tests — 44 for the filters, 26 for `github_repos`, 71 for the
-tracked-file guard, 32 that run `claude_login.yml` and `remote_control.yml` against canned logins and
-stand-ins, 1 that `--tags claude_code` still runs discovery, and 17 that run `make` against the
-Makefile's guards: `vm-name-check` accepts DNS-like names and refuses whitespace, quotes, shell
-metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision` passes `VM_NAME` as one JSON
-extra-var and runs the check before the playbook; `deploy` refuses `TAGS`.
+pytest over `tests/unit/`: 241 tests — 58 for the filters, 26 for `github_repos`, 76 for the
+tracked-file guard, 35 that run `claude_login.yml` and `remote_control.yml` against canned logins and
+stand-ins, 2 that `--tags claude_code` still runs discovery and the alias play, 18 that run
+`tasks/ssh_config.yml` for real against a temporary home and resolve the result with `ssh -G` (and
+guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, and that no
+playbook sets the task file's inputs as facts), and 26 that run
+`make` against the Makefile's guards: `vm-name-check` accepts DNS-like names and refuses whitespace,
+quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision` and
+`ssh-config` pass `VM_NAME` as one JSON extra-var and run the check before the playbook; `deploy`
+refuses `TAGS`; `code` refuses no name and several.
 
 ### 11.2 Role scenarios — `make molecule MOLECULE_ROLES="..."`
 
 One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting driver and platform
 from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
 side_effect → verify → destroy.
+
+`vscode_server`'s side effect writes a `05-molecule-hardening.conf` with `AllowTcpForwarding no`,
+runs the role inside a `block`/`rescue` and asserts the failure names that file; then runs the role
+switched off and asserts both files are gone, and switched on again for verify, which reads the
+drop-in, the sysctl file and `sshd -T` (forwarding on, converge's keepalive values in effect).
 
 `proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
 came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —
@@ -1023,7 +1158,17 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 - `destroy.yml` must refuse without confirmation (the prompt's non-interactive default), refuse
   `legacy` with the hint to tag it, and refuse the template even with
   `proxmox_vm_allow_untagged_delete` — deleting nothing — then delete `commas` and `parked` in one
-  run and `legacy` with the flag, leaving every other VM in place.
+  run and `legacy` with the flag, leaving every other VM in place. Aliases seeded for all of them
+  beforehand survive every refusal, and each deletion takes exactly its own.
+- `ssh_config.yml` fleet-wide, with aliases seeded for a VM that exists nowhere and for the untagged
+  `stranger`: with the node that is down still down it prunes nothing and says which VMID holds it;
+  with that node switched back on (§11.4) it prunes the vanished one, leaves `stranger` alone and
+  reports it, and refreshes `alpha` with the workspace the destroy fixtures recorded; with `VM_NAME`
+  it prunes nothing.
+- `code.yml` against a stand-in `code` on `PATH` that records its arguments and lists what a file
+  says: the first run installs the Remote - SSH extension and opens `/home/dev/projects` on `alpha`,
+  the second only opens; `stranger`, `nonic` (no address), a missing name and two names are each
+  refused with their own message, and the user ssh config in the ephemeral directory never exists.
 
 ### 11.4 The fakes — `tests/molecule/`
 
@@ -1051,7 +1196,10 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   hid that `claude_vm_tagged` needs `selectattr('tags', 'defined')`.
 - A second node, `pve2`, is listed as offline and holds an unrelated VM (8000, below the template so
   `/cluster/nextid` is unaffected); every request to it gets a 595, as pveproxy returns for a node it
-  cannot reach.
+  cannot reach. `PUT /api2/json/fake/nodes/pve2?status=online` - not a PVE endpoint - brings it back:
+  its guests are then listed with their names and as stopped, the way Proxmox lists guests on a node
+  that has just come back, which is the only way the "nothing is pruned while a node is down" path
+  can be shown to recover.
 - A config write carrying `fake-verbatim-tags` keeps its tags as sent, for the comma-joined fixture.
   It is not a PVE parameter.
 
@@ -1061,7 +1209,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 
 ### 11.6 Which scenarios need the network
 
-`common`, `dev_tools`, `claude_code`, `github_projects` and the `configure` scenario install packages
+`common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects` and the `configure` scenario install packages
 inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_template` and the
 `provision` scenario talk only to local fakes and still run offline.
 
@@ -1076,7 +1224,7 @@ inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_templat
 |---|---|
 | `lint` | tracked-file guard → `make lint` → `make syntax` → `make unit` → pre-commit (minus the linters already run) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
 | `dependency-review` | PRs only, fails on moderate severity |
-| `molecule` | matrix over all six roles, `needs: lint` |
+| `molecule` | matrix over all seven roles, `needs: lint` |
 | `playbooks` | matrix over the `configure` and `provision` scenarios, `needs: lint` |
 | `canary` | schedule/dispatch only, runs `configure` against the **unpinned** Ubuntu image; allowed to fail — that failure is the notification |
 
@@ -1138,20 +1286,26 @@ playbooks/
   discover.yml                    find VMs by tag, resolve addresses via the guest agent
   list.yml                        read-only: what exists, and where it is
   claude_login.yml                print the one Remote Control step that needs a browser
-  configure.yml                   discover, then common → dev_tools → claude_code → github_projects
-  destroy.yml                     confirm, verify ownership, then delete in parallel
+  configure.yml                   discover, then common → vscode_server → dev_tools → claude_code → github_projects,
+                                  then an SSH alias per configured VM on the controller
+  destroy.yml                     confirm, verify ownership, delete in parallel, forget each alias
+  ssh_config.yml                  refresh every alias from the fleet; fleet-wide, prune the vanished
+  code.yml                        refresh one alias, then open the VM in VS Code
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
+  tasks/ssh_config.yml            one blockinfile block per VM in ~/.ssh/claude-on-proxmox.conf, Include once
 
 roles/
   proxmox_template/               qm + virt-customize on the PVE node
   proxmox_vm/                     the Proxmox API role (tasks/{main,present,absent}.yml, vars/main.yml)
   common/                         OS baseline, user, sudo, keys, sshd hardening
+  vscode_server/                  sshd forwarding drop-in checked with sshd -T, inotify limit
   dev_tools/                      Node.js, Docker, gh, uv  (files/*.asc are vendored signing keys)
   claude_code/                    native or npm install, settings.json, Remote Control; tasks/login.yml
   github_projects/                library/github_repos.py + clone loop
 
-filter_plugins/proxmox.py         net_mac, guest_ipv4, guest_address, guest_addresses, proxmox_access_denied
+filter_plugins/proxmox.py         net_mac, guest_ipv4, guest_address, guest_addresses, proxmox_access_denied,
+                                  ssh_config_blocks, ssh_config_prune
 inventory/
   hosts.yml.example               the only address anyone supplies
   controller.yml                  localhost, so it picks up group_vars/all
@@ -1160,7 +1314,8 @@ inventory/
 
 tests/
   check_no_local_files.sh         tracked-file guard (also runs in CI)
-  unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, Makefile guards
+  unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the managed
+                                  SSH config, Makefile guards
   molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API
 molecule/
   provision/                      provision.yml + discover.yml against the fake API

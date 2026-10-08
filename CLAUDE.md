@@ -24,13 +24,15 @@ make deploy          # template (if missing) + provision + configure, all idempo
 make claude-login    # print the one Remote Control step Ansible cannot do
 make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push an API key
 make list            # read-only: the VMs this project created, and their addresses
+make ssh-config      # refresh the SSH alias per VM on this machine; fleet-wide also prunes
+make code VM_NAME=alpha   # refresh one alias from Proxmox, then open the VM in VS Code
 ```
 
 Scenarios are slow and disk-hungry. Run the ones your change touches, one at a time, rather than
 `make test`, until you are ready to finish.
 
-`common`, `dev_tools`, `claude_code`, `github_projects` and the `configure` scenario install
-packages inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_template` and
+`common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects` and the `configure`
+scenario install packages inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_template` and
 the `provision` scenario talk only to local fakes, so they still run when the network is down —
 if apt fails to resolve a mirror, that is the machine, not the change.
 
@@ -59,6 +61,17 @@ if apt fails to resolve a mirror, that is the machine, not the change.
 - **Tests never touch a real Proxmox, GitHub or hypervisor.** `tests/molecule/` holds the fakes:
   a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, and a GitHub API over
   local bare repos. Extend a fake rather than reaching for the network.
+- **The project writes exactly two things outside the repo on the controller:** `~/.ssh/known_hosts`
+  and the managed SSH config `~/.ssh/claude-on-proxmox.conf`, plus one `Include` line at the top of
+  `~/.ssh/config` that is added once and never removed. Nothing else in `~/.ssh` is ever edited.
+  Everything goes through `playbooks/tasks/ssh_config.yml`, which validates each write with
+  `ssh -G` and refuses an alias the user's own config already names. A block is only ever written
+  for a tagged VM, and pruning (`ssh_config.yml`) removes blocks, never VMs.
+- **Tests never write into the developer's `~/.ssh`.** The `configure` scenario runs the real
+  playbook and its `localhost` is the developer's machine, so every playbook scenario points
+  `claude_ssh_config_file` and `claude_ssh_user_config` into `MOLECULE_EPHEMERAL_DIRECTORY` with
+  the `Include` off, the Vagrantfile sets `claude_ssh_config: false`, and
+  `tests/unit/test_ssh_config.py` fails if any of them stops.
 
 ## Architecture, and why it looks like this
 
@@ -131,6 +144,18 @@ after a successful start removes it, so a re-run finishes that VM while a finish
 down stays stopped. Do not decide the start from `status` alone, and do not run the resize on every
 run: `proxmox_disk` compares size strings, and Proxmox cannot shrink a hand-grown disk.
 
+**Assert what sshd runs with, not the file we wrote.** sshd keeps the first value it reads for a
+keyword, so a drop-in sorted before `20-vscode-server.conf`, or `/etc/ssh/sshd_config` itself, wins
+over it silently. `roles/vscode_server` therefore flushes its restart handler and reads `sshd -T`
+back, failing with the offending file named. Keep the two drop-ins with two owners: `10-` is
+`common`'s hardening, `20-` is VS Code's forwarding and keepalives.
+
+**The alias play reads a fact the configure play set last.** `configure.yml`'s second play ends
+with a `getent` of `vm_user` and a `claude_vm_workspace` fact, both tagged `always`; the third play
+writes an alias only for hosts that have that fact, so a host that failed a role never gets one, and
+the workspace is the VM user's real home rather than a guess from the controller (Ansible's own
+`user_dir` fact is the *connecting* user's home, which under Molecule is root's).
+
 **Discovery is a playbook, not the `community.proxmox` inventory plugin.** The header of
 `discover.yml` records the trade-offs; the swap is a live design question, not an oversight.
 
@@ -156,6 +181,11 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   warns ("Not prompting as we are not in interactive mode") and uses the `default:`, or `None` when
   there is none. So every prompt needs a `default:`, and it must be the safe answer (`destroy.yml`
   defaults to `no`).
+- **A `set_fact` outranks the `vars:` of a later `import_tasks`.** `ssh_config.yml` built its
+  refresh list as a `claude_ssh_vms` fact, then imported `tasks/ssh_config.yml` a second time with
+  `claude_ssh_vms: <the prune list>` and `state: absent`. The fact won, and the prune removed the
+  aliases it had just refreshed. Pass the task file's inputs only through `vars:` on the import;
+  `tests/unit/test_ssh_config.py` fails if a playbook sets them as facts.
 - **There is deliberately no `LIMIT`.** `--limit` is applied before the plays run, and these VMs
   only enter the inventory once discovery has found them, so it could never match.
 - **`gitleaks --staged` scans the index**, which equals HEAD in a CI checkout — i.e. nothing. CI

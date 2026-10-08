@@ -20,6 +20,9 @@ what it stores:
   ansible-vault file and are marked `no_log`.
 - **What the VM ends up trusting**: the SSH key material, the passwordless sudo rule and the docker group
   membership.
+- **What is written on the controller**: `~/.ssh/known_hosts`, the managed SSH config
+  `~/.ssh/claude-on-proxmox.conf` and the one `Include` line at the top of `~/.ssh/config`
+  (`playbooks/tasks/ssh_config.yml`). A bug there reaches every `ssh` on the user's machine.
 
 Findings in any of those are in scope, as is anything that would cause a secret to be written to a log or
 the repository.
@@ -34,6 +37,10 @@ that only restate them are not treated as vulnerabilities:
 - The VM's user gets passwordless sudo and docker group membership by default; both are toggles.
 - SSH host keys are accepted on first contact (`StrictHostKeyChecking=accept-new`) so a freshly cloned VM
   can be reached without manual steps. Changed keys are still refused.
+- The `vscode_server` role keeps `AllowTcpForwarding` on, which VS Code's Remote - SSH needs and OpenSSH
+  defaults to anyway; the VM user can forward ports, as a user with passwordless sudo always could.
+  SSH agent forwarding to the VM is off by default and documented as a choice, because the VM user is
+  root-equivalent and runs an AI agent.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
   once - and `make configure` then sends it your SSH keys, GitHub token and Anthropic API key. Keeping
