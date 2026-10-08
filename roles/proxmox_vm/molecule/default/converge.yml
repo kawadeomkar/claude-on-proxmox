@@ -24,3 +24,18 @@
 
     # Publishing to claude_vms is the playbook's job, not the role's; the
     # provision scenario covers it for a whole fleet.
+
+    # A boundary in the fake's request log. Molecule re-runs this play for its
+    # idempotence stage and side_effect.yml runs the role again, so the log ends
+    # up spanning runs that each poll 9001's agent - and a cumulative count could
+    # not tell converge's polls from one poll per stage. verify.yml counts only
+    # the agent polls before the first marker. It is shaped like a logged request
+    # with a path no assertion's pattern matches, so the `selectattr('path', ...)`
+    # filters across verify.yml and side_effect.yml skip it rather than fail on a
+    # missing key. changed_when: false, so writing it each run leaves the
+    # idempotence check green.
+    - name: Mark the end of this converge run in the request log
+      ansible.builtin.shell: >-
+        printf '%s\n' '{"method": "MARKER", "path": "/converge-end", "params": {}}' >> /var/lib/fake-pve/calls.log
+      become: true
+      changed_when: false

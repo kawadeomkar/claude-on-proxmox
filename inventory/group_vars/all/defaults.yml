@@ -19,6 +19,11 @@ proxmox_validate_certs: false
 proxmox_node: pve
 proxmox_storage: local-lvm
 proxmox_bridge: vmbr0
+# Which NIC of the template carries the LAN address: its MAC is how a VM's own
+# address is told apart from bridges the guest grows later. Provisioning,
+# discovery and make list all read it from here. Only change it if the
+# template was built with something other than a single net0.
+proxmox_nic: net0
 
 # Cloud-init template that VMs are cloned from (built by playbooks/template.yml)
 proxmox_template_vmid: 9000
@@ -107,6 +112,7 @@ proxmox_vm_api_token_secret: "{{ proxmox_api_token_secret }}"
 proxmox_vm_validate_certs: "{{ proxmox_validate_certs }}"
 proxmox_vm_node: "{{ proxmox_node }}"
 proxmox_vm_storage: "{{ proxmox_storage }}"
+proxmox_vm_nic: "{{ proxmox_nic }}"
 proxmox_vm_template_name: "{{ proxmox_template_name }}"
 proxmox_vm_user: "{{ vm_user }}"
 proxmox_vm_ssh_public_keys: "{{ vm_ssh_public_keys }}"

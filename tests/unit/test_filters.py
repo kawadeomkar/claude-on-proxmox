@@ -17,6 +17,7 @@ SPEC.loader.exec_module(proxmox_filters)
 
 net_mac = proxmox_filters.net_mac
 guest_ipv4 = proxmox_filters.guest_ipv4
+proxmox_access_denied = proxmox_filters.proxmox_access_denied
 
 
 def iface(name, mac, addresses):
@@ -66,6 +67,10 @@ class TestGuestIpv4:
 
     def test_mac_match_is_case_insensitive(self):
         assert guest_ipv4([ETH0], LAN_MAC.upper()) == "192.0.2.51"
+
+    def test_an_uppercase_hardware_address_from_the_agent_still_matches(self):
+        # Windows guests report BC-24-style uppercase MACs; the fake's docker0 is uppercase too.
+        assert guest_ipv4([iface("eth0", LAN_MAC.upper(), [("192.0.2.51", "ipv4", 24)])], LAN_MAC) == "192.0.2.51"
 
     def test_skips_loopback_without_a_mac(self):
         # A plain 127.0.0.1 loopback proves nothing here - the "127." filter
@@ -134,3 +139,36 @@ class TestNetMacDefault:
 
     def test_a_default_does_not_mask_a_real_mac(self):
         assert net_mac("virtio=BC:24:11:0E:72:04,bridge=vmbr0", "") == "bc:24:11:0e:72:04"
+
+
+class TestProxmoxAccessDenied:
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            # A token that fails authentication: the module's first API call.
+            "401 Unauthorized: authentication failure - {'errors': b''}",
+            # A token without guest-agent access, as proxmox_vm_info reports it.
+            "Failed to retrieve QEMU VMs information: 403 Forbidden: Permission check failed (/vms/4013, VM.Monitor)",
+        ],
+    )
+    def test_true_for_a_refused_token(self, msg):
+        assert proxmox_access_denied(msg) is True
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            # VMIDs containing 401 or 403, in the detail Proxmox writes: a
+            # stopped VM like this used to fail make list for the whole fleet.
+            "Failed to retrieve QEMU VMs information: 500 Internal Server Error: VM 4013 is not running",
+            "Failed to retrieve QEMU VMs information: 500 Internal Server Error: VM 401 is not running",
+            "Failed to retrieve QEMU VMs information: 500 Internal Server Error: VM 14030 is not running",
+            "Failed to retrieve QEMU VMs information: 500 Internal Server Error: QEMU guest agent is not running",
+            "Failed to retrieve QEMU VMs information: 595 Errors during connect(): No route to host",
+            "",
+        ],
+    )
+    def test_false_for_a_problem_with_one_vm(self, msg):
+        assert proxmox_access_denied(msg) is False
+
+    def test_false_for_no_message(self):
+        assert proxmox_access_denied(None) is False
