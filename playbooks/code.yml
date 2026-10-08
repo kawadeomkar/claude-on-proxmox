@@ -13,9 +13,20 @@
 # PROJECT that is mistyped, or a VM never configured and so without a projects
 # directory yet, is said here, with what is there, rather than in a VS Code
 # window opened on a folder that does not exist. The Remote - SSH extension is
-# installed first if VS Code does not have it. Nothing on the VM is changed:
-# cloud-init placed the key at provisioning. Not a subset of `make deploy`,
+# installed first if VS Code does not have it. Not a subset of `make deploy`,
 # which creates and configures and only prints the command; this runs it.
+#
+# With vscode_claude_terminal (the default), VS Code is handed a workspace
+# file rather than the folder. It names the folder and holds one task, run when
+# the window opens: a terminal named Claude that starts claude there, signing
+# in first on a VM that has not been. That file is the one thing written on the
+# VM, in a directory of its own beside the projects
+# (<projects>/.claude-on-proxmox/), never in a repository; cloud-init placed
+# the key at provisioning, so nothing else needs changing. VS Code runs the
+# task only in a window the user has trusted, and only once they have allowed
+# automatic tasks; this playbook reads their VS Code settings to say which of
+# those to expect, and never writes them (README, "A Claude session in the
+# window").
 #
 # vm_project (PROJECT) is one folder name, as a GitHub repository is named,
 # and is checked again here so that a direct ansible-playbook run cannot point
@@ -31,6 +42,79 @@
       {{ claude_vm_names[0] }} is running at {{ claude_code_reach }}, but SSH to it as {{ vm_user }}
       failed, so VS Code could not connect either: {{ claude_code_ssh.msg | default('no reason given') | trim }}
       A VM that has just booted can need another minute; `ssh {{ claude_vm_names[0] }}` shows why.
+    claude_code_terminal: "{{ vscode_claude_terminal | default(true) | bool }}"
+
+    # The workspace file, built as data and written with to_nice_json so no
+    # path or message can break its JSON. Absolute paths throughout:
+    # ${workspaceFolder} is ambiguous in a task that belongs to a workspace
+    # file rather than to a folder. The workspace files' own directory is hidden
+    # from the explorer in the window that shows it, the whole directory's.
+    claude_code_workspace_file:
+      folders:
+        - path: "{{ claude_code_target }}"
+      settings: >-
+        {{ {'files.exclude': {claude_code_ws_dir | basename: true}}
+           if claude_code_ws_dir | dirname == claude_code_target else {} }}
+      tasks:
+        version: "2.0.0"
+        tasks:
+          - label: Claude
+            type: process
+            command: /bin/bash
+            args: [-lc, "{{ claude_code_session }}", make-code, "{{ claude_code_not_installed }}", "{{ claude_code_signed_in }}"]
+            options:
+              cwd: "{{ claude_code_target }}"
+            runOptions:
+              runOn: folderOpen
+            presentation:
+              reveal: always
+              focus: true
+              panel: dedicated
+              clear: true
+              showReuseMessage: false
+            problemMatcher: []
+
+    # What the task runs, as `bash -lc <this> make-code <$1> <$2>`. A login
+    # shell, because tasks start non-login shells and claude is on the login
+    # PATH only. `claude auth status` exits non-zero until the VM is signed in,
+    # by claude.ai or by an API key; `claude auth login` is the browser flow,
+    # and the browser is the one on this machine, through the BROWSER helper
+    # VS Code Server sets in every terminal it starts. The messages are
+    # arguments, never script text.
+    claude_code_session: |-
+      if ! command -v claude >/dev/null 2>&1; then
+        printf '%s\n' "$1"
+        exit 1
+      fi
+      if ! claude auth status >/dev/null 2>&1; then
+        printf '%s\n' "Signing in to Claude first. Your browser opens the sign-in page; if it shows a code, paste it here."
+        claude auth login || exit 1
+        [ -z "$2" ] || printf '%s\n' "$2"
+      fi
+      exec claude
+    claude_code_not_installed: >-
+      Claude Code is not installed on {{ claude_vm_names[0] }} yet. On your machine, run
+      make configure VM_NAME={{ claude_vm_names[0] }}, then "Tasks: Run Task", Claude here.
+    # Remote Control needs that claude.ai login, which is why it was waiting;
+    # the role's own checks decide whether to start it, so it is not started
+    # from the terminal.
+    claude_code_signed_in: >-
+      {{ ('Signed in. To reach this VM from the Claude apps too, start Remote Control from your machine: '
+          ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
+         if claude_remote_control | default(true) | bool else '' }}
+
+    # Read on this machine, never written. task.allowAutomaticTasks is an
+    # application setting, so the default profile's settings.json holds it
+    # whichever profile is in use.
+    claude_code_settings_file: >-
+      {{ vscode_user_settings_file | default('', true)
+         or query('ansible.builtin.first_found', claude_code_settings_places, skip=true) | first | default('') }}
+    claude_code_settings_places:
+      - "{{ lookup('ansible.builtin.env', 'HOME') }}/Library/Application Support/Code/User/settings.json"
+      - "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/Code/User/settings.json"
+    claude_code_auto_tasks: >-
+      {{ (lookup('ansible.builtin.file', claude_code_settings_file, errors='ignore')
+          if claude_code_settings_file | length > 0 else '') | vscode_setting('task.allowAutomaticTasks', '') }}
 
   tasks:
     - name: Refuse anything but one VM
@@ -155,11 +239,36 @@
           {{ vm_projects_dir | default('', true)
              or claude_code_home.ansible_facts.getent_passwd[vm_user][4] ~ '/projects' }}
         claude_code_root: "{{ claude_code_workspace | regex_replace('(.)/+$', '\\1') }}"
+        claude_code_ws_dir: >-
+          {{ (vscode_workspaces_dir | default('', true) or claude_code_root ~ '/.claude-on-proxmox')
+             | regex_replace('(.)/+$', '\\1') }}
       ansible.builtin.set_fact:
         claude_code_project: "{{ vm_project | default('', true) | string }}"
         claude_code_root: "{{ claude_code_root }}"
         claude_code_target: >-
           {{ claude_code_root ~ ('/' ~ vm_project if vm_project | default('', true) | string | length > 0 else '') }}
+        claude_code_ws_dir: "{{ claude_code_ws_dir }}"
+        # One project's file in project/, so a repository that shares the
+        # projects directory's name cannot collide with the whole directory's.
+        claude_code_ws_file: >-
+          {{ claude_code_ws_dir
+             ~ ('/project/' ~ vm_project if vm_project | default('', true) | string | length > 0
+                else '/' ~ (claude_code_root | basename or 'projects'))
+             ~ '.code-workspace' }}
+
+    # The workspace files' directory is not a project, though a PROJECT can
+    # name it. VS Code is handed absolute paths only, and a relative
+    # vscode_workspaces_dir would be written somewhere VS Code cannot find.
+    - name: Refuse the folder that holds the workspace files
+      ansible.builtin.assert:
+        that:
+          - claude_code_target != claude_code_ws_dir
+          - claude_code_ws_dir is match('/') or not claude_code_terminal
+        fail_msg: >-
+          {{ claude_code_ws_dir ~ ' on ' ~ claude_vm_names[0] ~ ' is where make code keeps its VS Code workspace files, not a project.'
+             if claude_code_target == claude_code_ws_dir
+             else 'vscode_workspaces_dir is a path on the VM, and must be an absolute one, not "' ~ claude_code_ws_dir ~ '".' }}
+        quiet: true
 
     - name: Refresh the alias
       ansible.builtin.import_tasks: tasks/ssh_config.yml
@@ -260,13 +369,64 @@
       when: "'ms-vscode-remote.remote-ssh' not in (claude_code_extensions.stdout_lines | map('lower') | list)"
       changed_when: true
 
+    # The one write on the VM, as the VM user, last: every refusal above
+    # leaves the VM as it was. An unchanged file is not rewritten, so a run
+    # that only reopens a window reports no change there.
+    - name: Make the directory for VS Code workspace files on the VM
+      ansible.builtin.file:
+        path: "{{ claude_code_ws_file | dirname }}"
+        state: directory
+        mode: "0755"
+      delegate_to: "{{ claude_vm_names[0] }}"
+      when: claude_code_terminal
+
+    - name: Write the VS Code workspace on the VM
+      ansible.builtin.copy:
+        dest: "{{ claude_code_ws_file }}"
+        content: "{{ claude_code_workspace_file | to_nice_json(indent=2) }}\n"
+        mode: "0644"
+      delegate_to: "{{ claude_vm_names[0] }}"
+      when: claude_code_terminal
+
+    # VS Code opens a path ending in .code-workspace as a workspace, not as a
+    # file to edit; the same workspace already open is focused, and its task
+    # is not run a second time.
     - name: Open the folder in VS Code
       ansible.builtin.command:
-        argv: [code, --remote, "ssh-remote+{{ claude_vm_names[0] }}", "{{ claude_code_target }}"]
+        argv:
+          - code
+          - --remote
+          - ssh-remote+{{ claude_vm_names[0] }}
+          - "{{ claude_code_ws_file if claude_code_terminal else claude_code_target }}"
       changed_when: true
 
+    # What VS Code will ask, from what the user's own settings say. "off" set
+    # by the user is the one value that silences both the question and the
+    # task; unset, VS Code asks once and Allow writes "on".
     - name: Say what was opened
+      vars:
+        # Trust covers a folder's children, and a workspace is trusted when its
+        # folder and its file both are: with the files beside the projects,
+        # trusting the whole directory's window once covers every project.
+        claude_code_trust_once: >-
+          {{ '' if not claude_code_ws_dir.startswith(claude_code_root ~ '/')
+             else 'Trusting this window trusts every project in ' ~ claude_code_root ~ '.'
+                  if claude_code_project | length == 0
+             else 'Trusting the window of make code VM_NAME=' ~ claude_vm_names[0] ~ ' instead trusts every project in '
+                  ~ claude_code_root ~ ' at once.' }}
+        claude_code_first_time: >-
+          {{ 'It will not start on its own: task.allowAutomaticTasks is "off" in ' ~ claude_code_settings_file
+             ~ '. Choose Allow under "Tasks: Manage Automatic Tasks" to change that, or start it each time with'
+             ~ ' "Tasks: Run Task", Claude.'
+             if claude_code_auto_tasks == 'off'
+             else 'The first time, it waits for you: trust the window (the Restricted Mode banner, Manage, Trust)'
+                  ~ (', then choose Allow when VS Code asks about automatic tasks' if claude_code_auto_tasks != 'on' else '')
+                  ~ '. ' ~ claude_code_trust_once }}
+        claude_code_said:
+          - VS Code is opening {{ claude_code_target }} on {{ claude_vm_names[0] }} ({{ claude_code_reach }}).
+          - The first connection installs VS Code Server on the VM and takes a minute.
+          - >-
+            {{ 'A terminal named Claude then starts claude in it, signing in to Claude first if '
+               ~ claude_vm_names[0] ~ ' has not been. ' ~ claude_code_first_time if claude_code_terminal else '' }}
       ansible.builtin.debug:
-        msg: >-
-          VS Code is opening {{ claude_code_target }} on {{ claude_vm_names[0] }} ({{ claude_code_reach }}).
-          The first connection installs VS Code Server on the VM and takes a minute.
+        msg: "{{ claude_code_said | select | join(' ') | trim }}"
