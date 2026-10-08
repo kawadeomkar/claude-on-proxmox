@@ -1,0 +1,137 @@
+---
+# `qm config` reads this node's configs only, so a VMID held by a sibling node
+# looks free to the probe. The role used to run the whole build on that answer
+# and fail at `qm create`, after the download and virt-customize. Prove the
+# cluster-wide check refuses it first: the fake .vmlist lists 8000 on pve2.
+- name: Refuse a VMID another node holds
+  hosts: all
+  become: true
+  tasks:
+    - name: Try to build the template as VMID 8000
+      block:
+        - name: Run the role against the sibling node's VMID
+          ansible.builtin.include_role:
+            name: proxmox_template
+          vars:
+            proxmox_template_vmid: 8000
+            proxmox_template_qm: /usr/local/bin/qm
+            proxmox_template_virt_customize: /usr/local/bin/virt-customize
+            proxmox_template_manage_libguestfs: false
+            proxmox_template_image_url: http://127.0.0.1:8080/noble-server-cloudimg-amd64.img
+            proxmox_template_image_checksum: sha256:http://127.0.0.1:8080/SHA256SUMS
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: >-
+              proxmox_template built VMID 8000, which .vmlist says node pve2
+              holds. The cluster-wide VMID check is not working.
+      rescue:
+        - name: Assert it refused for the right reason
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('VMID 8000 exists on node pve2')
+              - ansible_failed_result.msg is search('proxmox_template_vmid')
+            fail_msg: >-
+              Expected a sibling-node refusal, got: {{ ansible_failed_result.msg }}
+            quiet: true
+
+    - name: Assert nothing was built for 8000
+      ansible.builtin.stat:
+        path: /var/lib/fake-qm/8000.conf
+      register: proxmox_template_sibling
+      failed_when: proxmox_template_sibling.stat.exists
+
+# The probe sees this node's VMIDs. One that exists but is not the finished
+# template - a build that died before `qm template`, or an unrelated VM - must
+# be refused, not skipped as "already built" and not built over. Both cases
+# fail the same assert, so each is checked for its own cause: 9002 has no
+# `template: 1`, 9003 is a finished template of another name.
+- name: Refuse a VMID that holds a half-built VM
+  hosts: all
+  become: true
+  tasks:
+    - name: Create VMID 9002 as a plain VM, never converted to a template
+      ansible.builtin.command:
+        argv: [/usr/local/bin/qm, create, "9002", --name, other]
+      args:
+        creates: /var/lib/fake-qm/9002.conf
+
+    - name: Try to build the template as VMID 9002
+      block:
+        - name: Run the role against the half-built VMID
+          ansible.builtin.include_role:
+            name: proxmox_template
+          vars:
+            proxmox_template_vmid: 9002
+            proxmox_template_qm: /usr/local/bin/qm
+            proxmox_template_virt_customize: /usr/local/bin/virt-customize
+            proxmox_template_manage_libguestfs: false
+            proxmox_template_image_url: http://127.0.0.1:8080/noble-server-cloudimg-amd64.img
+            proxmox_template_image_checksum: sha256:http://127.0.0.1:8080/SHA256SUMS
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: >-
+              proxmox_template accepted VMID 9002, which holds a VM that was
+              never converted to a template. The reuse check is not working.
+      rescue:
+        - name: Assert it refused for the right reason
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('VMID 9002 exists but is not the finished template "ubuntu-24.04-cloudinit"')
+              - ansible_failed_result.msg is search('qm destroy 9002')
+            fail_msg: >-
+              Expected the reuse refusal, got: {{ ansible_failed_result.msg }}
+            quiet: true
+
+    - name: Assert 9002 was left as it was
+      ansible.builtin.slurp:
+        src: /var/lib/fake-qm/9002.conf
+      register: proxmox_template_half_built
+      failed_when: >-
+        (proxmox_template_half_built.content | b64decode).splitlines() != ['name: other']
+
+- name: Refuse a VMID that holds a finished template of another name
+  hosts: all
+  become: true
+  tasks:
+    - name: Create VMID 9003 as a finished template named other-template
+      ansible.builtin.shell:
+        cmd: /usr/local/bin/qm create 9003 --name other-template && /usr/local/bin/qm template 9003
+        creates: /var/lib/fake-qm/9003.conf
+
+    - name: Try to build the template as VMID 9003
+      block:
+        - name: Run the role against the other template's VMID
+          ansible.builtin.include_role:
+            name: proxmox_template
+          vars:
+            proxmox_template_vmid: 9003
+            proxmox_template_qm: /usr/local/bin/qm
+            proxmox_template_virt_customize: /usr/local/bin/virt-customize
+            proxmox_template_manage_libguestfs: false
+            proxmox_template_image_url: http://127.0.0.1:8080/noble-server-cloudimg-amd64.img
+            proxmox_template_image_checksum: sha256:http://127.0.0.1:8080/SHA256SUMS
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: >-
+              proxmox_template accepted VMID 9003, a template named
+              other-template, as its own. The name check is not working.
+      rescue:
+        - name: Assert it refused for the right reason
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('VMID 9003 exists but is not the finished template "ubuntu-24.04-cloudinit"')
+              - ansible_failed_result.msg is search('qm destroy 9003')
+            fail_msg: >-
+              Expected the name-mismatch refusal, got: {{ ansible_failed_result.msg }}
+            quiet: true
+
+    - name: Assert 9003 was left as it was
+      ansible.builtin.slurp:
+        src: /var/lib/fake-qm/9003.conf
+      register: proxmox_template_other_template
+      failed_when: >-
+        (proxmox_template_other_template.content | b64decode).splitlines()
+        != ['name: other-template', 'template: 1']

@@ -24,6 +24,34 @@
     quiet: true
   when: proxmox_template_existing.rc == 0
 
+# `qm config` reads this node's configs only, so a VMID held by a sibling node
+# looks free to the probe: the build would download the image, run
+# virt-customize, and only then be refused by `qm create` with "VM 9000 already
+# exists on node 'pve2'". pmxcfs lists every guest in the cluster in .vmlist,
+# with its node, so a VMID the probe cannot see is checked there first.
+- name: Read the cluster-wide VM list
+  ansible.builtin.slurp:
+    src: /etc/pve/.vmlist
+  register: proxmox_template_vmlist
+  when: proxmox_template_existing.rc != 0
+
+- name: Refuse a VMID another node holds, {{ proxmox_template_vmid }}
+  vars:
+    # Empty when no node holds the VMID. fail_msg is rendered even when the
+    # assertion holds, so this cannot index into a missing entry.
+    proxmox_template_vmlist_node: >-
+      {{ ((proxmox_template_vmlist.content | b64decode | from_json).ids
+          [proxmox_template_vmid | string] | default({})).node | default('') }}
+  ansible.builtin.assert:
+    that:
+      - proxmox_template_vmlist_node | length == 0
+    fail_msg: >-
+      VMID {{ proxmox_template_vmid }} exists on node {{ proxmox_template_vmlist_node }},
+      not on {{ inventory_hostname }}, where qm cannot see it. Build the template on that
+      node (point inventory/hosts.yml at it) or choose another proxmox_template_vmid.
+    quiet: true
+  when: proxmox_template_existing.rc != 0
+
 - name: Build the template
   when: proxmox_template_existing.rc != 0
   block:
@@ -47,16 +75,17 @@
       register: proxmox_template_image
 
     # The pristine download is left untouched so get_url stays idempotent;
-    # virt-customize edits a copy, which is what gets imported.
+    # virt-customize edits a copy, which is what gets imported and is removed
+    # once the template is finished.
     - name: Decide which image to import
       ansible.builtin.set_fact:
         proxmox_template_import_path: >-
           {{ proxmox_template_image_dir ~ '/claude-on-proxmox-' ~ proxmox_template_vmid ~ '.img'
-             if proxmox_template_install_guest_agent
+             if proxmox_template_install_guest_agent | bool
              else proxmox_template_image.dest }}
 
     - name: Prepare the image for customization
-      when: proxmox_template_install_guest_agent
+      when: proxmox_template_install_guest_agent | bool
       block:
         # dhcpcd-base is not pulled in on Proxmox 9, and without it the
         # libguestfs appliance cannot DHCP, so --install fails with
@@ -70,7 +99,7 @@
             update_cache: true
             cache_valid_time: 3600
             lock_timeout: 600
-          when: proxmox_template_manage_libguestfs
+          when: proxmox_template_manage_libguestfs | bool
 
         - name: Copy the cloud image for customization
           ansible.builtin.copy:
@@ -156,3 +185,13 @@
           - template
           - "{{ proxmox_template_vmid }}"
       changed_when: true
+
+    # import-from has copied the disk into the storage, so the customised
+    # image is derived data now: a rebuild makes it again from the download.
+    # Left behind, it was ~600 MB per node, forever. Only the copy: without
+    # the guest agent the import path is the download itself, which stays.
+    - name: Remove the customised image
+      ansible.builtin.file:
+        path: "{{ proxmox_template_import_path }}"
+        state: absent
+      when: proxmox_template_import_path != proxmox_template_image.dest

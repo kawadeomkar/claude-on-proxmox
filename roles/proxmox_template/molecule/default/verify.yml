@@ -11,10 +11,18 @@
         - /var/lib/fake-qm/calls.log
       register: proxmox_template_verify_state
 
-    - name: Stat downloaded image
+    - name: Stat the downloaded image and the customised copy
       ansible.builtin.stat:
-        path: /var/lib/vz/template/iso/noble-server-cloudimg-amd64.img
-      register: proxmox_template_verify_image
+        path: "{{ item }}"
+      loop:
+        - /var/lib/vz/claude-on-proxmox/noble-server-cloudimg-amd64.img
+        - /var/lib/vz/claude-on-proxmox/claude-on-proxmox-9000.img
+      register: proxmox_template_verify_images
+
+    - name: Stat the image directory
+      ansible.builtin.stat:
+        path: /var/lib/vz/claude-on-proxmox
+      register: proxmox_template_verify_image_dir
 
     - name: Assert template was built exactly once with the expected settings
       vars:
@@ -22,16 +30,32 @@
         proxmox_template_verify_calls: "{{ proxmox_template_verify_state.results[1].content | b64decode | trim | split('\n') }}"
       ansible.builtin.assert:
         that:
-          - proxmox_template_verify_image.stat.exists
+          # the pristine download stays, in a directory that is not storage
+          # content, and the customised copy is gone once the template is built
+          - proxmox_template_verify_images.results[0].stat.exists
+          - not proxmox_template_verify_images.results[1].stat.exists
+          - proxmox_template_verify_image_dir.stat.isdir
+          - proxmox_template_verify_image_dir.stat.mode == '0755'
           - "'ubuntu-24.04-cloudinit' in proxmox_template_verify_conf"
           - "'virtio,bridge=vmbr1' in proxmox_template_verify_conf"
-          - "'local-zfs:0,import-from=/var/lib/vz/template/iso/claude-on-proxmox-9000.img,discard=on' in proxmox_template_verify_conf"
+          - "'local-zfs:0,import-from=/var/lib/vz/claude-on-proxmox/claude-on-proxmox-9000.img,discard=on' in proxmox_template_verify_conf"
           - "'local-zfs:cloudinit' in proxmox_template_verify_conf"
           - "'order=scsi0' in proxmox_template_verify_conf"
           - "'template: 1' in proxmox_template_verify_conf"
           # converge + idempotence = two `qm config` probes, but only one build
-          - proxmox_template_verify_calls | select('search', '^create ') | list | length == 1
-          - proxmox_template_verify_calls | select('search', '^template ') | list | length == 1
+          - proxmox_template_verify_calls | select('search', '^create 9000 ') | list | length == 1
+          - proxmox_template_verify_calls | select('search', '^template 9000') | list | length == 1
+          # side_effect: the sibling node's VMID was probed, never created
+          - proxmox_template_verify_calls | select('search', '^config 8000') | list | length == 1
+          # side_effect: 9002 and 9003 were created by the scenario itself, once
+          # each, and the role touched neither - no second create, set or
+          # template reached any VMID
+          - proxmox_template_verify_calls | select('search', '^create ') | list | length == 3
+          - proxmox_template_verify_calls | select('search', '^create 9002 ') | list | length == 1
+          - proxmox_template_verify_calls | select('search', '^create 9003 ') | list | length == 1
+          - proxmox_template_verify_calls | select('search', '^set ') | list | length == 2
+          - proxmox_template_verify_calls | select('search', '^template ') | list | length == 2
+          - proxmox_template_verify_calls | select('search', '^template 9003') | list | length == 1
         quiet: true
 
     - name: Read the fake virt-customize log
@@ -48,6 +72,7 @@
           # unique machine-ids, so clones do not collide on one DHCP lease
           - "'--truncate /etc/machine-id' in proxmox_template_verify_customize"
           # the pristine download is left alone so get_url stays idempotent
-          - "'--add /var/lib/vz/template/iso/claude-on-proxmox-9000.img' in proxmox_template_verify_customize"
+          - "'--add /var/lib/vz/claude-on-proxmox/claude-on-proxmox-9000.img' in proxmox_template_verify_customize"
+          # one build in all: the refusals in side_effect never got this far
           - proxmox_template_verify_customize.splitlines() | length == 1
         quiet: true
