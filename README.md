@@ -575,7 +575,9 @@ make code VM_NAME=alpha PROJECT=discord-music-bot   # just that project, in a wi
 
 `make code` looks the VM up on Proxmox, rewrites its alias in case the lease moved, checks over SSH
 that the folder it is about to open is there, installs the Remote - SSH extension if VS Code does
-not have it, and runs `code --remote ssh-remote+alpha /home/dev/projects`.
+not have it, and opens the folder with `code --remote ssh-remote+alpha`, by way of a workspace file
+that also starts `claude` in a terminal of the window ([A Claude session in the
+window](#a-claude-session-in-the-window)).
 
 `PROJECT` opens one folder of `~/projects` instead: the repository's name, as `github_projects`
 cloned it. A window rooted at the project is what most editor features expect - the source control
@@ -664,6 +666,63 @@ VS Code is on, copy the managed file and the key there; a VS Code on Windows rea
 (`\\wsl.localhost\<distro>\home\<you>\.ssh\claude-on-proxmox.conf`) and keep the key readable from
 Windows.
 
+#### A Claude session in the window
+
+`make code` does not stop at the window. VS Code is handed a small workspace file that names the
+folder and holds one task, so once the window has connected a terminal named **Claude** opens in it
+running `claude` in the folder: `make deploy` and then `make code` end in a Claude session in the
+repository. On a VM that has not signed in to Claude yet, the terminal runs `claude auth login`
+first. The sign-in page opens in the browser on your machine - VS Code Server sends every URL a
+terminal opens there - and if the page shows a code, paste it into the terminal.
+
+The first time, VS Code waits for two answers that are yours to give:
+
+1. **Trust.** VS Code opens a folder it has not seen before in Restricted Mode, which starts nothing
+   on its own, terminals and tasks included. Choose *Manage* on the banner, then *Trust*, and the
+   terminal starts. Trusting the whole projects directory - the window `make code VM_NAME=alpha`
+   opens, without `PROJECT` - trusts every project on alpha and every workspace file `make code`
+   writes there, at once. VS Code keeps trust by alias (`ssh-remote+alpha`), so a lease that moves
+   does not undo it, but a VM you rename is trusted again.
+2. **Automatic tasks.** VS Code then asks whether to allow automatic tasks in trusted workspaces:
+   choose *Allow*, which writes `"task.allowAutomaticTasks": "on"` to your VS Code user settings, so
+   it is asked once. If you closed the question instead, *Tasks: Manage Automatic Tasks* in the
+   Command Palette offers the same choice.
+
+After that, `make code` opens straight into Claude. It reads your VS Code user settings, and never
+writes them, to say which of the two to expect; with `task.allowAutomaticTasks` set to `"off"` it
+says the terminal will not start, and *Tasks: Run Task*, *Claude* starts it by hand. Neither answer
+is given for you, on purpose: Restricted Mode and the automatic-tasks question are VS Code's guard
+against code that runs because a folder was opened, and this project does not turn trust off, allow
+terminals in untrusted windows, or write the setting.
+
+**What it writes.** The workspace files live on the VM beside the repositories, never in one, so
+`git status` stays clean: `~/projects/.claude-on-proxmox/projects.code-workspace` for the whole
+directory and `~/projects/.claude-on-proxmox/project/<repo>.code-workspace` for one project, hidden
+from the explorer. They are the one thing `make code` writes on the VM, and only when they would
+change. A repository named `.claude-on-proxmox` would land on the same path; `make code` refuses to
+open that name, and `github_projects` would clone it there, so leave it out of `github_projects`.
+
+**After the first sign-in.** Remote Control ([Reaching a VM from your phone](#reaching-a-vm-from-your-phone))
+waits for exactly that login, and the terminal says so:
+`make configure VM_NAME=alpha TAGS=claude_code` starts it. A VM configured with an API key is
+already signed in, and goes straight to `claude`.
+
+**Every window is a session.** Two `make code` windows on one project are two Claude sessions in one
+working tree. Opening a window that is already open focuses it rather than starting a second
+session. Quitting `claude` ends the task; *Tasks: Run Task*, *Claude* starts another.
+
+**Switches.** `vscode_claude_terminal: false` opens the bare folder, as before, and writes nothing
+on the VM; for one run, `make code VM_NAME=alpha ANSIBLE_ARGS="-e vscode_claude_terminal=false"`.
+`vscode_workspaces_dir` moves the workspace files (outside the projects directory, each window is
+trusted on its own), and `vscode_user_settings_file` points the check at another settings file,
+such as VS Code Insiders' `~/Library/Application Support/Code - Insiders/User/settings.json`.
+
+If you would rather have the Claude Code extension's panel than a terminal, install
+`anthropic.claude-code` on the VM's side, by hand or through `remote.SSH.defaultExtensions`; it uses
+the VM's `claude` and the same login. Written against VS Code 1.140: both gates changed in 2026
+(automatic tasks off by default since 1.109, Restricted Mode with only a banner since 1.126), so a
+VS Code that changes them again may ask differently.
+
 ### Run logs
 
 Every `make` target that runs Ansible keeps a copy of the whole run in `.logs/`, one file per run,
@@ -706,7 +765,7 @@ before this project tagged its VMs, see
 ```bash
 make lint                 # yamllint + ansible-lint (production profile) + ruff
 make syntax               # --syntax-check of every playbook against your inventory/
-make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the managed SSH config, Makefile guards (no network)
+make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the managed SSH config, the Claude terminal, Makefile guards (no network)
 make molecule             # Molecule (Docker) test of every role, incl. idempotence
 make molecule-integration # playbooks/configure.yml end to end in a container
 make molecule-provision   # provision.yml + discover.yml against a fake Proxmox API
@@ -729,7 +788,10 @@ so the tests are deterministic:
 - The `provision` scenario runs `provision.yml` exactly as `make provision VM_NAME=alpha,beta` does,
   then rediscovers both VMs from their tag in a separate stage - proving a later `make configure` can
   find them without anything stored locally. It ends with `make ssh-config` and `make code` against
-  the fake fleet, with a stand-in `code` that records what it was asked.
+  the fake fleet, with a stand-in `code` that records what it was asked, and checks the workspace
+  file `make code` writes, what it says for each `task.allowAutomaticTasks`, and that it writes
+  nothing with `vscode_claude_terminal: false`. The script the Claude terminal runs is run by
+  `tests/unit/test_code_session.py` against a stand-in `claude`.
 - `vscode_server` proves the role refuses an sshd that a drop-in sorted before its own has turned
   forwarding off on, naming the file, and removes what it wrote when switched off.
 - Everything the playbooks write on the controller - the SSH aliases - goes into Molecule's ephemeral
@@ -792,12 +854,13 @@ playbooks/tasks/            cluster_vms.yml (the shared cluster listing), vm_add
                             imported by the playbooks above
 filter_plugins/             net_mac, guest_ipv4, guest_address and guest_addresses, for reading guest agent
                             output; proxmox_access_denied, for telling a refused token from a slow boot;
-                            ssh_config_blocks and ssh_config_prune, for the managed SSH config
+                            ssh_config_blocks and ssh_config_prune, for the managed SSH config (proxmox.py);
+                            vscode_setting, for reading VS Code's settings without writing them (vscode.py)
 inventory/                  controller.yml, hosts.yml.example, group_vars/all/{defaults.yml,local.yml.example,vault.yml.example}
 roles/                      one role per concern, each with defaults, meta/argument_specs, molecule/
 roles/github_projects/library/github_repos.py   custom module
 tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, the managed SSH
-                            config, Makefile guards
+                            config, the Claude terminal, Makefile guards
 tests/molecule/             shared fakes for Molecule scenarios
 molecule/configure/         integration scenario for the full configure playbook
 molecule/provision/         end-to-end scenario for provisioning + discovery
