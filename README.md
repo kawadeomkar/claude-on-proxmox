@@ -217,7 +217,7 @@ beta                        9002  running   192.0.2.52
 gamma                       9003  stopped   -
 
 3 VMs tagged "claude-on-proxmox".
-VS Code: make code VM_NAME=<name>, or code --remote ssh-remote+<name> /home/dev/projects
+VS Code: make code VM_NAME=<name> [PROJECT=<repo>], or code --remote ssh-remote+<name> /home/dev/projects
 (make ssh-config refreshes the aliases).
 No address for gamma: the guest agent has not reported one.
 Those VMs may be stopped, still booting, built without the agent, or on a node that is down.
@@ -245,7 +245,7 @@ Given, `VM_NAME` narrows every target to those names. Left out, what it means de
 |--------|-------------------|
 | `make deploy`, `make provision`, `make destroy` | `claude-on-proxmox-default` |
 | `make configure`, `make check`, `make list`, `make claude-login`, `make ssh-config` | every VM this project created (tagged `claude-on-proxmox`) |
-| `make code` | refused: it opens one VM, so it needs one name |
+| `make code` | refused: it opens one VM, so it needs one name; `PROJECT` optionally narrows it to one project |
 
 So a bare `make deploy` creates and configures `claude-on-proxmox-default` and leaves any other VMs
 alone, while a bare `make configure` re-applies the configuration to all of them.
@@ -571,11 +571,27 @@ address DHCP gave the VM, and that is what this project keeps for you.
 make deploy VM_NAME=alpha          # as before; the run ends with
 #   alpha: ssh alpha   |   code --remote ssh-remote+alpha /home/dev/projects
 make code VM_NAME=alpha            # later: refresh the alias from Proxmox, then open the VM in VS Code
+make code VM_NAME=alpha PROJECT=discord-music-bot   # just that project, in a window of its own
 ```
 
-`make code` looks the VM up on Proxmox, rewrites its alias in case the lease moved, installs the
-Remote - SSH extension if VS Code does not have it, and runs `code --remote ssh-remote+alpha
-/home/dev/projects`. The first connection installs VS Code Server on the VM and takes about a minute;
+`make code` looks the VM up on Proxmox, rewrites its alias in case the lease moved, checks over SSH
+that the folder it is about to open is there, installs the Remote - SSH extension if VS Code does
+not have it, and runs `code --remote ssh-remote+alpha /home/dev/projects`.
+
+`PROJECT` opens one folder of `~/projects` instead: the repository's name, as `github_projects`
+cloned it. A window rooted at the project is what most editor features expect - the source control
+view, search, a debugger's launch configuration and the Claude Code extension all start from the
+repository, where with `~/projects` open they see every repository at once. Names are checked
+before anything runs: a GitHub repository name is letters, digits, `.`, `-` and `_`, so a `/`, a
+`..` or a quote is refused. A name that is not there is reported with what is, and a name that
+differs only in case gets a suggestion, because folder names on the VM are case-sensitive:
+
+```
+There is no project named parkbnb in /home/dev/projects on alpha. Did you mean ParkBnb? Folder names are case-sensitive.
+```
+
+The same check catches a VM that was never configured, which has no `~/projects` yet; the message
+says to run `make configure` first. The first connection installs VS Code Server on the VM and takes about a minute;
 the VM downloads it from Microsoft over HTTPS, so it needs that route out. You can also pick `alpha`
 in the extension's host picker (*Remote-SSH: Connect to Host…*) and open any folder.
 

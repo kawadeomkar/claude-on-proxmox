@@ -409,14 +409,30 @@ one at random.
 
 ### 4.9 `playbooks/code.yml`
 
-`make code VM_NAME=alpha`: the alias step for one VM, then the one step no other playbook does,
-launching the editor. It refuses anything but one name; finds the VM by tag, naming an untagged VM of
-that name as not this project's; asks its agent for the address, failing with the `make list` hint
-for a stopped VM; refreshes the block, carrying over the workspace a configure run recorded or
-assuming `/home/<user>/projects` and saying so; then checks `code` is on `PATH`, installs
-`ms-vscode-remote.remote-ssh` if `code --list-extensions` lacks it, and runs
-`code --remote ssh-remote+alpha <workspace>`. It never configures the VM: cloud-init placed the key,
-so a VM that was provisioned but never configured still opens.
+`make code VM_NAME=alpha [PROJECT=discord-music-bot]`: the alias step for one VM, then the one step
+no other playbook does, launching the editor. In order:
+
+1. Refuse anything but one name, and a `vm_project` (`PROJECT`) that is not one GitHub repository
+   name - up to 100 ASCII letters, digits, `.`, `-`, `_`, and not `.` or `..` - so nothing outside
+   the projects directory, or nested in it, can be opened. The Makefile's `project-name-check` refuses
+   the same before a shell sees the value; this is for a direct `ansible-playbook` run.
+2. Find the VM by tag, naming an untagged VM of that name as not this project's; ask its agent for
+   the address, failing with the `make list` hint for a stopped VM.
+3. Refresh the alias, carrying over the workspace a configure run recorded, or assuming
+   `/home/<user>/projects` and saying so.
+4. Look for the folder to open - the workspace, or `<workspace>/<project>` - with `stat`, delegated
+   over SSH to the VM, added with `add_host` the way configure reaches it (Ansible's own connection
+   and `accept-new`, not the user's ssh config). Read-only. Unreachable, missing and not-a-folder
+   are each their own message: a missing project lists what the workspace holds and, for a name
+   that differs only in case, suggests the right one, since the VM's paths are case-sensitive; a
+   missing workspace means a VM never configured, and says to run `make configure`. This is the one
+   step that connects to the VM, and it is there so a typo is said in the terminal, not in a VS Code
+   window opened on a folder that does not exist.
+5. Check `code` is on `PATH`, install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
+   lacks it, and run `code --remote ssh-remote+alpha <folder>`.
+
+Nothing on the VM is changed: cloud-init placed the key, so a VM that was provisioned but never
+configured still opens once it has a workspace.
 
 ## 5. Roles
 
@@ -1081,16 +1097,18 @@ Three tiers. **No test ever talks to a real Proxmox, a real GitHub, or a real hy
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 256 tests — 58 for the filters, 26 for `github_repos`, 81 for the
+pytest over `tests/unit/`: 284 tests — 58 for the filters, 26 for `github_repos`, 81 for the
 tracked-file guard, 35 that run `claude_login.yml` and `remote_control.yml` against canned logins and
 stand-ins, 2 that `--tags claude_code` still runs discovery and the alias play, 18 that run
 `tasks/ssh_config.yml` for real against a temporary home and resolve the result with `ssh -G` (and
 guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, and that no
-playbook sets the task file's inputs as facts), and 36 that run
+playbook sets the task file's inputs as facts), and 64 that run
 `make` against the Makefile's guards and its run logs: `vm-name-check` accepts DNS-like names and refuses whitespace,
 quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision` and
 `ssh-config` pass `VM_NAME` as one JSON extra-var and run the check before the playbook; `deploy`
-refuses `TAGS`; `code` refuses no name and several; every playbook target exports its own
+refuses `TAGS`; `code` refuses no name and several, and passes `PROJECT` as its own JSON extra-var,
+which no other target reads, after `project-name-check` has accepted real repository names and
+refused `/`, `.`, `..`, quotes, shell syntax, a newline, non-ASCII and more than 100 characters; every playbook target exports its own
 `ANSIBLE_LOG_PATH` (never named after `VM_NAME`) into a `0700` directory, `LOG_DIR=` turns it off,
 old run logs are pruned and nothing else is, and `logs-clean` deletes only run logs.
 
@@ -1178,9 +1196,15 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   reports it, and refreshes `alpha` with the workspace the destroy fixtures recorded; with `VM_NAME`
   it prunes nothing.
 - `code.yml` against a stand-in `code` on `PATH` that records its arguments and lists what a file
-  says: the first run installs the Remote - SSH extension and opens `/home/dev/projects` on `alpha`,
-  the second only opens; `stranger`, `nonic` (no address), a missing name and two names are each
-  refused with their own message, and the user ssh config in the ephemeral directory never exists.
+  says. The VM side is read with Ansible's local connection, against a projects directory made in
+  the ephemeral directory and recorded as `alpha`'s workspace, because the fake fleet's addresses
+  answer nothing: the first run installs the Remote - SSH extension and opens the workspace, the
+  second only opens it, the third opens `discord-music-bot` in it. Refused, each with its own
+  message and nothing opened: `stranger`, `nonic` (no address), a missing name, two names, a
+  mistyped project (the projects are listed, the file among them is not), `parkbnb` for `ParkBnb`
+  (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file, `../etc` and `..` (the playbook's own check), a VM with no projects directory,
+  an empty one, and one case over real SSH to an address nothing answers on. The user ssh config in
+  the ephemeral directory never exists.
 
 ### 11.4 The fakes — `tests/molecule/`
 

@@ -958,6 +958,14 @@
     verify_ssh_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/claude-on-proxmox.conf"
     verify_ssh_playbook: "{{ playbook_dir }}/../../playbooks/ssh_config.yml"
     verify_code_playbook: "{{ playbook_dir }}/../../playbooks/code.yml"
+    # alpha is reached with the local connection (see the tasks); the
+    # interpreter is this run's own, which has every module code.yml needs.
+    verify_code_vars:
+      vm_name: alpha
+      ansible_connection: local
+      ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    verify_code_env: >-
+      {{ verify_playbook_env | combine({'PATH': verify_ssh_dir ~ '/bin:' ~ lookup('ansible.builtin.env', 'PATH')}) }}
   tasks:
     - name: Remove the twins
       ansible.builtin.uri:
@@ -1112,6 +1120,35 @@
           [ "$1" = "--list-extensions" ] && cat "{{ verify_ssh_dir }}/extensions" 2>/dev/null
           exit 0
 
+    # The VM side of `make code` - is the folder there, and what else is - is
+    # read over SSH, and the fake fleet's addresses are documentation ones
+    # that nothing answers on. So these runs reach "alpha" with Ansible's own
+    # local connection instead, against a projects directory made here, and
+    # alpha's alias records that directory as its workspace, as configure
+    # would. One case below keeps real SSH, to see that failure said.
+    - name: Make a projects directory for alpha to hold
+      ansible.builtin.file:
+        path: "{{ verify_ssh_dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [projects/discord-music-bot, projects/ParkBnb, empty]
+
+    - name: Put a file among the projects
+      ansible.builtin.copy:
+        dest: "{{ verify_ssh_dir }}/projects/notes.txt"
+        content: "not a project\n"
+        mode: "0644"
+
+    - name: Record that directory as alpha's workspace
+      ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_config_file: "{{ verify_ssh_file }}"
+        claude_ssh_user_config: "{{ verify_ssh_dir }}/ssh_config"
+        claude_ssh_config_include: false
+        claude_ssh_vms:
+          - {name: alpha, address: 192.0.2.51, user: dev, vmid: 9001, workspace: "{{ verify_ssh_dir }}/projects"}
+
     - name: Let the stand-in report no extensions
       ansible.builtin.copy:
         dest: "{{ verify_ssh_dir }}/extensions"
@@ -1120,8 +1157,8 @@
 
     - name: Run make code's playbook for alpha with the extension missing
       ansible.builtin.command:
-        argv: "{{ verify_playbook_cmd + ['--extra-vars', '{\"vm_name\": \"alpha\"}', verify_code_playbook] }}"
-      environment: "{{ verify_playbook_env | combine({'PATH': verify_ssh_dir ~ '/bin:' ~ lookup('ansible.builtin.env', 'PATH')}) }}"
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_code_vars | to_json, verify_code_playbook] }}"
+      environment: "{{ verify_code_env }}"
       register: verify_code_first
       changed_when: false
       failed_when: false
@@ -1132,70 +1169,120 @@
         mode: "0644"
         content: "ms-vscode-remote.remote-ssh\n"
 
-    - name: Run make code's playbook for alpha with the extension present
+    - name: Run make code's playbook for alpha with the extension present, then for one project
       ansible.builtin.command:
-        argv: "{{ verify_playbook_cmd + ['--extra-vars', '{\"vm_name\": \"alpha\"}', verify_code_playbook] }}"
-      environment: "{{ verify_playbook_env | combine({'PATH': verify_ssh_dir ~ '/bin:' ~ lookup('ansible.builtin.env', 'PATH')}) }}"
-      register: verify_code_second
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_code_vars | combine(item) | to_json, verify_code_playbook] }}"
+      environment: "{{ verify_code_env }}"
+      register: verify_code_next
       changed_when: false
       failed_when: false
+      loop:
+        - {}
+        - {vm_project: discord-music-bot}
 
     - name: Read what the stand-in VS Code was asked
       ansible.builtin.set_fact:
         verify_code_log: "{{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() }}"
-        verify_code_runs:
-          results: ["{{ verify_code_first }}", "{{ verify_code_second }}"]
 
-    - name: Assert make code installed the extension once and opened the recorded workspace
+    - name: Assert make code installed the extension once and opened the workspace, then the project
+      vars:
+        verify_ws: "{{ verify_ssh_dir }}/projects"
+        verify_runs: "{{ [verify_code_first] + verify_code_next.results }}"
       ansible.builtin.assert:
         that:
-          - verify_code_first.rc == 0
-          - verify_code_second.rc == 0
+          - verify_runs | map(attribute='rc') | list == [0, 0, 0]
           - verify_code_log == ['--list-extensions',
                                 '--install-extension ms-vscode-remote.remote-ssh',
-                                '--remote ssh-remote+alpha /home/dev/projects',
+                                '--remote ssh-remote+alpha ' ~ verify_ws,
                                 '--list-extensions',
-                                '--remote ssh-remote+alpha /home/dev/projects']
-          - verify_code_runs.results[0].stdout is search('VS Code is opening /home/dev/projects on alpha \(192\.0\.2\.51\)\.')
-          - verify_code_runs.results[0].stdout is not search('assumed')
+                                '--remote ssh-remote+alpha ' ~ verify_ws,
+                                '--list-extensions',
+                                '--remote ssh-remote+alpha ' ~ verify_ws ~ '/discord-music-bot']
+          - verify_runs[0].stdout is search(('VS Code is opening ' ~ verify_ws ~ ' on alpha (192.0.2.51).') | regex_escape)
+          - verify_runs[2].stdout is search(('VS Code is opening ' ~ verify_ws ~ '/discord-music-bot on alpha') | regex_escape)
+          - verify_runs[0].stdout is not search('assumed')
         fail_msg: >-
-          make code exited {{ verify_code_runs.results | map(attribute='rc') | list }} and asked for
-          {{ verify_code_log }}:
-          {{ verify_code_runs.results | map(attribute='stdout') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+          make code exited {{ verify_runs | map(attribute='rc') | list }} and asked for {{ verify_code_log }}:
+          {{ verify_runs | map(attribute='stdout') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
         quiet: true
 
+    # The local connection reads this machine's filesystem, and macOS's
+    # ignores case, where the VM's ext4 does not: there, projects/parkbnb is
+    # ParkBnb, so the case-mismatch refusal is only tested where it means
+    # something (Linux, and so CI). It was checked by hand against a real VM.
+    - name: Find out whether this machine's filesystem ignores case
+      ansible.builtin.stat:
+        path: "{{ verify_ssh_dir }}/projects/PARKBNB"
+      register: verify_fs_folds_case
+
     - name: Run make code's playbook where it must refuse
+      vars:
+        verify_code_cases:
+          - {expect: 'A VM of that name exists but is not tagged', vars: {vm_name: stranger}}
+          - {expect: 'nonic is running and reported\s+no address', vars: {vm_name: nonic}}
+          - {expect: 'No VM named missing is tagged', vars: {vm_name: missing}}
+          - {expect: 'VS Code opens one VM at a time', vars: {vm_name: "alpha,solo"}}
+          # Mistyped: what is there is listed, in a case-blind order, and the
+          # file among it is not.
+          - expect: 'There is no project named nope in \S+/projects on alpha\.\s+The projects there are: discord-music-bot, ParkBnb\.'
+            vars: {vm_project: nope}
+          # Right name, wrong case: Linux paths are case-sensitive.
+          - expect: 'Did you mean ParkBnb\? Folder names are case-sensitive\.'
+            vars: {vm_project: parkbnb}
+            case_sensitive_only: true
+          - expect: '/projects/notes\.txt on alpha is a file, not a project folder\.'
+            vars: {vm_project: notes.txt}
+          # The Makefile refuses these first; the playbook must too.
+          - expect: 'PROJECT names one project folder on the VM.*"\.\./etc" is not one'
+            vars: {vm_project: ../etc}
+          - expect: 'PROJECT names one project folder on the VM.*"\.\." is not one'
+            vars: {vm_project: ".."}
+          # A VM never configured: no projects directory at all.
+          - expect: '\S+/nowhere does not exist on solo yet'
+            vars: {vm_name: solo, vm_projects_dir: "{{ verify_ssh_dir }}/nowhere"}
+          - expect: '\S+/empty on alpha holds no projects yet'
+            vars: {vm_project: anything, vm_projects_dir: "{{ verify_ssh_dir }}/empty"}
+          # Real SSH to an address nothing answers on. Not ansible_connection:
+          # ssh, which as an extra var would reach the controller's own tasks
+          # too; without the local override, only the VM is reached over SSH.
+          - expect: 'alpha is running at 192\.0\.2\.51, but SSH to it as\s+dev failed'
+            base: {vm_name: alpha}
+            vars: {ansible_ssh_timeout: 3}
       ansible.builtin.command:
-        argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_case.vars | to_json, verify_code_playbook] }}"
-      environment: "{{ verify_playbook_env | combine({'PATH': verify_ssh_dir ~ '/bin:' ~ lookup('ansible.builtin.env', 'PATH')}) }}"
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', (verify_case.base | default(verify_code_vars)) | combine(verify_case.vars) | to_json,
+                verify_code_playbook] }}
+      environment: "{{ verify_code_env }}"
       register: verify_code_refusals
       changed_when: false
       failed_when: false
-      loop:
-        - {expect: 'A VM of that name exists but is not tagged', vars: {vm_name: stranger}}
-        - {expect: 'nonic is running and reported\s+no address', vars: {vm_name: nonic}}
-        - {expect: 'No VM named missing is tagged', vars: {vm_name: missing}}
-        - {expect: 'VS Code opens one VM at a time', vars: {vm_name: "alpha,solo"}}
+      loop: >-
+        {{ verify_code_cases | rejectattr('case_sensitive_only', 'defined') | list
+           if verify_fs_folds_case.stat.exists else verify_code_cases }}
       loop_control:
         loop_var: verify_case
         label: "{{ verify_case.vars }}"
 
-    - name: Assert each refusal said why, and opened nothing
-      vars:
-        verify_code_outputs: >-
-          {{ verify_code_refusals.results | map(attribute='stdout')
-             | zip(verify_code_refusals.results | map(attribute='stderr')) | map('join', '\n') | list }}
+    - name: Assert each refusal said why
       ansible.builtin.assert:
         that:
-          - verify_code_refusals.results | map(attribute='rc') | reject('equalto', 0) | list | length == 4
-          - verify_code_outputs[0] is search(verify_code_refusals.results[0].verify_case.expect)
-          - verify_code_outputs[1] is search(verify_code_refusals.results[1].verify_case.expect)
-          - verify_code_outputs[2] is search(verify_code_refusals.results[2].verify_case.expect)
-          - verify_code_outputs[3] is search(verify_code_refusals.results[3].verify_case.expect)
-          - lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() | length == 5
+          - verify_code_refusal.rc != 0
+          - (verify_code_refusal.stdout ~ '\n' ~ verify_code_refusal.stderr) is search(verify_code_refusal.verify_case.expect)
         fail_msg: >-
-          make code exited {{ verify_code_refusals.results | map(attribute='rc') | list }}:
-          {{ verify_code_outputs | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+          make code {{ verify_code_refusal.verify_case.vars }} exited {{ verify_code_refusal.rc }}, expected
+          /{{ verify_code_refusal.verify_case.expect }}/:
+          {{ (verify_code_refusal.stdout ~ '\n' ~ verify_code_refusal.stderr) | regex_findall('\[ERROR\]: [^\n]*') }}
+        quiet: true
+      loop: "{{ verify_code_refusals.results }}"
+      loop_control:
+        loop_var: verify_code_refusal
+        label: "{{ verify_code_refusal.verify_case.vars }}"
+
+    - name: Assert none of the refusals opened anything
+      ansible.builtin.assert:
+        that: lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() | length == 7
+        fail_msg: "VS Code was asked for more than the three runs above: {{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log') }}"
         quiet: true
 
     - name: Stat the user ssh config that must never have been written

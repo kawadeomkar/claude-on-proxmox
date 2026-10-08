@@ -26,6 +26,13 @@ VM_NAME    ?=
 # name check in the proxmox_vm role, which explains the problem. vm-name-check
 # has already rejected anything that could break out of this quoting.
 VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
+# One project to open with `make code`, rather than the whole projects
+# directory: the name of a folder in it, which is the repository's name when
+# github_projects cloned it. Only `make code` reads it. Passed as JSON for the
+# same reason as VM_NAME, after project-name-check has refused anything that
+# could break out of the quoting or out of the projects directory.
+PROJECT    ?=
+PROJECT_ARGS := $(if $(PROJECT),-e '{"vm_project": "$(PROJECT)"}',)
 # Re-run part of configure: make configure VM_NAME=alpha TAGS=claude_code
 # Role tags are common, vscode_server, dev_tools, claude_code and
 # github_projects. Discovery is
@@ -137,6 +144,21 @@ vm-name-check:
 	  *[!A-Za-z0-9._,-]*) echo "error: VM_NAME may contain only letters, digits and . _ - , (got: [$$VM_NAME_CHECK])"; exit 1;; \
 	esac
 
+# PROJECT is one folder name, and a GitHub repository name is at most 100
+# ASCII letters, digits, ".", "-" and "_". So no "/" - nothing outside the
+# projects directory, nothing nested - and not "." or "..", which name the
+# directory itself or its parent. Read the same way as VM_NAME, for the same
+# reasons. Empty (no PROJECT) is fine: the whole directory opens.
+.PHONY: project-name-check
+project-name-check: export PROJECT_CHECK := $(value PROJECT)
+project-name-check: export LC_ALL := C
+project-name-check:
+	@case "$$PROJECT_CHECK" in \
+	  *[!A-Za-z0-9._-]*) echo "error: PROJECT may contain only letters, digits and . _ - (got: [$$PROJECT_CHECK])"; exit 1;; \
+	  .|..) echo "error: PROJECT names one project folder, not [$$PROJECT_CHECK]"; exit 1;; \
+	esac
+	@test "$${#PROJECT_CHECK}" -le 100 || { echo "error: PROJECT is longer than the 100 characters a repository name can be"; exit 1; }
+
 # Make LOG_DIR, private, and prune it. Only files named the way this Makefile
 # names them, and only in LOG_DIR: an ANSIBLE_LOG_PATH of your own pointing
 # elsewhere is used as it is and its directory never touched. Read through the
@@ -220,10 +242,10 @@ ssh-config: vault-check vm-name-check log-setup ## Refresh the SSH alias of ever
 # vm-name-check, so the value is never interpolated into the recipe.
 .PHONY: code
 code: export VM_NAME_CHECK := $(value VM_NAME)
-code: vault-check vm-name-check log-setup ## Refresh one VM's SSH alias and open its workspace in VS Code: make code VM_NAME=alpha
+code: vault-check vm-name-check project-name-check log-setup ## Open a VM in VS Code, or one project on it: make code VM_NAME=alpha [PROJECT=<repo>]
 	@test -n "$$VM_NAME_CHECK" || { echo "error: code opens one VM: make code VM_NAME=<name>"; exit 1; }
 	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(PROJECT_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
 
 # ------------------------------------------------------------ quality -----
 .PHONY: lint

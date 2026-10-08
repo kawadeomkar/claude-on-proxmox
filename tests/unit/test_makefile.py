@@ -284,3 +284,68 @@ def test_logs_lists_and_logs_clean_deletes_only_run_logs(tmp_path: Path) -> None
     assert "Deleted 1 run log(s)" in cleaned.stdout
     assert not run_log.exists()
     assert notes.exists()
+
+
+# PROJECT: one folder name, as GitHub names a repository - up to 100 ASCII
+# letters, digits, ".", "-" and "_". Only `make code` reads it.
+PROJECT_ERROR = "PROJECT may contain only letters, digits and . _ -"
+
+
+@pytest.mark.parametrize(
+    "value", ["discord-music-bot", "ParkBnb", "djangoTest", "omkar_kv", "site.github.io", "x", "a" * 100, ""]
+)
+def test_project_name_check_accepts_repository_names(value: str) -> None:
+    result = _make("project-name-check", f"PROJECT={value}")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        pytest.param("../etc", PROJECT_ERROR, id="parent-path"),
+        pytest.param("org/repo", PROJECT_ERROR, id="slash"),
+        pytest.param("/etc", PROJECT_ERROR, id="absolute"),
+        pytest.param(".", "PROJECT names one project folder, not [.]", id="dot"),
+        pytest.param("..", "PROJECT names one project folder, not [..]", id="dot-dot"),
+        pytest.param("a b", PROJECT_ERROR, id="space"),
+        pytest.param("a'b", PROJECT_ERROR, id="single-quote"),
+        pytest.param('a"b', PROJECT_ERROR, id="double-quote"),
+        pytest.param("a;b", PROJECT_ERROR, id="semicolon"),
+        pytest.param("$(x)", PROJECT_ERROR, id="make-expansion"),
+        pytest.param("a,b", PROJECT_ERROR, id="comma"),
+        pytest.param("repo\nother", PROJECT_ERROR, id="newline"),
+        pytest.param("répo", PROJECT_ERROR, id="non-ascii"),
+        pytest.param("a" * 101, "longer than the 100 characters", id="too-long"),
+    ],
+)
+def test_project_name_check_rejects_anything_else(value: str, error: str) -> None:
+    result = _make("project-name-check", f"PROJECT={value}")
+    assert result.returncode != 0, "accepted " + repr(value)
+    assert error in result.stdout + result.stderr
+
+
+def test_code_passes_project_as_its_own_json_extra_var() -> None:
+    result = _make("-n", "code", "VM_NAME=alpha", "PROJECT=discord-music-bot")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert """-e '{"vm_name": "alpha"}' -e '{"vm_project": "discord-music-bot"}'""" in result.stdout
+
+
+def test_code_without_project_passes_none() -> None:
+    result = _make("-n", "code", "VM_NAME=alpha")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "vm_project" not in result.stdout
+
+
+def test_code_refuses_a_bad_project_before_the_playbook(tmp_path: Path) -> None:
+    result = _make("code", "VM_NAME=alpha", "PROJECT=../etc", *_safe_overrides(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert PROJECT_ERROR in output
+    assert "ansible-playbook" not in output
+
+
+@pytest.mark.parametrize("target", ["deploy", "configure", "list"])
+def test_only_code_reads_project(target: str) -> None:
+    result = _make("-n", target, "VM_NAME=alpha", "PROJECT=discord-music-bot")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "vm_project" not in result.stdout

@@ -25,7 +25,7 @@ make claude-login    # print the one Remote Control step Ansible cannot do
 make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push an API key
 make list            # read-only: the VMs this project created, and their addresses
 make ssh-config      # refresh the SSH alias per VM on this machine; fleet-wide also prunes
-make code VM_NAME=alpha   # refresh one alias from Proxmox, then open the VM in VS Code
+make code VM_NAME=alpha [PROJECT=repo]   # refresh one alias, check the folder over SSH, open it in VS Code
 make logs            # the run logs, newest first: read these instead of asking for terminal output
 ```
 
@@ -195,6 +195,11 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   `claude_ssh_vms: <the prune list>` and `state: absent`. The fact won, and the prune removed the
   aliases it had just refreshed. Pass the task file's inputs only through `vars:` on the import;
   `tests/unit/test_ssh_config.py` fails if a playbook sets them as facts.
+- **Every value typed on the `make` line is checked before a shell sees it.** `VM_NAME` and
+  `PROJECT` each have a `*-name-check` target that reads the value through the environment with
+  `$(value ...)` and refuses anything outside its character set with a shell `case`, then the value
+  travels to Ansible as JSON. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused
+  as well, and `code.yml` repeats the check for a direct `ansible-playbook` run.
 - **There is deliberately no `LIMIT`.** `--limit` is applied before the plays run, and these VMs
   only enter the inventory once discovery has found them, so it could never match.
 - **`gitleaks --staged` scans the index**, which equals HEAD in a CI checkout — i.e. nothing. CI
