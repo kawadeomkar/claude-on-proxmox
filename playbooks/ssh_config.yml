@@ -1,0 +1,140 @@
+---
+# Bring the SSH aliases on this machine back in step with the fleet.
+#
+#   make ssh-config                   -> every VM tagged claude-on-proxmox
+#   make ssh-config VM_NAME=alpha     -> only alpha, and nothing pruned
+#
+# `make deploy` and `make configure` keep an alias for each VM they touch
+# (playbooks/tasks/ssh_config.yml); this is for everything in between: a
+# lease that moved, a VM deleted in the Proxmox UI, a second machine. It
+# refreshes every tagged VM that has an address and, fleet-wide, prunes the
+# aliases of VMs that are gone. Pruning only ever removes alias blocks from
+# the managed file, never VMs, and a block is only ever written for a tagged
+# VM, so a VM you run outside this project cannot be touched by it. What it
+# will not prune: a name an untagged VM still carries (not this project's to
+# reason about; reported), and anything while a tagged VM is listed without
+# a name, which is what a node that is down looks like (held, and reported).
+# Read-only against Proxmox.
+- name: Refresh the SSH aliases from Proxmox
+  hosts: localhost
+  gather_facts: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ proxmox_api_module_defaults }}"
+
+  tasks:
+    - name: Stop when the managed file is switched off
+      ansible.builtin.debug:
+        msg: claude_ssh_config is false, so this project keeps no SSH aliases on this machine. Nothing to do.
+      when: not claude_ssh_config | default(true) | bool
+
+    - name: End the play when the managed file is switched off
+      ansible.builtin.meta: end_play
+      when: not claude_ssh_config | default(true) | bool
+
+    - name: List every VM in the cluster
+      ansible.builtin.import_tasks: tasks/cluster_vms.yml
+
+    # claude_vm_requested (group_vars/all) keeps the VMs carrying this
+    # project's tag, narrowed to VM_NAME when given, exactly as discovery and
+    # the listing do. A tagged VM without a name (a node that is down) cannot
+    # be asked for an address and cannot be an alias; it matters below.
+    - name: Narrow to the requested VMs
+      ansible.builtin.set_fact:
+        claude_ssh_requested: "{{ claude_vm_requested | selectattr('name', 'defined') | list }}"
+
+    # Proxmox permits duplicate names, and an alias is a name: two tagged VMs
+    # called twin would leave `ssh twin` pointing at whichever was written
+    # last. Refused, as discovery refuses to configure them.
+    - name: Refuse to continue with duplicated VM names
+      vars:
+        claude_ssh_dupes: >-
+          {{ claude_ssh_requested | map(attribute='name') | list
+             | community.general.counter | dict2items
+             | selectattr('value', 'gt', 1) | map(attribute='key') | sort | list }}
+      ansible.builtin.assert:
+        that: claude_ssh_dupes | length == 0
+        fail_msg: >-
+          More than one VM is tagged {{ claude_vm_tag }} and named
+          {{ claude_ssh_dupes | join(', ') }}, so an alias of that name would point at one of them
+          at random. Rename or remove the duplicates first.
+        quiet: true
+
+    - name: Ask each running VM's guest agent for an address
+      ansible.builtin.import_tasks: tasks/vm_addresses.yml
+      vars:
+        claude_vm_query: "{{ claude_ssh_requested }}"
+
+    # What is kept already, for the prune below.
+    - name: Read the aliases already kept
+      ansible.builtin.set_fact:
+        claude_ssh_existing: >-
+          {{ (lookup('ansible.builtin.file', claude_ssh_config_file, errors='ignore') or '') | ssh_config_blocks }}
+
+    # The workspace is only shown in the connect line, and this play never
+    # connects to a VM to read its home: vm_projects_dir when it is set, and
+    # otherwise the line says `make code`, which does.
+    - name: Build an alias for each VM that can be reached
+      ansible.builtin.set_fact:
+        claude_ssh_refresh: >-
+          {{ claude_ssh_refresh | default([]) + [{
+               'name': claude_ssh_vm.name,
+               'address': claude_ssh_vm.address,
+               'user': vm_user,
+               'workspace': vm_projects_dir | default('', true),
+             }] }}
+      loop: "{{ claude_vm_addressed }}"
+      loop_control:
+        loop_var: claude_ssh_vm
+        label: "{{ claude_ssh_vm.name }}"
+      when: claude_ssh_vm.address | length > 0 or claude_ssh_host_domain | default('') | length > 0
+
+    - name: Write the aliases
+      ansible.builtin.import_tasks: tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_vms: "{{ claude_ssh_refresh | default([]) }}"
+      when: claude_ssh_refresh | default([]) | length > 0
+
+    - name: Decide what to prune
+      ansible.builtin.set_fact:
+        claude_ssh_prune: >-
+          {{ claude_ssh_existing | ssh_config_prune(claude_vm_all.json.data, claude_vm_tag_pattern)
+             if vm_name is not defined else {'prune': [], 'held': [], 'untagged': [], 'nameless': []} }}
+
+    - name: Remove the aliases of VMs that are gone
+      ansible.builtin.import_tasks: tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: absent
+        claude_ssh_vms: "{{ claude_ssh_prune.prune | map('community.general.dict_kv', 'name') | list }}"
+      when: claude_ssh_prune.prune | length > 0
+
+    - name: Report what was kept, pruned and left alone
+      vars:
+        claude_ssh_unaddressed: >-
+          {{ claude_vm_addressed | selectattr('address', 'equalto', '')
+             | map(attribute='name') | list
+             if claude_ssh_host_domain | default('') | length == 0 else [] }}
+      ansible.builtin.debug:
+        msg: |-
+          {% set claude_ssh_count = claude_ssh_refresh | default([]) | length %}
+          {{ claude_ssh_count }} alias{{ 'es' if claude_ssh_count != 1 else '' }} refreshed in {{ claude_ssh_config_file }}.
+          {% if claude_ssh_unaddressed | length > 0 %}
+          Not refreshed, no address (stopped, booting, or without the agent): {{ claude_ssh_unaddressed | join(', ') }}.
+          An alias they had is kept as it was.
+          {% endif %}
+          {% if claude_ssh_prune.prune | length > 0 %}
+          Pruned, no VM of that name exists any more: {{ claude_ssh_prune.prune | join(', ') }}.
+          {% endif %}
+          {% if claude_ssh_prune.untagged | length > 0 %}
+          Left alone: {{ claude_ssh_prune.untagged | join(', ') }}. A VM of that name exists but is not tagged
+          "{{ claude_vm_tag }}", so it is not this project's. Remove the alias by hand if it is stale.
+          {% endif %}
+          {% if claude_ssh_prune.nameless | length > 0 %}
+          Nothing pruned: VMID {{ claude_ssh_prune.nameless | join(', ') }} is tagged "{{ claude_vm_tag }}" but listed
+          without a name, which is what a node that is down looks like, and
+          {{ claude_ssh_prune.held | join(', ') if claude_ssh_prune.held else 'any alias' }} could be its.
+          Run this again once every node reports.
+          {% endif %}
+          {% if vm_name is defined %}
+          Only the VMs named in VM_NAME were refreshed; a fleet-wide `make ssh-config` also prunes.
+          {% endif %}

@@ -280,3 +280,113 @@ class TestGuestAddresses:
     def test_rejects_non_lists(self):
         with pytest.raises(AnsibleFilterError, match="three lists"):
             guest_addresses({"vmid": 1}, [], [])
+
+
+ssh_config_blocks = proxmox_filters.ssh_config_blocks
+ssh_config_prune = proxmox_filters.ssh_config_prune
+
+MANAGED = """# BEGIN claude-on-proxmox: alpha
+Host alpha
+    HostName 192.0.2.51
+    User dev
+# END claude-on-proxmox: alpha
+# BEGIN claude-on-proxmox: beta
+Host beta
+    HostName 192.0.2.52
+    User dev
+# END claude-on-proxmox: beta
+# BEGIN claude-on-proxmox: old
+Host old
+    HostName 192.0.2.9
+    User dev
+# END claude-on-proxmox: old
+"""
+
+TAG = r"(?i)(^|[;,])claude\-on\-proxmox([;,]|$)"
+
+
+def vm(name, vmid, tags="claude-on-proxmox", kind="qemu"):
+    entry = {"vmid": vmid, "type": kind, "node": "pve"}
+    if name is not None:
+        entry["name"] = name
+    if tags is not None:
+        entry["tags"] = tags
+    return entry
+
+
+class TestSshConfigBlocks:
+    def test_reads_every_block_in_file_order(self):
+        assert ssh_config_blocks(MANAGED) == [{"name": "alpha"}, {"name": "beta"}, {"name": "old"}]
+
+    def test_empty_for_nothing(self):
+        assert ssh_config_blocks("") == []
+        assert ssh_config_blocks(None) == []
+        assert ssh_config_blocks("Host *\n    ServerAliveInterval 30\n") == []
+
+    def test_a_block_whose_end_marker_names_another_vm_is_not_a_block(self):
+        text = "# BEGIN claude-on-proxmox: alpha\nHost alpha\n# END claude-on-proxmox: beta\n"
+        assert ssh_config_blocks(text) == []
+
+    def test_rejects_non_text(self):
+        with pytest.raises(AnsibleFilterError, match="file's text"):
+            ssh_config_blocks(["Host alpha"])
+
+
+class TestSshConfigPrune:
+    BLOCKS = [{"name": "alpha"}, {"name": "beta"}, {"name": "old"}]
+
+    def test_prunes_only_a_name_no_vm_carries(self):
+        fleet = [vm("alpha", 9001), vm("beta", 9002), vm("ubuntu-24.04-cloudinit", 9000, tags=None)]
+        assert ssh_config_prune(self.BLOCKS, fleet, TAG) == {
+            "prune": ["old"],
+            "held": [],
+            "untagged": [],
+            "nameless": [],
+        }
+
+    def test_keeps_a_block_whose_vm_was_rebuilt_under_a_new_vmid(self):
+        # The present pass rewrites it for the new VM; nothing to prune.
+        fleet = [vm("alpha", 9044), vm("beta", 9002), vm("old", 9050)]
+        assert ssh_config_prune(self.BLOCKS, fleet, TAG)["prune"] == []
+
+    def test_leaves_alone_and_reports_a_name_an_untagged_vm_carries(self):
+        fleet = [vm("alpha", 9001), vm("beta", 9002), vm("old", 9010, tags="claude;ansible")]
+        result = ssh_config_prune(self.BLOCKS, fleet, TAG)
+        assert result["prune"] == []
+        assert result["untagged"] == ["old"]
+        # The same for a VM with no tags key at all, as Proxmox lists one.
+        fleet = [vm("alpha", 9001), vm("beta", 9002), vm("old", 9010, tags=None)]
+        assert ssh_config_prune(self.BLOCKS, fleet, TAG)["untagged"] == ["old"]
+
+    def test_a_lookalike_tag_does_not_make_a_vm_tagged(self):
+        fleet = [vm("alpha", 9001), vm("beta", 9002), vm("old", 9011, tags="claude-on-proxmox-staging")]
+        result = ssh_config_prune(self.BLOCKS, fleet, TAG)
+        assert result["untagged"] == ["old"]
+        assert result["prune"] == []
+
+    def test_holds_everything_while_a_tagged_vm_is_listed_without_a_name(self):
+        # A node that is down: Proxmox drops the name but keeps the tags.
+        fleet = [vm("alpha", 9001), vm("beta", 9002), vm(None, 8001)]
+        result = ssh_config_prune(self.BLOCKS, fleet, TAG)
+        assert result == {"prune": [], "held": ["old"], "untagged": [], "nameless": ["8001"]}
+
+    def test_a_nameless_untagged_vm_holds_nothing(self):
+        fleet = [vm("alpha", 9001), vm("beta", 9002), vm(None, 8000, tags=None)]
+        assert ssh_config_prune(self.BLOCKS, fleet, TAG)["prune"] == ["old"]
+
+    def test_a_container_does_not_count_as_a_vm(self):
+        # A tagged lxc named "old" is not what the alias was written for.
+        fleet = [vm("alpha", 9001), vm("beta", 9002), vm("old", 9003, kind="lxc")]
+        assert ssh_config_prune(self.BLOCKS, fleet, TAG)["prune"] == ["old"]
+
+    def test_tags_in_either_separator_count(self):
+        fleet = [
+            vm("alpha", 9001, tags="ansible,claude-on-proxmox"),
+            vm("beta", 9002, tags="ansible;claude-on-proxmox"),
+        ]
+        result = ssh_config_prune(self.BLOCKS[:2], fleet, TAG)
+        assert result == {"prune": [], "held": [], "untagged": [], "nameless": []}
+
+    def test_rejects_non_lists(self):
+        with pytest.raises(AnsibleFilterError, match="as lists"):
+            ssh_config_prune({"name": "alpha"}, [], TAG)

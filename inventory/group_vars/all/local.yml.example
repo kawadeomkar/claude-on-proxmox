@@ -50,6 +50,29 @@
 # dev_tools_install_gh: true
 # dev_tools_node_major: 22
 
+# VS Code over SSH (README, "Using VS Code on the VM"). On the VM: an sshd
+# drop-in with forwarding and keepalives, checked against what sshd runs
+# with, and a higher inotify limit. Set false to remove both files.
+# vscode_remote: true
+# On this machine: an SSH alias per VM in ~/.ssh/claude-on-proxmox.conf,
+# included from the top of ~/.ssh/config, so `ssh alpha` and VS Code's host
+# picker follow the VM's address. Set false to keep out of ~/.ssh entirely;
+# claude_ssh_config_include: false writes the file but not the Include line.
+# claude_ssh_config: true
+# claude_ssh_config_include: true
+# Point aliases at <name>.<domain> instead of the address, on a network whose
+# DNS resolves VM names; then a lease that moves no longer matters.
+# claude_ssh_host_domain: lan
+# claude_ssh_identity_file: ~/.ssh/id_ed25519
+# Off on purpose: the VM user is root-equivalent and runs Claude Code, and
+# agent forwarding hands them every key in your agent.
+# claude_ssh_forward_agent: false
+# claude_ssh_options:
+#   ServerAliveInterval: "30"
+# Where the code lives on the VM: cloned into, opened by Remote Control, and
+# what VS Code is pointed at. Empty means ~/projects of the VM user.
+# vm_projects_dir: ""
+
 # Claude Code release channel: stable, latest, or an exact version like 2.1.0
 # claude_code_version: stable
 # Extra user-level settings merged into ~/.claude/settings.json

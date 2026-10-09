@@ -41,9 +41,73 @@
   roles:
     - role: common
       tags: [common]
+    # After common, which owns the user and sshd: this adds a second sshd
+    # drop-in and checks the result against what sshd runs with.
+    - role: vscode_server
+      tags: [vscode_server]
     - role: dev_tools
       tags: [dev_tools]
     - role: claude_code
       tags: [claude_code]
     - role: github_projects
       tags: [github_projects]
+
+  # Where VS Code is pointed: vm_projects_dir, or ~/projects of the VM user,
+  # resolved here on the VM where the home directory is known rather than
+  # guessed on the controller (Ansible's own user_dir fact is the connecting
+  # user's home, which under Molecule is root's). Last, so a host that failed
+  # a role never records one and never gets an alias. Tagged "always" like
+  # discovery, so a `make configure TAGS=...` still refreshes the alias.
+  post_tasks:
+    - name: Look up the VM user's home directory
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ vm_user }}"
+      tags: [always]
+
+    - name: Record where the code lives, for the alias play below
+      ansible.builtin.set_fact:
+        claude_vm_workspace: >-
+          {{ vm_projects_dir | default('', true) or ansible_facts.getent_passwd[vm_user][4] ~ '/projects' }}
+      tags: [always]
+
+# One SSH alias per VM on this machine, so `ssh alpha` and the host picker of
+# VS Code's Remote - SSH extension follow the address DHCP gave it (README,
+# "Using VS Code on the VM"). A localhost play after the roles: the alias must
+# not exist before the VM is ready, and the play above has just recorded
+# where each VM's code lives. Only a VM that finished that play gets one.
+# Tagged "always" like discovery, so `make configure TAGS=...` still
+# refreshes an address that moved; `claude_ssh_config: false` keeps this
+# project out of ~/.ssh entirely.
+- name: Keep an SSH alias for each configured VM
+  hosts: localhost
+  gather_facts: false
+  tags: [always]
+
+  tasks:
+    - name: Collect each configured VM's name, address and workspace
+      vars:
+        claude_ssh_vm_vars: "{{ hostvars[claude_ssh_host] }}"
+      ansible.builtin.set_fact:
+        claude_ssh_configured: >-
+          {{ claude_ssh_configured | default([]) + [{
+               'name': claude_ssh_host,
+               'address': claude_ssh_vm_vars.ansible_host | default(claude_ssh_host),
+               'user': claude_ssh_vm_vars.vm_user | default(vm_user),
+               'workspace': claude_ssh_vm_vars.claude_vm_workspace,
+             }] }}
+      loop: "{{ groups['claude_vms'] | default([]) }}"
+      loop_control:
+        loop_var: claude_ssh_host
+      when:
+        - claude_ssh_config | default(true) | bool
+        - hostvars[claude_ssh_host].claude_vm_workspace is defined
+
+    - name: Write the aliases
+      ansible.builtin.import_tasks: tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_vms: "{{ claude_ssh_configured | default([]) }}"
+      when:
+        - claude_ssh_config | default(true) | bool
+        - claude_ssh_configured | default([]) | length > 0
