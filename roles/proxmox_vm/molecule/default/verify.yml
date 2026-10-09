@@ -171,6 +171,9 @@
           - proxmox_vm_verify_shutdowns | length == 1
           - proxmox_vm_verify_shutdowns[0].params.forceStop == '1'
           - proxmox_vm_verify_deletes | length == 1
+          # A disk that carries the VMID but is no longer in the config goes
+          # with the VM; the module sends the API's hyphenated spelling.
+          - proxmox_vm_verify_deletes[0].params['destroy-unreferenced-disks'] | default('') | string == '1'
           # 9001 is the VM converge created; it must be gone from the fake's
           # persisted state. This asserted '200' until now - a VMID that had
           # been renumbered away, so it was true before the delete ever ran.

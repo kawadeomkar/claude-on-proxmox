@@ -99,6 +99,13 @@ A default LVM install gives you two: `local` for ISOs and templates, and `local-
 **An install on ZFS has no `local-lvm`** — it has `local-zfs` instead. Check *Datacenter → Storage*,
 and if yours is not `local-lvm`, set `proxmox_storage` in `local.yml`.
 
+The same setting is how a storage of this project's own is handed to it: an admin who provisions a
+dedicated pool for these VMs (on a NAS, say) gives you its id, you put it in `proxmox_storage` and
+grant it to the token with the `pveum aclmod /storage/<id>` line in step 5. The id is the whole
+interface. This project only ever names a storage and puts the template and every clone on it; it
+never creates or changes one, never asks for more than `Datastore.AllocateSpace` and
+`Datastore.Audit` on that one path, and needs the `images` content type and nothing else.
+
 See [Storage](https://pve.proxmox.com/wiki/Storage).
 
 ### 5. Root SSH for the template build, and an API token for everything else
@@ -773,7 +780,8 @@ make destroy                      # claude-on-proxmox-default
 make destroy VM_NAME=alpha,beta   # several at once; they are deleted in parallel
 ```
 
-It prompts for confirmation, then stops each VM and deletes it with its disks. Without a terminal to
+It prompts for confirmation, then stops each VM and deletes it with its disks, a disk that still
+carries its VMID but that its configuration no longer lists included. Without a terminal to
 prompt on the answer is "no", so nothing is deleted. Every name must be a VM this project created:
 a name that does not exist, or a VM without the `claude-on-proxmox` tag, is refused before anything
 is deleted, and the error lists the VMs it did create. A template is never deleted. For a VM created
