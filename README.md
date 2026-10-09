@@ -568,7 +568,7 @@ address DHCP gave the VM, and that is what this project keeps for you.
 
 ```bash
 make deploy VM_NAME=alpha          # as before; the run ends with
-#   alpha: ssh alpha   |   code --remote ssh-remote+alpha /home/dev/projects
+#   alpha: ssh alpha   |   make code VM_NAME=alpha   (opens /home/dev/projects)
 make code VM_NAME=alpha            # later: refresh the alias from Proxmox, then open the VM in VS Code
 make code VM_NAME=alpha PROJECT=discord-music-bot   # just that project, in a window of its own
 ```
@@ -683,24 +683,32 @@ The first time, VS Code waits for two answers that are yours to give:
    opens, without `PROJECT` - trusts every project on alpha and every workspace file `make code`
    writes there, at once. VS Code keeps trust by alias (`ssh-remote+alpha`), so a lease that moves
    does not undo it, but a VM you rename is trusted again.
-2. **Automatic tasks.** VS Code then asks whether to allow automatic tasks in trusted workspaces:
-   choose *Allow*, which writes `"task.allowAutomaticTasks": "on"` to your VS Code user settings, so
-   it is asked once. If you closed the question instead, *Tasks: Manage Automatic Tasks* in the
-   Command Palette offers the same choice.
+2. **Automatic tasks.** VS Code then asks whether to allow automatic tasks in trusted workspaces,
+   once per workspace, in a notification at the bottom right that goes quiet after a moment (the
+   bell keeps it): choose *Allow*, which writes `"task.allowAutomaticTasks": "on"` to your VS Code
+   user settings, so it is asked once. If you missed the question, *Tasks: Manage Automatic Tasks*
+   in the Command Palette offers the same choice.
+3. **Claude's own check.** In the terminal, `claude` asks once per repository whether to trust the
+   folder it was started in, as it does anywhere; the whole projects directory is pre-trusted on a
+   VM with Remote Control, one project's clone is not.
 
 After that, `make code` opens straight into Claude. It reads your VS Code user settings, and never
-writes them, to say which of the two to expect; with `task.allowAutomaticTasks` set to `"off"` it
-says the terminal will not start, and *Tasks: Run Task*, *Claude* starts it by hand. Neither answer
-is given for you, on purpose: Restricted Mode and the automatic-tasks question are VS Code's guard
-against code that runs because a folder was opened, and this project does not turn trust off, allow
-terminals in untrusted windows, or write the setting.
+writes them, to say which of the two VS Code answers to expect; with `task.allowAutomaticTasks` set
+to `"off"` it says the terminal will not start, and *Tasks: Run Task*, *Claude* starts it by hand in
+a trusted window. The settings are looked for where VS Code keeps them - `VSCODE_APPDATA` or
+`XDG_CONFIG_HOME` if set, else stock VS Code's place on macOS and Linux, the snap's and the
+flatpak's - and a file not found, not readable or not parsable is said as such rather than taken
+for "not answered yet". Neither answer is given for you, on purpose: Restricted Mode and the
+automatic-tasks question are VS Code's guard against code that runs because a folder was opened,
+and this project does not turn trust off, allow terminals in untrusted windows, or write the setting.
 
 **What it writes.** The workspace files live on the VM beside the repositories, never in one, so
-`git status` stays clean: `~/projects/.claude-on-proxmox/projects.code-workspace` for the whole
-directory and `~/projects/.claude-on-proxmox/project/<repo>.code-workspace` for one project, hidden
-from the explorer. They are the one thing `make code` writes on the VM, and only when they would
-change. A repository named `.claude-on-proxmox` would land on the same path; `make code` refuses to
-open that name, and `github_projects` would clone it there, so leave it out of `github_projects`.
+`git status` stays clean: `~/projects/.claude-on-proxmox/<directory's name>.code-workspace` for the
+whole directory (`projects.code-workspace` with the default `vm_projects_dir`) and
+`~/projects/.claude-on-proxmox/project/<repo>.code-workspace` for one project, hidden from the
+explorer. They are the one thing `make code` writes on the VM, and only when they would change. A
+repository named `.claude-on-proxmox` would land on the same path; `make code` refuses to open that
+name, and `github_projects` would clone it there, so leave it out of `github_projects`.
 
 **After the first sign-in.** Remote Control ([Reaching a VM from your phone](#reaching-a-vm-from-your-phone))
 waits for exactly that login, and the terminal says so:
@@ -717,15 +725,23 @@ session; two windows on one project would share the conversation. Quitting `clau
 
 **Switches.** `vscode_claude_terminal: false` opens the bare folder, as before, and writes nothing
 on the VM; for one run, `make code VM_NAME=alpha ANSIBLE_ARGS="-e vscode_claude_terminal=false"`.
-`vscode_workspaces_dir` moves the workspace files (outside the projects directory, each window is
-trusted on its own), and `vscode_user_settings_file` points the check at another settings file,
-such as VS Code Insiders' `~/Library/Application Support/Code - Insiders/User/settings.json`.
+`vscode_workspaces_dir` moves the workspace files to an absolute path of its own on the VM (outside
+the projects directory, each window is trusted on its own; a directory that exists keeps its
+mode). Switching off, or moving them, leaves the files written before where they were: harmless,
+and `rm -r ~/projects/.claude-on-proxmox` on the VM removes them. `vscode_user_settings_file`
+points the check at another settings file: VS Code Insiders'
+`~/Library/Application Support/Code - Insiders/User/settings.json`, VSCodium's
+`~/.config/VSCodium/User/settings.json`, or, for a VS Code on Windows driven from WSL,
+`/mnt/c/Users/<you>/AppData/Roaming/Code/User/settings.json`.
 
-If you would rather have the Claude Code extension's panel than a terminal, install
-`anthropic.claude-code` on the VM's side, by hand or through `remote.SSH.defaultExtensions`; it uses
-the VM's `claude` and the same login. Written against VS Code 1.140: both gates changed in 2026
-(automatic tasks off by default since 1.109, Restricted Mode with only a banner since 1.126), so a
-VS Code that changes them again may ask differently.
+**The Claude Code extension.** The first `claude` in the terminal installs `anthropic.claude-code`
+on the VM's side of the connection by itself, as it does in any VS Code terminal, and the install
+may ask for a reload (which the task survives, as above). It uses the VM's `claude` and the same
+login; its panel is there if you would rather have it than the terminal. To keep it out, set
+`autoInstallIdeExtension` to `false` in `claude_code_settings`. Written against VS Code 1.140,
+unchanged in 1.141: both gates changed in 2026 (automatic tasks off by default since 1.109,
+Restricted Mode with only a banner since 1.126), so a VS Code that changes them again may ask
+differently.
 
 ### Run logs
 

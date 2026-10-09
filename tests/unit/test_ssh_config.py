@@ -139,7 +139,7 @@ def test_present_writes_one_block_per_vm_and_the_include_at_the_top(tmp_path: Pa
     assert resolved["hostname"] == "192.0.2.51"
     assert resolved["user"] == "dev"
     assert resolved["serveraliveinterval"] == "30"
-    assert "alpha: ssh alpha   |   code --remote ssh-remote+alpha /home/dev/projects" in result.stdout
+    assert "alpha: ssh alpha   |   make code VM_NAME=alpha   (opens /home/dev/projects)" in result.stdout
 
 
 def test_a_second_run_changes_nothing(tmp_path: Path) -> None:
