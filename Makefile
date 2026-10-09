@@ -23,7 +23,8 @@ VM_NAME    ?=
 # Passed as JSON, not key=value. Ansible's key=value parser splits extra-vars
 # on whitespace, so VM_NAME="alpha beta" silently became just alpha and only
 # half the fleet was created. As JSON the value arrives whole and reaches the
-# name check in the proxmox_vm role, which explains the problem.
+# name check in the proxmox_vm role, which explains the problem. vm-name-check
+# has already rejected anything that could break out of this quoting.
 VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
 # Re-run part of configure: make configure VM_NAME=alpha TAGS=claude_code
 # Role tags are common, dev_tools, claude_code, github_projects. Discovery is
@@ -36,6 +37,11 @@ TAGS       ?=
 TAG_ARGS   := $(if $(TAGS),--tags $(TAGS),)
 ROLES      := common dev_tools claude_code github_projects proxmox_template proxmox_vm
 MOLECULE_ROLES ?= $(ROLES)
+# Hooks make lint already runs. make test skips them in pre-commit so the
+# production-profile ansible-lint and ruff do not run a second time (ruff-format
+# even rewriting files). This is exactly what CI passes as SKIP; gitleaks is in
+# it because CI scans the tree and the pushed commits separately.
+PRE_COMMIT_SKIP := yamllint,ansible-lint,ruff-check,ruff-format,gitleaks
 
 .DEFAULT_GOAL := help
 
@@ -76,11 +82,32 @@ vault-encrypt: ## Encrypt inventory/group_vars/all/vault.yml with ansible-vault
 vault-edit: ## Edit the encrypted vault file
 	$(BIN)/ansible-vault edit $(VAULT_ARGS) $(VAULT_FILE)
 
-# Refuse to run playbooks while vault.yml is still plaintext.
+# Refuse to run playbooks without vault.yml, or while it is still plaintext.
+# A missing file used to fall through to the playbook, which died inside the
+# cluster listing with "'vault_proxmox_api_token_secret' is undefined".
 .PHONY: vault-check
 vault-check:
-	@test ! -f $(VAULT_FILE) || head -c 14 $(VAULT_FILE) | grep -q '^\$$ANSIBLE_VAULT' \
+	@test -f $(VAULT_FILE) || { echo "error: $(VAULT_FILE) missing. Run: make init"; exit 1; }
+	@head -c 14 $(VAULT_FILE) | grep -q '^\$$ANSIBLE_VAULT' \
 	  || { echo "error: $(VAULT_FILE) is not encrypted. Run: make vault-encrypt"; exit 1; }
+
+# VM names are DNS-like, with commas separating a list. A quote, space or shell
+# metacharacter in VM_NAME would break out of the single-quoted JSON in VM_ARGS
+# or reshape it, so refuse those before any VM target runs. Read through the
+# environment, never interpolated into the recipe, so the check is safe for the
+# very values it rejects. $(value) hands the check what was typed rather than
+# make's expansion of it, so VM_NAME='$(x)' is refused instead of silently
+# becoming empty. A shell `case` rather than grep: grep tests line by line, so
+# VM_NAME='alpha<newline>beta' passed and YAML folded it to `alpha beta`.
+# LC_ALL=C so A-Z is ASCII; in a UTF-8 locale the range can collate accented
+# letters. Empty (no VM_NAME) is fine.
+.PHONY: vm-name-check
+vm-name-check: export VM_NAME_CHECK := $(value VM_NAME)
+vm-name-check: export LC_ALL := C
+vm-name-check:
+	@case "$$VM_NAME_CHECK" in \
+	  *[!A-Za-z0-9._,-]*) echo "error: VM_NAME may contain only letters, digits and . _ - , (got: [$$VM_NAME_CHECK])"; exit 1;; \
+	esac
 
 # ------------------------------------------------------------ run books ----
 .PHONY: template
@@ -88,35 +115,35 @@ template: vault-check ## Build the cloud-init VM template on the Proxmox host (o
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/template.yml
 
 .PHONY: provision
-provision: vault-check ## Create and start VM(s): make provision VM_NAME=alpha,beta (default: claude-on-proxmox-default)
+provision: vault-check vm-name-check ## Create and start VM(s): make provision VM_NAME=alpha,beta (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
 
 .PHONY: list
-list: vault-check ## Show the VMs this project created, and their addresses (all, unless VM_NAME)
+list: vault-check vm-name-check ## Show the VMs this project created, and their addresses (all, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/list.yml
 
 .PHONY: configure
-configure: vault-check ## Configure the VM(s): packages, tools, Claude Code, GitHub projects (every tagged VM, unless VM_NAME)
+configure: vault-check vm-name-check ## Configure the VM(s): packages, tools, Claude Code, GitHub projects (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: deploy
-deploy: vault-check ## Everything: template (if missing) + provision + configure, for VM_NAME only (default: claude-on-proxmox-default)
+deploy: vault-check vm-name-check ## Everything: template (if missing) + provision + configure, for VM_NAME only (default: claude-on-proxmox-default)
 	@test -z "$(TAGS)" || { echo "error: deploy takes no TAGS. To re-run one role: make configure VM_NAME=<name> TAGS=$(TAGS)"; exit 1; }
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) deploy.yml
 
 .PHONY: destroy
-destroy: vault-check ## Stop and delete the VM(s) on Proxmox (default: claude-on-proxmox-default)
+destroy: vault-check vm-name-check ## Stop and delete the VM(s) on Proxmox (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 
 # Remote Control needs a claude.ai login on the VM, and Anthropic supports no
 # non-interactive way to create one, so this prints the command rather than
 # pretending to do it.
 .PHONY: claude-login
-claude-login: vault-check ## Show how to sign Claude Code in on the VM(s), for Remote Control (every tagged VM, unless VM_NAME)
+claude-login: vault-check vm-name-check ## Show how to sign Claude Code in on the VM(s), for Remote Control (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
 
 .PHONY: check
-check: vault-check ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
+check: vault-check vm-name-check ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
 
 # ------------------------------------------------------------ quality -----
@@ -135,7 +162,7 @@ syntax: ## ansible-playbook --syntax-check on every playbook
 	done
 
 .PHONY: unit
-unit: ## Run Python unit tests for custom modules
+unit: ## pytest over tests/unit/: filters, github_repos module, tracked-file guard, configure tags, Remote Control, Makefile guards
 	$(BIN)/pytest
 
 # Molecule resolves ansible-playbook from PATH (and only appends the venv), so
@@ -164,8 +191,20 @@ molecule-integration: ## Run the full configure playbook against a Docker contai
 molecule-provision: ## Run provision.yml + discover.yml against a fake Proxmox API
 	$(MAKE) molecule-scenario SCENARIO=provision
 
-# Includes pre-commit so that `make test` really is a superset of the CI gate;
-# it was possible to pass everything locally and still be failed by CI.
+# Includes pre-commit so a local pass covers the hooks CI runs too; it was
+# possible to pass everything locally and still be failed by CI. A
+# target-specific export reaches every prerequisite of test, not just
+# pre-commit; only pre-commit reads SKIP, and it skips the hooks lint already
+# ran so they do not run twice. Not a full superset of CI: CI also runs a
+# gitleaks scan over the working tree and the commits a push brings in, which a
+# local `make test` cannot reproduce from the index alone.
+#
+# .NOTPARALLEL: the Molecule scenarios each run a Docker container and build
+# images into one small disk, so `make -j test` must not run them at once.
+# They are serialised on purpose, as they are in the molecule target's loop.
+.NOTPARALLEL:
+.PHONY: test
+test: export SKIP := $(PRE_COMMIT_SKIP)
 test: lint syntax unit pre-commit molecule molecule-integration molecule-provision ## Run everything (the local quality gate)
 
 .PHONY: vagrant-up
