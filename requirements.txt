@@ -7,7 +7,7 @@ molecule-plugins[docker]==26.7.15
 yamllint==1.38.0
 pre-commit==4.5.1
 pytest==9.1.1
-ruff==0.16.6
+ruff==0.16.7
 # Required on the controller by the community.proxmox collection
 proxmoxer==2.3.0
 requests==2.32.5
