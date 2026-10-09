@@ -390,10 +390,14 @@ Host alpha
 
 The user's own `~/.ssh/config` gets exactly one line, `Include <managed file>`, inserted at the top
 (`lineinfile`, `insertbefore: BOF`): an `Include` below a `Host` block is scoped to that block. It is
-added only when no spelling of it is there already - the absolute path, `~/...`, `${HOME}/...`, or
-the bare name for a file in `~/.ssh` - and an existing one is left exactly as written, not rewritten
-into this form. `$HOME/...` is not one of those spellings: ssh expands only `${...}`, so such a line
-includes nothing. The file's mode is set only when this task creates it. The `Include` is never
+added only when the managed file is not reached already, which is ssh's to say rather than a regex's:
+a line in a spelling ssh accepts for the same file - the absolute path, `~/...`, `${HOME}/...`, or
+the bare name for a file in `~/.ssh` - counts only if `ssh -G -F <user config> <first VM>` comes
+back with the `HostName` the managed file just gave that VM. `${HOME}/...` is expanded only from
+OpenSSH 9.9 on (Ubuntu 24.04 ships 9.6, which reads it as a literal path), `$HOME/...` never, and
+an `Include` inside a `Host` block reaches only that host; each of those includes nothing, and the
+line is added above it. An existing line is left exactly as written, not rewritten into this form.
+The file's mode is set only when this task creates it. The `Include` is never
 removed, since that would mean editing the user's file on destroy, and an `Include` of a missing
 file is harmless. Nothing else in `~/.ssh` is ever edited.
 

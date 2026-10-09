@@ -126,13 +126,32 @@
     - claude_ssh_state | default('present') == 'present'
     - claude_ssh_config_include | default(true) | bool
 
+# Whether a line already in the user's config reaches the managed file is
+# ssh's to say, not a regex's: ${HOME}/... is expanded only from OpenSSH 9.9
+# on (Ubuntu 24.04 ships 9.6, which reads it as a literal path and includes
+# nothing), and an Include below a Host block is scoped to that block. So the
+# user's config is handed to the real client, and the first VM's alias must
+# come back with the HostName the managed file just gave it.
+- name: ssh_config | Ask ssh whether the user's config reaches the managed file
+  ansible.builtin.command:
+    argv: [ssh, -G, -F, "{{ claude_ssh_user_config }}", "{{ claude_ssh_vms[0].name }}"]
+  register: claude_ssh_probe
+  changed_when: false
+  failed_when: false
+  when:
+    - claude_ssh_state | default('present') == 'present'
+    - claude_ssh_config_include | default(true) | bool
+    - claude_ssh_vms | length > 0
+    - claude_ssh_user.stat.exists
+
 # At the top, because an Include below a Host block is scoped to that block.
-# Only when it is not there already, in any spelling ssh accepts for the same
-# file - the absolute path, ~/..., ${HOME}/... or, for a file in ~/.ssh, the
-# bare name ssh resolves against it - and then the user's line is left
-# exactly as it is, not rewritten into this one. Not $HOME/...: ssh expands
-# only the ${...} form, so that line includes nothing, and this one is added. The mode is set only on
-# a file this task creates: the user's own keeps its own.
+# Only when the managed file is not reached already: a line in a spelling
+# ssh accepts for the same file - the absolute path, ~/..., ${HOME}/... or,
+# for a file in ~/.ssh, the bare name ssh resolves against it - that ssh
+# itself, asked above, reads. Then the user's line is left exactly as it is,
+# not rewritten into this one. A spelling ssh does not read ($HOME/..., or
+# ${HOME}/... on an older ssh) includes nothing, and this line is added. The
+# mode is set only on a file this task creates: the user's own keeps its own.
 - name: ssh_config | Include the managed file from the user's ssh config
   vars:
     claude_ssh_home: "{{ lookup('ansible.builtin.env', 'HOME') }}"
@@ -145,10 +164,14 @@
             if claude_ssh_rest | length > 0 else [])
          + ([claude_ssh_config_file | basename]
             if (claude_ssh_config_file | dirname) == (claude_ssh_user_config | dirname) else []) }}
+    claude_ssh_first_hostname: >-
+      {{ claude_ssh_vms[0].name ~ '.' ~ claude_ssh_host_domain
+         if claude_ssh_host_domain | default('') | length > 0 else claude_ssh_vms[0].address }}
     claude_ssh_included: >-
       {{ (lookup('ansible.builtin.file', claude_ssh_user_config, errors='ignore') or '')
          is search('^\s*include\s+(' ~ (claude_ssh_spellings | map('regex_escape') | join('|')) ~ ')\s*$',
-                   multiline=True, ignorecase=True) }}
+                   multiline=True, ignorecase=True)
+         and ('hostname ' ~ claude_ssh_first_hostname) in (claude_ssh_probe.stdout_lines | default([])) }}
   ansible.builtin.lineinfile:
     path: "{{ claude_ssh_user_config }}"
     create: true

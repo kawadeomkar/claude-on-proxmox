@@ -77,7 +77,9 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   `ssh -G` and refuses an alias the user's own config already names. A block is only ever written
   for a tagged VM, holds only what ssh reads (no state of this project's - `make code` reads the
   workspace on the VM), and pruning (`ssh_config.yml`) removes blocks, never VMs. The `Include` is
-  added only when no spelling of it is there, and never rewrites or changes the mode of the user's file.
+  added only when `ssh -G` says the user's config does not reach the managed file yet (a `${HOME}`
+  spelling counts on OpenSSH 9.9+ and not before; an `Include` inside a `Host` block never does),
+  and never rewrites or changes the mode of the user's file.
 - **Tests never write into the developer's `~/.ssh`.** The `configure` scenario runs the real
   playbook and its `localhost` is the developer's machine, so every playbook scenario points
   `claude_ssh_config_file` and `claude_ssh_user_config` into `MOLECULE_EPHEMERAL_DIRECTORY` with

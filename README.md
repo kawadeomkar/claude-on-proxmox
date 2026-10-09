@@ -599,7 +599,10 @@ top of `~/.ssh/config` with a single `Include` line. That file and that line are
 project writes in `~/.ssh` besides `known_hosts`; the body of `~/.ssh/config` is never touched, its
 permissions are left as they are, and the `Include` stays once added (an `Include` of a missing file
 is harmless). An `Include` of the same file that you already have, as `~/.ssh/claude-on-proxmox.conf`,
-`${HOME}/...` or the bare name, counts, and is left exactly as you wrote it. The alias is the VM's
+`${HOME}/...` or the bare name, counts if your ssh reads it - the question is put to `ssh -G` rather
+than guessed from the spelling, since `${HOME}/...` is expanded only from OpenSSH 9.9 on (Ubuntu
+24.04 ships 9.6) and an `Include` below a `Host` block is scoped to that block - and your line is
+left exactly as you wrote it either way. The alias is the VM's
 name. If your own `~/.ssh/config` already has a `Host` entry of that name, the run refuses to write
 the alias and names the line: rename the VM, or the entry, since the managed file is included first
 and would otherwise override yours silently. Set `claude_ssh_config: false` to keep the project out

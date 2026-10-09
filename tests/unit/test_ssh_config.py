@@ -283,17 +283,62 @@ def test_an_include_already_there_in_another_spelling_is_not_added_again(tmp_pat
     user_config.write_text(before)
     result = _run(tmp_path, [ALPHA])
     assert result.returncode == 0, result.stdout + result.stderr
-    # Not added again, and the user's own line not rewritten either.
-    assert user_config.read_text() == before
-    # And ssh itself resolves that spelling to the managed file.
-    probe = subprocess.run(
-        [SSH, "-G", "-F", str(user_config), "alpha"],
+    # Not added again when this machine's ssh reads that spelling (${HOME}/...
+    # only from OpenSSH 9.9 on), added above it when it does not; the user's
+    # own line is not rewritten either way.
+    if _ssh_reads_include(tmp_path, line):
+        assert user_config.read_text() == before
+    else:
+        assert user_config.read_text() == f"Include {_paths(tmp_path)['claude_ssh_config_file']}\n{before}"
+    # And either way ssh itself now reaches the managed file through the user's config.
+    assert "hostname 192.0.2.51" in _probe(tmp_path, user_config)
+
+
+def _probe(tmp_path: Path, config: Path) -> str:
+    """What the real ssh client makes of the user's config, with the temporary home."""
+    return subprocess.run(
+        [SSH, "-G", "-F", str(config), "alpha"],
         env={**os.environ, "HOME": str(tmp_path / "home")},
         capture_output=True,
         text=True,
         check=True,
-    )
-    assert "hostname 192.0.2.51" in probe.stdout
+    ).stdout
+
+
+def _ssh_reads_include(tmp_path: Path, line: str) -> bool:
+    """Whether this machine's ssh reaches ~/.ssh/claude-on-proxmox.conf through that Include spelling."""
+    home = tmp_path / "probe-home"
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "claude-on-proxmox.conf").write_text("Host alpha\n    HostName 192.0.2.99\n")
+    config = home / ".ssh" / "config"
+    config.write_text(f"{line}\n")
+    out = subprocess.run(
+        [SSH, "-G", "-F", str(config), "alpha"],
+        env={**os.environ, "HOME": str(home)},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return "hostname 192.0.2.99" in out
+
+
+def test_an_include_below_a_host_block_does_not_count(tmp_path: Path) -> None:
+    # ssh scopes an Include inside a Host block to that block, so this one
+    # reaches the managed file for github.com only; the line is added at the
+    # top, and the user's own kept.
+    user_config = _user_config(tmp_path)
+    user_config.parent.mkdir(parents=True)
+    before = "Host github.com\n    User git\n    Include ~/.ssh/claude-on-proxmox.conf\n"
+    user_config.write_text(before)
+    result = _run(tmp_path, [ALPHA])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert user_config.read_text() == f"Include {_paths(tmp_path)['claude_ssh_config_file']}\n{before}"
+    assert "hostname 192.0.2.51" in _probe(tmp_path, user_config)
+    # And a second run leaves it at that.
+    again = _run(tmp_path, [ALPHA])
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert "changed=0" in again.stdout
+    assert user_config.read_text() == f"Include {_paths(tmp_path)['claude_ssh_config_file']}\n{before}"
 
 
 def test_a_bad_option_fails_validation_and_leaves_the_file_alone(tmp_path: Path) -> None:
