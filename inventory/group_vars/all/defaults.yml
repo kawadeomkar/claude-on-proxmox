@@ -182,11 +182,19 @@ vm_projects_dir: ""
 # Claude session in the window"). Set false to open the bare folder and write
 # nothing on the VM.
 vscode_claude_terminal: true
+# Where those files go on the VM: an absolute path (no "~"), not the projects
+# directory itself. Empty: .claude-on-proxmox in the projects directory. A
+# directory that already exists keeps its mode; files written before a move
+# stay where they were.
 vscode_workspaces_dir: ""
 # The VS Code user settings make code reads, and never writes, to say whether
-# that terminal will start on its own. Empty: where VS Code keeps them on this
-# OS, ~/Library/Application Support/Code/User/settings.json on macOS and
-# ~/.config/Code/User/settings.json on Linux.
+# that terminal will start on its own. Empty: where VS Code itself would keep
+# them - $VSCODE_APPDATA or $XDG_CONFIG_HOME if set, else
+# ~/Library/Application Support/Code/User/settings.json on macOS,
+# ~/.config/Code/User/settings.json on Linux, then the snap's and the
+# flatpak's. Set it for a VS Code that keeps them elsewhere: Insiders,
+# VSCodium (~/.config/VSCodium/User/settings.json), or a VS Code on Windows
+# driven from WSL (/mnt/c/Users/<you>/AppData/Roaming/Code/User/settings.json).
 vscode_user_settings_file: ""
 
 # An SSH alias per VM on this machine, kept in step with the VM's address:

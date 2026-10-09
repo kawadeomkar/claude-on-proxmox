@@ -1175,6 +1175,17 @@
         mode: "0644"
         content: ""
 
+    # The runs below assume no settings file, an empty log and no workspace
+    # files: made so, not assumed, in case an earlier run was cut short.
+    - name: Start make code's runs from nothing
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ verify_code_vars.vscode_user_settings_file }}"
+        - "{{ verify_ssh_dir }}/code.log"
+        - "{{ verify_code_ws_dir }}"
+
     - name: Run make code's playbook for alpha with the extension missing
       ansible.builtin.command:
         argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_code_vars | to_json, verify_code_playbook] }}"
@@ -1222,9 +1233,10 @@
                                 '--remote ssh-remote+alpha ' ~ verify_code_ws_dir ~ '/project/discord-music-bot.code-workspace']
           - verify_runs[0].stdout is search(('VS Code is opening ' ~ verify_ws ~ ' on alpha (192.0.2.51).') | regex_escape)
           - verify_runs[2].stdout is search(('VS Code is opening ' ~ verify_ws ~ '/discord-music-bot on alpha') | regex_escape)
-          # No settings file: VS Code will ask, and trusting this window covers every project.
+          # No settings file: said so, VS Code will ask, and trusting this window covers every project.
           - verify_runs[0].stdout is search('A terminal named Claude then starts claude in it')
           - verify_runs[0].stdout is search('trust the window .*, then choose Allow when VS Code asks about automatic tasks')
+          - verify_runs[0].stdout is search('No VS Code settings file at \S+/vscode/settings.json, so whether you have answered')
           - verify_runs[0].stdout is search(('Trusting this window trusts every project in ' ~ verify_ws ~ '.') | regex_escape)
           - verify_runs[2].stdout is search('Trusting the window of make code VM_NAME=alpha instead trusts every project')
         fail_msg: >-
@@ -1238,33 +1250,37 @@
         verify_ws_project: >-
           {{ lookup('ansible.builtin.file', verify_code_ws_dir ~ '/project/discord-music-bot.code-workspace') | from_json }}
 
+    # The script in the file is the one the unit tests run, byte for byte.
     - name: Assert each workspace opens its folder and starts Claude in it when the window opens
       vars:
         verify_ws: "{{ verify_ssh_dir }}/projects"
         verify_task: "{{ verify_ws_project.tasks.tasks[0] }}"
+        verify_code_script: "{{ (lookup('ansible.builtin.file', verify_code_playbook) | from_yaml)[0].vars.claude_code_terminal_script }}"
       ansible.builtin.assert:
         that:
+          - verify_ws_whole | dict2items | map(attribute='key') | sort == ['folders', 'settings', 'tasks']
+          - verify_ws_project | dict2items | map(attribute='key') | sort == ['folders', 'settings', 'tasks']
           - "verify_ws_whole.folders == [{'path': verify_ws}]"
           - "verify_ws_project.folders == [{'path': verify_ws ~ '/discord-music-bot'}]"
           # The workspace files stay out of the explorer of the window that shows them.
           - "verify_ws_whole.settings == {'files.exclude': {'.claude-on-proxmox': true}}"
           - verify_ws_project.settings == {}
+          - verify_ws_whole.tasks.version == '2.0.0'
+          - verify_ws_project.tasks.version == '2.0.0'
           - verify_ws_whole.tasks.tasks | length == 1
           - verify_ws_whole.tasks.tasks[0].options.cwd == verify_ws
+          - verify_ws_whole.tasks.tasks[0].args == verify_task.args
           - verify_ws_project.tasks.tasks | length == 1
           - verify_task.label == 'Claude'
           - verify_task.type == 'process'
           - verify_task.command == '/bin/bash'
-          - verify_task.args[0] == '-lc'
-          - verify_task.args[1] is search('claude auth status')
-          - verify_task.args[2] == 'make-code'
+          - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4]]
           - verify_task.args[3] is search('make configure VM_NAME=alpha,')
           - verify_task.args[4] is search('make configure VM_NAME=alpha TAGS=claude_code$')
           - verify_task.options.cwd == verify_ws ~ '/discord-music-bot'
           - "verify_task.runOptions == {'runOn': 'folderOpen'}"
-          - verify_task.presentation.reveal == 'always'
-          - verify_task.presentation.focus
-          - verify_task.presentation.panel == 'dedicated'
+          - "verify_task.presentation == {'reveal': 'always', 'focus': true, 'panel': 'dedicated', 'clear': true, 'showReuseMessage': true}"
+          - verify_task.problemMatcher == []
         fail_msg: "make code wrote {{ verify_ws_whole }} and {{ verify_ws_project }}"
         quiet: true
 
@@ -1340,7 +1356,9 @@
       failed_when: false
       loop:
         - {}
-        - {vm_project: ParkBnb, vscode_claude_terminal: "false"}
+        # Switched off, with a workspace directory of its own, so a directory
+        # made by mistake would be seen.
+        - {vm_project: ParkBnb, vscode_claude_terminal: "false", vscode_workspaces_dir: "{{ verify_ssh_dir }}/elsewhere"}
 
     - name: Find the workspace files on the VM
       ansible.builtin.find:
@@ -1348,6 +1366,11 @@
         recurse: true
         hidden: true
       register: verify_ws_files
+
+    - name: Stat the workspace directory the switched-off run was given
+      ansible.builtin.stat:
+        path: "{{ verify_ssh_dir }}/elsewhere"
+      register: verify_ws_elsewhere
 
     - name: Assert make code says what VS Code will do, rewrites nothing, and writes nothing when switched off
       vars:
@@ -1360,6 +1383,15 @@
           - verify_code_allowed.rc == 0
           - verify_off.rc == 0
           - verify_bare.rc == 0
+          # Each of the three runs was handed the workspace file, or the bare folder, that its switches say.
+          - verify_code_log_now | length == 13
+          - verify_code_log_now[7:13] == ['--list-extensions',
+                                          '--remote ssh-remote+alpha ' ~ verify_code_ws_dir ~ '/project/discord-music-bot.code-workspace',
+                                          '--list-extensions',
+                                          '--remote ssh-remote+alpha ' ~ verify_code_ws_dir ~ '/projects.code-workspace',
+                                          '--list-extensions',
+                                          '--remote ssh-remote+alpha ' ~ verify_ws ~ '/ParkBnb']
+          - not verify_ws_elsewhere.stat.exists
           # Allowed: only trust is left to do, and the file is not written again.
           - verify_code_allowed.stdout is search('trust the window \\(the Restricted Mode banner, Manage, Trust\\)\\.')
           - verify_code_allowed.stdout is not search('choose Allow')
@@ -1368,9 +1400,10 @@
           # The user's settings were read, never written.
           - verify_settings_on_after.stat.mtime == verify_settings_on.stat.mtime
           - verify_settings_on_after.stat.checksum == verify_settings_on.stat.checksum
-          # Off: said, with where.
+          # Off: said, with where, and that running it by hand still takes a trusted window.
           - >-
             verify_off.stdout is search('It will not start on its own: task.allowAutomaticTasks is \\W+off\\W+ in \\S+/vscode/settings.json')
+          - verify_off.stdout is search('once you have trusted the window')
           - verify_off.stdout is not search('trust the window')
           # Switched off: the bare folder, as before this feature, and nothing on the VM.
           - verify_code_log_now[-1] == '--remote ssh-remote+alpha ' ~ verify_ws ~ '/ParkBnb'
@@ -1423,6 +1456,12 @@
             vars: {vm_project: .claude-on-proxmox}
           - expect: 'vscode_workspaces_dir is a path on the VM, and must be an absolute one, not \W+relative/files'
             vars: {vscode_workspaces_dir: relative/files}
+          # Not the projects directory: its files would sit among the repositories.
+          - expect: 'vscode_workspaces_dir is the projects directory, \S+/projects, whose folders are the projects'
+            vars: {vscode_workspaces_dir: "{{ verify_ssh_dir }}/projects"}
+          # A "~" is not expanded on the way to VS Code, and is refused by its own name.
+          - expect: 'vm_projects_dir is a path on the VM, and must be an absolute one, not \W+~/projects'
+            vars: {vm_projects_dir: "~/projects"}
           # A VM never configured: no projects directory at all.
           - expect: '\S+/nowhere does not exist on solo yet'
             vars: {vm_name: solo, vm_projects_dir: "{{ verify_ssh_dir }}/nowhere"}
@@ -1432,7 +1471,7 @@
           # ssh, which as an extra var would reach the controller's own tasks
           # too; without the local override, only the VM is reached over SSH.
           - expect: 'alpha is running at 192\.0\.2\.51, but SSH to it as\s+dev failed'
-            base: {vm_name: alpha}
+            base: {vm_name: alpha, vscode_user_settings_file: "{{ verify_code_vars.vscode_user_settings_file }}"}
             vars: {ansible_ssh_timeout: 3}
       ansible.builtin.command:
         argv: >-
@@ -1536,6 +1575,93 @@
           {{ verify_code_log_kept[-2:] }}, left {{ verify_kept.results | map(attribute='stat.exists') | list }}
           with mode {{ verify_kept.results[0].stat.mode | default('none') }}:
           {{ verify_code_kept.stdout | regex_findall('(\\[ERROR\\]: [^\\n]*|VS Code is opening[^\\n]*)') }}
+        quiet: true
+
+    # Settings that do not parse are said as such: VS Code reads past the
+    # error, so an "off" in there still silences the task, and the message
+    # must not promise a question. Last, once the "off" file has been checked.
+    - name: Break the VS Code settings
+      ansible.builtin.copy:
+        dest: "{{ verify_code_vars.vscode_user_settings_file }}"
+        mode: "0644"
+        content: "{\"editor.fontSize\": 14\n \"task.allowAutomaticTasks\": \"off\"}"
+
+    - name: Stat the broken VS Code settings
+      ansible.builtin.stat:
+        path: "{{ verify_code_vars.vscode_user_settings_file }}"
+      register: verify_settings_broken
+
+    - name: Open the whole directory with settings that do not parse, then the files' directory with the terminal off
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_code_vars | combine(item) | to_json, verify_code_playbook] }}"
+      environment: "{{ verify_code_env }}"
+      register: verify_code_last
+      changed_when: false
+      failed_when: false
+      loop:
+        - {}
+        # Only with the terminal on is that directory special.
+        - {vm_project: .claude-on-proxmox, vscode_claude_terminal: "false"}
+
+    - name: Stat the broken VS Code settings after make code read them
+      ansible.builtin.stat:
+        path: "{{ verify_code_vars.vscode_user_settings_file }}"
+      register: verify_settings_broken_after
+
+    - name: Assert broken settings were said and left alone, and the files' directory opens as a folder with the terminal off
+      vars:
+        verify_ws: "{{ verify_ssh_dir }}/projects"
+        verify_broken: "{{ verify_code_last.results[0] }}"
+        verify_code_log_last: "{{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() }}"
+      ansible.builtin.assert:
+        that:
+          - verify_code_last.results | map(attribute='rc') | list == [0, 0]
+          - verify_broken.stdout is search('did not parse, so whether you have answered before is unknown')
+          - verify_broken.stdout is search('then choose Allow when VS Code asks about automatic tasks')
+          - verify_settings_broken_after.stat.mtime == verify_settings_broken.stat.mtime
+          - verify_settings_broken_after.stat.checksum == verify_settings_broken.stat.checksum
+          - verify_code_log_last | length == 19
+          - verify_code_log_last[-1] == '--remote ssh-remote+alpha ' ~ verify_ws ~ '/.claude-on-proxmox'
+        fail_msg: >-
+          make code exited {{ verify_code_last.results | map(attribute='rc') | list }} and asked for
+          {{ verify_code_log_last[-4:] }}:
+          {{ verify_code_last.results | map(attribute='stdout')
+             | map('regex_findall', '(\\[ERROR\\]: [^\\n]*|VS Code is opening[^\\n]*|did not parse[^\\n]*)') | list }}
+        quiet: true
+
+    # Nothing set and nothing where stock VS Code keeps its settings: said
+    # so, naming the variable that points elsewhere. HOME is an empty
+    # directory for this one run, and the two variables VS Code honours are
+    # unset, so none of the places make code looks in is this machine's.
+    - name: Make an empty home for a run that must find no settings
+      ansible.builtin.file:
+        path: "{{ verify_ssh_dir }}/nohome"
+        state: directory
+        mode: "0700"
+
+    - name: Open the whole directory with no VS Code settings anywhere
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd + ['--extra-vars', verify_code_vars | combine({'vscode_user_settings_file': ''}) | to_json,
+                                    verify_code_playbook] }}
+      environment: "{{ verify_code_env | combine({'HOME': verify_ssh_dir ~ '/nohome', 'XDG_CONFIG_HOME': '', 'VSCODE_APPDATA': ''}) }}"
+      register: verify_code_nohome
+      changed_when: false
+      failed_when: false
+
+    - name: Assert make code said no settings file was found, and what points elsewhere
+      vars:
+        verify_code_log_end: "{{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() }}"
+      ansible.builtin.assert:
+        that:
+          - verify_code_nohome.rc == 0
+          - verify_code_nohome.stdout is search('No VS Code settings file was found where stock VS Code keeps one on this OS')
+          - verify_code_nohome.stdout is search('pointed at with vscode_user_settings_file')
+          - verify_code_nohome.stdout is search('then choose Allow when VS Code asks')
+          - verify_code_log_end | length == 21
+        fail_msg: >-
+          make code with no settings anywhere exited {{ verify_code_nohome.rc }} and asked for {{ verify_code_log_end[-2:] }}:
+          {{ verify_code_nohome.stdout | regex_findall('(\\[ERROR\\]: [^\\n]*|VS Code is opening[^\\n]*|No VS Code settings[^\\n]*)') }}
         quiet: true
 
     - name: Stat the user ssh config that must never have been written

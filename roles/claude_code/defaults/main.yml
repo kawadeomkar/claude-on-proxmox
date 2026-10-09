@@ -5,7 +5,8 @@ claude_code_user: dev
 # npm:    @anthropic-ai/claude-code via npm (requires Node.js)
 claude_code_install_method: native
 
-# stable, latest, or an exact version such as 2.1.0
+# stable, latest, or an exact version such as 2.1.41 - the oldest with
+# `claude auth`, which the Claude terminal `make code` opens relies on.
 claude_code_version: stable
 claude_code_installer_url: https://claude.ai/install.sh
 

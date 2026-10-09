@@ -31,6 +31,11 @@
 # vm_project (PROJECT) is one folder name, as a GitHub repository is named,
 # and is checked again here so that a direct ansible-playbook run cannot point
 # VS Code outside the projects directory either.
+#
+# The claude_code_ prefix below is this playbook's - the `code` playbook of
+# claude-on-proxmox - not the claude_code role's, whose variables live in
+# roles/claude_code/defaults; the ones here that are about VS Code's own
+# settings say vscode in their names.
 - name: Open a VM in VS Code
   hosts: localhost
   gather_facts: false
@@ -61,7 +66,7 @@
           - label: Claude
             type: process
             command: /bin/bash
-            args: [-lc, "{{ claude_code_session }}", make-code, "{{ claude_code_not_installed }}", "{{ claude_code_signed_in }}"]
+            args: [-lc, "{{ claude_code_terminal_script }}", make-code, "{{ claude_code_not_installed }}", "{{ claude_code_signed_in }}"]
             options:
               cwd: "{{ claude_code_target }}"
             runOptions:
@@ -71,7 +76,8 @@
               focus: true
               panel: dedicated
               clear: true
-              showReuseMessage: false
+              # When claude exits, say what the next keypress does.
+              showReuseMessage: true
             problemMatcher: []
 
     # What the task runs, as `bash -lc <this> make-code <$1> <$2>`. A login
@@ -83,15 +89,17 @@
     # folder's latest conversation up, or starts one when there is none: a
     # task terminal does not survive a window reload, after which the task
     # runs again, so without it a reload would end the conversation (/clear
-    # starts a fresh one). The messages are arguments, never script text.
-    claude_code_session: |-
+    # starts a fresh one). The messages are arguments, never script text, and
+    # a stop ends with exit 0: on a non-zero exit VS Code prints the whole
+    # command line, script and messages included, under the line that matters.
+    claude_code_terminal_script: |-
       if ! command -v claude >/dev/null 2>&1; then
         printf '%s\n' "$1"
-        exit 1
+        exit 0
       fi
       if ! claude auth status >/dev/null 2>&1; then
         printf '%s\n' "Signing in to Claude first. Your browser opens the sign-in page; if it shows a code, paste it here."
-        claude auth login || exit 1
+        claude auth login || exit 0
         [ -z "$2" ] || printf '%s\n' "$2"
       fi
       exec claude --continue
@@ -108,16 +116,32 @@
 
     # Read on this machine, never written. task.allowAutomaticTasks is an
     # application setting, so the default profile's settings.json holds it
-    # whichever profile is in use.
-    claude_code_settings_file: >-
+    # whichever profile is in use. Looked for where VS Code itself would put
+    # it: the two variables it honours first, then stock VS Code's place on
+    # macOS and Linux, then the snap and the flatpak. A VS Code that keeps its
+    # settings elsewhere (Windows driven from WSL, VSCodium, Insiders on
+    # Linux) is pointed at with vscode_user_settings_file. The text is kept
+    # apart from the value read out of it, so a file that could not be read
+    # or did not parse is said as such rather than taken for "unset".
+    claude_code_vscode_settings_file: >-
       {{ vscode_user_settings_file | default('', true)
-         or query('ansible.builtin.first_found', claude_code_settings_places, skip=true) | first | default('') }}
-    claude_code_settings_places:
-      - "{{ lookup('ansible.builtin.env', 'HOME') }}/Library/Application Support/Code/User/settings.json"
-      - "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/Code/User/settings.json"
-    claude_code_auto_tasks: >-
-      {{ (lookup('ansible.builtin.file', claude_code_settings_file, errors='ignore')
-          if claude_code_settings_file | length > 0 else '') | vscode_setting('task.allowAutomaticTasks', '') }}
+         or query('ansible.builtin.first_found', claude_code_vscode_settings_places, skip=true) | first | default('') }}
+    claude_code_vscode_settings_places: >-
+      {{ ([lookup('ansible.builtin.env', 'VSCODE_APPDATA') ~ '/Code/User/settings.json']
+          if lookup('ansible.builtin.env', 'VSCODE_APPDATA') | length > 0 else [])
+         + ([lookup('ansible.builtin.env', 'XDG_CONFIG_HOME') ~ '/Code/User/settings.json']
+            if lookup('ansible.builtin.env', 'XDG_CONFIG_HOME') | length > 0 else [])
+         + [claude_code_here_home ~ '/Library/Application Support/Code/User/settings.json',
+            claude_code_here_home ~ '/.config/Code/User/settings.json',
+            claude_code_here_home ~ '/snap/code/current/.config/Code/User/settings.json',
+            claude_code_here_home ~ '/.var/app/com.visualstudio.code/config/Code/User/settings.json'] }}
+    claude_code_here_home: "{{ lookup('ansible.builtin.env', 'HOME') }}"
+    claude_code_vscode_settings_text: >-
+      {{ lookup('ansible.builtin.file', claude_code_vscode_settings_file, errors='ignore')
+         if claude_code_vscode_settings_file | length > 0 else '' }}
+    claude_code_vscode_auto_tasks: >-
+      {{ (claude_code_vscode_settings_text or '')
+         | vscode_setting('task.allowAutomaticTasks', '', unparsable='unparsable') }}
 
   tasks:
     - name: Refuse anything but one VM
@@ -261,19 +285,37 @@
                 else '/' ~ (claude_code_root | basename or 'projects'))
              ~ '.code-workspace' }}
 
+    # Paths on the VM are absolute here, with no "~" to expand: VS Code is
+    # handed them as written, from this machine.
+    - name: Refuse a projects directory that is not an absolute path
+      ansible.builtin.assert:
+        that: claude_code_root is match('/')
+        fail_msg: >-
+          vm_projects_dir is a path on the VM, and must be an absolute one, not "{{ claude_code_root }}":
+          VS Code is handed it as written.
+        quiet: true
+
     # The workspace files' directory is not a project, though a PROJECT can
-    # name it. VS Code is handed absolute paths only, and a relative
-    # vscode_workspaces_dir would be written somewhere VS Code cannot find.
-    - name: Refuse the folder that holds the workspace files
+    # name it, and is not the projects directory either: its files would sit
+    # among the repositories, and project/ would be listed as one. Only with
+    # the terminal on, which is when the directory is used at all.
+    - name: Refuse a workspace directory that is not absolute, is the projects directory, or is the folder
       ansible.builtin.assert:
         that:
+          - claude_code_ws_dir is match('/')
+          - claude_code_ws_dir != claude_code_root
           - claude_code_target != claude_code_ws_dir
-          - claude_code_ws_dir is match('/') or not claude_code_terminal
         fail_msg: >-
-          {{ claude_code_ws_dir ~ ' on ' ~ claude_vm_names[0] ~ ' is where make code keeps its VS Code workspace files, not a project.'
-             if claude_code_target == claude_code_ws_dir
-             else 'vscode_workspaces_dir is a path on the VM, and must be an absolute one, not "' ~ claude_code_ws_dir ~ '".' }}
+          {{ 'vscode_workspaces_dir is a path on the VM, and must be an absolute one, not "' ~ claude_code_ws_dir
+             ~ '": VS Code is handed it as written.'
+             if not claude_code_ws_dir is match('/')
+             else 'vscode_workspaces_dir is the projects directory, ' ~ claude_code_root
+                  ~ ', whose folders are the projects; name a directory of its own.'
+             if claude_code_ws_dir == claude_code_root
+             else claude_code_ws_dir ~ ' on ' ~ claude_vm_names[0]
+                  ~ ' is where make code keeps its VS Code workspace files, not a project.' }}
         quiet: true
+      when: claude_code_terminal
 
     - name: Refresh the alias
       ansible.builtin.import_tasks: tasks/ssh_config.yml
@@ -417,7 +459,10 @@
 
     # What VS Code will ask, from what the user's own settings say. "off" set
     # by the user is the one value that silences both the question and the
-    # task; unset, VS Code asks once and Allow writes "on".
+    # task; "on" means it was answered; anything else, VS Code asks once per
+    # workspace, in a notification that goes quiet after a moment. Settings
+    # not found, not readable or not parsable are said as such: "unset"
+    # would promise a question that may never come.
     - name: Say what was opened
       vars:
         # Trust covers a folder's children, and a workspace is trusted when its
@@ -429,14 +474,33 @@
                   if claude_code_project | length == 0
              else 'Trusting the window of make code VM_NAME=' ~ claude_vm_names[0] ~ ' instead trusts every project in '
                   ~ claude_code_root ~ ' at once.' }}
+        claude_code_settings_note: >-
+          {{ 'No VS Code settings file was found where stock VS Code keeps one on this OS, so whether you have'
+             ~ ' answered before is unknown; a VS Code that keeps its settings elsewhere is pointed at with'
+             ~ ' vscode_user_settings_file. '
+             if claude_code_vscode_settings_file | length == 0
+             else 'No VS Code settings file at ' ~ claude_code_vscode_settings_file ~ ', so whether you have'
+                  ~ ' answered before is unknown. '
+             if not claude_code_vscode_settings_file is exists
+             else 'Your VS Code settings, ' ~ claude_code_vscode_settings_file ~ ', could not be read, so whether'
+                  ~ ' you have answered before is unknown. '
+             if claude_code_vscode_settings_text is none
+             else 'Your VS Code settings, ' ~ claude_code_vscode_settings_file ~ ', did not parse, so whether you'
+                  ~ ' have answered before is unknown; VS Code itself reads past the error. '
+             if claude_code_vscode_auto_tasks == 'unparsable'
+             else '' }}
         claude_code_first_time: >-
-          {{ 'It will not start on its own: task.allowAutomaticTasks is "off" in ' ~ claude_code_settings_file
+          {{ 'It will not start on its own: task.allowAutomaticTasks is "off" in ' ~ claude_code_vscode_settings_file
              ~ '. Choose Allow under "Tasks: Manage Automatic Tasks" to change that, or start it each time with'
-             ~ ' "Tasks: Run Task", Claude.'
-             if claude_code_auto_tasks == 'off'
+             ~ ' "Tasks: Run Task", Claude, once you have trusted the window (the Restricted Mode banner, Manage,'
+             ~ ' Trust). ' ~ claude_code_trust_once
+             if claude_code_vscode_auto_tasks == 'off'
              else 'The first time, it waits for you: trust the window (the Restricted Mode banner, Manage, Trust)'
-                  ~ (', then choose Allow when VS Code asks about automatic tasks' if claude_code_auto_tasks != 'on' else '')
-                  ~ '. ' ~ claude_code_trust_once }}
+                  ~ ('' if claude_code_vscode_auto_tasks == 'on'
+                     else ', then choose Allow when VS Code asks about automatic tasks: once per workspace, in a'
+                          ~ ' notification that goes quiet after a moment ("Tasks: Manage Automatic Tasks" offers'
+                          ~ ' the same choice later)')
+                  ~ '. ' ~ claude_code_settings_note ~ claude_code_trust_once }}
         claude_code_said:
           - VS Code is opening {{ claude_code_target }} on {{ claude_vm_names[0] }} ({{ claude_code_reach }}).
           - The first connection installs VS Code Server on the VM and takes a minute.

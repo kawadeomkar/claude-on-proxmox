@@ -436,21 +436,30 @@ no other playbook does, launching the editor. In order:
 4. Read the VM user's home on the VM with `getent`, delegated over SSH, unless `vm_projects_dir`
    says where the code is. Nothing is guessed on the controller, and nothing is read back out of the
    alias: the workspace is `vm_projects_dir` or `<home>/projects`.
-5. Refresh the alias, then look for the folder to open - the workspace, or `<workspace>/<project>` -
+5. Refuse a `vm_projects_dir` that is not absolute (VS Code is handed it as written, from this
+   machine, so `~` would not expand) and, with the terminal on, a `vscode_workspaces_dir` that is
+   not absolute, is the projects directory (its files would sit among the repositories), or is the
+   folder being opened (`PROJECT=.claude-on-proxmox`). Each names the variable it is about.
+6. Refresh the alias, then look for the folder to open - the workspace, or `<workspace>/<project>` -
    with `stat` on the VM. Read-only. Unreachable, missing and not-a-folder are each their own
    message: a missing project lists what the workspace holds and, for a name that differs only in
    case, suggests the right one, since the VM's paths are case-sensitive; a missing workspace means a
    VM never configured, and says to run `make configure`. These are there so a typo is said in the
    terminal, not in a VS Code window opened on a folder that does not exist.
-6. Check `code` is on `PATH`, and install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
+7. Check `code` is on `PATH`, and install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
    lacks it.
-7. With `vscode_claude_terminal` (the default), write a workspace file on the VM and open that:
+8. With `vscode_claude_terminal` (the default), write a workspace file on the VM and open that:
    `code --remote ssh-remote+alpha <workspaces>/project/<project>.code-workspace`, or
    `<workspaces>/<workspace's name>.code-workspace` for the whole directory, where `<workspaces>` is
    `vscode_workspaces_dir` or `<workspace>/.claude-on-proxmox`. One project's file is in `project/`
    so a repository that shares the workspace's name cannot collide with the whole directory's. Off,
    it opens the folder itself and writes nothing.
-8. Say what VS Code will do, from the user's VS Code settings, read and never written.
+9. Say what VS Code will do, from the user's VS Code settings, read and never written: looked for
+   where VS Code would put them (`VSCODE_APPDATA`, `XDG_CONFIG_HOME`, stock VS Code's place on macOS
+   and Linux, the snap, the flatpak), and said as not found, not readable or not parsable when they
+   are, since "unset" would promise a question that may not come; VS Code asks once per workspace,
+   in a notification that goes quiet after a moment, so the message names *Tasks: Manage Automatic
+   Tasks* as well.
 
 **The workspace file** is built as data and written with `to_nice_json`, so no path breaks its JSON;
 `copy` leaves an unchanged file alone. It names the folder by absolute path, hides its own directory
@@ -941,9 +950,13 @@ Covered by 26 unit tests in `tests/unit/test_github_repos.py`.
 `code.yml` to say whether the Claude terminal will start on its own. The file is JSONC: `//` and
 `/* */` comments and trailing commas are dropped in one pass that copies strings whole, so a `//`
 in a URL is not a comment and a commented-out `"task.allowAutomaticTasks": "off"` does not count.
-A key is read flat, as VS Code writes it, or nested. Empty, unparsable and not-an-object text give
-`default`: a run that only reports what the editor will do must not fail on the user's own settings.
-Read-only by construction; nothing in the project writes that file.
+A key is read flat, as VS Code writes it, or nested, and the later spelling wins, as VS Code's own
+reader has it: dotted keys expand into a tree in file order, a nested object replaces what the flat
+keys built before it, and a key whose path runs into a value that is not an object is dropped.
+Empty text gives `default`; text that does not parse, or is not an object, gives `unparsable` when
+the caller passes one, which is how `code.yml` says a file did not parse rather than take it for
+unset. Either way a run that only reports what the editor will do must not fail on the user's own
+settings. Read-only by construction; nothing in the project writes that file.
 
 Covered by unit tests in `tests/unit/test_vscode_filters.py`.
 
