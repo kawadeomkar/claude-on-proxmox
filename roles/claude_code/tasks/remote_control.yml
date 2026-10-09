@@ -10,33 +10,26 @@
 # but explicitly cannot establish a Remote Control session. So this file
 # prepares everything around the login, starts the service when the login is
 # already there, and otherwise says exactly what to run.
+#
+# main.yml has already established that no API key is configured, and
+# settings.yml has removed any key an earlier run wrote: a key outranks the
+# login, so the two paths are mutually exclusive.
 
-- name: remote_control | Refuse to fight the API key for the credential
-  ansible.builtin.assert:
-    that: claude_code_anthropic_api_key | length == 0
-    fail_msg: >-
-      Remote Control and an API key cannot both be configured. ANTHROPIC_API_KEY
-      takes precedence over the subscription login that Remote Control requires,
-      so the session would authenticate as the API account and Remote Control
-      would refuse to start. Clear vault_anthropic_api_key to use Remote Control,
-      or set claude_remote_control=false to keep the API key.
-    quiet: true
-
-# Each of these disables the feature-flag evaluation Remote Control's
-# availability depends on, so the server starts and then never appears.
-- name: remote_control | Refuse settings that silently disable Remote Control
-  ansible.builtin.assert:
-    that:
-      - (claude_code_settings.env | default({})).keys() | list
-        | intersect(claude_code_remote_control_blocking_env) | length == 0
-      - "'ANTHROPIC_BASE_URL' not in (claude_code_settings.env | default({}))"
-    fail_msg: >-
-      claude_code_settings.env sets one of
-      {{ claude_code_remote_control_blocking_env | join(', ') }} or
-      ANTHROPIC_BASE_URL. Each of those disables Remote Control - the first four
-      by switching off the feature-flag evaluation it depends on, the last by
-      pointing the client away from api.anthropic.com.
-    quiet: true
+# Read from the settings.json settings.yml just wrote, because that is what
+# Claude Code reads at startup - not claude_code_settings, which misses a
+# blocker left on the VM by an earlier run. no_log: the file can hold a token.
+# vars/main.yml turns it into claude_code_remote_control_settings_blockers,
+# which is part of eligibility: a setting that disables Remote Control (a
+# telemetry opt-out, apiKeyHelper, a foreign ANTHROPIC_BASE_URL) leaves the
+# service stopped and is named below, like a credential it cannot use. It is
+# not a failure - a privacy setting is a legitimate choice, and failing the
+# host here kept github_projects from running.
+- name: remote_control | Read the settings Claude Code will start with
+  ansible.builtin.slurp:
+    src: "{{ claude_code_home }}/.claude/settings.json"
+  register: claude_code_remote_control_settings_raw
+  failed_when: false
+  no_log: true
 
 - name: remote_control | Ensure the session's working directory exists
   ansible.builtin.file:
@@ -57,6 +50,9 @@
   register: claude_code_remote_control_which
   changed_when: false
   check_mode: false
+  # command -v exits 1 when claude is not found. Without this the task fails
+  # with a bare exit code, and the friendly assert below never runs.
+  failed_when: false
 
 - name: remote_control | Record the binary path
   ansible.builtin.set_fact:
@@ -71,32 +67,38 @@
       exactly this; check that it ran.
     quiet: true
 
-# The server stops for a trust dialog on an unseen directory and for the
-# first-run onboarding, neither of which anything can answer under systemd.
-# Both are recorded in ~/.claude.json, so seed them rather than have the
-# service fail in a way that looks like an authentication problem.
+# The server stops for three prompts nothing can answer under systemd: the
+# first-run onboarding, a trust dialog on an unseen directory, and Remote
+# Control's own one-time "Enable Remote Control? (y/n)". That last one reads
+# stdin, which systemd points at /dev/null, and anything but "y" exits 0 - so
+# the unit would start, print the question to the journal and quietly stop.
+# All three answers live in ~/.claude.json. Enabling claude_remote_control is
+# the user's answer to the confirmation; seeding it records that.
 - name: remote_control | Read the Claude Code config
   ansible.builtin.slurp:
     src: "{{ claude_code_home }}/.claude.json"
   register: claude_code_remote_control_cfg_raw
   failed_when: false
+  no_log: true
 
 - name: remote_control | Record the current config
   ansible.builtin.set_fact:
     claude_code_remote_control_cfg: >-
       {{ (claude_code_remote_control_cfg_raw.content | b64decode | from_json)
          if claude_code_remote_control_cfg_raw.content is defined else {} }}
+  no_log: true
 
-# Written only when one of the two flags is actually missing. Claude Code owns
+# Written only when one of the flags is actually missing. Claude Code owns
 # this file and rewrites it constantly - start counters, cached flags, per
 # project metadata - so a copy that reasserted the whole document every run
 # would report changed forever and fight the application for it. Guarding on
-# the two keys also keeps the write to the first run, which is the only moment
+# the keys also keeps the write to the first run, which is the only moment
 # nothing else is holding the file.
-- name: remote_control | Pre-accept onboarding and workspace trust
+- name: remote_control | Pre-accept onboarding, workspace trust and the Remote Control prompt
   vars:
     claude_code_remote_control_seed:
       hasCompletedOnboarding: true
+      remoteDialogSeen: true
       projects: "{{ {claude_code_remote_control_target_dir: {'hasTrustDialogAccepted': true}} }}"
   ansible.builtin.copy:
     content: >-
@@ -108,9 +110,11 @@
     group: "{{ claude_code_user }}"
     mode: "0600"
   when: not (claude_code_remote_control_dialogs_seeded | bool)
+  no_log: true
 
 # Read before the unit is installed, so the "what do I run next" message below
-# reflects the state the user is actually in.
+# reflects the state the user is actually in. vars/main.yml reads the result,
+# as it does for login.yml, which `make claude-login` runs.
 - name: remote_control | Check whether this VM is logged in
   ansible.builtin.command:
     argv: ["{{ claude_code_remote_control_bin }}", auth, status]
@@ -123,14 +127,6 @@
   changed_when: false
   check_mode: false
 
-- name: remote_control | Record the authentication state
-  ansible.builtin.set_fact:
-    claude_code_remote_control_status: >-
-      {{ (claude_code_remote_control_auth.stdout | from_json)
-         if claude_code_remote_control_auth.rc == 0
-            and (claude_code_remote_control_auth.stdout | trim | length > 0)
-         else {} }}
-
 - name: remote_control | Install the systemd unit
   ansible.builtin.template:
     src: claude-remote-control.service.j2
@@ -140,40 +136,134 @@
     mode: "0644"
   register: claude_code_remote_control_unit
 
-- name: remote_control | Start Remote Control
-  when: claude_code_remote_control_eligible | bool
+# In a real run the unit is always there by now. In check mode on a VM that
+# never had it, it is not: the template above writes nothing, and
+# systemd_service fails on a unit that does not exist - check mode included,
+# since ansible-core's missing-unit check does not look at it. So `make check`
+# failed on every VM without Remote Control yet. There, the tasks that enable,
+# start or stop the service are skipped, and the template reporting "changed"
+# is what says the unit would be installed.
+- name: remote_control | Look for the unit the service needs
+  ansible.builtin.stat:
+    path: /etc/systemd/system/{{ claude_code_remote_control_service }}.service
+  register: claude_code_remote_control_unit_file
+
+# --spawn worktree makes each session a fresh git worktree, so the server
+# needs a git repository at its working directory before the first session,
+# or it exits within seconds. The directory this role created is not one,
+# and github_projects (which could clone into it) runs after this role - so
+# a repo has to be there already. Caught here with a clear message instead
+# of the generic "session did not stay up" the start check would print.
+#
+# Before the start block rather than in it, and not gated on the unit file:
+# in check mode on a VM that has no unit yet nothing below would run, and
+# `make check` would pass a configuration whose real run fails here.
+- name: remote_control | Require a git repository for worktree spawn
+  when:
+    - claude_code_remote_control_eligible | bool
+    - claude_code_remote_control_spawn == 'worktree'
   block:
+    - name: remote_control | Look for a git repository in the session directory
+      ansible.builtin.stat:
+        path: "{{ claude_code_remote_control_target_dir }}/.git"
+      register: claude_code_remote_control_git
+
+    - name: remote_control | Fail when worktree spawn has no git repository
+      ansible.builtin.assert:
+        that: claude_code_remote_control_git.stat.exists
+        fail_msg: >-
+          claude_code_remote_control_spawn is "worktree", which creates each
+          session as a git worktree, but {{ claude_code_remote_control_target_dir }}
+          on {{ inventory_hostname }} is not a git repository, so the server
+          would exit at once. Put a repository there first (github_projects
+          can clone one into it), or set claude_code_remote_control_spawn to
+          same-dir or session.
+        quiet: true
+
+- name: remote_control | Start Remote Control
+  when:
+    - claude_code_remote_control_eligible | bool
+    - claude_code_remote_control_unit_file.stat.exists
+  block:
+    # With no state requested, systemd_service only reads the unit.
+    - name: remote_control | Read the service state
+      ansible.builtin.systemd_service:
+        name: "{{ claude_code_remote_control_service }}"
+      register: claude_code_remote_control_before
+
+    # Restarted unless this exact unit is already running. A changed unit only
+    # takes effect on a restart. And a server that exited and is waiting out
+    # its restart delay reports "activating", which `started` counts as
+    # running - so after a fresh login it would sit there for minutes instead
+    # of starting now.
     - name: remote_control | Enable and start the service
       ansible.builtin.systemd_service:
         name: "{{ claude_code_remote_control_service }}"
         enabled: true
-        state: "{{ 'restarted' if claude_code_remote_control_unit.changed else 'started' }}"
+        state: >-
+          {{ 'started'
+             if not claude_code_remote_control_unit.changed
+                and (claude_code_remote_control_before.status.ActiveState | default('')) == 'active'
+             else 'restarted' }}
         daemon_reload: true
+      register: claude_code_remote_control_start
 
-    # `started` returns as soon as systemd forks the process. The server needs a
-    # moment to register with claude.ai, and a credential it cannot use fails
-    # here rather than an hour later when someone reaches for their phone.
+    # A credential it cannot use, an ineligible plan or an organisation that
+    # has not enabled Remote Control all make the server exit within seconds -
+    # and should fail here, not an hour later when someone reaches for their
+    # phone. One "active" reading proves nothing: Type=simple is active the
+    # moment the process forks, before the server has tried anything. So the
+    # process is recorded right after the start and read again once it has had
+    # time to fail. An exit shows up as a state other than active/running
+    # (systemd waiting to restart it) or, if it was already restarted, as a new
+    # PID and a higher NRestarts. What systemd cannot see is the server
+    # registering with claude.ai, which is why this waits rather than polls.
+    #
+    # Only after a start or restart. `started` on a server that was already
+    # running changes nothing, and that server has had far longer than 20
+    # seconds to fail - so a fleet that is already live used to pay 20 seconds
+    # per batch of forks on every configure run for a check that could not
+    # find anything. Skipped in check mode too, where nothing was started.
     - name: remote_control | Confirm the session stayed up
-      ansible.builtin.command:
-        argv: [systemctl, is-active, "{{ claude_code_remote_control_service }}"]
-      register: claude_code_remote_control_active
-      until: claude_code_remote_control_active.stdout | trim == 'active'
-      retries: 6
-      delay: 5
-      changed_when: false
-      failed_when: false
+      when:
+        - not ansible_check_mode
+        - claude_code_remote_control_start is changed
+      block:
+        - name: remote_control | Record the server process just started
+          ansible.builtin.systemd_service:
+            name: "{{ claude_code_remote_control_service }}"
+          register: claude_code_remote_control_started
 
-    - name: remote_control | Fail when the session did not stay up
-      ansible.builtin.assert:
-        that: claude_code_remote_control_active.stdout | trim == 'active'
-        fail_msg: >-
-          {{ claude_code_remote_control_service }} did not stay running on
-          {{ inventory_hostname }}. Read the reason with
-          "ssh {{ claude_code_user }}@{{ ansible_host | default(inventory_hostname) }}
-          sudo journalctl -u {{ claude_code_remote_control_service }} -n 40".
-        quiet: true
+        - name: remote_control | Give the server time to fail
+          ansible.builtin.wait_for:
+            timeout: 20
 
+        - name: remote_control | Read the server process again
+          ansible.builtin.systemd_service:
+            name: "{{ claude_code_remote_control_service }}"
+          register: claude_code_remote_control_after
+
+        - name: remote_control | Fail when the session did not stay up
+          ansible.builtin.assert:
+            that: claude_code_remote_control_stayed_up | bool
+            fail_msg: >-
+              {{ claude_code_remote_control_service }} did not stay running on
+              {{ inventory_hostname }}: 20 seconds after starting it is
+              {{ claude_code_remote_control_after.status.ActiveState | default('unknown') }}/{{
+                 claude_code_remote_control_after.status.SubState | default('unknown') }},
+              with main PID {{ claude_code_remote_control_after.status.ExecMainPID | default('?') }}
+              (was {{ claude_code_remote_control_started.status.ExecMainPID | default('?') }}) and
+              {{ claude_code_remote_control_after.status.NRestarts | default('?') }} restarts
+              (was {{ claude_code_remote_control_started.status.NRestarts | default('?') }}).
+              Read the reason with
+              "ssh {{ claude_code_user }}@{{ ansible_host | default(inventory_hostname) }}
+              sudo journalctl -u {{ claude_code_remote_control_service }} -n 40".
+            quiet: true
+
+    # Outside the block above: a server this run found running and left alone
+    # is live too. Not in check mode, where nothing was started.
     - name: remote_control | Report where to reach the session
+      when: not ansible_check_mode
       ansible.builtin.debug:
         msg: >-
           Remote Control is live for {{ inventory_hostname }} as
@@ -182,6 +272,9 @@
           Open claude.ai/code or the Claude mobile app, signed in as the same
           account, and it appears in the session list.
 
+# Not eligible covers a missing or unusable login and a settings.json that
+# disables the feature. Each ends the same way: the unit is installed, the
+# service is stopped, and the message says what is in the way.
 - name: remote_control | Explain the one step that cannot be automated
   when: not (claude_code_remote_control_eligible | bool)
   block:
@@ -191,14 +284,23 @@
         enabled: false
         state: stopped
         daemon_reload: true
+      when: claude_code_remote_control_unit_file.stat.exists
 
+    # `make claude-login` decides from the same vars, so what it says next
+    # agrees with this. A settings blocker on a VM that is signed in needs no
+    # login step, so none is suggested for it.
     - name: remote_control | Say exactly what to run
       ansible.builtin.debug:
         msg: >-
           Remote Control is configured on {{ inventory_hostname }} but not started:
           {{ claude_code_remote_control_blocker }}
-          Log in once, from any terminal - the browser shows a code to paste back,
-          which is the supported flow over SSH:
-          "make claude-login VM_NAME={{ inventory_hostname }}" prints the exact
-          command. Then re-run "make configure VM_NAME={{ inventory_hostname }}"
+          {{ 'Log in once, from any terminal - the browser shows a code to paste back,'
+             ~ ' which is the supported flow over SSH: "make claude-login VM_NAME='
+             ~ inventory_hostname ~ '" prints the exact command.'
+             if not (claude_code_remote_control_status.loggedIn | default(false)) | bool
+             else ''
+             if claude_code_remote_control_settings_blockers | length > 0
+             else '"make claude-login VM_NAME=' ~ inventory_hostname ~ '" checks again'
+                  ~ ' and prints the login command if one is still needed.' }}
+          Then re-run "make configure VM_NAME={{ inventory_hostname }}"
           and the service starts.

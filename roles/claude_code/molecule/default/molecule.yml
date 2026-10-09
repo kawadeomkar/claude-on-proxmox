@@ -18,3 +18,5 @@ provisioner:
   env:
     # Resolve roles from this repository's roles/ directory (not Galaxy).
     ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/..
+  playbooks:
+    side_effect: side_effect.yml

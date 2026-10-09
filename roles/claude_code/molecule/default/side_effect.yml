@@ -1,0 +1,351 @@
+---
+# Converge configured an API key, so Remote Control was never set up. These are
+# the changes a real VM goes through afterwards, each a re-run of the role with
+# different inputs:
+#
+#   1. the key is cleared              -> it leaves settings.json; Remote Control is prepared
+#   2. Remote Control is switched off  -> the prepared unit is removed again,
+#                                         and a dry run with no login does not fail
+#   3. a login whose server exits      -> a dry run first does not fail either;
+#                                         the run fails instead of reporting it live,
+#                                         and systemd restarts the server anyway
+#   4. a login whose server stays up   -> the run reports it live, a re-run leaves
+#                                         it alone, and a changed unit restarts it
+#   5. the key comes back              -> the running server is stopped and removed
+#
+# Step 5 puts the converge inputs back, so verify.yml checks the same end state.
+# The container has no claude.ai login and cannot get one, so steps 3 and 4 put
+# a stand-in at the path of `claude` that reports one and plays the server.
+- name: Take the role through the changes a VM goes through after converge
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    claude_code_side_effect_bin: /home/dev/.local/bin/claude
+    claude_code_side_effect_unit: /etc/systemd/system/claude-remote-control.service
+    claude_code_side_effect_stand_in: |
+      #!/bin/sh
+      # Stand-in for claude, for this scenario only: reports the claude.ai
+      # login the container cannot have, plays the Remote Control server, and
+      # hands everything else to the real binary.
+      case "$1" in
+        auth) echo '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty", "subscriptionType": "max"}' ;;
+        remote-control) SERVER ;;
+        *) exec {{ claude_code_side_effect_bin }}.real "$@" ;;
+      esac
+  tasks:
+    # ------------------------------------------------ 1. the key is cleared --
+    # Nothing else is managed on this run, which is the default and exactly
+    # when settings.yml used to skip the file altogether.
+    - name: Clear the API key and re-run the role
+      ansible.builtin.include_role:
+        name: claude_code
+      vars:
+        claude_code_anthropic_api_key: ""
+
+    - name: Read settings.json after the key was cleared
+      ansible.builtin.slurp:
+        src: /home/dev/.claude/settings.json
+      register: claude_code_side_effect_cleared
+
+    - name: Read the Remote Control service after the key was cleared
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: claude_code_side_effect_prepared
+
+    - name: Assert the key is gone and Remote Control is prepared but stopped
+      vars:
+        claude_code_side_effect_json: "{{ claude_code_side_effect_cleared.content | b64decode | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - "'ANTHROPIC_API_KEY' not in claude_code_side_effect_json.env"
+          # Everything else in the file survives the removal
+          - claude_code_side_effect_json.env.KEEP_ME == '1'
+          - claude_code_side_effect_json.theme == 'dark'
+          - claude_code_side_effect_json.permissions.defaultMode == 'acceptEdits'
+          # No login here, so installed and left stopped
+          - claude_code_side_effect_prepared.status.LoadState == 'loaded'
+          - claude_code_side_effect_prepared.status.ActiveState != 'active'
+          - claude_code_side_effect_prepared.status.UnitFileState == 'disabled'
+        fail_msg: >-
+          Clearing the API key did not take the VM back to the Remote Control
+          path. settings.json env keys:
+          {{ claude_code_side_effect_json.env | default({}) | list }};
+          service {{ claude_code_side_effect_prepared.status.LoadState | default('?') }}/{{
+          claude_code_side_effect_prepared.status.ActiveState | default('?') }}.
+        quiet: true
+
+    # ------------------------------------- 2. Remote Control switched off --
+    - name: Switch Remote Control off and re-run the role
+      ansible.builtin.include_role:
+        name: claude_code
+      vars:
+        claude_code_anthropic_api_key: ""
+        claude_code_remote_control: false
+
+    - name: Stat the unit after Remote Control was switched off
+      ansible.builtin.stat:
+        path: "{{ claude_code_side_effect_unit }}"
+      register: claude_code_side_effect_off_unit
+
+    - name: Read the service after Remote Control was switched off
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: claude_code_side_effect_off
+
+    - name: Assert switching Remote Control off removed the unit
+      ansible.builtin.assert:
+        that:
+          - not claude_code_side_effect_off_unit.stat.exists
+          # Reloaded, so systemd no longer knows the unit either
+          - claude_code_side_effect_off.status.LoadState == 'not-found'
+        fail_msg: >-
+          claude_code_remote_control: false left the Remote Control unit behind
+          (file exists: {{ claude_code_side_effect_off_unit.stat.exists }},
+          LoadState {{ claude_code_side_effect_off.status.LoadState | default('?') }}).
+        quiet: true
+
+    # `make check` on a VM that has never had the unit, which failed: check mode
+    # writes no unit, and systemd_service rejects a missing one in check mode
+    # too. Applied to the role rather than passed as --check, so
+    # ansible_check_mode stays false - which the fix does not depend on.
+    - name: Dry-run the role with Remote Control on again, without a login
+      ansible.builtin.include_role:
+        name: claude_code
+        apply:
+          check_mode: true
+      vars:
+        claude_code_anthropic_api_key: ""
+
+    - name: Stat the unit after the dry run without a login
+      ansible.builtin.stat:
+        path: "{{ claude_code_side_effect_unit }}"
+      register: claude_code_side_effect_dry_unit
+
+    - name: Assert the dry run without a login installed nothing
+      ansible.builtin.assert:
+        that: not claude_code_side_effect_dry_unit.stat.exists
+        fail_msg: A run in check mode wrote the Remote Control unit.
+        quiet: true
+
+    # ------------------------------------------ 3. a server that exits --
+    - name: Move the real claude aside for the stand-in
+      ansible.builtin.command:
+        argv: [mv, "{{ claude_code_side_effect_bin }}", "{{ claude_code_side_effect_bin }}.real"]
+        creates: "{{ claude_code_side_effect_bin }}.real"
+
+    # Up long enough for a single "is it active?" reading taken right after the
+    # start to say yes, then gone within seconds, as a refused or ineligible
+    # server is. The exit is clean on purpose: on-failure never restarted one.
+    - name: Stand in a server that exits cleanly three seconds after starting
+      ansible.builtin.copy:
+        content: "{{ claude_code_side_effect_stand_in | replace('SERVER', 'sleep 3; exit 0') }}"
+        dest: "{{ claude_code_side_effect_bin }}"
+        owner: dev
+        group: dev
+        mode: "0755"
+
+    # The same dry run, this time down the path that enables and starts it.
+    - name: Dry-run the role with a login, on a VM without the unit
+      ansible.builtin.include_role:
+        name: claude_code
+        apply:
+          check_mode: true
+      vars:
+        claude_code_anthropic_api_key: ""
+
+    - name: Read the service after the dry run with a login
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: claude_code_side_effect_dry_login
+
+    - name: Assert the dry run with a login started nothing
+      ansible.builtin.assert:
+        that: claude_code_side_effect_dry_login.status.LoadState == 'not-found'
+        fail_msg: >-
+          A run in check mode left the Remote Control unit
+          {{ claude_code_side_effect_dry_login.status.LoadState | default('?') }}/{{
+          claude_code_side_effect_dry_login.status.ActiveState | default('?') }}.
+        quiet: true
+
+    - name: Run the role against a server that does not stay up
+      block:
+        - name: Re-run the role with a login whose server exits
+          ansible.builtin.include_role:
+            name: claude_code
+          vars:
+            claude_code_anthropic_api_key: ""
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: >-
+              claude_code reported Remote Control live, although the server
+              exited three seconds after it started.
+      rescue:
+        - name: Assert it failed at the stay-up check, pointing at the journal
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name is search('did not stay up')
+              - ansible_failed_result.msg is search('journalctl -u claude-remote-control')
+            fail_msg: >-
+              Expected the stay-up check to fail, got
+              "{{ ansible_failed_task.name }}": {{ ansible_failed_result.msg | default('') }}
+            quiet: true
+
+    - name: Wait for systemd to restart the server that exited cleanly
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: claude_code_side_effect_restarted
+      until: claude_code_side_effect_restarted.status.NRestarts | int > 0
+      retries: 8
+      delay: 5
+
+    # ----------------------------------------- 4. a server that stays up --
+    - name: Stand in a server that stays up
+      ansible.builtin.copy:
+        content: "{{ claude_code_side_effect_stand_in | replace('SERVER', 'exec sleep infinity') }}"
+        dest: "{{ claude_code_side_effect_bin }}"
+        owner: dev
+        group: dev
+        mode: "0755"
+
+    # The old stand-in is still being restarted, and one caught in its three
+    # seconds up would be left alone by the run below and then exit under it.
+    # Stopped, the next start can only run the new one.
+    - name: Stop the old stand-in
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+        state: stopped
+
+    - name: Re-run the role with a login whose server stays up
+      ansible.builtin.include_role:
+        name: claude_code
+      vars:
+        claude_code_anthropic_api_key: ""
+
+    - name: Read the service that should be live
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: claude_code_side_effect_live
+
+    - name: Assert the server is running and enabled
+      ansible.builtin.assert:
+        that:
+          - claude_code_side_effect_live.status.ActiveState == 'active'
+          - claude_code_side_effect_live.status.SubState == 'running'
+          - claude_code_side_effect_live.status.UnitFileState == 'enabled'
+        fail_msg: >-
+          The server that stays up is not running and enabled:
+          {{ claude_code_side_effect_live.status.ActiveState | default('?') }}/{{
+          claude_code_side_effect_live.status.SubState | default('?') }},
+          {{ claude_code_side_effect_live.status.UnitFileState | default('?') }}.
+        quiet: true
+
+    # ------------------------------ 4b. a re-run against the live server --
+    # The fleet-wide re-run the README encourages. Unchanged inputs must leave
+    # the running server alone: a restart here kills every live session
+    # (KillSignal=SIGINT), and the stay-up check compares a PID recorded after
+    # the start with itself, so it could never tell. The server's own PID and
+    # restart count are the witnesses, read before and after.
+    - name: Re-run the role unchanged against the live server
+      ansible.builtin.include_role:
+        name: claude_code
+      vars:
+        claude_code_anthropic_api_key: ""
+
+    - name: Read the service after the unchanged re-run
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: claude_code_side_effect_rerun
+
+    - name: Assert the unchanged re-run left the running server alone
+      ansible.builtin.assert:
+        that:
+          - claude_code_side_effect_rerun.status.ExecMainPID == claude_code_side_effect_live.status.ExecMainPID
+          - claude_code_side_effect_rerun.status.NRestarts == claude_code_side_effect_live.status.NRestarts
+          # The role's own start task, registered inside the role, reported
+          # nothing to do - which is also what skips the 20 second wait.
+          - claude_code_remote_control_start is not changed
+          - claude_code_remote_control_start is not skipped
+        fail_msg: >-
+          A re-run with nothing changed restarted the live server: PID
+          {{ claude_code_side_effect_live.status.ExecMainPID }} ->
+          {{ claude_code_side_effect_rerun.status.ExecMainPID }}, restarts
+          {{ claude_code_side_effect_live.status.NRestarts }} ->
+          {{ claude_code_side_effect_rerun.status.NRestarts }}, start task
+          changed={{ claude_code_remote_control_start.changed | default('?') }}.
+        quiet: true
+
+    # And a changed unit must take effect: a new --permission-mode is only
+    # read by a new process, so this one is restarted, once.
+    - name: Re-run the role with a different permission mode
+      ansible.builtin.include_role:
+        name: claude_code
+      vars:
+        claude_code_anthropic_api_key: ""
+        claude_code_remote_control_permission_mode: acceptEdits
+
+    - name: Read the service after the permission mode changed
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: claude_code_side_effect_remoded
+
+    - name: Read the unit after the permission mode changed
+      ansible.builtin.slurp:
+        src: "{{ claude_code_side_effect_unit }}"
+      register: claude_code_side_effect_remoded_unit
+
+    - name: Assert the changed unit restarted the server with the new mode
+      ansible.builtin.assert:
+        that:
+          - claude_code_side_effect_remoded.status.ActiveState == 'active'
+          - claude_code_side_effect_remoded.status.SubState == 'running'
+          - claude_code_side_effect_remoded.status.ExecMainPID != claude_code_side_effect_live.status.ExecMainPID
+          - claude_code_remote_control_start is changed
+          - "'--permission-mode acceptEdits' in (claude_code_side_effect_remoded_unit.content | b64decode)"
+        fail_msg: >-
+          Changing the permission mode did not restart the server with it: PID
+          {{ claude_code_side_effect_live.status.ExecMainPID }} ->
+          {{ claude_code_side_effect_remoded.status.ExecMainPID }},
+          {{ claude_code_side_effect_remoded.status.ActiveState | default('?') }}/{{
+          claude_code_side_effect_remoded.status.SubState | default('?') }}, start task
+          changed={{ claude_code_remote_control_start.changed | default('?') }}.
+        quiet: true
+
+    # -------------------------------------------- 5. the key comes back --
+    - name: Put the real claude back
+      ansible.builtin.command:
+        argv: [mv, "{{ claude_code_side_effect_bin }}.real", "{{ claude_code_side_effect_bin }}"]
+        removes: "{{ claude_code_side_effect_bin }}.real"
+
+    - name: Configure the API key again and re-run the role
+      ansible.builtin.include_role:
+        name: claude_code
+      vars:
+        claude_code_anthropic_api_key: sk-ant-molecule-test-key
+
+    - name: Stat the unit after the key came back
+      ansible.builtin.stat:
+        path: "{{ claude_code_side_effect_unit }}"
+      register: claude_code_side_effect_keyed_unit
+
+    - name: Read the service after the key came back
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+      register: claude_code_side_effect_keyed
+
+    - name: Assert adding a key stopped the running server and removed it
+      ansible.builtin.assert:
+        that:
+          - not claude_code_side_effect_keyed_unit.stat.exists
+          - claude_code_side_effect_keyed.status.LoadState == 'not-found'
+          # Stopped, not merely forgotten: systemd keeps a running service
+          # active after its unit file is removed and reloaded, and reports
+          # inactive only once every process in it has exited
+          - claude_code_side_effect_keyed.status.ActiveState == 'inactive'
+        fail_msg: >-
+          Adding an API key left Remote Control behind (file exists:
+          {{ claude_code_side_effect_keyed_unit.stat.exists }},
+          {{ claude_code_side_effect_keyed.status.LoadState | default('?') }}/{{
+          claude_code_side_effect_keyed.status.ActiveState | default('?') }}).
+        quiet: true

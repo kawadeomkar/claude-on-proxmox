@@ -4,11 +4,12 @@ Description=Claude Code Remote Control ({{ claude_code_remote_control_name }})
 Documentation=https://code.claude.com/docs/en/remote-control
 After=network-online.target
 Wants=network-online.target
-# A login that has expired cannot be renewed without a browser, so the service
-# would otherwise restart every 10 seconds forever. Five attempts, then stop
-# and leave the failure visible in `systemctl status`.
-StartLimitBurst=5
-StartLimitIntervalSec=300
+# No start limit. Once hit, it leaves the unit failed until someone resets it
+# by hand, and the things that stop this server are mostly temporary: a
+# network outage, or a boot that raced the network. The growing restart delay
+# below is what keeps a login that has expired - which cannot be renewed
+# without a browser - from spinning.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -17,12 +18,30 @@ Group={{ claude_code_user }}
 WorkingDirectory={{ claude_code_remote_control_target_dir }}
 Environment=HOME={{ claude_code_home }}
 Environment=PATH={{ claude_code_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin
-# Remote Control needs the subscription login, and ANTHROPIC_API_KEY would
-# override it. It is deliberately not passed to this unit even when one is
-# configured for interactive use.
-ExecStart={{ claude_code_remote_control_bin }} remote-control --name {{ claude_code_remote_control_name | quote }} --permission-mode {{ claude_code_remote_control_permission_mode }} --spawn {{ claude_code_remote_control_spawn }}
-Restart=on-failure
+# Remote Control needs the subscription login, which ANTHROPIC_API_KEY would
+# override. The server would pick a key up from ~/.claude/settings.json (this
+# unit sets HOME so it reads it), not from this unit - so what protects the
+# login is that this path runs only when no key is configured, with settings.yml
+# keeping settings.json clear of one. The key is left out of the unit too, but
+# that alone is not the safeguard.
+# Every value is quoted: systemd splits ExecStart on whitespace, so an unquoted
+# mode with a space in it would reach Claude Code as two arguments and fail for
+# a reason the journal hint does not name. The mode is deliberately not
+# validated here (see meta/argument_specs.yml), so Claude Code's own rejection
+# must be what the journal shows. A plain word is left as it is.
+ExecStart={{ claude_code_remote_control_bin }} remote-control --name {{ claude_code_remote_control_name | quote }} --permission-mode {{ claude_code_remote_control_permission_mode | quote }} --spawn {{ claude_code_remote_control_spawn | quote }}
+# always, not on-failure: server mode exits by itself after about ten minutes
+# without a network, and on-failure restarts only an unclean exit. A stop
+# through systemctl is never restarted, so `systemctl stop` still means stop.
+Restart=always
+# 10 seconds after the first exit, growing over five restarts to five minutes,
+# then every five minutes. systemd only resets the count when the unit is
+# stopped and started again, not after a long healthy run. RestartSteps needs
+# systemd 254 or later; an older one warns, ignores both and restarts every
+# 10 seconds.
 RestartSec=10
+RestartSteps=5
+RestartMaxDelaySec=300
 KillSignal=SIGINT
 TimeoutStopSec=20
 

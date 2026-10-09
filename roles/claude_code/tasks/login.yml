@@ -1,0 +1,49 @@
+---
+# Entry point for playbooks/claude_login.yml (`make claude-login`): say whether
+# this VM can already run Remote Control, and if not, what to do about it.
+#
+# It lives in the role, rather than in the playbook, so that it decides from the
+# same vars/main.yml definitions remote_control.yml does. Deciding separately,
+# the playbook took any login for a claude.ai one, and a VM signed in with a
+# Console account, a `claude setup-token` token or an API key was sent back and
+# forth between `make claude-login` and `make configure`.
+
+# Through a login shell as the SSH user - claude_code_user on every VM this
+# project builds - because that is what puts the native install on PATH. No
+# become: the command it prints runs without one too.
+- name: login | Check whether this VM is logged in
+  ansible.builtin.command:
+    argv: [bash, -lc, "claude auth status"]
+  register: claude_code_remote_control_auth
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# The settings are part of eligibility too, and remote_control.yml reads them
+# from the same file. The SSH user's own home: this entry point never resolves
+# claude_code_home, and the file is the user's. no_log: it can hold a token.
+- name: login | Read the settings Claude Code will start with
+  ansible.builtin.slurp:
+    src: ~/.claude/settings.json
+  register: claude_code_remote_control_settings_raw
+  failed_when: false
+  no_log: true
+
+# The login command ends its line, with no full stop after it: one after the
+# closing quote is pasted along with it and ends up in the remote command.
+- name: login | Report the login state and what to do about it
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ 'already signed in as ' ~ (claude_code_remote_control_status.email | default('?', true))
+         ~ ' (' ~ claude_code_remote_control_status.authMethod ~ ', '
+         ~ (claude_code_remote_control_status.subscriptionType | default('?', true)) ~ ' plan).'
+         if claude_code_remote_control_eligible | bool
+         else 'not signed in. Run this, approve in the browser, and paste back the code it shows: '
+              ~ claude_code_remote_control_login_command
+         if not (claude_code_remote_control_status.loggedIn | default(false)) | bool
+         else 'signed in, but not in a way Remote Control can use: '
+              ~ claude_code_remote_control_blocker
+              ~ ' If that leaves it logged out, log in with the claude.ai account: '
+              ~ claude_code_remote_control_login_command }}
+      Then: make configure VM_NAME={{ inventory_hostname }}
