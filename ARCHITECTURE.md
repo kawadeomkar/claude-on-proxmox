@@ -573,7 +573,10 @@ The read-then-assert pairs exist so a failure reports *what to fix* (check that 
 
 **`tasks/absent.yml`** — ask the agent for the address *while the VM still exists* (the NIC's MAC comes
 from the config the lookup already holds), stop, delete
-with `force: true` (which also covers a VM restarted between the two calls), then one housekeeping
+with `force: true` (which also covers a VM restarted between the two calls) and
+`destroy_unreferenced_disks: true` (a disk that still carries the VMID but that the configuration no
+longer lists goes with the VM - these VMs are deleted often, and the tag check has already
+established the VMID is this project's), then one housekeeping
 step: remove the address from `known_hosts`. It matters because names and DHCP leases are reused,
 and a stale host key produces `HOST KEY VERIFICATION FAILED` with no hint why. If no address could
 be determined, a warning says so and names the `ssh-keygen -R` fix. There are no cached facts to
