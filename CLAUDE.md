@@ -15,12 +15,15 @@ a hand-rolled `molecule test` will not.
 
 ```
 make lint            # yamllint --strict, ansible-lint (production), ruff check + format
-make syntax          # --syntax-check on site.yml and playbooks/*
+make syntax          # --syntax-check on deploy.yml and playbooks/*
 make unit            # pytest, tests/unit/
 make molecule MOLECULE_ROLES="proxmox_vm"      # one role scenario
 make molecule-scenario SCENARIO=provision      # one playbook scenario
 make test            # everything, including pre-commit — the CI gate
+make deploy          # template (if missing) + provision + configure, all idempotent
 make claude-login    # print the one Remote Control step Ansible cannot do
+make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push an API key
+make list            # read-only: the VMs this project created, and their addresses
 ```
 
 Scenarios are slow and disk-hungry. Run the ones your change touches, one at a time, rather than
@@ -41,13 +44,18 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   `.vault_pass`, `host_vars/` and friends. `tests/unit/test_tracked_files.py` tests that guard both
   ways — extend it when you change the patterns.
 - **The ownership tag is the safety interlock.** Every VM this project creates carries
-  `claude-on-proxmox` (`claude_vm_tag`). Discovery finds VMs by it and deletion *refuses* a VM
-  without it. It is matched as a whole tag via `claude_vm_tag_pattern`, never as a substring.
+  `claude-on-proxmox` (`claude_vm_tag`). Discovery finds VMs by it, and both deletion and
+  provisioning *refuse* an existing VM without it — provisioning also refuses a template. It is
+  matched as a whole tag via `claude_vm_tag_pattern`, never as a substring.
 - **Idempotence.** Molecule's idempotence stage re-runs converge and fails on any `changed` task.
 - **An API key and Remote Control are mutually exclusive.** `ANTHROPIC_API_KEY` outranks the
   claude.ai login in Claude Code's credential precedence, and only that login can establish a
-  Remote Control session. Never configure both; `roles/claude_code/tasks/remote_control.yml`
-  asserts it. See ARCHITECTURE.md §5.5.
+  Remote Control session. Remote Control is on by default and derives what to do from the
+  credentials present, so do not add a flag for it — `claude_code_remote_control_wanted` decides
+  once, and `roles/claude_code/tasks/main.yml` either includes `remote_control.yml` or removes a
+  unit an earlier run installed. Both directions must converge on a VM that was on the other path:
+  `settings.yml` removes a key it no longer manages, and eligibility rejects any `apiKeySource` in
+  `claude auth status`. See ARCHITECTURE.md §5.5.
 - **Tests never touch a real Proxmox, GitHub or hypervisor.** `tests/molecule/` holds the fakes:
   a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, and a GitHub API over
   local bare repos. Extend a fake rather than reaching for the network.
@@ -57,33 +65,85 @@ if apt fails to resolve a mirror, that is the machine, not the change.
 **Playbooks own inventory; roles do not.** `add_host` sets `BYPASS_HOST_LOOP`, so it runs *once per
 task* no matter how many hosts the play has. A copy inside a role publishes only the first VM of a
 fleet. `provision.yml` therefore ends with a third play that loops `add_host` from localhost over
-the facts the role left behind. Do not move it back into `proxmox_vm`.
+the facts the role left behind. Do not move it back into `proxmox_vm`. That loop is over the names
+asked for, so it publishes only a VM whose `proxmox_vm_address` is non-empty: a VM the role left
+stopped has none on purpose, and one whose run failed has no fact at all.
 
 **`provision.yml` is three plays on purpose.** Most of the per-VM time is a multi-minute wait for
-the guest agent, and every VM boots concurrently on the hypervisor. Play 1 turns each name into a
-placeholder host, play 2 runs the role across them so Ansible fans out over `forks`, play 3
-publishes. A loop over `include_role` would serialise the waiting.
+the guest agent, and the VMs boot on the hypervisor up to `forks` at a time (20 in `ansible.cfg`;
+`ANSIBLE_ARGS="-f N"` for a larger fleet). Play 1 turns each name into a placeholder host, play 2
+runs the role across them so Ansible fans out over `forks`, play 3 publishes. A loop over
+`include_role` would serialise the waiting.
 
-**The clone is `throttle: 1`.** Proxmox has no atomic VMID reservation — `proxmox_kvm` asks
-`/cluster/nextid` and then clones, so two concurrent clones get the same ID and one fails. Only the
-clone is throttled; everything after it still runs in parallel. On a VMID collision `proxmox_kvm`
-returns `changed=False` and *the clone source's* VMID, so the role asserts `is changed` rather than
-trusting the returned ID — without that, every later task reconfigures the template.
+**`destroy.yml` has the same shape.** A localhost play prompts, lists the cluster, checks every name
+and adds each as a placeholder host; a second play runs the role with `proxmox_vm_state: absent`
+across them, so VMs are stopped and deleted in parallel. It used to loop `include_role` on
+localhost: against the fake, 20 VMs took 168 s that way and take 41 s now. The pre-check honours
+`proxmox_vm_allow_untagged_delete` but never admits a template. Deleting in parallel is why
+`absent.yml`'s `known_hosts` task is `throttle: 1`.
+
+**`deploy.yml` configures only what provisioning published.** It imports `configure.yml` with
+`claude_vm_discovery: false`. Discovery without `vm_name` means every tagged VM, while provisioning
+without it means the one default VM, so running both made a bare `make deploy` create the default VM
+and then configure the whole fleet. Standalone `configure`, `check`, `list` and `claude-login` stay
+fleet-wide without `VM_NAME`.
+
+**A stopped VM is left stopped, and not waited on.** An existing, configured VM is started only
+with `proxmox_vm_start_existing`. Otherwise `present.yml` sets `proxmox_vm_stopped` from the
+lookup's `status` and skips the NIC read, the agent wait and the address assert: its agent cannot
+answer, and Proxmox's 500 for that is retried like a slow boot.
+
+**A clone without a VMID is `throttle: 1`.** Proxmox has no atomic VMID reservation — `proxmox_kvm`
+asks `/cluster/nextid` and then clones, so two concurrent clones get the same ID and one fails. But
+under the linear strategy a throttled clone holds every VM's settings, start and boot back until the
+fleet's last clone is done, so `provision.yml`'s play 1 gives each new VM of a fleet its own
+`proxmox_vm_id` (from `/cluster/nextid`, skipping what `/cluster/resources` lists), and the throttle
+is 0 for a clone with a VMID and for a VM that exists. Keep both halves: dropping the throttle makes
+unallocated concurrent clones collide every time, and `strategy: free` neither shortens the run nor
+enforces the throttle across included tasks. On a VMID collision `proxmox_kvm` returns
+`changed=False` and *the clone source's* VMID, so the role asserts `is changed` rather than trusting
+the returned ID — without that, every later task reconfigures the template.
 
 **`roles/proxmox_vm/vars/main.yml` holds lazily-evaluated internals** that read registers set by
 tasks (`proxmox_vm_lookup`, `proxmox_vm_config`, `proxmox_vm_net`). They are vars, not facts, on
-purpose: `destroy.yml` runs the role in a loop, and a `set_fact` survives an iteration that skips
-it, so a fact would hand VM #1's MAC to VM #2. A skipped register is overwritten; a skipped
-`set_fact` is not. Do not convert these to `set_fact`. The same pattern gives
-`claude_vm_tagged` in `inventory/group_vars/all/defaults.yml`, which needs `claude_vm_all`
-registered by whichever play uses it.
+purpose: the role can run more than once for the same host in one play - the role scenario's
+`side_effect.yml` includes it back to back - and a `set_fact` survives a run that skips it, so a
+fact would hand VM #1's MAC to VM #2. A skipped register is overwritten; a skipped `set_fact` is
+not. Do not convert these to `set_fact`. The role sets exactly four facts, each unconditionally on
+every run so none can go stale that way: `proxmox_vm_exists` and `proxmox_vm_resolved_id` in
+`main.yml` (`present.yml` re-sets the ID after a clone, the one time it changes), `proxmox_vm_stopped`
+and `proxmox_vm_address` in `present.yml`. They are outputs rather than internals: `provision.yml`'s third play reads
+`proxmox_vm_address`, `proxmox_vm_stopped` and `proxmox_vm_resolved_id` through `hostvars`, and role
+vars are not visible there. The
+same pattern gives `claude_vm_tagged` and `claude_vm_requested` in
+`inventory/group_vars/all/defaults.yml`, which need `claude_vm_all` registered first by
+`playbooks/tasks/cluster_vms.yml`.
 
 **Existence is not convergence.** A run that died between the clone and the settings call leaves a
-VM with no cloud-init user, no keys, no agent and no tag. `proxmox_vm_needs_configuration` keys off
-the *tag*, written by that same settings call, so a half-built VM is repaired instead of skipped.
+VM with no cloud-init user, no keys and no agent. `present.yml` tags a new VM in a call of its own
+straight after the clone, so that VM is still recognisably this project's, and
+`proxmox_vm_needs_configuration` keys off the *cloud-init user*, which only the settings call writes,
+so it is repaired instead of skipped. Do not key it off the ownership tag again: "untagged" must mean
+"not ours", because an untagged VM with a matching name is someone else's and is refused. A run that
+died *after* the settings call — at the resize or the start — is caught by a second marker: the
+settings call adds `claude-on-proxmox-unfinished` (`proxmox_vm_unfinished_tag`) and only the call
+after a successful start removes it, so a re-run finishes that VM while a finished VM someone shut
+down stays stopped. Do not decide the start from `status` alone, and do not run the resize on every
+run: `proxmox_disk` compares size strings, and Proxmox cannot shrink a hand-grown disk.
 
 **Discovery is a playbook, not the `community.proxmox` inventory plugin.** The header of
 `discover.yml` records the trade-offs; the swap is a live design question, not an oversight.
+
+**Fleet listings read `/cluster/resources`, never an unfiltered `proxmox_vm_info`.** Unfiltered, the
+module asks every node that owns a VM for its VM list and fails on any error, so one node that is
+down broke `deploy`, `configure`, `list` and `destroy` for every VM on the others.
+`playbooks/tasks/cluster_vms.yml` fetches the listing with `uri` (`no_log`, since the request
+carries the token); `proxmox_vm_info` is called only with a `name` or a `vmid`. The shared pieces
+live in one place each, so the playbooks cannot drift: `proxmox_api_module_defaults` for
+`module_defaults`, `claude_vm_requested` for `VM_NAME` narrowing, the `guest_address` filter with
+`proxmox_nic` for a VM's address, and the `proxmox_access_denied` filter for "the token was
+refused" - which anchors 401/403 to proxmoxer's status position, because Proxmox names the VM in
+the error text and `VM 4013 is not running` otherwise reads as a 401.
 
 ## Things that have bitten this repo
 
@@ -92,12 +152,16 @@ the *tag*, written by that same settings call, so a half-built VM is repaired in
   half the fleet. The Makefile passes JSON (`-e '{"vm_name": "..."}'`) to keep the value whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them
   comma-joined. Anything parsing tags must handle both.
-- **`vars_prompt` needs a `default:`**, or a run with no terminal hangs. The default must be the
-  safe answer (`destroy.yml` defaults to `no`).
+- **`vars_prompt` silently takes its `default:` without a terminal.** It does not hang — ansible-core
+  warns ("Not prompting as we are not in interactive mode") and uses the `default:`, or `None` when
+  there is none. So every prompt needs a `default:`, and it must be the safe answer (`destroy.yml`
+  defaults to `no`).
 - **There is deliberately no `LIMIT`.** `--limit` is applied before the plays run, and these VMs
   only enter the inventory once discovery has found them, so it could never match.
 - **`gitleaks --staged` scans the index**, which equals HEAD in a CI checkout — i.e. nothing. CI
-  scans the tree, scoped by `.gitleaks.toml`.
+  scans the tree *and* the commits a push or pull request brings in, both scoped by `.gitleaks.toml`:
+  the tree alone misses a secret committed and then deleted, which stays in the published history.
+  gitleaks exits 0 when git fails to read a range, so the workflow checks the range with `git` first.
 
 ## Conventions
 
@@ -106,4 +170,6 @@ catch people out: role variables must be prefixed with the role name (`var-namin
 including vars set inside a role's own Molecule scenario), task names in an included file are
 prefixed with the file name (`- name: node | Install Node.js`), and every role variable needs both
 a `defaults/main.yml` entry and a `meta/argument_specs.yml` entry, with `no_log: true` if it can
-hold a secret. Commits follow Conventional Commits; the body explains *why*.
+hold a secret. Commits follow Conventional Commits; the body explains *why*. Pull request titles
+start with the kind of change in brackets - `[feat]`, `[fix]`, `[cleanup]`, `[docs]`, `[test]`,
+`[ci]`, `[build]` - then a short imperative summary, never a `feat:` prefix.

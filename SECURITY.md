@@ -21,8 +21,8 @@ what it stores:
 - **What the VM ends up trusting**: the SSH key material, the passwordless sudo rule and the docker group
   membership.
 
-Findings in any of those are in scope, as is anything that would cause a secret to be written to a log, a
-fact cache or the repository.
+Findings in any of those are in scope, as is anything that would cause a secret to be written to a log or
+the repository.
 
 ## Known trade-offs, not vulnerabilities
 
@@ -38,7 +38,21 @@ that only restate them are not treated as vulnerabilities:
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
   once - and `make configure` then sends it your SSH keys, GitHub token and Anthropic API key. Keeping
   the key instead would only trade this for a failure every time a lease is recycled, so the removal is
-  deliberate. On a network where you do not trust every device, assign VMs a fixed address with
-  `proxmox_vm_ipconfig` rather than relying on DHCP.
+  deliberate. On a network where you do not trust every device, put the VMs on a bridge that only
+  trusted devices can reach (`proxmox_bridge`, set before `make template`, since every clone inherits
+  the template's NIC). A fixed address from `proxmox_vm_ipconfig`, outside the DHCP pool, keeps the
+  address from being leased to anything else, but only for a single VM: that one value applies to every
+  VM a run provisions, so a second VM would be given the same address.
 
 If you can show one of these is exploitable beyond the documented trade-off, please report it.
+
+## Secrets committed by mistake
+
+CI runs gitleaks over the working tree and over every commit a push or pull request brings in, so a
+token committed and then deleted in a later commit still fails the run (ARCHITECTURE.md §10 lists what
+it cannot see). A failing scan means the secret has already been pushed to a public repository, and
+rewritten commits stay reachable by SHA, from pull requests and in forks. Revoke or rotate the
+credential first, as GitHub's guide to [removing sensitive data][sensitive] advises; rewriting history
+comes second.
+
+[sensitive]: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository
