@@ -31,6 +31,11 @@
     # force also covers a VM that was (re)started between the two tasks;
     # without it the module reports ok and leaves the VM in place.
     force: true
+    # A disk that still carries this VMID but that the configuration no
+    # longer lists goes with the VM: these are throwaway VMs, deleted often,
+    # and a disk left behind would sit on the storage until someone noticed.
+    # The VMID is this VM's, by the tag check above, so the disks are too.
+    destroy_unreferenced_disks: true
     timeout: "{{ proxmox_vm_timeout }}"
   when: proxmox_vm_exists
 
