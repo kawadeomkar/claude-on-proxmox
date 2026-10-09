@@ -242,7 +242,7 @@ ssh-config: vault-check vm-name-check log-setup ## Refresh the SSH alias of ever
 # vm-name-check, so the value is never interpolated into the recipe.
 .PHONY: code
 code: export VM_NAME_CHECK := $(value VM_NAME)
-code: vault-check vm-name-check project-name-check log-setup ## Open a VM in VS Code, or one project on it: make code VM_NAME=alpha [PROJECT=<repo>]
+code: vault-check vm-name-check project-name-check log-setup ## Open a VM in VS Code with a Claude terminal, or one project on it: make code VM_NAME=alpha [PROJECT=<repo>]
 	@test -n "$$VM_NAME_CHECK" || { echo "error: code opens one VM: make code VM_NAME=<name>"; exit 1; }
 	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(PROJECT_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml

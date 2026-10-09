@@ -72,8 +72,21 @@
 # Where the code lives on the VM: cloned into, opened by Remote Control, and
 # what VS Code is pointed at. Empty means ~/projects of the VM user.
 # vm_projects_dir: ""
+# `make code` opens a workspace file that starts claude in a terminal of the
+# window, once you have trusted the folder and allowed automatic tasks. Set
+# false to open the bare folder and write nothing on the VM; for one run,
+# make code VM_NAME=alpha ANSIBLE_ARGS="-e vscode_claude_terminal=false".
+# vscode_claude_terminal: true
+# Where those files go on the VM, as an absolute path of its own. Empty:
+# .claude-on-proxmox in vm_projects_dir.
+# vscode_workspaces_dir: ""
+# The VS Code settings read (never written) to say whether the terminal starts
+# on its own. Empty: where stock VS Code keeps them on macOS and Linux; set it
+# for Insiders, VSCodium, or a VS Code on Windows driven from WSL.
+# vscode_user_settings_file: ""
 
-# Claude Code release channel: stable, latest, or an exact version like 2.1.0
+# Claude Code release channel: stable, latest, or an exact version like 2.1.41
+# (the oldest with `claude auth`, which the Claude terminal relies on)
 # claude_code_version: stable
 # Extra user-level settings merged into ~/.claude/settings.json
 # claude_code_settings:

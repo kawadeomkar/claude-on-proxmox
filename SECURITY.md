@@ -45,6 +45,13 @@ that only restate them are not treated as vulnerabilities:
   defaults to anyway; the VM user can forward ports, as a user with passwordless sudo always could.
   SSH agent forwarding to the VM is off by default and documented as a choice, because the VM user is
   root-equivalent and runs an AI agent.
+- `make code` opens a workspace file whose task starts `claude` in a terminal when the window opens
+  (`vscode_claude_terminal`, on by default). The file is written by this project beside the
+  repositories, never in one, and its command is fixed in `playbooks/code.yml`. VS Code still runs
+  it only in a window you have trusted and once you have allowed automatic tasks; the project reads
+  that setting to explain what will happen, and never writes it, sets trust, or relaxes either check.
+  Allowing automatic tasks is a VS Code-wide choice: it also lets a trusted repository's own
+  `folderOpen` tasks run, as it would without this project.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
   once - and `make configure` then sends it your SSH keys, GitHub token and Anthropic API key. Keeping

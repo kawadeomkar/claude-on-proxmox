@@ -436,17 +436,73 @@ no other playbook does, launching the editor. In order:
 4. Read the VM user's home on the VM with `getent`, delegated over SSH, unless `vm_projects_dir`
    says where the code is. Nothing is guessed on the controller, and nothing is read back out of the
    alias: the workspace is `vm_projects_dir` or `<home>/projects`.
-5. Refresh the alias, then look for the folder to open - the workspace, or `<workspace>/<project>` -
+5. Refuse a `vm_projects_dir` that is not absolute (VS Code is handed it as written, from this
+   machine, so `~` would not expand) and, with the terminal on, a `vscode_workspaces_dir` that is
+   not absolute, is the projects directory (its files would sit among the repositories), or is the
+   folder being opened (`PROJECT=.claude-on-proxmox`). Each names the variable it is about.
+6. Refresh the alias, then look for the folder to open - the workspace, or `<workspace>/<project>` -
    with `stat` on the VM. Read-only. Unreachable, missing and not-a-folder are each their own
    message: a missing project lists what the workspace holds and, for a name that differs only in
    case, suggests the right one, since the VM's paths are case-sensitive; a missing workspace means a
    VM never configured, and says to run `make configure`. These are there so a typo is said in the
    terminal, not in a VS Code window opened on a folder that does not exist.
-6. Check `code` is on `PATH`, install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
-   lacks it, and run `code --remote ssh-remote+alpha <folder>`.
+7. Check `code` is on `PATH`, and install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
+   lacks it.
+8. With `vscode_claude_terminal` (the default), write a workspace file on the VM and open that:
+   `code --remote ssh-remote+alpha <workspaces>/project/<project>.code-workspace`, or
+   `<workspaces>/<workspace's name>.code-workspace` for the whole directory, where `<workspaces>` is
+   `vscode_workspaces_dir` or `<workspace>/.claude-on-proxmox`. One project's file is in `project/`
+   so a repository that shares the workspace's name cannot collide with the whole directory's. Off,
+   it opens the folder itself and writes nothing.
+9. Say what VS Code will do, from the user's VS Code settings, read and never written: looked for
+   where VS Code would put them (`VSCODE_APPDATA`, `XDG_CONFIG_HOME`, stock VS Code's place on macOS
+   and Linux, the snap, the flatpak), and said as not found, not readable or not parsable when they
+   are, since "unset" would promise a question that may not come; VS Code asks once per workspace,
+   in a notification that goes quiet after a moment, so the message names *Tasks: Manage Automatic
+   Tasks* as well.
 
-Nothing on the VM is changed: cloud-init placed the key, so a VM that was provisioned but never
-configured still opens once it has a workspace.
+**The workspace file** is built as data and written with `to_nice_json`, so no path breaks its JSON;
+`copy` leaves an unchanged file alone. It names the folder by absolute path, hides its own directory
+from the explorer of the window that shows it, and holds one task, `Claude`: a `process` task,
+`/bin/bash -lc <script> make-code <not installed> <signed in>`, `cwd` the folder, `runOptions.runOn:
+folderOpen`, presented in a dedicated, focused terminal. A login shell, because VS Code starts task
+shells non-login and `claude` is on the login `PATH` only (`make claude-login` uses `bash -lc` for
+the same reason). The script checks `claude` is installed, runs `claude auth login` when
+`claude auth status` fails, and then `exec claude --continue` - the folder's latest conversation, or
+a new one, because a task terminal does not survive a window reload, after which the task runs
+again; its two messages arrive as arguments, never as script text, and
+`tests/unit/test_code_session.py` runs it against a stand-in `claude`. `${workspaceFolder}`
+is not used: in a task that belongs to a workspace file rather than a folder it is ambiguous.
+
+Sign-in is not scripted, because it cannot be: it is a browser flow. VS Code Server puts its
+`browser.sh` helper in `BROWSER` for every terminal it starts, which opens the URL on the client,
+and `claude` shows the URL as well and accepts a pasted code. A fresh login leaves Remote Control's
+unit stopped (§5.5); the terminal names `make configure VM_NAME=<name> TAGS=claude_code`, which starts
+it through the role's own eligibility checks, rather than starting it itself.
+
+**What VS Code decides, and what this does not touch.** VS Code runs a `folderOpen` task only in a
+trusted window, and only once automatic tasks are allowed:
+
+| Gate | Where VS Code keeps it | What `code.yml` does |
+|---|---|---|
+| Workspace Trust | client-side, by URI, per remote authority; a trusted folder covers its children. A workspace file is trusted when its folders *and* the file itself are | Puts the files under the projects directory, so trusting that directory once covers every project and every file. Says so. |
+| `task.allowAutomaticTasks` | an application setting in the default profile's `settings.json`; unset, VS Code asks once and *Allow* writes `"on"`; only a user-set `"off"` silences both question and task | Reads it with the `vscode_setting` filter (JSONC: comments, trailing commas, flat or nested key) and says which question to expect, or that the terminal will not start. Never writes it. |
+
+Both are the user's own security decisions, so there is no `security.workspace.trust.enabled:
+false`, no `terminal.integrated.allowInUntrustedWorkspace`, no written setting and no user-level
+`folderOpen` task, which would fire in every workspace they open. Checked against VS Code 1.140's
+source: trust is computed over the folders plus the workspace file's own URI, automatic tasks
+include a workspace file's tasks, and a path ending in `.code-workspace` given to `--remote` opens as a
+workspace. The defaults moved twice in 2026 (1.109, 1.126); CI cannot watch the user's editor, so a
+manual run of `make code` is the check when they move again.
+
+The workspace file is the one thing written on the VM, last, as the VM user, so every refusal above
+leaves the VM as it was; a workspace directory that already exists keeps its mode, since
+`vscode_workspaces_dir` may name one of the user's own. `tests/unit/test_code_session.py` holds
+every task in `code.yml` to an allowlist - read-only here, or delegated to the VM - and the
+`provision` scenario checks the settings file it planted is byte-for-byte untouched after every
+run. `PROJECT=.claude-on-proxmox`, which names the files' own directory, is refused. Cloud-init placed the key, so a VM that was provisioned but never configured still
+opens once it has a workspace, and its terminal says to run `make configure`.
 
 ## 5. Roles
 
@@ -888,6 +944,22 @@ Covered by 26 unit tests in `tests/unit/test_github_repos.py`.
 
 ---
 
+### 7.3 `filter_plugins/vscode.py`
+
+**`vscode_setting(text, key, default)`** — the value VS Code's `settings.json` gives `key`, for
+`code.yml` to say whether the Claude terminal will start on its own. The file is JSONC: `//` and
+`/* */` comments and trailing commas are dropped in one pass that copies strings whole, so a `//`
+in a URL is not a comment and a commented-out `"task.allowAutomaticTasks": "off"` does not count.
+A key is read flat, as VS Code writes it, or nested, and the later spelling wins, as VS Code's own
+reader has it: dotted keys expand into a tree in file order, a nested object replaces what the flat
+keys built before it, and a key whose path runs into a value that is not an object is dropped.
+Empty text gives `default`; text that does not parse, or is not an object, gives `unparsable` when
+the caller passes one, which is how `code.yml` says a file did not parse rather than take it for
+unset. Either way a run that only reports what the editor will do must not fail on the user's own
+settings. Read-only by construction; nothing in the project writes that file.
+
+Covered by unit tests in `tests/unit/test_vscode_filters.py`.
+
 ## 8. Convergence and idempotence
 
 Idempotence is enforced mechanically: Molecule's idempotence stage re-runs converge and fails on any
@@ -1107,6 +1179,15 @@ file into the ephemeral directory with the `Include` off, guarded by a unit test
 and documented as a choice: the VM user is root-equivalent and runs an AI agent, and `ForwardAgent`
 would hand it every key in the user's agent.
 
+**In the editor:** `make code`'s workspace file starts a terminal running `claude` when the window
+opens, which is exactly the kind of code-on-open VS Code guards with Workspace Trust and the
+automatic-tasks question. Both stay the user's to answer (§4.9): the project reads
+`task.allowAutomaticTasks` to say what will happen and never writes it, sets no trust, and lowers no
+VS Code setting. The task is the one written in the file, not one a repository can supply: the file
+lives beside the repositories, never in one, and a repository's own `.vscode/tasks.json` still
+needs the same trust and permission as it would without this project. What the task runs is fixed
+in `code.yml`, with the VM name passed as an argument rather than spliced into the script.
+
 ---
 
 ## 11. Testing architecture
@@ -1229,8 +1310,15 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   mistyped project (the projects are listed, the file among them is not), `parkbnb` for `ParkBnb`
   (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file,
   `../etc` and `..` (the playbook's own check), a VM with no projects directory,
-  an empty one, and one case over real SSH to an address nothing answers on. The user ssh config in
-  the ephemeral directory never exists.
+  an empty one, `.claude-on-proxmox` (the workspace files' own directory), a relative
+  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The user ssh
+  config in the ephemeral directory never exists. The workspace files are read back and parsed: one
+  folder, the project's path; one task, `folderOpen`, `bash -lc` in that folder; the whole
+  directory's hides `.claude-on-proxmox`. With VS Code settings in the ephemeral directory (never the
+  developer's) saying nothing, `"on"` behind a commented-out `"off"`, and `"off"`, the message asks
+  for trust and *Allow*, trust only, and says the terminal will not start; reopening leaves the file's
+  mtime and checksum alone; `vscode_claude_terminal: false` opens the bare folder and writes no file,
+  and no refusal writes one either.
 
 ### 11.4 The fakes — `tests/molecule/`
 
@@ -1353,7 +1441,7 @@ playbooks/
                                   then an SSH alias per configured VM on the controller
   destroy.yml                     confirm, verify ownership, delete in parallel, forget each alias
   ssh_config.yml                  refresh every alias from the fleet; fleet-wide, prune the vanished
-  code.yml                        refresh one alias, then open the VM in VS Code
+  code.yml                        refresh one alias, write the Claude workspace file, open it in VS Code
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
   tasks/ssh_config.yml            one blockinfile block per VM in ~/.ssh/claude-on-proxmox.conf, Include once
@@ -1369,6 +1457,7 @@ roles/
 
 filter_plugins/proxmox.py         net_mac, guest_ipv4, guest_address, guest_addresses, proxmox_access_denied,
                                   ssh_config_blocks, ssh_config_prune
+filter_plugins/vscode.py          vscode_setting (JSONC, read-only)
 inventory/
   hosts.yml.example               the only address anyone supplies
   controller.yml                  localhost, so it picks up group_vars/all
@@ -1378,7 +1467,7 @@ inventory/
 tests/
   check_no_local_files.sh         tracked-file guard (also runs in CI)
   unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the managed
-                                  SSH config, Makefile guards
+                                  SSH config, the Claude terminal's script, Makefile guards
   molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API
 molecule/
   provision/                      provision.yml + discover.yml against the fake API
