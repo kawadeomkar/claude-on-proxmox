@@ -208,7 +208,7 @@ def _stub_log_path(output: str) -> str:
     return match.group(1)
 
 
-@pytest.mark.parametrize("target", ["list", "deploy", "ssh-config", "claude-login", "template"])
+@pytest.mark.parametrize("target", ["list", "deploy", "ssh-config", "claude-login", "github-login", "template"])
 def test_a_playbook_target_logs_its_run_to_its_own_file(tmp_path: Path, target: str) -> None:
     result = _make(target, "VM_NAME=alpha", *_logging_overrides(tmp_path))
     output = result.stdout + result.stderr

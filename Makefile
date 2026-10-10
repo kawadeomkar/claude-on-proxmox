@@ -72,7 +72,7 @@ PRE_COMMIT_SKIP := yamllint,ansible-lint,ruff-check,ruff-format,gitleaks
 LOG_DIR            ?= $(CURDIR)/.logs
 LOG_RETENTION_DAYS ?= 14
 LOG_STAMP          := $(shell date +%Y%m%d-%H%M%S)
-LOGGED_TARGETS     := template provision list configure deploy destroy claude-login check ssh-config code \
+LOGGED_TARGETS     := template provision list configure deploy destroy claude-login github-login check ssh-config code \
                       molecule molecule-scenario molecule-integration molecule-provision test vagrant-up
 ifneq ($(LOG_DIR),)
 $(LOGGED_TARGETS): export ANSIBLE_LOG_PATH ?= $(LOG_DIR)/$(LOG_STAMP)-$(firstword $(MAKECMDGOALS) $@).log
@@ -224,6 +224,15 @@ destroy: vault-check vm-name-check log-setup ## Stop and delete the VM(s) on Pro
 .PHONY: claude-login
 claude-login: vault-check vm-name-check log-setup ## Show how to sign Claude Code in on the VM(s), for Remote Control (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
+
+# Without a token in the vault, gh is signed in to GitHub by its device flow,
+# which ends with the user entering a code on a page; given one VM_NAME this
+# runs it as far as it goes - the page opens here, the code is on the
+# clipboard - waits for the approval, and clones the private repositories.
+# Without a name it reports every VM's state.
+.PHONY: github-login
+github-login: vault-check vm-name-check log-setup ## Sign gh in to GitHub on one VM (VM_NAME) by the device flow, then clone its private repositories; without VM_NAME, report every VM
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/github_login.yml
 
 .PHONY: check
 check: vault-check vm-name-check log-setup ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)

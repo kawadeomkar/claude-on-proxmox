@@ -7,6 +7,9 @@ vm_ssh_public_keys:
   - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMoleculeTestKeyDoNotUse0000000000000000000 molecule@test
 github_username: molecule
 github_token: ""
+# The device flow's browser and clipboard steps run on the controller, which
+# here is the developer's own machine: never in a test.
+github_login_desktop: false
 # Empty = clone everything (the fork "beta" is still filtered out).
 github_projects: []
 # No API key here: Remote Control below is mutually exclusive with one, and

@@ -41,6 +41,23 @@
 # github_projects_include_archived: false
 # github_projects_exclude: []
 # github_projects_clone_protocol: https
+# Sign gh in on each VM (from vault_github_token, or by GitHub's device flow,
+# which make github-login runs for you) and make it git's credential helper,
+# so private repositories clone and git push works. false leaves gh and
+# ~/.gitconfig alone. auto takes the token when there is one, else the device
+# flow; web is the device flow always; token is the token only.
+# github_auth: true
+# github_auth_method: auto
+# github_login_scopes: [workflow]
+# Open the page and copy the code on this machine during the device flow.
+# github_login_desktop: true
+# Run the device flow inside make configure and make deploy too (one VM at a
+# time; the run waits for your approval).
+# github_login_prompt: false
+# The git identity on each VM. Empty: your GitHub display name (or login) and
+# GitHub's noreply address for your account.
+# git_user_name: ""
+# git_user_email: ""
 
 # Packages/tools installed on the VM. See roles/*/defaults/main.yml for the full lists.
 # common_extra_packages: [postgresql-client]

@@ -129,10 +129,45 @@ vm_ssh_public_keys: >-
 
 # --------------------------------------------------------------- GitHub -----
 github_username: "{{ vault_github_username | default('') }}"
+# Optional. With it, private repositories are listed and cloned, and gh on
+# each VM is signed in with it, so `git push` and `gh pr create` work there
+# (README, "Pushing from the VM", for the permissions it needs). Without it,
+# gh is signed in once per VM by GitHub's device flow - `make github-login
+# VM_NAME=<name>` runs it and then clones the private repositories, and the
+# terminal `make code` opens runs it too - and every later `make configure`
+# lists with the token gh stored. Either way the same token serves the
+# listing, the clones and the pushes.
 github_token: "{{ vault_github_token | default('') }}"
 # Repository names to clone. Empty list = every repository of github_username
 # (forks and archived repos excluded unless enabled below).
 github_projects: []
+# Sign gh in on each VM and make it git's credential helper, as above. false
+# leaves gh, ~/.gitconfig and the identity below alone; a token then only
+# lists, and a private repository it lists is skipped, not cloned.
+github_auth: true
+# How: auto signs in with github_token when there is one and by GitHub's
+# device flow otherwise; web is the device flow always, and a token then only
+# lists; token is the token only, and an empty one fails by name. The device
+# flow is `make github-login VM_NAME=<name>`: a page opens in your browser,
+# the code is on your clipboard, you paste it and approve, and the run then
+# clones the private repositories too. Scopes it asks for on top of gh's own:
+# workflow, so that pushes which change .github/workflows/ are not refused.
+github_auth_method: auto
+github_login_scopes: [workflow]
+# The browser and clipboard steps of the device flow happen on this machine.
+# Off, the run only prints the page and the code (a headless controller).
+# Every test turns this off; tests/unit/test_github_auth.py checks they do.
+github_login_desktop: true
+# Run the device flow inside make configure and make deploy too, on a
+# signed-out VM. One VM at a time, and the run waits up to fifteen minutes for
+# your approval, so it is off by default: a fleet or an unattended run would be
+# held up. make github-login does it without this.
+github_login_prompt: false
+# The git identity written on each VM. Empty: the GitHub account's display
+# name (or its login) and GitHub's noreply address for it, so no private email
+# lands in commits by default.
+git_user_name: ""
+git_user_email: ""
 
 # ------------------------------------------------------------ Anthropic -----
 # Optional API key, for billing Claude Code to Anthropic API credits. If empty,
@@ -220,7 +255,7 @@ claude_ssh_host_domain: ""
 claude_ssh_identity_file: ""
 # Off on purpose: the VM user has passwordless sudo and runs Claude Code, and
 # ForwardAgent hands every key in your agent to both for the life of the
-# connection. For pushes, `gh auth login` on the VM instead (README).
+# connection. Pushes go through gh, signed in on the VM itself (github_auth).
 claude_ssh_forward_agent: false
 # Extra "Key value" lines for each alias, verbatim. ServerAliveInterval keeps
 # a VS Code connection from going stale behind a NAT or a sleeping laptop.
@@ -265,3 +300,10 @@ github_projects_username: "{{ github_username }}"
 github_projects_token: "{{ github_token }}"
 github_projects_include: "{{ github_projects }}"
 github_projects_dir: "{{ vm_projects_dir }}"
+github_projects_auth: "{{ github_auth }}"
+github_projects_auth_method: "{{ github_auth_method }}"
+github_projects_login_scopes: "{{ github_login_scopes }}"
+github_projects_login_desktop: "{{ github_login_desktop }}"
+github_projects_login_prompt: "{{ github_login_prompt }}"
+github_projects_git_user_name: "{{ git_user_name }}"
+github_projects_git_user_email: "{{ git_user_email }}"

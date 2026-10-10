@@ -13,6 +13,7 @@
       - delta:archived
       - excluded-one
       - epsilon:empty
+      - secret:private
   tasks:
     - name: Create the target user
       ansible.builtin.user:

@@ -15,8 +15,14 @@ vault_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 # GitHub account whose repositories get cloned onto the VM.
 vault_github_username: "your-github-username"
-# Optional: a fine-grained or classic token with `repo` scope to include private
-# repositories and avoid the unauthenticated API rate limit.
+# Optional. With it, private repositories are listed and cloned and gh on each
+# VM is signed in with it, so git push and gh pr create work there. A classic
+# token needs repo, workflow and read:org; a fine-grained one Metadata (read)
+# and Contents, Pull requests and Workflows (read and write) on all
+# repositories. Leave it empty to sign in once per VM by GitHub's device flow
+# instead (make github-login VM_NAME=<name>), with no secret here: that run
+# clones the private repositories too, and later runs list with the token gh
+# stored. README, "Private repositories, and pushing from the VM".
 vault_github_token: ""
 
 # Optional: skip interactive `claude` login on the VM.

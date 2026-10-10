@@ -6,10 +6,10 @@
     - name: Stat expected and unexpected checkouts
       ansible.builtin.stat:
         path: "/home/dev/projects/{{ item }}"
-      loop: [alpha, beta, gamma, delta, excluded-one, epsilon]
+      loop: [alpha, beta, gamma, delta, excluded-one, epsilon, secret]
       register: github_projects_verify_dirs
 
-    - name: Assert only public, non-fork, non-archived, non-excluded, non-empty repos were cloned
+    - name: Assert the non-fork, non-archived, non-excluded, non-empty repos were cloned, the private one included
       ansible.builtin.assert:
         that:
           - github_projects_verify_dirs.results[0].stat.exists
@@ -18,7 +18,41 @@
           - not github_projects_verify_dirs.results[3].stat.exists
           - not github_projects_verify_dirs.results[4].stat.exists
           - not github_projects_verify_dirs.results[5].stat.exists
+          - github_projects_verify_dirs.results[6].stat.exists
           - github_projects_verify_dirs.results[0].stat.pw_name == 'dev'
+        quiet: true
+
+    # What the sign-in left behind for dev: the stand-in gh's login (the vault
+    # token, written once across every converge), git's credential helper as
+    # gh writes it, and the identity derived from the fake account. As dev
+    # under sudo -H, so --global is /home/dev/.gitconfig.
+    - name: Read what the sign-in left behind for dev
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - [cat, /home/dev/.config/gh/fake-token]
+        - [grep, -c, "^auth login ", /home/dev/.config/gh/calls.log]
+        - [git, config, --global, --get-all, credential.https://github.com.helper]
+        - [git, config, --global, user.name]
+        - [git, config, --global, user.email]
+        - [cat, /home/dev/.config/claude-on-proxmox/gh-login]
+      become: true
+      become_user: dev
+      register: github_projects_verify_gh
+      changed_when: false
+      loop_control:
+        label: "{{ item | join(' ') }}"
+
+    - name: Assert gh was signed in once, made the helper, and the identity is the account's
+      ansible.builtin.assert:
+        that:
+          - github_projects_verify_gh.results[0].stdout == 'ghp_molecule0000'
+          - github_projects_verify_gh.results[1].stdout == '1'
+          - github_projects_verify_gh.results[2].stdout_lines == ['', '!/usr/local/bin/gh auth git-credential']
+          - github_projects_verify_gh.results[3].stdout == 'Molecule Tester'
+          - github_projects_verify_gh.results[4].stdout == '4242+molecule@users.noreply.github.com'
+          # The marker that makes this login the role's to remove: the digest, not the token.
+          - github_projects_verify_gh.results[5].stdout == 'ghp_molecule0000' | hash('sha256')
         quiet: true
 
     - name: Stat checkouts of the explicit-list run
