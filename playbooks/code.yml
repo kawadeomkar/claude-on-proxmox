@@ -19,7 +19,7 @@
 # With vscode_claude_terminal (the default), VS Code is handed a workspace
 # file rather than the folder. It names the folder and holds one task, run when
 # the window opens: a terminal named Claude that starts claude there, signing
-# in first on a VM that has not been. That file is the one thing written on the
+# in to Claude, and to GitHub, first on a VM that has not been. That file is the one thing written on the
 # VM, in a directory of its own beside the projects
 # (<projects>/.claude-on-proxmox/), never in a repository; cloud-init placed
 # the key at provisioning, so nothing else needs changing. VS Code runs the
@@ -66,7 +66,16 @@
           - label: Claude
             type: process
             command: /bin/bash
-            args: [-lc, "{{ claude_code_terminal_script }}", make-code, "{{ claude_code_not_installed }}", "{{ claude_code_signed_in }}"]
+            args:
+              - -lc
+              - "{{ claude_code_terminal_script }}"
+              - make-code
+              - "{{ claude_code_not_installed }}"
+              - "{{ claude_code_signed_in }}"
+              - "{{ claude_code_github_signed_in }}"
+              - "{{ github_projects_clone_protocol | default('https') }}"
+              - "{{ github_login_scopes | default(['workflow']) | join(',') }}"
+              - "{{ claude_vm_names[0] }}"
             options:
               cwd: "{{ claude_code_target }}"
             runOptions:
@@ -80,19 +89,34 @@
               showReuseMessage: true
             problemMatcher: []
 
-    # What the task runs, as `bash -lc <this> make-code <$1> <$2>`. A login
-    # shell, because tasks start non-login shells and claude is on the login
-    # PATH only. `claude auth status` exits non-zero until the VM is signed in,
-    # by claude.ai or by an API key; `claude auth login` is the browser flow,
-    # and the browser is the one on this machine, through the BROWSER helper
-    # VS Code Server sets in every terminal it starts. --continue picks the
-    # folder's latest conversation up, or starts one when there is none: a
-    # task terminal does not survive a window reload, after which the task
-    # runs again, so without it a reload would end the conversation (/clear
-    # starts a fresh one). The messages are arguments, never script text, and
-    # a stop ends with exit 0: on a non-zero exit VS Code prints the whole
-    # command line, script and messages included, under the line that matters.
+    # What the task runs, as `bash -lc <this> make-code <$1> <$2> <$3> <$4>
+    # <$5>`. A login shell, because tasks start non-login shells and claude is
+    # on the login PATH only. `claude auth status` exits non-zero until the VM
+    # is signed in, by claude.ai or by an API key; `claude auth login` is the
+    # browser flow, and the browser is the one on this machine, through the
+    # BROWSER helper VS Code Server sets in every terminal it starts. Then
+    # GitHub, when $3 says so (github_auth, and not the token method) and gh is
+    # there but signed out: gh's device flow, run with no terminal of its own
+    # so that it prints the code and the page at once and asks nothing - stdin
+    # closed, its output read line by line - with the page opened on this
+    # machine through that same BROWSER helper and the code printed on a line
+    # of its own to copy (a Remote-SSH terminal passes no clipboard escape
+    # through). The code is the seventh word of gh's line, read by word
+    # rather than cut with ${...}: VS Code resolves ${...} in a task's
+    # arguments before bash sees them. $4 and $5 are the git protocol and the
+    # scopes, $6 the VM's name. Then gh is made
+    # git's credential helper, so a push from this terminal works at once; the
+    # private repositories still take the make configure that $3 names, and a
+    # sign-in that fails does not keep Claude from starting. pipefail, so that
+    # gh's exit status survives the read loop. --continue picks the folder's
+    # latest conversation up, or starts one when there is none: a task terminal
+    # does not survive a window reload, after which the task runs again, so
+    # without it a reload would end the conversation (/clear starts a fresh
+    # one). The messages are arguments, never script text, and a stop ends
+    # with exit 0: on a non-zero exit VS Code prints the whole command line,
+    # script and messages included, under the line that matters.
     claude_code_terminal_script: |-
+      set -o pipefail
       if ! command -v claude >/dev/null 2>&1; then
         printf '%s\n' "$1"
         exit 0
@@ -101,6 +125,22 @@
         printf '%s\n' "Signing in to Claude first. Your browser opens the sign-in page; if it shows a code, paste it here."
         claude auth login || exit 0
         [ -z "$2" ] || printf '%s\n' "$2"
+      fi
+      if [ -n "$3" ] && command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
+        printf '%s\n' "Signing in to GitHub next, so that git push and gh work here. Your browser opens github.com/login/device; enter the code below there."
+        if gh auth login -h github.com -p "$4" -w -s "$5" --skip-ssh-key </dev/null 2>&1 | while IFS= read -r line; do
+            case "$line" in
+              *"one-time code: "*)
+                read -r _ _ _ _ _ _ code <<<"$line"
+                printf '\n    %s\n\n' "$code"
+                [ -z "$BROWSER" ] || "$BROWSER" https://github.com/login/device >/dev/null 2>&1 || true ;;
+              *"Logged in as"*|*"failed to authenticate"*) printf '%s\n' "$line" ;;
+            esac
+          done && gh auth setup-git -h github.com; then
+          printf '%s\n' "$3"
+        else
+          printf '%s\n' "Not signed in to GitHub. From your machine: make github-login VM_NAME=$6"
+        fi
       fi
       exec claude --continue
     claude_code_not_installed: >-
@@ -113,6 +153,14 @@
       {{ ('Signed in. To reach this VM from the Claude apps too, start Remote Control from your machine: '
           ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
          if claude_remote_control | default(true) | bool else '' }}
+    # Empty when github_auth is off or the token method is chosen, which is
+    # also what tells the script to leave GitHub alone. The private
+    # repositories are listed with the token gh just stored, so they take one
+    # more configure run (README, "Private repositories").
+    claude_code_github_signed_in: >-
+      {{ ('Signed in to GitHub. To clone your private repositories here too, run on your machine: '
+          ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=github_projects')
+         if github_auth | default(true) | bool and github_auth_method | default('auto') != 'token' else '' }}
 
     # Read on this machine, never written. task.allowAutomaticTasks is an
     # application setting, so the default profile's settings.json holds it
@@ -505,7 +553,8 @@
           - VS Code is opening {{ claude_code_target }} on {{ claude_vm_names[0] }} ({{ claude_code_reach }}).
           - The first connection installs VS Code Server on the VM and takes a minute.
           - >-
-            {{ 'A terminal named Claude then starts claude in it, signing in to Claude first if '
+            {{ 'A terminal named Claude then starts claude in it, signing in to Claude'
+               ~ (' and to GitHub' if github_auth | default(true) | bool else '') ~ ' first if '
                ~ claude_vm_names[0] ~ ' has not been. ' ~ claude_code_first_time if claude_code_terminal else '' }}
       ansible.builtin.debug:
         msg: "{{ claude_code_said | select | join(' ') | trim }}"

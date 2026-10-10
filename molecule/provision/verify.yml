@@ -1274,9 +1274,12 @@
           - verify_task.label == 'Claude'
           - verify_task.type == 'process'
           - verify_task.command == '/bin/bash'
-          - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4]]
+          - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4],
+                                 verify_task.args[5], 'https', 'workflow', 'alpha']
           - verify_task.args[3] is search('make configure VM_NAME=alpha,')
           - verify_task.args[4] is search('make configure VM_NAME=alpha TAGS=claude_code$')
+          # The GitHub sign-in message, empty when github_auth is off.
+          - verify_task.args[5] is search('make configure VM_NAME=alpha TAGS=github_projects$')
           - verify_task.options.cwd == verify_ws ~ '/discord-music-bot'
           - "verify_task.runOptions == {'runOn': 'folderOpen'}"
           - "verify_task.presentation == {'reveal': 'always', 'focus': true, 'panel': 'dedicated', 'clear': true, 'showReuseMessage': true}"
