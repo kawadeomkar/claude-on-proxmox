@@ -24,6 +24,12 @@ proxmox_vm_state: present
 # checking in the Proxmox UI that the VMID is the one you mean.
 proxmox_vm_allow_untagged_delete: false
 
+# The DNS domain this machine's SSH aliases reach the VMs by, when it is not
+# their address (claude_ssh_host_domain). Deleting a VM forgets its host key
+# under <name>.<domain> as well as under its address, so a VM created again
+# with the same name is not refused for the old key.
+proxmox_vm_known_hosts_domain: ""
+
 # Identity. The name is the key: the role looks the VM up by name and only
 # clones when no VM of that name exists, so re-running is a no-op. The VMID is
 # optional - left empty, Proxmox assigns the next free one.

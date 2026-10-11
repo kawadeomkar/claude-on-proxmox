@@ -7,16 +7,18 @@
 # one step that stays the user's is entering the code and authorising, which
 # GitHub insists on: its device flow pre-fills nothing. One VM at a time: the
 # browser would otherwise open one page per host before any waiting began.
+# ansible_play_batch, not ansible_play_hosts: under serial the play still holds
+# every VM, and only the batch is the one being signed in now.
 - name: device_flow | Refuse to prompt for more than one VM at a time
   ansible.builtin.assert:
-    that: ansible_play_hosts | length == 1
+    that: ansible_play_batch | length == 1
     fail_msg: >-
-      The GitHub device flow signs in one VM at a time, and this play has
-      {{ ansible_play_hosts | length }}: {{ ansible_play_hosts | join(', ') }}. Run
-      make github-login VM_NAME=<one name>, or set github_login_prompt: false.
+      The GitHub device flow signs in one VM at a time, and this batch has
+      {{ ansible_play_batch | length }}: {{ ansible_play_batch | join(', ') }}. Run the play
+      with serial: 1, as playbooks/github_login.yml does.
     quiet: true
 
-- name: device_flow | Make the directory for gh's output
+- name: device_flow | Make the directory for gh's files
   ansible.builtin.file:
     path: "{{ github_projects_login_output | dirname }}"
     state: directory
@@ -24,14 +26,17 @@
   become: true
   become_user: "{{ github_projects_user }}"
 
-# A run that failed after starting gh leaves gh polling for up to fifteen
-# minutes, writing to this file. Truncating it would share it with that gh,
-# whose expiry line would end the wait below early; unlinked, the stale gh
-# keeps its own inode and exits on its own when its code expires.
-- name: device_flow | Remove the output of an earlier run
+# A run that ended without ending its gh - Ctrl-C - leaves gh polling for up
+# to fifteen minutes, writing to the output file. Truncating it would share it
+# with that gh, whose closing lines would end the wait below early; unlinked,
+# the stale gh keeps its own inode and exits on its own when its code expires.
+- name: device_flow | Remove the files of an earlier run
   ansible.builtin.file:
-    path: "{{ github_projects_login_output }}"
+    path: "{{ item }}"
     state: absent
+  loop:
+    - "{{ github_projects_login_output }}"
+    - "{{ github_projects_login_pidfile }}"
   become: true
   become_user: "{{ github_projects_user }}"
   changed_when: false
@@ -39,171 +44,210 @@
 # A shell, because the output has to be captured while gh still runs: a
 # command's output only comes back when it exits, and the code is needed now.
 # stdin closed and stdout a file is what tells gh to print the code and poll
-# without asking anything. 900 s: the code lives fifteen minutes.
+# without asking anything. gh runs in the background of the job, so that its
+# pid can be recorded to end it by, and the job writes a closing line once gh
+# has exited, however it ended - the one thing the waits below need to see.
 - name: device_flow | Start gh's device flow in the background
   ansible.builtin.shell:
     cmd: >-
-      umask 077 && exec {{ github_projects_login_args | map('quote') | join(' ') }}
-      </dev/null >{{ github_projects_login_output | quote }} 2>&1
+      umask 077 && { {{ github_projects_login_args | map('quote') | join(' ') }} </dev/null &
+      echo $! >{{ github_projects_login_pidfile | quote }}; wait $!; echo "gh exited: $?"; }
+      >{{ github_projects_login_output | quote }} 2>&1
   become: true
   become_user: "{{ github_projects_user }}"
-  async: 900
+  async: "{{ github_projects_login_async_seconds }}"
   poll: 0
   register: github_projects_login_job
   changed_when: false
 
-- name: device_flow | Wait for gh to show the code
-  ansible.builtin.wait_for:
-    path: "{{ github_projects_login_output }}"
-    search_regex: "[A-Z0-9]{4}-[A-Z0-9]{4}|failed to authenticate|error"
-    timeout: 30
-  become: true
-  become_user: "{{ github_projects_user }}"
-  register: github_projects_login_started
-  failed_when: false
+- name: device_flow | Show the code, wait for the approval, and clean up whatever happened
+  block:
+    - name: device_flow | Wait for gh to show the code
+      ansible.builtin.wait_for:
+        path: "{{ github_projects_login_output }}"
+        search_regex: "[A-Z0-9]{4}-[A-Z0-9]{4}|gh exited:"
+        timeout: "{{ github_projects_login_start_seconds }}"
+      become: true
+      become_user: "{{ github_projects_user }}"
+      failed_when: false
 
-- name: device_flow | Read what gh printed
-  ansible.builtin.slurp:
-    src: "{{ github_projects_login_output }}"
-  become: true
-  become_user: "{{ github_projects_user }}"
-  register: github_projects_login_out
-  failed_when: false
+    - name: device_flow | Read what gh printed
+      ansible.builtin.slurp:
+        src: "{{ github_projects_login_output }}"
+      become: true
+      become_user: "{{ github_projects_user }}"
+      register: github_projects_login_out
+      failed_when: false
 
-- name: device_flow | Fail when gh did not start the device flow
-  ansible.builtin.fail:
-    msg: >-
-      gh on {{ inventory_hostname }} did not start the device flow:
-      {{ github_projects_login_text | trim or 'no output in 30 seconds' }}
-  when: github_projects_login_code | length == 0
+    - name: device_flow | Fail when gh did not start the device flow
+      vars:
+        github_projects_login_start_why: >-
+          {{ github_projects_login_said | join('; ') or 'no output in ' ~ github_projects_login_start_seconds ~ ' seconds' }}
+      ansible.builtin.fail:
+        msg: >-
+          gh on {{ inventory_hostname }} did not start the device flow:
+          {{ github_projects_login_start_why ~ ('' if github_projects_login_start_why is search('[.!?]$') else '.') }}
+          Run {{ github_projects_login_command }} again.
+      when: github_projects_login_code | length == 0
 
-- name: device_flow | Say the code and the page
-  ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }}: enter this code at {{ github_projects_login_page }} and authorise
-      GitHub CLI, within fifteen minutes: {{ github_projects_login_code }}
-      {{ '(the page opens in your browser and the code is on your clipboard, if this machine allows it)'
-         if github_projects_login_desktop | bool else '' }}
-      This run waits here until you have.
+    # One line of Jinja per line of text: a more-indented line in a folded
+    # scalar keeps its line break.
+    - name: device_flow | Say the code and the page
+      vars:
+        github_projects_login_opens: >-
+          {{ ' (the page opens in your browser and the code is on your clipboard, if this machine allows it)' if github_projects_login_desktop | bool else '' }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: enter the code {{ github_projects_login_code }} at {{ github_projects_login_page }}
+          and authorise GitHub CLI there{{ github_projects_login_opens }}. This run waits for that: the wait ends by
+          itself when the code expires, after fifteen minutes, and Ctrl-C ends the whole run.
 
-# The two steps on the controller, both best effort: a headless controller
-# still has the line above. Never in a test (github_projects_login_desktop).
-# become off: the play's become is the VM's passwordless sudo, and on the
-# controller it would be the developer's, which asks for a password - and the
-# browser and clipboard are the developer's login session, not root's.
-- name: device_flow | Look for a browser opener and a clipboard on this machine
-  ansible.builtin.command:
-    argv: [which, open, xdg-open, pbcopy, wl-copy, xclip]
-  delegate_to: localhost
-  become: false
-  register: github_projects_login_tools
-  changed_when: false
-  failed_when: false
-  when: github_projects_login_desktop | bool
+    # The two steps on the controller, both best effort: a headless controller
+    # still has the line above. Never in a test (github_projects_login_desktop).
+    # become off: the play's become is the VM's passwordless sudo, and on the
+    # controller it would be the developer's, which asks for a password - and
+    # the browser and clipboard are the developer's login session, not root's.
+    - name: device_flow | Look for a browser opener and a clipboard on this machine
+      ansible.builtin.command:
+        argv: [which, open, xdg-open, pbcopy, wl-copy, xclip]
+      delegate_to: localhost
+      become: false
+      register: github_projects_login_tools
+      changed_when: false
+      failed_when: false
+      when: github_projects_login_desktop | bool
 
-- name: device_flow | Open the page in your browser
-  vars:
-    github_projects_login_browser: "{{ lookup('ansible.builtin.env', 'BROWSER') }}"
-    github_projects_login_found: "{{ github_projects_login_tools.stdout_lines | default([]) | map('basename') | list }}"
-  ansible.builtin.command:
-    argv: >-
-      {{ (github_projects_login_browser | split(' ') | map('replace', '%s', github_projects_login_page) | list)
-         + ([] if '%s' in github_projects_login_browser else [github_projects_login_page])
-         if github_projects_login_browser | length > 0
-         else ['open', github_projects_login_page] if 'open' in github_projects_login_found
-         else ['xdg-open', github_projects_login_page] }}
-  delegate_to: localhost
-  become: false
-  changed_when: false
-  failed_when: false
-  when:
-    - github_projects_login_desktop | bool
-    - github_projects_login_browser | length > 0 or 'open' in github_projects_login_found or 'xdg-open' in github_projects_login_found
+    # BROWSER first, then open, then xdg-open (filter_plugins/desktop.py).
+    - name: device_flow | Open the page in your browser
+      vars:
+        github_projects_login_opener: >-
+          {{ github_projects_login_page
+             | page_opener(lookup('ansible.builtin.env', 'BROWSER'), github_projects_login_tools.stdout_lines | default([])) }}
+      ansible.builtin.command:
+        argv: "{{ github_projects_login_opener }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      failed_when: false
+      when:
+        - github_projects_login_desktop | bool
+        - github_projects_login_opener | length > 0
 
-- name: device_flow | Copy the code to your clipboard
-  vars:
-    github_projects_login_found: "{{ github_projects_login_tools.stdout_lines | default([]) | map('basename') | list }}"
-  ansible.builtin.command:
-    argv: >-
-      {{ ['pbcopy'] if 'pbcopy' in github_projects_login_found
-         else ['wl-copy'] if 'wl-copy' in github_projects_login_found
-         else ['xclip', '-selection', 'clipboard'] }}
-    stdin: "{{ github_projects_login_code }}"
-    stdin_add_newline: false
-  delegate_to: localhost
-  become: false
-  changed_when: false
-  failed_when: false
-  when:
-    - github_projects_login_desktop | bool
-    - github_projects_login_found | intersect(['pbcopy', 'wl-copy', 'xclip']) | length > 0
+    - name: device_flow | Copy the code to your clipboard
+      vars:
+        github_projects_login_found: "{{ github_projects_login_tools.stdout_lines | default([]) | map('basename') | list }}"
+      ansible.builtin.command:
+        argv: >-
+          {{ ['pbcopy'] if 'pbcopy' in github_projects_login_found
+             else ['wl-copy'] if 'wl-copy' in github_projects_login_found
+             else ['xclip', '-selection', 'clipboard'] }}
+        stdin: "{{ github_projects_login_code }}"
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      failed_when: false
+      when:
+        - github_projects_login_desktop | bool
+        - github_projects_login_found | intersect(['pbcopy', 'wl-copy', 'xclip']) | length > 0
 
-# One quiet task, up to the fifteen minutes the code lives, rather than a loop
-# that prints a retry line every few seconds.
-- name: device_flow | Wait for the approval
-  ansible.builtin.wait_for:
-    path: "{{ github_projects_login_output }}"
-    search_regex: "Logged in as|failed to authenticate"
-    timeout: 900
-  become: true
-  become_user: "{{ github_projects_user }}"
-  register: github_projects_login_waited
-  failed_when: false
+    # One quiet task rather than a loop that prints a retry line every few
+    # seconds. It ends when gh does, however gh ends - approved, expired, or
+    # an error of its own - since the closing line is what it waits for; and
+    # it outlasts gh's own fifteen minutes, so gh's word on an expiry ends it.
+    - name: device_flow | Wait for the approval
+      ansible.builtin.wait_for:
+        path: "{{ github_projects_login_output }}"
+        search_regex: "gh exited:"
+        timeout: "{{ github_projects_login_wait_seconds }}"
+      become: true
+      become_user: "{{ github_projects_user }}"
+      failed_when: false
 
-- name: device_flow | Collect gh's result
-  ansible.builtin.async_status:
-    jid: "{{ github_projects_login_job.ansible_job_id }}"
-  become: true
-  become_user: "{{ github_projects_user }}"
-  register: github_projects_login_result
-  failed_when: false
+  # Whatever happened above - an approval, an expiry, or a failure - gh is
+  # ended if it still runs, its job is collected and removed, and its files
+  # go: a job file left behind is never removed, and a gh left polling holds
+  # the output file.
+  always:
+    - name: device_flow | Give gh a moment to finish
+      ansible.builtin.async_status:
+        jid: "{{ github_projects_login_job.ansible_job_id }}"
+      become: true
+      become_user: "{{ github_projects_user }}"
+      register: github_projects_login_finished
+      until: github_projects_login_finished.finished | default(0) | int == 1
+      retries: 3
+      delay: 1
+      failed_when: false
 
-# Only this mode removes the job file, and gh's "Logged in as" line with it.
-- name: device_flow | Clean up gh's job
-  ansible.builtin.async_status:
-    jid: "{{ github_projects_login_job.ansible_job_id }}"
-    mode: cleanup
-  become: true
-  become_user: "{{ github_projects_user }}"
-  changed_when: false
-  failed_when: false
+    # Only while the job still runs is the recorded pid gh's own.
+    - name: device_flow | End gh if it still runs
+      ansible.builtin.command:
+        argv: [sh, -c, 'pid=$(cat "$1") && kill "$pid"; exit 0', sh, "{{ github_projects_login_pidfile }}"]
+      become: true
+      become_user: "{{ github_projects_user }}"
+      changed_when: false
+      failed_when: false
+      when: github_projects_login_finished.finished | default(0) | int != 1
 
-- name: device_flow | Fail when gh's job could not be collected
-  ansible.builtin.fail:
-    msg: >-
-      {{ inventory_hostname }}: gh's background job could not be collected
-      ({{ github_projects_login_result.msg | default('no detail') }}); its output is read below all the same.
-  when:
-    - github_projects_login_result.finished | default(0) | int != 1
-    - github_projects_login_waited is succeeded
+    - name: device_flow | Collect gh's result
+      ansible.builtin.async_status:
+        jid: "{{ github_projects_login_job.ansible_job_id }}"
+      become: true
+      become_user: "{{ github_projects_user }}"
+      register: github_projects_login_result
+      until: github_projects_login_result.finished | default(0) | int == 1
+      retries: 10
+      delay: 1
+      failed_when: false
 
-- name: device_flow | Read what gh printed, now it has finished
-  ansible.builtin.slurp:
-    src: "{{ github_projects_login_output }}"
-  become: true
-  become_user: "{{ github_projects_user }}"
-  register: github_projects_login_out
-  failed_when: false
+    # Only this mode removes the job file.
+    - name: device_flow | Clean up gh's job
+      ansible.builtin.async_status:
+        jid: "{{ github_projects_login_job.ansible_job_id }}"
+        mode: cleanup
+      become: true
+      become_user: "{{ github_projects_user }}"
+      changed_when: false
+      failed_when: false
 
-- name: device_flow | Remove gh's output
-  ansible.builtin.file:
-    path: "{{ github_projects_login_output }}"
-    state: absent
-  become: true
-  become_user: "{{ github_projects_user }}"
-  changed_when: false
+    - name: device_flow | Read what gh printed, now it has finished
+      ansible.builtin.slurp:
+        src: "{{ github_projects_login_output }}"
+      become: true
+      become_user: "{{ github_projects_user }}"
+      register: github_projects_login_out
+      failed_when: false
+
+    - name: device_flow | Remove gh's files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ github_projects_login_output }}"
+        - "{{ github_projects_login_pidfile }}"
+      become: true
+      become_user: "{{ github_projects_user }}"
+      changed_when: false
+
+# What decides the outcome: gh's own login state, read as everywhere else, not
+# what gh printed. Never under a condition: a skipped include would leave the
+# state read before the flow in place, which is "signed out".
+- name: device_flow | Read gh's login state again
+  ansible.builtin.include_tasks: auth_status.yml
 
 - name: device_flow | Fail when the code was not approved
+  vars:
+    github_projects_login_why: >-
+      {{ 'the code expired after fifteen minutes without an approval' if github_projects_login_expired | bool
+         else github_projects_login_said | last | default('gh gave no reason', true) }}
   ansible.builtin.fail:
     msg: >-
       {{ inventory_hostname }}: the GitHub sign-in did not complete.
-      {{ (github_projects_login_text | trim).splitlines() | last | default('gh gave no reason', true) }}
-      Run make github-login VM_NAME={{ inventory_hostname }} again for a fresh code.
-  when: "'Logged in as' not in github_projects_login_text"
+      {{ github_projects_login_why ~ ('' if github_projects_login_why is search('[.!?]$') else '.') }}
+      Run {{ github_projects_login_command }} again for a fresh code.
+  when: not github_projects_signed_in | bool
 
 - name: device_flow | Record that this run signed the VM in
   ansible.builtin.set_fact:
     github_projects_login_done: true
-
-- name: device_flow | Read gh's login state again
-  ansible.builtin.include_tasks: auth_status.yml

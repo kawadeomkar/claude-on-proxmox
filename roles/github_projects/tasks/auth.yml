@@ -1,12 +1,13 @@
 ---
 # gh on the VM, as github_projects_user: signed in from the vault token when
-# there is one, otherwise left for the one device-flow login the user makes
-# (make github-login, or the terminal make code opens), and either way made
-# git's credential helper for github.com. The state is read first, and again
-# after a change, so that the listing which follows can use whatever token the
-# VM then holds (vars/main.yml, github_projects_listing_token). Nothing here
-# fails a VM that is merely signed out: public repositories still clone, and
-# the run says what is missing.
+# there is one and gh holds no login of the user's own, otherwise left for the
+# one device-flow login the user makes (make github-login, or the terminal
+# make code opens), and either way made git's credential helper for
+# github.com. The state is read first, and again after a change, so that the
+# listing which follows can use whatever token the VM then holds
+# (vars/main.yml, github_projects_listing_token). Nothing here fails a VM that
+# is merely signed out: public repositories still clone, and the run says what
+# is missing.
 - name: auth | Look for gh
   ansible.builtin.command:
     argv: [which, gh]
@@ -28,7 +29,7 @@
   ansible.builtin.fail:
     msg: >-
       gh on {{ inventory_hostname }} could not report its login state:
-      {{ github_projects_auth_status.stderr | default('') | trim or 'no output' }}.
+      {{ github_projects_status_said or 'no output' }}.
       `gh auth status --json` needs gh 2.81.0 or newer. Install gh from GitHub's apt repository
       (dev_tools_install_gh: true), or set github_auth: false to leave gh alone.
   when:
@@ -56,11 +57,13 @@
     - github_projects_auth | bool
     - not github_projects_gh_found | bool
 
-# Only when the stored token differs from the vault's, so a second run changes
-# nothing. --insecure-storage: a headless VM has no credential store, and gh
-# would fall back to the same plain-text hosts.yml anyway; asking for it keeps
-# a future gh that finds one from storing the token somewhere this role cannot
-# read or remove. no_log: the token is on stdin, and the result would show it.
+# Only over a login that is not the user's own, and only when the stored token
+# differs from the vault's, so a second run changes nothing
+# (vars/main.yml, github_projects_token_sign_in). --insecure-storage: a
+# headless VM has no credential store, and gh would fall back to the same
+# plain-text hosts.yml anyway; asking for it keeps a future gh that finds one
+# from storing the token somewhere this role cannot read or remove. no_log:
+# the token is on stdin, and the result would show it.
 - name: auth | Sign gh in with the token
   ansible.builtin.command:
     argv: [gh, auth, login, --hostname, github.com, --git-protocol, https, --with-token, --insecure-storage]
@@ -71,10 +74,7 @@
   changed_when: github_projects_login.rc == 0
   failed_when: false
   no_log: true
-  when:
-    - github_projects_auth_wanted | bool
-    - github_projects_token_wanted | bool
-    - github_projects_stored_token != github_projects_token
+  when: github_projects_token_sign_in | bool
 
 # Failed under no_log, which hides everything; gh's own line names the cause
 # (a refused token, no route to api.github.com) and never the token.
@@ -82,12 +82,40 @@
   ansible.builtin.fail:
     msg: >-
       gh auth login on {{ inventory_hostname }} with vault_github_token failed:
-      {{ github_projects_login.stderr | default('') | trim or 'no output' }}.
+      {{ github_projects_token_said or 'no output' }}.
       GitHub refused the token or the VM cannot reach it. Check the token and its permissions
-      (README, "Pushing from the VM"), or clear it to sign in by hand with make github-login.
+      (README, "Private repositories, and pushing from the VM"), or clear it to sign in by the device flow
+      with {{ github_projects_login_command }}
   when:
     - github_projects_login is not skipped
     - github_projects_login.rc | default(0) != 0
+    - not github_projects_token_short | bool
+
+# A token that lists but that gh will not sign in with: under auto it lists
+# as before and gh stays signed out, rather than every VM failing on upgrade.
+# github_auth_method: token still fails above, as it asked for the token path.
+- name: auth | Say that the token only lists
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: gh did not sign in with vault_github_token
+      ({{ github_projects_token_said }}), so the token only lists the repositories,
+      and git push on the VM will fail. Add read:org (and workflow, for pushes that change
+      .github/workflows/) to the token and run {{ github_projects_configure_command }}; or set
+      github_auth_method: web and sign gh in by the device flow with {{ github_projects_login_command }}
+  when: github_projects_token_short | bool
+
+# The login the user made by hand - for pushing, say, beside a token that
+# only lists, as earlier versions advised - is theirs: the vault token is not
+# put over it, and only lists. Said on every run it holds, with the switch
+# that hands gh to the token instead.
+- name: auth | Say that the token only lists beside a login of your own
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: gh is signed in to GitHub as {{ github_projects_auth_account.login | default('?', true) }}
+      by a login of your own, which this role leaves as it is, so vault_github_token only lists the
+      repositories there. To sign gh in with the token instead, set github_auth_method: token and run
+      {{ github_projects_configure_command }}
+  when: github_projects_token_beside | bool
 
 # The other direction, like the API key in roles/claude_code: the login this
 # role made is removed once no token is configured. Only that one, told by
@@ -128,16 +156,6 @@
     - not github_projects_signed_in | bool
     - github_projects_marker_digest | length > 0
 
-# The device flow, here rather than from make github-login, when asked for:
-# the run then waits for the browser (github_projects_login_prompt).
-- name: auth | Sign gh in by the device flow
-  ansible.builtin.include_tasks: device_flow.yml
-  when:
-    - github_projects_auth_wanted | bool
-    - github_projects_login_prompt | bool
-    - github_projects_web_wanted | bool
-    - not github_projects_signed_in | bool
-
 # Written whenever the login is the vault token's, not only right after a
 # sign-in, so a marker that went missing comes back; the digest of the token,
 # never the token. Rewritten only when its content differs.
@@ -156,7 +174,7 @@
 
 - name: auth | Remember that the login is this role's
   ansible.builtin.copy:
-    content: "{{ github_projects_token | hash('sha256') }}\n"
+    content: "{{ github_projects_token_digest }}\n"
     dest: "{{ github_projects_marker_file }}"
     mode: "0600"
   become: true
@@ -167,6 +185,9 @@
     - github_projects_signed_in | bool
     - github_projects_stored_token == github_projects_token
 
+# Whenever gh is signed in, github_auth or not: clone.yml clones a private
+# repository over https only when git will ask gh for it, and a login made by
+# hand with github_auth off may have made gh the helper too.
 - name: auth | Read git's credential helpers for github.com
   ansible.builtin.command:
     argv: [git, config, --global, --get-all, credential.https://github.com.helper]
@@ -177,14 +198,10 @@
   # 1 is "no such key", which includes no ~/.gitconfig at all.
   failed_when: github_projects_helpers.rc not in [0, 1]
   check_mode: false
-  when:
-    - github_projects_auth_wanted | bool
-    - github_projects_signed_in | bool
+  when: github_projects_signed_in | bool
 
 # gh writes two entries: an empty one, which stops git from also asking any
-# helper configured more generally, then its own. Its own is recognised the
-# way gh recognises it, by the gh after the "!", so one installed elsewhere
-# than /usr/bin counts too.
+# helper configured more generally, then its own (github_projects_gh_helper).
 - name: auth | Make gh git's credential helper for github.com
   ansible.builtin.command:
     argv: [gh, auth, setup-git, --hostname, github.com]
@@ -194,15 +211,21 @@
   when:
     - github_projects_auth_wanted | bool
     - github_projects_signed_in | bool
-    - github_projects_helpers.stdout_lines | default([]) | select('search', '^!([^ ]*/)?gh( |$)') | list | length == 0
+    - not github_projects_gh_helper | bool
 
+# Under make deploy the sign-in comes next in the same run, which says so
+# rather than send the user off to run it (github_projects_sign_in_follows).
 - name: auth | Say how to sign gh in
+  vars:
+    github_projects_sign_in_next: >-
+      {{ 'make deploy signs it in next, in this run, and the private repositories follow.' if github_projects_sign_in_follows | bool
+         else 'Run ' ~ github_projects_login_command ~ ' on your machine: a page opens in your browser, the code is on your'
+              ~ ' clipboard, you paste it and authorise, and that run clones the private repositories too.' }}
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}: gh is not signed in to GitHub, so only public repositories are
-      listed and cloned, and git push on the VM will fail. Run {{ github_projects_login_command }}
-      on your machine: a page opens in your browser, the code is on your clipboard, you paste it
-      and authorise, and that run clones the private repositories too.
+      listed and cloned, and git push on the VM will fail. {{ github_projects_sign_in_next }}
   when:
     - github_projects_auth_wanted | bool
     - not github_projects_signed_in | bool
+    - not github_projects_token_short | bool

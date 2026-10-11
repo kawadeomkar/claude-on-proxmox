@@ -1,13 +1,28 @@
 ---
 # Everything, in order: build the template if it is missing, create the VMs,
-# configure them.
+# configure them, sign them in to Claude and GitHub, and open the VM in VS
+# Code - so one command ends at a window on the VM with a Claude session
+# running and gh signed in.
 #
 #   make deploy                       -> claude-on-proxmox-default, and only it
 #   make deploy VM_NAME=alpha,beta    -> alpha and beta, and only them
 #
+# Each stage is a playbook of its own, imported as is, so deploy is the sum of
+# make template, provision, configure, claude-login, github-login and code by
+# construction, and cannot drift from them.
+#
 # Configuration is limited to the VMs this run provisioned. Other VMs this
 # project created are left alone; `make configure` with no VM_NAME is the
 # command that reaches the whole fleet.
+#
+# The sign-ins are the two steps only the person can take, each a page in the
+# browser and a code: they run one VM at a time, after configuration, and the
+# run waits for them. Enter at a VM's Claude prompt skips both for that VM;
+# every other VM is asked before its GitHub sign-in starts; a run with no
+# terminal skips them all (deploy_sign_in: false skips them on purpose).
+# Either way the VM is deployed: make claude-login and make github-login
+# finish the job later. What a sign-in leads to - Remote Control's start, the
+# private repositories - failing is raised at the end, after VS Code.
 #
 # Every stage is idempotent, so this is also the command to re-run after
 # changing a variable - not only the one to run first. A second run rebuilds
@@ -69,14 +84,25 @@
         quiet: true
       when: claude_template_exists | bool
 
+    # Said up front, because the run stops for the person after the minutes of
+    # configuration, and a prompt left waiting long enough has a sign-in page
+    # behind it that expires. Built in vars, so the message is one line; named
+    # apart from the lookup's register, which would outrank a task var.
     - name: Report what this run will do
-      ansible.builtin.debug:
-        msg: >-
+      vars:
+        claude_deploy_template_said: >-
           {{ 'Template "' ~ proxmox_template_name ~ '" is already built, so this run needs no SSH to the Proxmox host.'
              if claude_template_exists | bool
              else 'Template "' ~ proxmox_template_name ~ '" does not exist yet; building it first, over SSH as root@'
                   ~ (groups['proxmox'][0] | default('the proxmox host')) ~ '.' }}
-          Then provisioning {{ claude_vm_names | join(', ') }} and configuring.
+        claude_deploy_sign_ins: >-
+          {{ ', then signing in to Claude and GitHub: the run stops for you at a prompt here and a page in your'
+             ~ ' browser (Enter at the prompt skips a VM)' if deploy_sign_in | bool else '' }}
+        claude_deploy_window: "{{ ', and opening VS Code on it' if deploy_code | bool and claude_vm_names | length == 1 else '' }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ claude_deploy_template_said }} Then provisioning {{ claude_vm_names | join(', ') }} and configuring, which takes
+          several minutes{{ claude_deploy_sign_ins }}{{ claude_deploy_window }}.
 
 - name: Build the cloud-init VM template
   ansible.builtin.import_playbook: playbooks/template.yml
@@ -95,3 +121,57 @@
   ansible.builtin.import_playbook: playbooks/configure.yml
   vars:
     claude_vm_discovery: false
+    # The sign-ins come next in this run, so configuration says so rather than
+    # name make claude-login and make github-login.
+    claude_code_sign_in_follows: "{{ deploy_sign_in }}"
+    github_projects_sign_in_follows: "{{ deploy_sign_in }}"
+
+# The VMs configuration reached, as for configure: a VM left stopped or whose
+# configuration failed is not in the group. A sign-in that fails is said and
+# left for make claude-login, rather than ending the run.
+- name: Sign Claude Code in on each VM, and start Remote Control
+  ansible.builtin.import_playbook: playbooks/claude_login.yml
+  vars:
+    claude_vm_discovery: false
+    claude_vm_login_interactive: true
+    claude_vm_login_in_deploy: true
+  when: deploy_sign_in | bool
+
+# VM by VM, since this flow waits up to fifteen minutes for a browser and
+# nothing else tells an attended run from an unattended one. Every VM but one
+# whose Claude prompt got Enter is asked first, so GitHub can always be left
+# for later: where a Claude code was entered someone is here, and Enter signs
+# it in; a VM that showed no Claude prompt (signed in already, or an API key)
+# signs in on a "y". With no terminal the question returns at once with
+# nothing. A token in the vault signed gh in during configuration already.
+- name: Sign gh in on each VM, and clone its private repositories
+  ansible.builtin.import_playbook: playbooks/github_login.yml
+  vars:
+    claude_vm_discovery: false
+    claude_vm_login_interactive: "{{ claude_code_login_answered | default(false) }}"
+    claude_vm_login_ask: "{{ not (claude_code_login_skipped | default(false)) }}"
+    claude_vm_login_in_deploy: true
+  when: deploy_sign_in | bool
+
+# make code, for the one VM this run was for: an alias that follows the VM,
+# then a VS Code window whose terminal starts claude. A fleet is not opened
+# window by window: code.yml ends at once with each VM's make code line.
+- name: Open the VM in VS Code
+  ansible.builtin.import_playbook: playbooks/code.yml
+  vars:
+    code_in_deploy: true
+  when: deploy_code | bool
+
+# What a sign-in leads to - Remote Control's start, the private repositories'
+# clones - is not a sign-in: when it failed, the deploy is not done, and says
+# so here, at its end, after VS Code has opened, with the command that retries
+# it. A sign-in that failed or was skipped was said where it happened.
+- name: Fail each VM whose work after a sign-in failed
+  hosts: claude_vms
+  gather_facts: false
+
+  tasks:
+    - name: Fail where the work after a sign-in failed
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_configure_failures | join(' ') }}"
+      when: claude_vm_configure_failures | default([]) | length > 0

@@ -20,8 +20,8 @@ make unit            # pytest, tests/unit/
 make molecule MOLECULE_ROLES="proxmox_vm"      # one role scenario
 make molecule-scenario SCENARIO=provision      # one playbook scenario
 make test            # everything, including pre-commit — the CI gate
-make deploy          # template (if missing) + provision + configure, all idempotent
-make claude-login    # print the one Remote Control step Ansible cannot do
+make deploy          # template (if missing) + provision + configure + both sign-ins + VS Code, all idempotent
+make claude-login VM_NAME=alpha   # sign Claude in by the browser (page opens here, paste its code at the prompt), start Remote Control
 make github-login VM_NAME=alpha   # sign gh in to GitHub by the device flow (page opens here, code on the clipboard), then clone private repos
 make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push an API key
 make list            # read-only: the VMs this project created, and their addresses
@@ -72,29 +72,83 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   `github_projects` signs `gh` in from `github_token` when there is one, otherwise prints the
   device-flow command and uses the token `gh` stored at that login for the listing
   (`github_projects_listing_token`), so private repositories arrive on the run after the login with
-  nothing in the vault. A cleared vault token signs out only the login the role itself made, told
+  nothing in the vault. The vault token is put over no login but the role's own (or under
+  `github_auth_method: token`): a login made by hand stays and the token only lists there, and a git
+  identity set by hand is never replaced (`user.name` and `user.email` are each derived only where
+  unset). A cleared vault token signs out only the login the role itself made, told
   by the marker `~/.config/claude-on-proxmox/gh-login` on the VM (the token's digest, written
   whenever the login is the vault token's), by account: a token the user pasted into gh by hand
-  looks the same, so never decide a logout from the token's prefix alone. The status JSON carries
+  looks the same, so never decide a logout from the token's prefix alone. Under `auto`, a vault
+token gh refuses for a missing scope (a classic token with `repo` alone, as earlier versions asked
+for, lacks `read:org`) keeps listing and gh stays signed out, with the scopes to add said
+(`github_projects_token_short`): failing it would fail every VM on upgrade, since they share the
+token; `github_auth_method: token` still fails. The status JSON carries
   no token; the kind of login comes from `gh auth token` under `no_log`, and a gh older than
   2.81.0, which has no `--json`, is a named failure, never "signed out". gh is made git's
   credential helper by gh's own test for its entry, so a second run is `ok`.
-  Every task that renders a token is `no_log`; `tests/unit/test_github_auth.py` greps the whole run
-  for every canned token. Do not key any of this off `github_auth` alone: with it off, a vault token
-  still lists, and a private repository it lists is skipped and named, not cloned and failed. See
+  Every task that renders a token is `no_log`: `tests/unit/test_github_auth.py` holds that statically
+  and greps every run, module arguments injected (`ansible_inject_invocation`), for every canned token;
+  a message or task var asks `github_projects_token_set`, never the token. Do not key any of this off `github_auth` alone: with it off, a vault token
+  still lists, and a private repository is cloned only where git has a credential for it - over ssh
+  always, over https with gh signed in and git's helper - and otherwise skipped and named, not cloned
+  and failed. See
   ARCHITECTURE.md §5.6.
-- **Tests never open the developer's browser or touch their clipboard.** The GitHub device flow
-  (`roles/github_projects/tasks/device_flow.yml`, run by `make github-login VM_NAME=<one>`) opens
-  the page and copies the code on `localhost`, which in the unit harness and every playbook scenario
-  is the developer's machine. `github_login_desktop` (role: `github_projects_login_desktop`) gates
-  both steps; every scenario and the harness set it false, and `tests/unit/test_github_auth.py` fails
-  if one stops. Those delegated tasks are `become: false`, because the play's `become` is the VM's
-  passwordless sudo and on the controller it is the developer's, which asks for a password; the
-  harness runs with become off, so the same test holds that statically. gh's output file is unlinked
-  before gh starts, never truncated: a run that failed after starting gh leaves gh polling, and its
-  expiry line in a shared file would end the next run's wait early. The flow takes one VM at a time
-  and refuses a play with more; it is inside configure and deploy only with `github_login_prompt`,
-  off by default, because the run waits for a browser.
+- **Tests never open the developer's browser, touch their clipboard, or read their terminal.** Both
+  sign-ins - GitHub's device flow (`roles/github_projects/tasks/device_flow.yml`) and Claude's
+  browser sign-in (`roles/claude_code/tasks/browser_login.yml`), run by `make github-login`, `make
+  claude-login` and `make deploy` - open a page (and GitHub's copies its code) on `localhost`, which in
+  the unit harness and every playbook scenario is the developer's machine. `login_desktop` (roles:
+  `github_projects_login_desktop`, `claude_code_login_desktop`, both wired from it in
+  `inventory/group_vars/all/defaults.yml`) gates those steps; every scenario and both harnesses set it
+  false, and `tests/unit/test_github_auth.py` and `test_claude_login.py` fail if one stops, if the
+  wiring goes, or if a desktop step runs. Behind that, `tests/unit/harness.py` puts stand-ins for
+  `open`, `xdg-open`, `pbcopy`, `wl-copy` and `xclip` first on every run's PATH and points `BROWSER` at
+  one: they record the call and fail, and a run that made one fails its test. A run inherits only the
+  variables the harness names (`PASSED_ON`), and a stand-in host's modules get its own directory as
+  HOME and XDG_CONFIG_HOME, with the git, gh and Claude config variables unset. Every playbook the
+  harnesses run gets `/dev/null` for stdin and a process group of its own, since Claude's sign-in
+  `pause`s for the code; the tests that type do so at a pseudo-terminal of their own, and
+  `test_a_run_never_reads_the_terminal_pytest_runs_at` fails if a run can read pytest's. The delegated tasks are
+  `become: false`, because the play's `become` is the VM's passwordless sudo and on the controller it
+  is the developer's, which asks for a password; the harnesses run with become off, so the same tests
+  hold that statically. Each flow unlinks its output file before starting, never truncating: an
+  attempt a failed run left behind would share the file. The sign-in plays run `serial: 1` whenever
+  they can prompt (names given, or `make deploy`) and all at once for a bare report, and the flows'
+  one-VM guards read `ansible_play_batch` - `ansible_play_hosts` ignores serial. Under serial a failed
+  VM is a whole batch failed, which ends the run, so the plays rescue a failure, say it, and raise it
+  in a later non-serial play, which `make deploy` skips (`claude_vm_login_in_deploy`): deploy goes on
+  past a failed sign-in. `rescue` covers failed tasks only: an unreachable VM is caught by a non-serial
+  play before the sign-in, which pings each VM with `ignore_unreachable` and records it as failed. The
+  block's condition sits on the task inside it, never on the block: a block's `when` is its rescue's
+  too, read again for each task, and the rescue sets the very fact it tests, which skipped the message
+  after it. The rescue re-raises `pause`'s abort (Ctrl-C, then A), which ends the run. The work after a sign-in -
+  Remote Control's start, the github_projects role - runs in a follow-on play after the last prompt;
+  its failure is recorded in `claude_vm_configure_failures` and raised even under `make deploy`, by
+  deploy's last play, since it is not a failed sign-in and the VM is not done.
+  `tests/unit/test_sign_in_plays.py` runs both playbooks, and deploy's sign-ins as deploy.yml has them,
+  against stand-ins, a VM whose ssh exits 255 among them. `make configure` never prompts.
+- **Claude's sign-in hands the code over a pipe, and nothing decides from a terminal probe.** `claude
+  auth login` with no terminal prints the page and reads one line, `<code>#<state>`: a wrong code exits
+  1, a right one writes `~/.claude/.credentials.json` and exits 0, and a line without `#` prints
+  `Invalid code` and waits, so only the pasted code is ever written and an attempt nobody completes is
+  ended by its recorded pid (`$$` is claude's because the shell exec's into it; never a subshell). The
+  code comes from `pause` under `no_log` or `claude_code_login_code`, travels on stdin, and is never
+  logged; the pipe is opened read-write, which never blocks, by a writer that refuses anything at that
+  path but a pipe (`<>` would create a plain file). Before the hand-over `async_status` checks that the
+  attempt still runs; the wait ends on any answer after claude's prompt; `Invalid code` (a code copied
+  up to its `#`) is asked for once more; a sign-in of the same VM still waiting is refused by its
+  pidfile; and what claude printed reaches a message only through the `plain_text` filter, which
+  removes whole escape sequences and then every control character but tab and newline (gh's text and
+  `make code`'s SSH error go through it too). A `/dev/tty` probe cannot tell an
+  attended run - Ansible runs lookups in workers detached from the terminal - so `pause` returning
+  nothing is the skip. `make deploy` decides GitHub's fifteen-minute device flow VM by VM, from facts
+  on each VM: Enter at its Claude prompt (`claude_code_login_skipped`) leaves it, and every other VM is
+  asked by `github_projects_login_ask` - Enter signs in one whose Claude code was entered
+  (`claude_code_login_answered`) and `n` leaves it, while one that showed no Claude prompt (signed in
+  already, an API key) signs in on `y` only - never one fact for the whole
+  run, which made one answer start every VM's flow. The path unit that starts Remote
+  Control when a login lands is `PathChanged=`, never `PathExists=`, which restarts a stopped service
+  instantly, and exists only while the login is the one thing missing (ARCHITECTURE §5.5).
 - **Tests never touch a real Proxmox, GitHub or hypervisor.** `tests/molecule/` holds the fakes:
   a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, a GitHub API over
   local bare repos (the authenticated endpoints included), and a stand-in `gh` installed ahead of
@@ -103,7 +157,10 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   and the managed SSH config `~/.ssh/claude-on-proxmox.conf`, plus one `Include` line at the top of
   `~/.ssh/config` that is added once and never removed. Nothing else in `~/.ssh` is ever edited.
   Everything goes through `playbooks/tasks/ssh_config.yml`, which validates each write with
-  `ssh -G` and refuses an alias the user's own config already names. A block is only ever written
+  `ssh -G`, refuses an alias the user's own config already names, and refuses a name or address that
+  is not one plain word. A VM's address is whatever its guest agent reports, which the VM chooses:
+  `guest_ipv4` accepts only what `ipaddress.IPv4Address` parses, because a newline and a
+  `ProxyCommand` after a valid address pass `ssh -G` and run on this machine. A block is only ever written
   for a tagged VM, holds only what ssh reads (no state of this project's - `make code` reads the
   workspace on the VM), and pruning (`ssh_config.yml`) removes blocks, never VMs. The `Include` is
   added only when `ssh -G` says the user's config does not reach the managed file yet (a `${HOME}`
@@ -116,7 +173,14 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   `code.yml` reads `task.allowAutomaticTasks` from the user's VS Code settings to say which to
   expect, and must never write it, set trust, or lower `security.workspace.trust.*` or
   `terminal.integrated.allowInUntrustedWorkspace`. The script is fixed text in `code.yml`'s vars;
-  anything variable reaches it as an argument. `tests/unit/test_code_session.py` runs it, and holds
+  anything variable reaches it as an argument. Every name `code.yml` sets starts with `code_`, a prefix
+  no role uses: a role's fact or register outranks a play var in the same `make deploy`, and no task var
+  shares a fact's name. In `make deploy` (`code_in_deploy`) every task of the window step is in one
+  `block` whose `rescue` says any failure with the `make code` line (`make deploy ...
+  proxmox_vm_start_existing=true` for a VM the deploy left stopped) and ends the play; outside it the
+  rescue fails again. A fleet's deploy ends at code.yml's first task with each VM's line.
+  `tests/unit/test_code_session.py` runs it (once at a pseudo-terminal, for Ctrl-C), runs the window
+  step's own tasks with stand-ins for `which` and `code` first on PATH, and holds
   every task in `code.yml` to an allowlist: read-only on this machine (plus `which`/`code` and the
   alias through `tasks/ssh_config.yml`), or `stat`/`getent`/`find` and the two writes delegated to
   the VM; a `shell`, a writer in a `block`, or a `connection` fails it by name. The `provision`

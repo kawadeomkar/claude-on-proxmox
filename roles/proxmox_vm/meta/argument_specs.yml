@@ -88,6 +88,13 @@ argument_specs:
           - Allow state=absent to delete a VM that does not carry the ownership
             tag. Off by default so a name collision cannot destroy a VM this
             project never created.
+      proxmox_vm_known_hosts_domain:
+        type: str
+        default: ""
+        description:
+          - The DNS domain SSH reaches the VMs by on this machine, when not their
+            address (claude_ssh_host_domain). state=absent forgets the host key
+            recorded under <name>.<domain> too, besides the one under the address.
       proxmox_vm_name:
         type: str
         description: VM name in Proxmox. Defaults to the inventory hostname.

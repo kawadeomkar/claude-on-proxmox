@@ -1,10 +1,84 @@
 ---
-# After converge and idempotence, which left gh signed out (no token in this
-# scenario): what make github-login does for one VM, against the container.
+# After converge and idempotence, which left Claude Code and gh both signed out:
+# the two sign-ins make deploy and make claude-login / make github-login run,
+# against the container, with stand-ins for the two vendors.
+#
+# Claude first. The converge prepared Remote Control and left it stopped, with
+# the path unit waiting for a login. The real claude would need claude.ai and a
+# browser, so tests/molecule/fake_claude.sh takes its place on dev's PATH, and
+# claude_login.yml signs in with the code given instead of the prompt. Its role
+# then starts Remote Control for real under systemd, waits out the stay-up
+# check, and retires the path unit; verify.yml asserts what that leaves.
+- name: Assert the converge left Claude signed out, with the path unit waiting
+  hosts: claude_vms
+  become: true
+  tasks:
+    - name: Read the state of the service and of the path unit
+      ansible.builtin.command:
+        argv: [systemctl, "{{ item.0 }}", "{{ item.1 }}"]
+      loop:
+        - [is-active, claude-remote-control.service]
+        - [is-enabled, claude-remote-control.service]
+        - [is-active, claude-remote-control.path]
+        - [is-enabled, claude-remote-control.path]
+      register: side_effect_units
+      changed_when: false
+      failed_when: false
+
+    - name: Stat the login
+      ansible.builtin.stat:
+        path: /home/dev/.claude/.credentials.json
+      register: side_effect_login
+
+    - name: Assert the service waits, stopped, for the login the path unit watches for
+      ansible.builtin.assert:
+        that:
+          - side_effect_units.results | map(attribute='stdout') | map('trim') | list
+            == ['inactive', 'disabled', 'active', 'enabled']
+          - not side_effect_login.stat.exists
+        fail_msg: "{{ side_effect_units.results | map(attribute='stdout') | list }}"
+        quiet: true
+
+- name: Put the stand-in claude in place of the real one
+  hosts: claude_vms
+  become: true
+  tasks:
+    # Before the swap, while it is the Claude Code the converge installed:
+    # verify.yml, which runs after this, only meets the stand-in.
+    - name: Run the installed claude once more
+      ansible.builtin.command:
+        argv: [bash, -lc, "claude --version"]
+      become: true
+      become_user: dev
+      register: side_effect_claude_version
+      changed_when: false
+
+    - name: Assert the installed claude reports a version
+      ansible.builtin.assert:
+        that: side_effect_claude_version.stdout is search('[0-9]+\.[0-9]+\.[0-9]+')
+        fail_msg: "claude --version printed {{ side_effect_claude_version.stdout }}"
+        quiet: true
+
+    - name: Replace the claude on dev's PATH with the stand-in
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../tests/molecule/fake_claude.sh"
+        dest: /home/dev/.local/bin/claude
+        owner: dev
+        group: dev
+        mode: "0755"
+
+- name: Sign Claude Code in as make claude-login does, for this one VM
+  ansible.builtin.import_playbook: ../../playbooks/claude_login.yml
+  vars:
+    vm_name: claude-dev
+    claude_code_login_code: fake-code#fake-state
+
+# Then gh, which has no token in this scenario: what make github-login does for
+# one VM, against the container.
 # The stand-in gh prints the code and the page, then approves itself after two
 # seconds, so the device flow runs end to end offline: the role waits on gh's
 # output, collects the job, runs the whole role, and the private repository
-# arrives. github_login_desktop is off in host_vars, so nothing opens on the
+# arrives. login_desktop is off in host_vars, so nothing opens on the
 # developer's machine; tests/unit/test_github_auth.py checks that it is.
 - name: Assert the converge left gh signed out
   hosts: claude_vms

@@ -2,7 +2,7 @@
 # Copy to inventory/group_vars/all/vault.yml (git-ignored), fill in, then encrypt:
 #
 #   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
-#   echo 'a-long-random-passphrase' > .vault_pass && chmod 600 .vault_pass
+#   (umask 077; openssl rand -base64 32 > .vault_pass)
 #   make vault-encrypt
 #
 # Values are referenced indirectly (vault_* -> plain name) in defaults.yml so

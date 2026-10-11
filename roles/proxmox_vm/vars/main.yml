@@ -100,3 +100,12 @@ proxmox_vm_needs_configuration: >-
 # configure run (ansible.cfg says why there is no fact cache).
 proxmox_vm_forget_address: >-
   {{ proxmox_vm_reported_address }}
+
+# Internal: every name this machine may hold the VM's host key under - the
+# address, and <name>.<domain> when the SSH aliases and make code connect by
+# name (proxmox_vm_known_hosts_domain). A VM created again under the same name
+# would otherwise fail its first connection by name on the old key.
+proxmox_vm_forget_names: >-
+  {{ ([proxmox_vm_forget_address] if proxmox_vm_forget_address | length > 0 else [])
+     + ([proxmox_vm_name ~ '.' ~ proxmox_vm_known_hosts_domain]
+        if proxmox_vm_known_hosts_domain | length > 0 else []) }}

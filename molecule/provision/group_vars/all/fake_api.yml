@@ -29,3 +29,8 @@ proxmox_vm_agent_delay: 1
 claude_ssh_config_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/claude-on-proxmox.conf"
 claude_ssh_user_config: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ssh_config"
 claude_ssh_config_include: false
+
+# The sign-ins read this switch from each VM, and the VMs here exist only
+# through add_host, so it is set for all of them, not on localhost: a deploy
+# that reached a sign-in must not open this machine's browser or clipboard.
+login_desktop: false

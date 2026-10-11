@@ -18,3 +18,7 @@ provisioner:
   env:
     # Resolve roles from this repository's roles/ directory (not Galaxy).
     ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/..
+    # The device flow opens its page through the repository's page_opener
+    # filter (filter_plugins/desktop.py) and quotes gh through plain_text
+    # (text.py), as proxmox_vm's scenario does for its own.
+    ANSIBLE_FILTER_PLUGINS: ${MOLECULE_PROJECT_DIRECTORY}/../../filter_plugins

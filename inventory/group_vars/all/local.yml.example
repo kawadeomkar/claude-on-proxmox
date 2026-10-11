@@ -42,18 +42,13 @@
 # github_projects_exclude: []
 # github_projects_clone_protocol: https
 # Sign gh in on each VM (from vault_github_token, or by GitHub's device flow,
-# which make github-login runs for you) and make it git's credential helper,
-# so private repositories clone and git push works. false leaves gh and
-# ~/.gitconfig alone. auto takes the token when there is one, else the device
-# flow; web is the device flow always; token is the token only.
+# which make deploy and make github-login run for you) and make it git's
+# credential helper, so private repositories clone and git push works. false
+# leaves gh and ~/.gitconfig alone. auto takes the token when there is one, else
+# the device flow; web is the device flow always; token is the token only.
 # github_auth: true
 # github_auth_method: auto
 # github_login_scopes: [workflow]
-# Open the page and copy the code on this machine during the device flow.
-# github_login_desktop: true
-# Run the device flow inside make configure and make deploy too (one VM at a
-# time; the run waits for your approval).
-# github_login_prompt: false
 # The git identity on each VM. Empty: your GitHub display name (or login) and
 # GitHub's noreply address for your account.
 # git_user_name: ""
@@ -117,6 +112,10 @@
 # DISABLE_TELEMETRY or DO_NOT_TRACK on purpose: those disable Remote Control,
 # so the role leaves the service stopped and says so until one or the other goes.
 # claude_remote_control: true
+# Extra arguments for the Claude sign-in's `claude auth login`, such as [--sso],
+# and how long it may take to accept the code you paste.
+# claude_login_args: []
+# claude_login_timeout: 120
 # Session title in the list at claude.ai/code; defaults to the VM name.
 # claude_code_remote_control_name: "{{ inventory_hostname }}"
 # Where sessions open. Empty means ~/projects of the VM user, where
@@ -129,3 +128,13 @@
 # gets its own git worktree (needs a repository there). session: serve one
 # session and reject further connections.
 # claude_code_remote_control_spawn: same-dir
+
+# make deploy ends with the VM signed in to Claude and GitHub and open in VS
+# Code; the two sign-ins each open a page and wait for you, one VM at a time.
+# false leaves them to make claude-login and make github-login.
+# deploy_sign_in: true
+# Open the VM in VS Code at the end of a one-VM make deploy.
+# deploy_code: true
+# Open the sign-in pages (and copy GitHub's code) on this machine. Off, the run
+# only prints them, for a controller with no desktop.
+# login_desktop: true

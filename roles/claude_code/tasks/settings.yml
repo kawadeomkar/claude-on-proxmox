@@ -15,9 +15,14 @@
 #
 # No stat first: slurp's own failure is the "not there yet" signal on a
 # first run, and `content` is only set when it read something.
+#
+# As the user, like every read and write under the user's home: root would
+# follow a symlink the user planted there.
 - name: settings | Read existing settings
   ansible.builtin.slurp:
     src: "{{ claude_code_home }}/.claude/settings.json"
+  become: true
+  become_user: "{{ claude_code_user }}"
   register: claude_code_settings_existing
   failed_when: false
   no_log: true
@@ -95,4 +100,6 @@
         owner: "{{ claude_code_user }}"
         group: "{{ claude_code_user }}"
         mode: "0600"
+      become: true
+      become_user: "{{ claude_code_user }}"
       no_log: true

@@ -1,0 +1,24 @@
+---
+# The path unit that starts Remote Control when a login lands, taken away:
+# stopped and disabled, its file removed, and systemd told. Included from
+# main.yml (Remote Control off, or an API key) and from remote_control.yml (a
+# login exists, or a setting blocks the feature): the two directions that
+# retire it, kept in one place so they cannot drift. As root, whoever includes
+# it: these are system units.
+- name: path_unit_absent | Stop watching for the login
+  ansible.builtin.systemd_service:
+    name: "{{ claude_code_remote_control_service }}.path"
+    state: stopped
+    enabled: false
+  become: true
+
+- name: path_unit_absent | Remove the path unit
+  ansible.builtin.file:
+    path: /etc/systemd/system/{{ claude_code_remote_control_service }}.path
+    state: absent
+  become: true
+
+- name: path_unit_absent | Make systemd forget the path unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  become: true

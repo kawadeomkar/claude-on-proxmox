@@ -1,0 +1,23 @@
+# {{ ansible_managed }}
+# Starts Remote Control the moment a Claude login lands on this VM, however it
+# was made: by `make claude-login`, or by hand in a terminal. Installed only
+# while the login is the one thing missing, and removed as soon as a login
+# exists - before the next configure starts the service, which also enables
+# it for boot.
+#
+# PathChanged, never PathExists: a path unit restarts its service instantly
+# whenever the service stops while its condition holds, and the service has no
+# start limit by design, so PathExists would undo every `systemctl stop`.
+# PathChanged fires on any change to the file - created, rewritten, renamed
+# into place, removed, its mode changed - which is why it is retired as soon
+# as a login exists. The service itself does not depend on the file's path,
+# which is Claude Code's to move.
+[Unit]
+Description=Start Claude Code Remote Control ({{ claude_code_remote_control_name }}) when a login lands
+
+[Path]
+PathChanged={{ claude_code_home }}/.claude/.credentials.json
+Unit={{ claude_code_remote_control_service }}.service
+
+[Install]
+WantedBy=multi-user.target

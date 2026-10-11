@@ -13,53 +13,63 @@
 # PROJECT that is mistyped, or a VM never configured and so without a projects
 # directory yet, is said here, with what is there, rather than in a VS Code
 # window opened on a folder that does not exist. The Remote - SSH extension is
-# installed first if VS Code does not have it. Not a subset of `make deploy`,
-# which creates and configures and only prints the command; this runs it.
+# installed first if VS Code does not have it.
+#
+# `make deploy` ends with this playbook (code_in_deploy) for its one VM: the
+# one VM_NAME names, or the default VM of a bare deploy. There, whatever stops
+# the window - a VM the deploy left stopped, no alias, no `code` command, an
+# SSH failure, an extension that would not install - is said with the command
+# that opens it later, instead of failing a deploy whose VM is done. A deploy
+# for several VMs opens none: this ends at once with each VM's make code line.
 #
 # With vscode_claude_terminal (the default), VS Code is handed a workspace
 # file rather than the folder. It names the folder and holds one task, run when
 # the window opens: a terminal named Claude that starts claude there, signing
-# in to Claude, and to GitHub, first on a VM that has not been. That file is the one thing written on the
-# VM, in a directory of its own beside the projects
-# (<projects>/.claude-on-proxmox/), never in a repository; cloud-init placed
-# the key at provisioning, so nothing else needs changing. VS Code runs the
-# task only in a window the user has trusted, and only once they have allowed
-# automatic tasks; this playbook reads their VS Code settings to say which of
-# those to expect, and never writes them (README, "A Claude session in the
-# window").
+# in to Claude, and to GitHub, first on a VM that has not been. That file is
+# the one thing written on the VM, in a directory of its own beside the
+# projects (<projects>/.claude-on-proxmox/), never in a repository; cloud-init
+# placed the key at provisioning, so nothing else needs changing. VS Code runs
+# the task only in a window the user has trusted, and only once they have
+# allowed automatic tasks; this playbook reads their VS Code settings to say
+# which of those to expect, and never writes them (README, "A Claude session
+# in the window").
 #
 # vm_project (PROJECT) is one folder name, as a GitHub repository is named,
 # and is checked again here so that a direct ansible-playbook run cannot point
 # VS Code outside the projects directory either.
 #
-# The claude_code_ prefix below is this playbook's - the `code` playbook of
-# claude-on-proxmox - not the claude_code role's, whose variables live in
-# roles/claude_code/defaults; the ones here that are about VS Code's own
-# settings say vscode in their names.
+# Every name this playbook sets starts with code_, a prefix no role uses: make
+# deploy runs the roles in the same run, and a fact or register of theirs
+# would outrank a play var of the same name without a word. What it reads from
+# the inventory keeps its own name (claude_code_remote_control,
+# github_projects_auth and the like), and the names about VS Code's own
+# settings say vscode.
 - name: Open a VM in VS Code
   hosts: localhost
   gather_facts: false
   module_defaults:
     group/community.proxmox.proxmox: "{{ proxmox_api_module_defaults }}"
   vars:
-    # claude_code_ssh is the result of whichever task connected.
-    claude_code_ssh_failed: >-
-      {{ claude_vm_names[0] }} is running at {{ claude_code_reach }}, but SSH to it as {{ vm_user }}
-      failed, so VS Code could not connect either: {{ claude_code_ssh.msg | default('no reason given') | trim }}
+    # code_ssh is the result of whichever task connected. ssh's error can hold
+    # line breaks, and text the VM sent before the login: said on one line,
+    # with no control character reaching this terminal.
+    code_ssh_failed: >-
+      {{ claude_vm_names[0] }} is running at {{ code_reach }}, but SSH to it as {{ vm_user }}
+      failed, so VS Code could not connect either: {{ code_ssh.msg | default('no reason given') | plain_text | regex_replace('\s+', ' ') | trim }}
       A VM that has just booted can need another minute; `ssh {{ claude_vm_names[0] }}` shows why.
-    claude_code_terminal: "{{ vscode_claude_terminal | default(true) | bool }}"
+    code_terminal: "{{ vscode_claude_terminal | default(true) | bool }}"
 
     # The workspace file, built as data and written with to_nice_json so no
     # path or message can break its JSON. Absolute paths throughout:
     # ${workspaceFolder} is ambiguous in a task that belongs to a workspace
     # file rather than to a folder. The workspace files' own directory is hidden
     # from the explorer in the window that shows it, the whole directory's.
-    claude_code_workspace_file:
+    code_workspace_file:
       folders:
-        - path: "{{ claude_code_target }}"
+        - path: "{{ code_target }}"
       settings: >-
-        {{ {'files.exclude': {claude_code_ws_dir | basename: true}}
-           if claude_code_ws_dir | dirname == claude_code_target else {} }}
+        {{ {'files.exclude': {code_ws_dir | basename: true}}
+           if code_ws_dir | dirname == code_target else {} }}
       tasks:
         version: "2.0.0"
         tasks:
@@ -68,16 +78,18 @@
             command: /bin/bash
             args:
               - -lc
-              - "{{ claude_code_terminal_script }}"
+              - "{{ code_terminal_script }}"
               - make-code
-              - "{{ claude_code_not_installed }}"
-              - "{{ claude_code_signed_in }}"
-              - "{{ claude_code_github_signed_in }}"
+              - "{{ code_not_installed }}"
+              - "{{ code_signed_in_watched }}"
+              - "{{ code_signed_in_unwatched }}"
+              - "{{ code_login_watch }}"
+              - "{{ code_github_signed_in }}"
               - "{{ github_projects_clone_protocol | default('https') }}"
-              - "{{ github_login_scopes | default(['workflow']) | join(',') }}"
+              - "{{ github_projects_login_scopes | default(['workflow']) | join(',') }}"
               - "{{ claude_vm_names[0] }}"
             options:
-              cwd: "{{ claude_code_target }}"
+              cwd: "{{ code_target }}"
             runOptions:
               runOn: folderOpen
             presentation:
@@ -89,33 +101,42 @@
               showReuseMessage: true
             problemMatcher: []
 
-    # What the task runs, as `bash -lc <this> make-code <$1> <$2> <$3> <$4>
-    # <$5>`. A login shell, because tasks start non-login shells and claude is
-    # on the login PATH only. `claude auth status` exits non-zero until the VM
-    # is signed in, by claude.ai or by an API key; `claude auth login` is the
-    # browser flow, and the browser is the one on this machine, through the
-    # BROWSER helper VS Code Server sets in every terminal it starts. Then
-    # GitHub, when $3 says so (github_auth, and not the token method) and gh is
-    # there but signed out: gh's device flow, run with no terminal of its own
-    # so that it prints the code and the page at once and asks nothing - stdin
+    # What the task runs: `bash -lc <this> make-code <$1> ... <$8>`, the eight
+    # arguments being, in order: what to say without claude; the line a
+    # sign-in here ends with where the claude_code role's path unit watches
+    # for the login, and so starts Remote Control, and the line where nothing
+    # does; that unit's file; GitHub's line, empty to leave GitHub alone; the
+    # git protocol and the scopes for gh; and the VM's name. A login shell,
+    # because tasks start non-login shells and claude is on the login PATH
+    # only. `claude auth status` exits non-zero until the VM is signed in, by
+    # claude.ai or by an API key; `claude auth login` is the browser flow, and
+    # the browser is the one on this machine, through the BROWSER helper VS
+    # Code Server sets in every terminal it starts. A sign-in that fails says
+    # how to try again, and stops. Then GitHub, when $5 says so
+    # (github_projects_auth, and not the token method) and gh is there but not
+    # signed in to github.com: asked of the active account alone, as the role
+    # asks, since gh otherwise checks every host and account and fails over a
+    # stale second one. gh's device flow runs with no terminal of its own so
+    # that it prints the code and the page at once and asks nothing - stdin
     # closed, its output read line by line - with the page opened on this
     # machine through that same BROWSER helper and the code printed on a line
     # of its own to copy (a Remote-SSH terminal passes no clipboard escape
-    # through). The code is the seventh word of gh's line, read by word
-    # rather than cut with ${...}: VS Code resolves ${...} in a task's
-    # arguments before bash sees them. $4 and $5 are the git protocol and the
-    # scopes, $6 the VM's name. Then gh is made
-    # git's credential helper, so a push from this terminal works at once; the
-    # private repositories still take the make configure that $3 names, and a
-    # sign-in that fails does not keep Claude from starting. pipefail, so that
-    # gh's exit status survives the read loop. --continue picks the folder's
-    # latest conversation up, or starts one when there is none: a task terminal
-    # does not survive a window reload, after which the task runs again, so
-    # without it a reload would end the conversation (/clear starts a fresh
-    # one). The messages are arguments, never script text, and a stop ends
-    # with exit 0: on a non-zero exit VS Code prints the whole command line,
-    # script and messages included, under the line that matters.
-    claude_code_terminal_script: |-
+    # through). The code is the seventh word of gh's line, read by word rather
+    # than cut with ${...}: VS Code resolves ${...} in a task's arguments
+    # before bash sees them. Ctrl-C skips it: the trap keeps bash alive while
+    # gh and the read loop end, and claude starts as after a sign-in that
+    # failed. Then gh is made git's credential helper, so a push from this
+    # terminal works at once; the private repositories still take the make
+    # configure that $5 names, and a sign-in that fails does not keep Claude
+    # from starting. pipefail, so that gh's exit status survives the read
+    # loop. --continue picks the folder's latest conversation up, or starts
+    # one when there is none: a task terminal does not survive a window
+    # reload, after which the task runs again, so without it a reload would
+    # end the conversation (/clear starts a fresh one). Anything variable is an
+    # argument, never script text, and a stop ends with exit 0: on a non-zero
+    # exit VS Code prints the whole command line, script and messages
+    # included, under the line that matters.
+    code_terminal_script: |-
       set -o pipefail
       if ! command -v claude >/dev/null 2>&1; then
         printf '%s\n' "$1"
@@ -123,12 +144,18 @@
       fi
       if ! claude auth status >/dev/null 2>&1; then
         printf '%s\n' "Signing in to Claude first. Your browser opens the sign-in page; if it shows a code, paste it here."
-        claude auth login || exit 0
-        [ -z "$2" ] || printf '%s\n' "$2"
+        if ! claude auth login; then
+          printf '%s\n' 'Not signed in to Claude. To try again, reload the window or run "Tasks: Run Task", Claude.'
+          exit 0
+        fi
+        if [ -e "$4" ]; then said=$2; else said=$3; fi
+        [ -z "$said" ] || printf '%s\n' "$said"
       fi
-      if [ -n "$3" ] && command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
-        printf '%s\n' "Signing in to GitHub next, so that git push and gh work here. Your browser opens github.com/login/device; enter the code below there."
-        if gh auth login -h github.com -p "$4" -w -s "$5" --skip-ssh-key </dev/null 2>&1 | while IFS= read -r line; do
+      if [ -n "$5" ] && command -v gh >/dev/null 2>&1 && ! gh auth status --hostname github.com --active >/dev/null 2>&1; then
+        printf '%s %s\n' "Signing in to GitHub next, so that git push and gh work here; Ctrl-C skips this." \
+          "Your browser opens github.com/login/device; enter the code below there."
+        trap ':' INT
+        if gh auth login -h github.com -p "$6" -w -s "$7" --skip-ssh-key </dev/null 2>&1 | while IFS= read -r line; do
             case "$line" in
               *"one-time code: "*)
                 read -r _ _ _ _ _ _ code <<<"$line"
@@ -137,30 +164,46 @@
               *"Logged in as"*|*"failed to authenticate"*) printf '%s\n' "$line" ;;
             esac
           done && gh auth setup-git -h github.com; then
-          printf '%s\n' "$3"
+          printf '%s\n' "$5"
         else
-          printf '%s\n' "Not signed in to GitHub. From your machine: make github-login VM_NAME=$6"
+          printf '%s\n' "Not signed in to GitHub. From your machine: make github-login VM_NAME=$8"
         fi
       fi
+      trap - INT
       exec claude --continue
-    claude_code_not_installed: >-
+    code_not_installed: >-
       Claude Code is not installed on {{ claude_vm_names[0] }} yet. On your machine, run
       make configure VM_NAME={{ claude_vm_names[0] }}, then "Tasks: Run Task", Claude here.
-    # Remote Control needs that claude.ai login, which is why it was waiting;
-    # the role's own checks decide whether to start it, so it is not started
-    # from the terminal.
-    claude_code_signed_in: >-
+    # Remote Control needs that claude.ai login, which is why it was waiting.
+    # On a VM with no login the claude_code role leaves a path unit that starts
+    # it once the login lands; the role's next run, which the first line names,
+    # enables it for boot and checks it stays up. Where that unit is not - a
+    # setting that blocks Remote Control, or a VM last configured before the
+    # unit existed - nothing starts it, and the second line names the run that
+    # does. The script tells the two apart on the VM, by the unit's file. Both
+    # are empty with Remote Control off.
+    code_signed_in_watched: >-
+      {{ ('Signed in. Remote Control starts by itself in a moment, putting this VM in the Claude apps too;'
+          ~ ' to keep it on across reboots, run on your machine: '
+          ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
+         if claude_code_remote_control | default(true) | bool else '' }}
+    code_signed_in_unwatched: >-
       {{ ('Signed in. To reach this VM from the Claude apps too, start Remote Control from your machine: '
           ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
-         if claude_remote_control | default(true) | bool else '' }}
-    # Empty when github_auth is off or the token method is chosen, which is
-    # also what tells the script to leave GitHub alone. The private
-    # repositories are listed with the token gh just stored, so they take one
-    # more configure run (README, "Private repositories").
-    claude_code_github_signed_in: >-
+         if claude_code_remote_control | default(true) | bool else '' }}
+    # The role's own default, unless the inventory names the service otherwise.
+    code_login_watch: "/etc/systemd/system/{{ claude_code_remote_control_service | default('claude-remote-control') }}.path"
+    # Empty when github_projects_auth is off or the token method is chosen,
+    # which is also what tells the script to leave GitHub alone. The role's
+    # names, which the inventory wires to github_auth and github_auth_method,
+    # so that an override of either reaches the role and this alike. The
+    # private repositories are listed with the token gh just stored, so they
+    # take one more configure run (README, "Private repositories, and pushing
+    # from the VM").
+    code_github_signed_in: >-
       {{ ('Signed in to GitHub. To clone your private repositories here too, run on your machine: '
           ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=github_projects')
-         if github_auth | default(true) | bool and github_auth_method | default('auto') != 'token' else '' }}
+         if github_projects_auth | default(true) | bool and github_projects_auth_method | default('auto') != 'token' else '' }}
 
     # Read on this machine, never written. task.allowAutomaticTasks is an
     # application setting, so the default profile's settings.json holds it
@@ -171,390 +214,465 @@
     # Linux) is pointed at with vscode_user_settings_file. The text is kept
     # apart from the value read out of it, so a file that could not be read
     # or did not parse is said as such rather than taken for "unset".
-    claude_code_vscode_settings_file: >-
+    code_vscode_settings_file: >-
       {{ vscode_user_settings_file | default('', true)
-         or query('ansible.builtin.first_found', claude_code_vscode_settings_places, skip=true) | first | default('') }}
-    claude_code_vscode_settings_places: >-
+         or query('ansible.builtin.first_found', code_vscode_settings_places, skip=true) | first | default('') }}
+    code_vscode_settings_places: >-
       {{ ([lookup('ansible.builtin.env', 'VSCODE_APPDATA') ~ '/Code/User/settings.json']
           if lookup('ansible.builtin.env', 'VSCODE_APPDATA') | length > 0 else [])
          + ([lookup('ansible.builtin.env', 'XDG_CONFIG_HOME') ~ '/Code/User/settings.json']
             if lookup('ansible.builtin.env', 'XDG_CONFIG_HOME') | length > 0 else [])
-         + [claude_code_here_home ~ '/Library/Application Support/Code/User/settings.json',
-            claude_code_here_home ~ '/.config/Code/User/settings.json',
-            claude_code_here_home ~ '/snap/code/current/.config/Code/User/settings.json',
-            claude_code_here_home ~ '/.var/app/com.visualstudio.code/config/Code/User/settings.json'] }}
-    claude_code_here_home: "{{ lookup('ansible.builtin.env', 'HOME') }}"
-    claude_code_vscode_settings_text: >-
-      {{ lookup('ansible.builtin.file', claude_code_vscode_settings_file, errors='ignore')
-         if claude_code_vscode_settings_file | length > 0 else '' }}
-    claude_code_vscode_auto_tasks: >-
-      {{ (claude_code_vscode_settings_text or '')
+         + [code_here_home ~ '/Library/Application Support/Code/User/settings.json',
+            code_here_home ~ '/.config/Code/User/settings.json',
+            code_here_home ~ '/snap/code/current/.config/Code/User/settings.json',
+            code_here_home ~ '/.var/app/com.visualstudio.code/config/Code/User/settings.json'] }}
+    code_here_home: "{{ lookup('ansible.builtin.env', 'HOME') }}"
+    code_vscode_settings_text: >-
+      {{ lookup('ansible.builtin.file', code_vscode_settings_file, errors='ignore')
+         if code_vscode_settings_file | length > 0 else '' }}
+    code_vscode_auto_tasks: >-
+      {{ (code_vscode_settings_text or '')
          | vscode_setting('task.allowAutomaticTasks', '', unparsable='unparsable') }}
+    # The one VM this play opens, among the tagged ones: claude_vm_names[0].
+    # Not claude_vm_requested, which narrows by name only when vm_name is
+    # defined and is the whole tagged fleet otherwise - as in a bare make
+    # deploy, whose one VM is the default one.
+    code_vm_tagged: >-
+      {{ claude_vm_tagged | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', claude_vm_names[0]) | list }}
+
+    # What the rescue below says, or raises again outside make deploy: the
+    # failed task's own message, or for a command, the command and what it
+    # printed, since "non-zero return code" names neither. On one line, which
+    # an SSH error need not be, and ending a sentence, as the line after it
+    # starts one.
+    code_failure: >-
+      {{ (code_failure_text ~ ('' if code_failure_text is search('[.!?]$') else '.')) | regex_replace('\s*\n\s*', ' ') }}
+    code_failure_text: >-
+      {{ ('`' ~ (ansible_failed_result.cmd if ansible_failed_result.cmd is string else ansible_failed_result.cmd | join(' '))
+          ~ '` failed' ~ (': ' ~ ansible_failed_result.stderr | trim
+                         if ansible_failed_result.stderr | default('') | trim | length > 0
+                         else ' with exit code ' ~ ansible_failed_result.rc | default('?')))
+         if ansible_failed_result.cmd is defined
+         else ansible_failed_result.msg | default('The window step failed', true) | trim }}
+    # What make deploy says when its window step failed: the failure, then the
+    # make code line that opens the window once it is dealt with. A VM found
+    # stopped is the exception: the deploy left it so, configured nothing on
+    # it and signed nothing in, so the next step is the deploy again with the
+    # VM started, which make code alone would not do.
+    code_later: >-
+      {{ claude_vm_names[0] ~ ' is stopped, and this deploy left it so: it was not configured, signed in or opened in'
+         ~ ' VS Code. To start it and finish the deploy: make deploy VM_NAME=' ~ claude_vm_names[0]
+         ~ ' ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"'
+         if code_status | default('') == 'stopped'
+         else code_failure ~ ' VS Code was not opened; to open it later: make code VM_NAME=' ~ claude_vm_names[0] }}
 
   tasks:
-    - name: Refuse anything but one VM
-      ansible.builtin.assert:
-        that:
-          - vm_name is defined
-          - claude_vm_names | length == 1
-        fail_msg: "VS Code opens one VM at a time: make code VM_NAME=<name>."
-        quiet: true
-
-    # A GitHub repository name: ASCII letters, digits, ".", "-" and "_", at
-    # most 100 of them. No "/", so nothing outside the projects directory or
-    # nested in it, and not "." or "..", which name the directory or its parent.
-    - name: Refuse a project that is not one folder name
-      vars:
-        claude_code_asked: "{{ vm_project | default('', true) | string }}"
-      ansible.builtin.assert:
-        that:
-          - claude_code_asked is match('^[A-Za-z0-9._-]{1,100}$')
-          - claude_code_asked not in ['.', '..']
-        fail_msg: >-
-          PROJECT names one project folder on the VM, the way a GitHub repository is named: up to 100
-          letters, digits, ".", "-" and "_". "{{ claude_code_asked }}" is not one.
-        quiet: true
-      when: vm_project | default('', true) | string | length > 0
-
-    - name: Refuse to run with the managed file switched off
-      ansible.builtin.assert:
-        that: claude_ssh_config | default(true) | bool
-        fail_msg: >-
-          claude_ssh_config is false, so this project keeps no SSH alias for the VM and has nothing
-          to hand VS Code. Set it true, or open the VM by address yourself.
-        quiet: true
-
-    - name: List every VM in the cluster
-      ansible.builtin.import_tasks: tasks/cluster_vms.yml
-
-    # Tagged VMs only, as everywhere: a VM of this name without the tag is
-    # not this project's, and is named as such rather than opened. With no
-    # tagged VM of that name, any VM that has the name is an untagged one.
-    - name: Find the VM
-      vars:
-        claude_code_same_name: >-
-          {{ claude_vm_all.json.data | selectattr('type', 'equalto', 'qemu')
-             | selectattr('name', 'defined') | selectattr('name', 'equalto', claude_vm_names[0]) | list }}
-      ansible.builtin.assert:
-        that: claude_vm_requested | length == 1
-        fail_msg: >-
-          {{ 'No VM named ' ~ claude_vm_names[0] ~ ' is tagged "' ~ claude_vm_tag ~ '".'
-             ~ (' A VM of that name exists but is not tagged, so it is not this project\'s to open.'
-                if claude_code_same_name | length > 0 else ' `make list` shows what this project created.')
-             if claude_vm_requested | length == 0
-             else 'More than one VM tagged "' ~ claude_vm_tag ~ '" is named ' ~ claude_vm_names[0]
-                  ~ '; rename or remove the duplicates first.' }}
-        quiet: true
-
-    - name: Ask the VM's guest agent for its address
-      ansible.builtin.import_tasks: tasks/vm_addresses.yml
-      vars:
-        claude_vm_query: "{{ claude_vm_requested }}"
-
-    # What VS Code will connect to is the alias's HostName - the address, or
-    # <name>.<domain> - and this run connects to the same, so the two cannot
-    # disagree about whether the VM is reachable.
-    - name: Settle where the VM is reached
-      ansible.builtin.set_fact:
-        claude_code_reach: >-
-          {{ claude_vm_names[0] ~ '.' ~ claude_ssh_host_domain
-             if claude_ssh_host_domain | default('') | length > 0 else claude_vm_addressed[0].address }}
-
-    # A stopped VM is refused even when its name still resolves.
-    - name: Fail when the VM cannot be reached
-      vars:
-        claude_code_status: "{{ claude_vm_addressed[0].status | default('unknown') }}"
-      ansible.builtin.assert:
-        that:
-          - claude_code_status == 'running'
-          - claude_code_reach | length > 0
-        fail_msg: >-
-          {{ claude_vm_names[0] }} is {{ claude_code_status }}{{ ' and reported no address'
-             if claude_code_status == 'running' else '' }}, so there is nothing to connect to.
-          `make list` shows the fleet; start the VM, or wait for its agent, and run this again.
-        quiet: true
-
-    # The connection Ansible makes to configure the VM: its own ssh settings
-    # and accept-new, not the user's ssh config, which is VS Code's business.
-    # In claude_vms, so connection variables set on that group in the
-    # inventory - a key, a port - apply here as they do to make configure.
-    - name: Reach the VM the way make configure does
-      ansible.builtin.add_host:
-        name: "{{ claude_vm_names[0] }}"
-        groups: claude_vms
-        ansible_host: "{{ claude_code_reach }}"
-        ansible_user: "{{ vm_user }}"
-      changed_when: false
-
-    # Where the code lives, read on the VM as configure reads it: the VM
-    # user's home, so nothing is guessed from this machine. Not needed when
-    # vm_projects_dir says it outright.
-    - name: Look up the VM user's home on the VM
-      ansible.builtin.getent:
-        database: passwd
-        key: "{{ vm_user }}"
-      delegate_to: "{{ claude_vm_names[0] }}"
-      register: claude_code_home
-      ignore_unreachable: true
-      when: vm_projects_dir | default('', true) | length == 0
-
-    - name: Fail when SSH to the VM does not work
-      vars:
-        claude_code_ssh: "{{ claude_code_home }}"
-      ansible.builtin.assert:
-        that: not (claude_code_ssh.unreachable | default(false))
-        fail_msg: "{{ claude_code_ssh_failed }}"
-        quiet: true
-
-    # The workspace, or one project in it. A trailing "/" on vm_projects_dir
-    # is dropped so the path VS Code is given is the one listed below.
-    - name: Settle the folder to open
-      vars:
-        claude_code_workspace: >-
-          {{ vm_projects_dir | default('', true)
-             or claude_code_home.ansible_facts.getent_passwd[vm_user][4] ~ '/projects' }}
-        claude_code_root: "{{ claude_code_workspace | regex_replace('(.)/+$', '\\1') }}"
-        # A folded scalar keeps its backslashes, so the group is written once:
-        # '\\1' here would reach the regex as a backslash and a 1.
-        claude_code_ws_dir: >-
-          {{ (vscode_workspaces_dir | default('', true) or claude_code_root ~ '/.claude-on-proxmox')
-             | regex_replace('(.)/+$', '\1') }}
-      ansible.builtin.set_fact:
-        claude_code_project: "{{ vm_project | default('', true) | string }}"
-        claude_code_root: "{{ claude_code_root }}"
-        claude_code_target: >-
-          {{ claude_code_root ~ ('/' ~ vm_project if vm_project | default('', true) | string | length > 0 else '') }}
-        claude_code_ws_dir: "{{ claude_code_ws_dir }}"
-        # One project's file in project/, so a repository that shares the
-        # projects directory's name cannot collide with the whole directory's.
-        claude_code_ws_file: >-
-          {{ claude_code_ws_dir
-             ~ ('/project/' ~ vm_project if vm_project | default('', true) | string | length > 0
-                else '/' ~ (claude_code_root | basename or 'projects'))
-             ~ '.code-workspace' }}
-
-    # Paths on the VM are absolute here, with no "~" to expand: VS Code is
-    # handed them as written, from this machine.
-    - name: Refuse a projects directory that is not an absolute path
-      ansible.builtin.assert:
-        that: claude_code_root is match('/')
-        fail_msg: >-
-          vm_projects_dir is a path on the VM, and must be an absolute one, not "{{ claude_code_root }}":
-          VS Code is handed it as written.
-        quiet: true
-
-    # The workspace files' directory is not a project, though a PROJECT can
-    # name it, and is not the projects directory either: its files would sit
-    # among the repositories, and project/ would be listed as one. Only with
-    # the terminal on, which is when the directory is used at all.
-    - name: Refuse a workspace directory that is not absolute, is the projects directory, or is the folder
-      ansible.builtin.assert:
-        that:
-          - claude_code_ws_dir is match('/')
-          - claude_code_ws_dir != claude_code_root
-          - claude_code_target != claude_code_ws_dir
-        fail_msg: >-
-          {{ 'vscode_workspaces_dir is a path on the VM, and must be an absolute one, not "' ~ claude_code_ws_dir
-             ~ '": VS Code is handed it as written.'
-             if not claude_code_ws_dir is match('/')
-             else 'vscode_workspaces_dir is the projects directory, ' ~ claude_code_root
-                  ~ ', whose folders are the projects; name a directory of its own.'
-             if claude_code_ws_dir == claude_code_root
-             else claude_code_ws_dir ~ ' on ' ~ claude_vm_names[0]
-                  ~ ' is where make code keeps its VS Code workspace files, not a project.' }}
-        quiet: true
-      when: claude_code_terminal
-
-    - name: Refresh the alias
-      ansible.builtin.import_tasks: tasks/ssh_config.yml
-      vars:
-        claude_ssh_state: present
-        claude_ssh_vms:
-          - name: "{{ claude_vm_addressed[0].name }}"
-            address: "{{ claude_vm_addressed[0].address }}"
-            user: "{{ vm_user }}"
-            workspace: "{{ claude_code_root }}"
-
-    - name: Look for the folder on the VM
-      ansible.builtin.stat:
-        path: "{{ claude_code_target }}"
-        follow: true
-        get_checksum: false
-      delegate_to: "{{ claude_vm_names[0] }}"
-      register: claude_code_found
-      ignore_unreachable: true
-
-    # The first connection of this run when vm_projects_dir is set.
-    - name: Fail when SSH to the VM does not work for the folder
-      vars:
-        claude_code_ssh: "{{ claude_code_found }}"
-      ansible.builtin.assert:
-        that: not (claude_code_ssh.unreachable | default(false))
-        fail_msg: "{{ claude_code_ssh_failed }}"
-        quiet: true
-
-    # Only to explain a miss: what the projects directory does hold, and a
-    # name that differs from the one asked for only in case - Linux paths are
-    # case-sensitive, and ParkBnb is not parkbnb.
-    - name: List the projects on the VM
-      ansible.builtin.find:
-        paths: "{{ claude_code_root }}"
-        file_type: directory
-        recurse: false
-      delegate_to: "{{ claude_vm_names[0] }}"
-      register: claude_code_listing
+    # VS Code opens one VM at a time, so a deploy for several opens none, and
+    # gives each VM's line here, at the end of the run where it is seen.
+    - name: Leave the windows of a fleet for later
       when:
-        - claude_code_project | length > 0
-        - not (claude_code_found.stat.isdir | default(false))
+        - code_in_deploy | default(false) | bool
+        - claude_vm_names | length > 1
+      block:
+        - name: Say how to open each VM
+          ansible.builtin.debug:
+            msg: >-
+              {{ ['VS Code opens one VM at a time, so this deploy for ' ~ claude_vm_names | length
+                  ~ ' VMs opened none. To open one:']
+                 + claude_vm_names | map('regex_replace', '^', 'make code VM_NAME=') | list }}
 
-    - name: Fail when the folder is not there
-      vars:
-        claude_code_names: >-
-          {{ claude_code_listing.files | default([]) | map(attribute='path') | map('basename') | sort | list }}
-        claude_code_close: >-
-          {{ claude_code_names | select('match', '(?i)^' ~ (claude_code_project | regex_escape) ~ '$') | list }}
-        # find lists a path that does not exist under skipped_paths.
-        claude_code_root_there: >-
-          {{ claude_code_listing is not skipped
-             and claude_code_listing.skipped_paths | default({}) | length == 0 }}
-      ansible.builtin.assert:
-        that: claude_code_found.stat.isdir | default(false)
-        fail_msg: >-
-          {%- if claude_code_project and claude_code_found.stat.exists | default(false) -%}
-          {{ claude_code_target }} on {{ claude_vm_names[0] }} is a file, not a project folder.
-          {%- elif claude_code_project and claude_code_names -%}
-          There is no project named {{ claude_code_project }} in {{ claude_code_root }} on {{ claude_vm_names[0] }}.
-          {{ 'Did you mean ' ~ claude_code_close | join(' or ') ~ '? Folder names are case-sensitive.'
-             if claude_code_close else 'The projects there are: ' ~ claude_code_names | join(', ') ~ '.' }}
-          {%- elif claude_code_project and claude_code_root_there | bool -%}
-          {{ claude_code_root }} on {{ claude_vm_names[0] }} holds no projects yet.
-          `make configure VM_NAME={{ claude_vm_names[0] }}` clones your repositories into it.
-          {%- else -%}
-          {{ claude_code_root }} does not exist on {{ claude_vm_names[0] }} yet: the VM has not been configured,
-          or vm_projects_dir points somewhere else. `make configure VM_NAME={{ claude_vm_names[0] }}` creates it and
-          clones your repositories into it.
-          {%- endif -%}
-        quiet: true
+        - name: Stop before the window
+          ansible.builtin.meta: end_play
 
-    - name: Look for VS Code on this machine
-      ansible.builtin.command:
-        argv: [which, code]
-      register: claude_code_which
-      changed_when: false
-      failed_when: false
+    # One block, so that in make deploy whatever stops the window - the
+    # causes expected here, and any other, an SSH failure or an extension that
+    # would not install - is said with the line that opens it later, and the
+    # deploy, whose VM is done, goes on. Outside make deploy the failure
+    # stands. Ansible rescues no unreachable host, which is why the first two
+    # connections to the VM ignore that and say it with an assert.
+    - name: Open the VM in VS Code
+      block:
+        # make deploy may have no VM_NAME: the default VM, one name all the same.
+        - name: Refuse anything but one VM
+          ansible.builtin.assert:
+            that:
+              - vm_name is defined or code_in_deploy | default(false) | bool
+              - claude_vm_names | length == 1
+            fail_msg: "VS Code opens one VM at a time: make code VM_NAME=<name>."
+            quiet: true
 
-    - name: Fail when VS Code's command is not on PATH
-      ansible.builtin.assert:
-        that: claude_code_which.rc == 0
-        fail_msg: >-
-          `code` is not on this machine's PATH. In VS Code, run "Shell Command: Install 'code' command
-          in PATH" from the Command Palette (macOS), or install VS Code; then run this again. The alias
-          is in place either way: ssh {{ claude_vm_names[0] }}.
-        quiet: true
+        # A GitHub repository name: ASCII letters, digits, ".", "-" and "_", at
+        # most 100 of them. No "/", so nothing outside the projects directory or
+        # nested in it, and not "." or "..", which name the directory or its parent.
+        - name: Refuse a project that is not one folder name
+          vars:
+            code_asked: "{{ vm_project | default('', true) | string }}"
+          ansible.builtin.assert:
+            that:
+              - code_asked is match('^[A-Za-z0-9._-]{1,100}$')
+              - code_asked not in ['.', '..']
+            fail_msg: >-
+              PROJECT names one project folder on the VM, the way a GitHub repository is named: up to 100
+              letters, digits, ".", "-" and "_". "{{ code_asked }}" is not one.
+            quiet: true
+          when: vm_project | default('', true) | string | length > 0
 
-    - name: List VS Code's extensions
-      ansible.builtin.command:
-        argv: [code, --list-extensions]
-      register: claude_code_extensions
-      changed_when: false
+        - name: Refuse to run with the managed file switched off
+          ansible.builtin.assert:
+            that: claude_ssh_config | default(true) | bool
+            fail_msg: >-
+              claude_ssh_config is false, so this project keeps no SSH alias for the VM and has nothing
+              to hand VS Code. Set it true, or open the VM by address yourself.
+            quiet: true
 
-    - name: Install the Remote - SSH extension when VS Code lacks it
-      ansible.builtin.command:
-        argv: [code, --install-extension, ms-vscode-remote.remote-ssh]
-      when: "'ms-vscode-remote.remote-ssh' not in (claude_code_extensions.stdout_lines | map('lower') | list)"
-      changed_when: true
+        - name: List every VM in the cluster
+          ansible.builtin.import_tasks: tasks/cluster_vms.yml
 
-    # The one write on the VM, as the VM user, last: every refusal above
-    # leaves the VM as it was. An unchanged file is not rewritten, so a run
-    # that only reopens a window reports no change there, and a directory
-    # that already exists keeps its mode: vscode_workspaces_dir may name one
-    # of the user's own, the home directory included.
-    - name: Look for the directory for VS Code workspace files on the VM
-      ansible.builtin.stat:
-        path: "{{ claude_code_ws_file | dirname }}"
-        get_checksum: false
-      delegate_to: "{{ claude_vm_names[0] }}"
-      register: claude_code_ws_dir_found
-      when: claude_code_terminal
+        # Tagged VMs only, as everywhere: a VM of this name without the tag is
+        # not this project's, and is named as such rather than opened. With no
+        # tagged VM of that name, any VM that has the name is an untagged one.
+        - name: Find the VM
+          vars:
+            code_same_name: >-
+              {{ claude_vm_all.json.data | selectattr('type', 'equalto', 'qemu')
+                 | selectattr('name', 'defined') | selectattr('name', 'equalto', claude_vm_names[0]) | list }}
+          ansible.builtin.assert:
+            that: code_vm_tagged | length == 1
+            fail_msg: >-
+              {{ 'No VM named ' ~ claude_vm_names[0] ~ ' is tagged "' ~ claude_vm_tag ~ '".'
+                 ~ (' A VM of that name exists but is not tagged, so it is not this project\'s to open.'
+                    if code_same_name | length > 0 else ' `make list` shows what this project created.')
+                 if code_vm_tagged | length == 0
+                 else 'More than one VM tagged "' ~ claude_vm_tag ~ '" is named ' ~ claude_vm_names[0]
+                      ~ '; rename or remove the duplicates first.' }}
+            quiet: true
 
-    - name: Make the directory for VS Code workspace files on the VM
-      ansible.builtin.file:
-        path: "{{ claude_code_ws_file | dirname }}"
-        state: directory
-        mode: "{{ omit if claude_code_ws_dir_found.stat.exists | default(false) else '0755' }}"
-      delegate_to: "{{ claude_vm_names[0] }}"
-      when: claude_code_terminal
+        - name: Ask the VM's guest agent for its address
+          ansible.builtin.import_tasks: tasks/vm_addresses.yml
+          vars:
+            claude_vm_query: "{{ code_vm_tagged }}"
 
-    - name: Write the VS Code workspace on the VM
-      ansible.builtin.copy:
-        dest: "{{ claude_code_ws_file }}"
-        content: "{{ claude_code_workspace_file | to_nice_json(indent=2) }}\n"
-        mode: "0644"
-      delegate_to: "{{ claude_vm_names[0] }}"
-      when: claude_code_terminal
+        # What VS Code will connect to is the alias's HostName - the address, or
+        # <name>.<domain> - and this run connects to the same, so the two cannot
+        # disagree about whether the VM is reachable. The status is a fact, as
+        # the rescue reads it too.
+        - name: Settle where the VM is reached
+          ansible.builtin.set_fact:
+            code_reach: >-
+              {{ claude_vm_names[0] ~ '.' ~ claude_ssh_host_domain
+                 if claude_ssh_host_domain | default('') | length > 0 else claude_vm_addressed[0].address }}
+            code_status: "{{ claude_vm_addressed[0].status | default('unknown') }}"
 
-    # VS Code opens a path ending in .code-workspace as a workspace, not as a
-    # file to edit; the same workspace already open is focused, and its task
-    # is not run a second time.
-    - name: Open the folder in VS Code
-      ansible.builtin.command:
-        argv:
-          - code
-          - --remote
-          - ssh-remote+{{ claude_vm_names[0] }}
-          - "{{ claude_code_ws_file if claude_code_terminal else claude_code_target }}"
-      changed_when: true
+        # A stopped VM is refused even when its name still resolves. One line
+        # of Jinja per line of text: a more-indented line in a folded scalar
+        # keeps its line break.
+        - name: Fail when the VM cannot be reached
+          ansible.builtin.assert:
+            that:
+              - code_status == 'running'
+              - code_reach | length > 0
+            fail_msg: >-
+              {{ claude_vm_names[0] }} is {{ code_status }}{{ ' and reported no address' if code_status == 'running' else '' }},
+              so there is nothing to connect to. `make list` shows the fleet; start the VM, or wait for its agent, and run this again.
+            quiet: true
 
-    # What VS Code will ask, from what the user's own settings say. "off" set
-    # by the user is the one value that silences both the question and the
-    # task; "on" means it was answered; anything else, VS Code asks once per
-    # workspace, in a notification that goes quiet after a moment. Settings
-    # not found, not readable or not parsable are said as such: "unset"
-    # would promise a question that may never come.
-    - name: Say what was opened
-      vars:
-        # Trust covers a folder's children, and a workspace is trusted when its
-        # folder and its file both are: with the files beside the projects,
-        # trusting the whole directory's window once covers every project.
-        claude_code_trust_once: >-
-          {{ '' if not claude_code_ws_dir.startswith(claude_code_root ~ '/')
-             else 'Trusting this window trusts every project in ' ~ claude_code_root ~ '.'
-                  if claude_code_project | length == 0
-             else 'Trusting the window of make code VM_NAME=' ~ claude_vm_names[0] ~ ' instead trusts every project in '
-                  ~ claude_code_root ~ ' at once.' }}
-        claude_code_settings_note: >-
-          {{ 'No VS Code settings file was found where stock VS Code keeps one on this OS, so whether you have'
-             ~ ' answered before is unknown; a VS Code that keeps its settings elsewhere is pointed at with'
-             ~ ' vscode_user_settings_file. '
-             if claude_code_vscode_settings_file | length == 0
-             else 'No VS Code settings file at ' ~ claude_code_vscode_settings_file ~ ', so whether you have'
-                  ~ ' answered before is unknown. '
-             if not claude_code_vscode_settings_file is exists
-             else 'Your VS Code settings, ' ~ claude_code_vscode_settings_file ~ ', could not be read, so whether'
-                  ~ ' you have answered before is unknown. '
-             if claude_code_vscode_settings_text is none
-             else 'Your VS Code settings, ' ~ claude_code_vscode_settings_file ~ ', did not parse, so whether you'
-                  ~ ' have answered before is unknown; VS Code itself reads past the error. '
-             if claude_code_vscode_auto_tasks == 'unparsable'
-             else '' }}
-        claude_code_first_time: >-
-          {{ 'It will not start on its own: task.allowAutomaticTasks is "off" in ' ~ claude_code_vscode_settings_file
-             ~ '. Choose Allow under "Tasks: Manage Automatic Tasks" to change that, or start it each time with'
-             ~ ' "Tasks: Run Task", Claude, once you have trusted the window (the Restricted Mode banner, Manage,'
-             ~ ' Trust). ' ~ claude_code_trust_once
-             if claude_code_vscode_auto_tasks == 'off'
-             else 'The first time, it waits for you: trust the window (the Restricted Mode banner, Manage, Trust)'
-                  ~ ('' if claude_code_vscode_auto_tasks == 'on'
-                     else ', then choose Allow when VS Code asks about automatic tasks: once per workspace, in a'
-                          ~ ' notification that goes quiet after a moment ("Tasks: Manage Automatic Tasks" offers'
-                          ~ ' the same choice later)')
-                  ~ '. ' ~ claude_code_settings_note ~ claude_code_trust_once }}
-        claude_code_said:
-          - VS Code is opening {{ claude_code_target }} on {{ claude_vm_names[0] }} ({{ claude_code_reach }}).
-          - The first connection installs VS Code Server on the VM and takes a minute.
-          - >-
-            {{ 'A terminal named Claude then starts claude in it, signing in to Claude'
-               ~ (' and to GitHub' if github_auth | default(true) | bool else '') ~ ' first if '
-               ~ claude_vm_names[0] ~ ' has not been. ' ~ claude_code_first_time if claude_code_terminal else '' }}
-      ansible.builtin.debug:
-        msg: "{{ claude_code_said | select | join(' ') | trim }}"
+        # The connection Ansible makes to configure the VM: its own ssh settings
+        # and accept-new, not the user's ssh config, which is VS Code's business.
+        # In claude_vms, so connection variables set on that group in the
+        # inventory - a key, a port - apply here as they do to make configure.
+        - name: Reach the VM the way make configure does
+          ansible.builtin.add_host:
+            name: "{{ claude_vm_names[0] }}"
+            groups: claude_vms
+            ansible_host: "{{ code_reach }}"
+            ansible_user: "{{ vm_user }}"
+          changed_when: false
+
+        # Where the code lives, read on the VM as configure reads it: the VM
+        # user's home, so nothing is guessed from this machine. Not needed when
+        # vm_projects_dir says it outright.
+        - name: Look up the VM user's home on the VM
+          ansible.builtin.getent:
+            database: passwd
+            key: "{{ vm_user }}"
+          delegate_to: "{{ claude_vm_names[0] }}"
+          register: code_home
+          ignore_unreachable: true
+          when: vm_projects_dir | default('', true) | length == 0
+
+        - name: Fail when SSH to the VM does not work
+          vars:
+            code_ssh: "{{ code_home }}"
+          ansible.builtin.assert:
+            that: not (code_ssh.unreachable | default(false))
+            fail_msg: "{{ code_ssh_failed }}"
+            quiet: true
+
+        # The workspace, or one project in it. A trailing "/" on vm_projects_dir
+        # is dropped so the path VS Code is given is the one listed below. The
+        # task's own names differ from the facts it sets, which would outrank
+        # them if it ever ran again.
+        - name: Settle the folder to open
+          vars:
+            code_workspace: >-
+              {{ vm_projects_dir | default('', true)
+                 or code_home.ansible_facts.getent_passwd[vm_user][4] ~ '/projects' }}
+            code_root_given: "{{ code_workspace | regex_replace('(.)/+$', '\\1') }}"
+            # A folded scalar keeps its backslashes, so the group is written once:
+            # '\\1' here would reach the regex as a backslash and a 1.
+            code_ws_dir_given: >-
+              {{ (vscode_workspaces_dir | default('', true) or code_root_given ~ '/.claude-on-proxmox')
+                 | regex_replace('(.)/+$', '\1') }}
+          ansible.builtin.set_fact:
+            code_project: "{{ vm_project | default('', true) | string }}"
+            code_root: "{{ code_root_given }}"
+            code_target: >-
+              {{ code_root_given ~ ('/' ~ vm_project if vm_project | default('', true) | string | length > 0 else '') }}
+            code_ws_dir: "{{ code_ws_dir_given }}"
+            # One project's file in project/, so a repository that shares the
+            # projects directory's name cannot collide with the whole directory's.
+            code_ws_file: >-
+              {{ code_ws_dir_given
+                 ~ ('/project/' ~ vm_project if vm_project | default('', true) | string | length > 0
+                    else '/' ~ (code_root_given | basename or 'projects'))
+                 ~ '.code-workspace' }}
+
+        # Paths on the VM are absolute here, with no "~" to expand: VS Code is
+        # handed them as written, from this machine.
+        - name: Refuse a projects directory that is not an absolute path
+          ansible.builtin.assert:
+            that: code_root is match('/')
+            fail_msg: >-
+              vm_projects_dir is a path on the VM, and must be an absolute one, not "{{ code_root }}":
+              VS Code is handed it as written.
+            quiet: true
+
+        # The workspace files' directory is not a project, though a PROJECT can
+        # name it, and is not the projects directory either: its files would sit
+        # among the repositories, and project/ would be listed as one. Only with
+        # the terminal on, which is when the directory is used at all.
+        - name: Refuse a workspace directory that is not absolute, is the projects directory, or is the folder
+          ansible.builtin.assert:
+            that:
+              - code_ws_dir is match('/')
+              - code_ws_dir != code_root
+              - code_target != code_ws_dir
+            fail_msg: >-
+              {{ 'vscode_workspaces_dir is a path on the VM, and must be an absolute one, not "' ~ code_ws_dir
+                 ~ '": VS Code is handed it as written.'
+                 if not code_ws_dir is match('/')
+                 else 'vscode_workspaces_dir is the projects directory, ' ~ code_root
+                      ~ ', whose folders are the projects; name a directory of its own.'
+                 if code_ws_dir == code_root
+                 else code_ws_dir ~ ' on ' ~ claude_vm_names[0]
+                      ~ ' is where make code keeps its VS Code workspace files, not a project.' }}
+            quiet: true
+          when: code_terminal
+
+        - name: Refresh the alias
+          ansible.builtin.import_tasks: tasks/ssh_config.yml
+          vars:
+            claude_ssh_state: present
+            claude_ssh_vms:
+              - name: "{{ claude_vm_addressed[0].name }}"
+                address: "{{ claude_vm_addressed[0].address }}"
+                user: "{{ vm_user }}"
+                workspace: "{{ code_root }}"
+
+        - name: Look for the folder on the VM
+          ansible.builtin.stat:
+            path: "{{ code_target }}"
+            follow: true
+            get_checksum: false
+          delegate_to: "{{ claude_vm_names[0] }}"
+          register: code_found
+          ignore_unreachable: true
+
+        # The first connection of this run when vm_projects_dir is set.
+        - name: Fail when SSH to the VM does not work for the folder
+          vars:
+            code_ssh: "{{ code_found }}"
+          ansible.builtin.assert:
+            that: not (code_ssh.unreachable | default(false))
+            fail_msg: "{{ code_ssh_failed }}"
+            quiet: true
+
+        # Only to explain a miss: what the projects directory does hold, and a
+        # name that differs from the one asked for only in case - Linux paths are
+        # case-sensitive, and ParkBnb is not parkbnb.
+        - name: List the projects on the VM
+          ansible.builtin.find:
+            paths: "{{ code_root }}"
+            file_type: directory
+            recurse: false
+          delegate_to: "{{ claude_vm_names[0] }}"
+          register: code_listing
+          when:
+            - code_project | length > 0
+            - not (code_found.stat.isdir | default(false))
+
+        - name: Fail when the folder is not there
+          vars:
+            code_names: >-
+              {{ code_listing.files | default([]) | map(attribute='path') | map('basename') | sort | list }}
+            code_close: >-
+              {{ code_names | select('match', '(?i)^' ~ (code_project | regex_escape) ~ '$') | list }}
+            # find lists a path that does not exist under skipped_paths.
+            code_root_there: >-
+              {{ code_listing is not skipped
+                 and code_listing.skipped_paths | default({}) | length == 0 }}
+          ansible.builtin.assert:
+            that: code_found.stat.isdir | default(false)
+            fail_msg: >-
+              {%- if code_project and code_found.stat.exists | default(false) -%}
+              {{ code_target }} on {{ claude_vm_names[0] }} is a file, not a project folder.
+              {%- elif code_project and code_names -%}
+              There is no project named {{ code_project }} in {{ code_root }} on {{ claude_vm_names[0] }}.
+              {{ 'Did you mean ' ~ code_close | join(' or ') ~ '? Folder names are case-sensitive.'
+                 if code_close else 'The projects there are: ' ~ code_names | join(', ') ~ '.' }}
+              {%- elif code_project and code_root_there | bool -%}
+              {{ code_root }} on {{ claude_vm_names[0] }} holds no projects yet.
+              `make configure VM_NAME={{ claude_vm_names[0] }}` clones your repositories into it.
+              {%- else -%}
+              {{ code_root }} does not exist on {{ claude_vm_names[0] }} yet: the VM has not been configured,
+              or vm_projects_dir points somewhere else. `make configure VM_NAME={{ claude_vm_names[0] }}` creates it and
+              clones your repositories into it.
+              {%- endif -%}
+            quiet: true
+
+        - name: Look for VS Code on this machine
+          ansible.builtin.command:
+            argv: [which, code]
+          register: code_which
+          changed_when: false
+          failed_when: false
+
+        - name: Fail when VS Code's command is not on PATH
+          ansible.builtin.assert:
+            that: code_which.rc == 0
+            fail_msg: >-
+              `code` is not on this machine's PATH. In VS Code, run "Shell Command: Install 'code' command
+              in PATH" from the Command Palette (macOS), or install VS Code; then run this again. The alias
+              is in place either way: ssh {{ claude_vm_names[0] }}.
+            quiet: true
+
+        - name: List VS Code's extensions
+          ansible.builtin.command:
+            argv: [code, --list-extensions]
+          register: code_extensions
+          changed_when: false
+
+        - name: Install the Remote - SSH extension when VS Code lacks it
+          ansible.builtin.command:
+            argv: [code, --install-extension, ms-vscode-remote.remote-ssh]
+          when: "'ms-vscode-remote.remote-ssh' not in (code_extensions.stdout_lines | map('lower') | list)"
+          changed_when: true
+
+        # The one write on the VM, as the VM user, last: every refusal above
+        # leaves the VM as it was. An unchanged file is not rewritten, so a run
+        # that only reopens a window reports no change there, and a directory
+        # that already exists keeps its mode: vscode_workspaces_dir may name one
+        # of the user's own, the home directory included.
+        - name: Look for the directory for VS Code workspace files on the VM
+          ansible.builtin.stat:
+            path: "{{ code_ws_file | dirname }}"
+            get_checksum: false
+          delegate_to: "{{ claude_vm_names[0] }}"
+          register: code_ws_dir_found
+          when: code_terminal
+
+        - name: Make the directory for VS Code workspace files on the VM
+          ansible.builtin.file:
+            path: "{{ code_ws_file | dirname }}"
+            state: directory
+            mode: "{{ omit if code_ws_dir_found.stat.exists | default(false) else '0755' }}"
+          delegate_to: "{{ claude_vm_names[0] }}"
+          when: code_terminal
+
+        - name: Write the VS Code workspace on the VM
+          ansible.builtin.copy:
+            dest: "{{ code_ws_file }}"
+            content: "{{ code_workspace_file | to_nice_json(indent=2) }}\n"
+            mode: "0644"
+          delegate_to: "{{ claude_vm_names[0] }}"
+          when: code_terminal
+
+        # VS Code opens a path ending in .code-workspace as a workspace, not as a
+        # file to edit; the same workspace already open is focused, and its task
+        # is not run a second time.
+        - name: Open the folder in VS Code
+          ansible.builtin.command:
+            argv:
+              - code
+              - --remote
+              - ssh-remote+{{ claude_vm_names[0] }}
+              - "{{ code_ws_file if code_terminal else code_target }}"
+          changed_when: true
+
+        # What VS Code will ask, from what the user's own settings say. "off" set
+        # by the user is the one value that silences both the question and the
+        # task; "on" means it was answered; anything else, VS Code asks once per
+        # workspace, in a notification that goes quiet after a moment. Settings
+        # not found, not readable or not parsable are said as such: "unset"
+        # would promise a question that may never come. GitHub is named when the
+        # terminal would sign in to it, as the script decides.
+        - name: Say what was opened
+          vars:
+            # Trust covers a folder's children, and a workspace is trusted when its
+            # folder and its file both are: with the files beside the projects,
+            # trusting the whole directory's window once covers every project.
+            code_trust_once: >-
+              {{ '' if not code_ws_dir.startswith(code_root ~ '/')
+                 else 'Trusting this window trusts every project in ' ~ code_root ~ '.'
+                      if code_project | length == 0
+                 else 'Trusting the window of make code VM_NAME=' ~ claude_vm_names[0] ~ ' instead trusts every project in '
+                      ~ code_root ~ ' at once.' }}
+            code_settings_note: >-
+              {{ 'No VS Code settings file was found where stock VS Code keeps one on this OS, so whether you have'
+                 ~ ' answered before is unknown; a VS Code that keeps its settings elsewhere is pointed at with'
+                 ~ ' vscode_user_settings_file. '
+                 if code_vscode_settings_file | length == 0
+                 else 'No VS Code settings file at ' ~ code_vscode_settings_file ~ ', so whether you have'
+                      ~ ' answered before is unknown. '
+                 if not code_vscode_settings_file is exists
+                 else 'Your VS Code settings, ' ~ code_vscode_settings_file ~ ', could not be read, so whether'
+                      ~ ' you have answered before is unknown. '
+                 if code_vscode_settings_text is none
+                 else 'Your VS Code settings, ' ~ code_vscode_settings_file ~ ', did not parse, so whether you'
+                      ~ ' have answered before is unknown; VS Code itself reads past the error. '
+                 if code_vscode_auto_tasks == 'unparsable'
+                 else '' }}
+            code_first_time: >-
+              {{ 'It will not start on its own: task.allowAutomaticTasks is "off" in ' ~ code_vscode_settings_file
+                 ~ '. Choose Allow under "Tasks: Manage Automatic Tasks" to change that, or start it each time with'
+                 ~ ' "Tasks: Run Task", Claude, once you have trusted the window (the Restricted Mode banner, Manage,'
+                 ~ ' Trust). ' ~ code_trust_once
+                 if code_vscode_auto_tasks == 'off'
+                 else 'The first time, it waits for you: trust the window (the Restricted Mode banner, Manage, Trust)'
+                      ~ ('' if code_vscode_auto_tasks == 'on'
+                         else ', then choose Allow when VS Code asks about automatic tasks: once per workspace, in a'
+                              ~ ' notification that goes quiet after a moment ("Tasks: Manage Automatic Tasks" offers'
+                              ~ ' the same choice later)')
+                      ~ '. ' ~ code_settings_note ~ code_trust_once }}
+            code_said:
+              - VS Code is opening {{ code_target }} on {{ claude_vm_names[0] }} ({{ code_reach }}).
+              - The first connection installs VS Code Server on the VM and takes a minute.
+              - >-
+                {{ 'A terminal named Claude then starts claude in it, signing in to Claude'
+                   ~ (' and to GitHub' if code_github_signed_in | length > 0 else '') ~ ' first if '
+                   ~ claude_vm_names[0] ~ ' has not been. ' ~ code_first_time if code_terminal else '' }}
+          ansible.builtin.debug:
+            msg: "{{ code_said | select | join(' ') | trim }}"
+
+      rescue:
+        # Outside make deploy the failure stands, said once more: for a
+        # command, with what it printed.
+        - name: Fail as make code does, outside make deploy
+          ansible.builtin.fail:
+            msg: "{{ code_failure }}"
+          when: not (code_in_deploy | default(false) | bool)
+
+        - name: Say how to open the VM later
+          ansible.builtin.debug:
+            msg: "{{ code_later }}"

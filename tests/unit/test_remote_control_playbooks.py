@@ -1,11 +1,12 @@
 """Remote Control's decisions, run for real against canned `claude auth status` output.
 
 Nothing here can reach a VM, a real `claude` or a real systemd. Every inventory
-host is the controller itself, over the local connection, with an interpreter
-wrapper that puts stand-ins for `bash`, `claude` and `systemctl` first on the
-module's PATH and points them at that host's canned login. The stand-in bash
-answers only the exact login-shell commands the role runs, so nothing is handed
-to a profile that could find a real `claude` on the developer's machine.
+host is the controller itself, over the local connection, through the harness
+in harness.py: an interpreter wrapper puts stand-ins for `bash`, `claude` and
+`systemctl` first on the module's PATH and points them at that host's canned
+login. The stand-in bash answers only the exact login-shell commands the role
+runs, so nothing is handed to a profile that could find a real `claude` on the
+developer's machine.
 
 What these guard:
 
@@ -14,6 +15,10 @@ What these guard:
   any other way was sent back and forth between the two.
 - The login command it printed ran `claude` in a non-login shell, where the
   native install is not on PATH.
+- Its report named `make configure` for every VM it did not sign in, and told
+  a VM on the API path to remove the key the vault writes back; now configure
+  is named only where it is what starts Remote Control, and Remote Control off
+  on purpose is said as such.
 - `make check` failed on every VM without the Remote Control unit, because
   systemd_service rejects a missing unit even in check mode.
 - A settings.json that disables Remote Control (a telemetry opt-out, an
@@ -27,6 +32,13 @@ What these guard:
 - settings.yml treats an empty or whitespace-only settings.json as `{}` once it
   has something to merge, names the file when it is not a JSON object, and
   leaves a broken file alone when nothing is managed.
+- The harness itself: a run inherits only what it names from the shell running
+  pytest, git and gh on a stand-in host never reach the developer's config, the
+  Galaxy collections resolve from wherever ANSIBLE_COLLECTIONS_PATH says, and
+  no run reads the terminal pytest runs at.
+
+The harness's names are imported here for the test modules that still import
+them from this one (test_github_auth.py among them).
 """
 
 from __future__ import annotations
@@ -34,37 +46,38 @@ from __future__ import annotations
 import grp
 import json
 import os
+import pty
 import pwd
 import re
+import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 import yaml
+from harness import (
+    DESKTOP_TOOLS,
+    LOGINS,
+    PASSED_ON,
+    REPO,
+    _env,
+    _failures,
+    _messages,
+    _results,
+    _run,
+    _run_at_a_terminal,
+    _seed_settings,
+    _stand_in_hosts,
+    _take_the_terminal,
+)
 
-REPO = Path(__file__).resolve().parents[2]
-ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
 UNIT = Path("/etc/systemd/system/claude-remote-control.service")
 LOGIN_COMMAND = "ssh -t dev@192.0.2.10 \"bash -lc 'claude auth login'\""
-
-# What `claude auth status` prints for each way of being signed in, and its
-# exit status: 0 when logged in, 1 when not.
-CLAUDE_AI = {"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"}
-LOGINS = {
-    "logged-out": ({"loggedIn": False, "authMethod": "none", "apiProvider": "firstParty"}, 1),
-    "claude-ai": ({**CLAUDE_AI, "email": "dev@example.com", "subscriptionType": "max"}, 0),
-    # The login exists, but ANTHROPIC_API_KEY outranks it.
-    "claude-ai-with-key": ({**CLAUDE_AI, "subscriptionType": "max", "apiKeySource": "ANTHROPIC_API_KEY"}, 0),
-    # A Console login reports claude.ai too; only the key source tells it apart.
-    "console": ({**CLAUDE_AI, "subscriptionType": None, "apiKeySource": "/login managed key"}, 0),
-    "api-key": ({"loggedIn": True, "authMethod": "api_key", "apiKeySource": "ANTHROPIC_API_KEY"}, 0),
-    "api-key-no-source": ({"loggedIn": True, "authMethod": "api_key"}, 0),
-    # CLAUDE_CODE_OAUTH_TOKEN, from `claude setup-token`.
-    "setup-token": ({"loggedIn": True, "authMethod": "oauth_token", "apiProvider": "firstParty"}, 0),
-    # Signed in, but ~/.claude/settings.json switches the feature off.
-    "claude-ai-telemetry": ({**CLAUDE_AI, "subscriptionType": "max"}, 0),
-}
+# A canned key for the hosts on the API path; never a real one.
+API_KEY = "sk-ant-api03-fake-key-0000"
 
 # The env keys the role refuses in settings.json, read from the role so every
 # one of them is seeded below.
@@ -99,148 +112,67 @@ SETTINGS = {
     ),
 }
 
-# One copy of each, shared by every host: macOS scans an executable the first
-# time it runs, which made a copy per host cost seconds. Each host's interpreter
-# is a symlink to the "python" wrapper, which finds the host's files beside it.
-# HOME is the host's directory too, so a module that reads ~/.claude/settings.json
-# finds what the test seeded there and never the developer's own.
-STAND_INS = {
-    "python": f"""#!/bin/sh
-STAND_IN=$(dirname "$0")
-PATH="$(dirname "$(dirname "$0")")/bin:$PATH"
-HOME=$STAND_IN
-export STAND_IN PATH HOME
-exec "{sys.executable}" "$@"
-""",
-    "bash": """#!/bin/sh
-echo "$*" >> "$STAND_IN/bash.log"
-case "$*" in
-  "-lc claude auth status") exec claude auth status ;;
-  "-lc command -v claude") command -v claude ;;
-  *) echo "stand-in bash: unexpected arguments: $*" >&2; exit 127 ;;
-esac
-""",
-    "claude": """#!/bin/sh
-if [ "$*" = "auth status" ]; then cat "$STAND_IN/status.json"; exit "$(cat "$STAND_IN/rc")"; fi
-echo "stand-in claude: unexpected arguments: $*" >&2
-exit 99
-""",
-    # systemd's answers for a unit that does not exist.
-    "systemctl": """#!/bin/sh
-echo "$*" >> "$STAND_IN/systemctl.log"
-case "$1" in
-  show) printf 'Id=%s.service\\nLoadState=not-found\\nActiveState=inactive\\nSubState=dead\\n' "$2" ;;
-  is-enabled) echo "Failed to get unit file state for $2.service: No such file or directory" >&2; exit 1 ;;
-  list-unit-files) exit 1 ;;
-esac
-""",
+# Signed in, but in a way Remote Control cannot use: the one state in which
+# make configure, after the user has fixed the login, is what starts it.
+INELIGIBLE = sorted(set(LOGINS) - {"claude-ai", "logged-out"})
+# Remote Control off on purpose, beside the canned logins: on the API path (a
+# key from the vault, which claude reports as its login), and switched off.
+OFF_ON_PURPOSE = {
+    "api-path": (LOGINS["api-key"], {"claude_code_anthropic_api_key": API_KEY}),
+    "switched-off": (LOGINS["setup-token"], {"claude_code_remote_control": False}),
 }
-
-
-def _stand_in_hosts(root: Path, logins: dict) -> dict:
-    """Inventory hosts, one per canned login, whose modules run with the stand-ins; returns their hostvars."""
-    bin_dir = root / "bin"
-    bin_dir.mkdir()
-    for name, text in STAND_INS.items():
-        (bin_dir / name).write_text(text)
-        (bin_dir / name).chmod(0o755)
-    hosts = {}
-    for name, (status, rc) in logins.items():
-        home = root / name
-        home.mkdir()
-        (home / "status.json").write_text(json.dumps(status))
-        (home / "rc").write_text(str(rc))
-        (home / "python").symlink_to(bin_dir / "python")
-        hosts[name] = {
-            "ansible_connection": "local",
-            "ansible_python_interpreter": str(home / "python"),
-            "ansible_host": "192.0.2.10",
-        }
-    return hosts
-
-
-def _seed_settings(root: Path, host: str, settings: dict) -> None:
-    """Put a settings.json where that host's modules read it: under its HOME, and under its claude_code_home."""
-    claude_dir = root / host / ".claude"
-    claude_dir.mkdir()
-    (claude_dir / "settings.json").write_text(json.dumps(settings))
-
-
-def _run(root: Path, playbook: Path, hosts: dict, *args: str) -> dict:
-    """Run a playbook against hosts, without the project's config or inventory; return the json callback's report."""
-    (root / "ansible.cfg").write_text("")
-    inventory = root / "hosts.yml"
-    inventory.write_text(yaml.safe_dump({"claude_vms": {"hosts": hosts, "vars": {"vm_user": "dev"}}}))
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
-    env.update(
-        ANSIBLE_CONFIG=str(root / "ansible.cfg"),
-        ANSIBLE_ROLES_PATH=str(REPO / "roles"),
-        ANSIBLE_FILTER_PLUGINS=str(REPO / "filter_plugins"),
-        ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json",
-        ANSIBLE_NOCOLOR="1",
-    )
-    result = subprocess.run(
-        [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, str(playbook)],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    try:
-        report = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        pytest.fail(f"ansible-playbook exited {result.returncode}:\n{result.stdout}\n{result.stderr}")
-    report["rc"] = result.returncode
-    return report
-
-
-def _results(report: dict):
-    for play in report["plays"]:
-        for task in play["tasks"]:
-            for host, result in task["hosts"].items():
-                yield task["task"]["name"], host, result
-
-
-def _messages(report: dict, task: str) -> dict:
-    """What each host printed from the task whose name ends with `task`."""
-    return {
-        host: result["msg"]
-        for name, host, result in _results(report)
-        if name.endswith(task) and "msg" in result and not result.get("skipped")
-    }
-
-
-def _failures(report: dict) -> dict:
-    return {host: f"{name}: {result.get('msg')}" for name, host, result in _results(report) if result.get("failed")}
 
 
 @pytest.fixture(scope="module")
 def login(tmp_path_factory):
     """claude_login.yml, run once for every canned login: the stand-ins' root, and what it told each host."""
     root = tmp_path_factory.mktemp("claude_login")
-    hosts = _stand_in_hosts(root, LOGINS)
+    hosts = _stand_in_hosts(root, {**LOGINS, **{name: login for name, (login, _) in OFF_ON_PURPOSE.items()}})
+    for name, (_, hostvars) in OFF_ON_PURPOSE.items():
+        hosts[name].update(hostvars)
     _seed_settings(root, "claude-ai-telemetry", {"env": {"DISABLE_TELEMETRY": "1"}})
-    report = _run(root, REPO / "playbooks" / "claude_login.yml", hosts, "-e", '{"claude_vm_discovery": false}')
+    report = _run(
+        root,
+        REPO / "playbooks" / "claude_login.yml",
+        hosts,
+        "-e",
+        # become off only because the controller has no sudo to give; the role
+        # reads the login as claude_code_user through it on a VM.
+        '{"claude_vm_discovery": false, "ansible_become": false}',
+    )
     assert report["rc"] == 0, _failures(report)
+    assert API_KEY not in json.dumps(report)
     return root, _messages(report, "Report the login state and what to do about it")
 
 
 def test_claude_login_calls_only_a_claude_ai_login_with_no_key_ready(login):
     _, messages = login
-    assert set(messages) == set(LOGINS)
+    assert set(messages) == set(LOGINS) | set(OFF_ON_PURPOSE)
     assert {host for host, msg in messages.items() if "already signed in" in msg} == {"claude-ai"}, messages
-    assert "dev@example.com (claude.ai, max plan)" in messages["claude-ai"]
+    assert "claude-ai: already signed in as dev@example.com (claude.ai, max plan)." in messages["claude-ai"]
     assert "auth login" not in messages["claude-ai"]
 
 
 @pytest.mark.parametrize("host", sorted(set(LOGINS) - {"claude-ai"}))
 def test_claude_login_prints_a_login_command_that_finds_claude(login, host):
     _, messages = login
-    # Ends its line: an old message put a full stop after the closing quote,
+    # Ends the message: an old one put a full stop after the closing quote,
     # which pasting turns into part of the remote command.
-    assert LOGIN_COMMAND + "\n" in messages[host]
-    assert f"Then: make configure VM_NAME={host}" in messages[host]
+    assert messages[host].endswith(LOGIN_COMMAND), messages[host]
+
+
+@pytest.mark.parametrize("host", sorted(set(LOGINS) | set(OFF_ON_PURPOSE)))
+def test_make_configure_is_named_only_where_it_is_what_starts_remote_control(login, host):
+    # After a login fixed by hand no path unit waits, so make configure starts
+    # Remote Control; anywhere else - signed in already, a sign-in that starts
+    # it itself, or Remote Control off on purpose - naming it costs the user a
+    # configure run that changes nothing.
+    _, messages = login
+    if host in INELIGIBLE:
+        assert f"Then make configure VM_NAME={host} TAGS=claude_code starts it." in messages[host]
+    else:
+        assert "make configure" not in messages[host], messages[host]
+        assert "Then" not in messages[host], messages[host]
 
 
 @pytest.mark.parametrize(
@@ -258,6 +190,20 @@ def test_claude_login_prints_a_login_command_that_finds_claude(login, host):
 def test_claude_login_says_what_is_in_the_way(login, host, advice):
     _, messages = login
     assert advice in messages[host]
+
+
+def test_remote_control_off_on_purpose_is_said_as_such(login):
+    _, messages = login
+    on_the_api_path = messages["api-path"]
+    assert on_the_api_path.startswith("api-path: signed in. Remote Control is off on this VM on purpose:")
+    assert "vault_anthropic_api_key" in on_the_api_path
+    # Not the advice for a key the project did not write: the vault writes this
+    # one back on the next run.
+    assert "Remove it wherever it is set" not in on_the_api_path
+    assert "auth login" not in on_the_api_path
+    assert messages["switched-off"] == (
+        "switched-off: signed in. Remote Control is off on this VM on purpose: claude_remote_control is false."
+    )
 
 
 def test_claude_login_reads_the_status_through_a_login_shell(login):
@@ -306,11 +252,20 @@ def check_mode(tmp_path_factory):
         pytest.skip("this machine has a real claude-remote-control unit")
     _require_daemon_user()
     root = tmp_path_factory.mktemp("check_mode")
-    logins = {"ready": LOGINS["claude-ai"], "not-ready": LOGINS["logged-out"]}
+    logins = {
+        "ready": LOGINS["claude-ai"],
+        "not-ready": LOGINS["logged-out"],
+        # make deploy's configure step, with its own sign-in next in the run.
+        "not-ready-in-deploy": LOGINS["logged-out"],
+        # No login, and a setting that would keep Remote Control off after one.
+        "not-ready-blocked": LOGINS["logged-out"],
+    }
     logins.update({name: LOGINS["claude-ai"] for name in SETTINGS})
     hosts = _stand_in_hosts(root, logins)
     for name, (settings, _) in SETTINGS.items():
         _seed_settings(root, name, settings)
+    _seed_settings(root, "not-ready-blocked", {"env": {"DISABLE_TELEMETRY": "1"}})
+    hosts["not-ready-in-deploy"]["claude_code_sign_in_follows"] = True
     (root / "projects").mkdir()
     report = _check_run(root, "remote_control", hosts, claude_code_remote_control_dir=str(root / "projects"))
     assert report["rc"] == 0, _failures(report)
@@ -326,6 +281,21 @@ def test_check_mode_on_a_vm_without_the_unit_does_not_fail(check_mode):
         calls = set(log.read_text().split()) if log.exists() else set()
         assert not calls & {"daemon-reload", "enable", "disable", "start", "stop", "restart"}
         assert not (root / host / ".claude.json").exists()
+
+
+def test_configure_names_the_sign_in_that_comes_next(check_mode):
+    _, _, report = check_mode
+    said = _messages(report, "Say exactly what to run")
+    # Standalone, the command that signs in and starts Remote Control.
+    assert 'Sign in once: "make claude-login VM_NAME=not-ready" opens the sign-in page' in said["not-ready"]
+    assert "page shows, and starts it." in said["not-ready"]
+    assert "make deploy" not in said["not-ready"]
+    # Inside make deploy, whose own sign-in follows in the same run.
+    assert "make deploy signs it in next, in this run." in said["not-ready-in-deploy"]
+    assert "make claude-login" not in said["not-ready-in-deploy"]
+    # A sign-in leaves a VM with a blocking setting stopped: no promise to start it.
+    assert 'Sign in once: "make claude-login VM_NAME=not-ready-blocked"' in said["not-ready-blocked"]
+    assert "and starts it" not in said["not-ready-blocked"]
 
 
 @pytest.mark.parametrize("host", sorted(SETTINGS))
@@ -344,6 +314,26 @@ def test_settings_that_disable_remote_control_are_named_rather_than_fatal(check_
     assert "claude_remote_control: false" in messages[host]
     # Signed in already, so no login step is suggested.
     assert "make claude-login" not in messages[host]
+
+
+def test_the_path_unit_is_retired_before_remote_control_starts():
+    # A start the server refuses fails the host at the stay-up check, and a
+    # path unit still installed then would start the service the user stops
+    # next, on the first token refresh or logout. Told by what the tasks do,
+    # not their names.
+    tasks = yaml.safe_load((REPO / "roles" / "claude_code" / "tasks" / "remote_control.yml").read_text())
+
+    def starts_the_service(task: dict) -> bool:
+        return any(
+            (step.get("ansible.builtin.systemd_service") or {}).get("enabled") is True
+            and not str(step["ansible.builtin.systemd_service"]["name"]).endswith(".path")
+            for step in [task, *task.get("block", [])]
+        )
+
+    retire = [i for i, task in enumerate(tasks) if task.get("ansible.builtin.include_tasks") == "path_unit_absent.yml"]
+    start = [i for i, task in enumerate(tasks) if starts_the_service(task)]
+    assert retire and start, (retire, start)
+    assert max(retire) < min(start), (retire, start)
 
 
 @pytest.fixture(scope="module")
@@ -416,3 +406,289 @@ def test_a_settings_json_that_is_not_json_is_named(settings_on_disk):
     ]
     assert messages, _failures(report)
     assert "/broken/.claude/settings.json on broken is not a JSON object" in messages[0]
+
+
+# ------------------------------------------------------------ the harness itself
+
+# What the developer's shell may hold that would point a module under test at
+# their own git, gh or Claude Code, with values that must never arrive.
+DEVELOPER_ONLY = {
+    "XDG_CONFIG_HOME": "/developer/.config",
+    "GIT_CONFIG_GLOBAL": "/developer/.gitconfig",
+    "GH_CONFIG_DIR": "/developer/.config/gh",
+    "GH_TOKEN": "gho_fake-developer-token-0000",
+    "GITHUB_TOKEN": "ghp_fake-developer-token-0000",
+    "CLAUDE_CONFIG_DIR": "/developer/.claude",
+}
+
+
+def test_a_run_inherits_only_what_the_harness_names(tmp_path, monkeypatch):
+    for name, value in DEVELOPER_ONLY.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("GIT_ASKPASS", "/developer/askpass.sh")
+    monkeypatch.setenv("ANSIBLE_STDOUT_CALLBACK", "developer.own.callback")
+    monkeypatch.setenv("ANSIBLE_COLLECTIONS_PATH", "/developer/collections")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    env = _env(tmp_path)
+    assert not set(env) & {*DEVELOPER_ONLY, "GIT_ASKPASS", "ANSIBLE_STDOUT_CALLBACK"}, env
+    inherited = {name for name in env if not name.startswith("ANSIBLE_") and name != "BROWSER"}
+    assert all(name in PASSED_ON or name.startswith("LC_") for name in inherited), inherited
+    # Passed on by name: where the Galaxy collections are, and the locale.
+    assert env["ANSIBLE_COLLECTIONS_PATH"] == "/developer/collections"
+    assert env["LC_ALL"] == "C.UTF-8"
+    # The desktop stand-ins come first, and BROWSER is one of them.
+    assert env["PATH"].split(os.pathsep)[0] == str(tmp_path / ".desktop")
+    assert env["BROWSER"] == str(tmp_path / ".desktop" / "open")
+
+
+def test_a_stand_in_host_never_sees_the_developer_s_git_gh_or_claude_config(tmp_path):
+    hosts = _stand_in_hosts(tmp_path, {"probe": LOGINS["claude-ai"]})
+    # Run the interpreter wrapper as a module would be, with everything a test
+    # might pass on itself.
+    seen = json.loads(
+        subprocess.run(
+            [
+                hosts["probe"]["ansible_python_interpreter"],
+                "-c",
+                "import json, os; print(json.dumps(dict(os.environ)))",
+            ],
+            env={"PATH": os.environ["PATH"], "HOME": "/developer", **DEVELOPER_ONLY},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    home = tmp_path / "probe"
+    assert seen["HOME"] == str(home)
+    assert seen["XDG_CONFIG_HOME"] == str(home / ".config")
+    assert seen["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert not set(seen) & (set(DEVELOPER_ONLY) - {"XDG_CONFIG_HOME"}), seen
+    assert seen["PATH"].split(os.pathsep)[0] == str(tmp_path / "bin")
+
+
+def test_git_on_a_stand_in_host_writes_inside_that_host_only(tmp_path, monkeypatch):
+    if shutil.which("git") is None:
+        pytest.skip("no git on this machine")
+    # The developer's own global config, where git would write it: through
+    # XDG_CONFIG_HOME, and through GIT_CONFIG_GLOBAL. Both are exported in the
+    # shell running pytest.
+    developer = tmp_path / "developer"
+    xdg_config = developer / "xdg" / "git" / "config"
+    xdg_config.parent.mkdir(parents=True)
+    xdg_config.write_text("[user]\n\tname = The Developer\n")
+    global_config = developer / "gitconfig"
+    global_config.write_text("[user]\n\temail = developer@example.com\n")
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (xdg_config, global_config)}
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(developer / "xdg"))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    root = tmp_path / "run"
+    root.mkdir()
+    hosts = _stand_in_hosts(root, {"probe": LOGINS["claude-ai"]})
+    playbook = root / "git.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "name": "Write the global git config, as clone.yml and gh setup-git do, and read it back",
+                    "hosts": "claude_vms",
+                    "gather_facts": False,
+                    "tasks": [
+                        {
+                            "name": "Write",
+                            "ansible.builtin.command": {"argv": ["git", "config", "--global", "user.name", "stand-in"]},
+                        },
+                        {
+                            "name": "Read",
+                            "ansible.builtin.command": {
+                                "argv": ["git", "config", "--global", "--show-origin", "--list"]
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+    )
+    report = _run(root, playbook, hosts)
+    assert report["rc"] == 0, _failures(report)
+    listed = next(result["stdout_lines"] for name, _, result in _results(report) if name == "Read")
+    assert listed, report
+    for line in listed:
+        origin = Path(line.split("\t")[0].removeprefix("file:")).resolve()
+        assert origin.is_relative_to((root / "probe").resolve()), line
+    assert "user.name=stand-in" in "\n".join(listed)
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
+
+
+def test_the_galaxy_collections_resolve_from_where_ansible_is_told(tmp_path, monkeypatch):
+    # ansible-playbook finds them under HOME by default; a developer who keeps
+    # them elsewhere says so with ANSIBLE_COLLECTIONS_PATH, which an earlier
+    # harness dropped along with every other ANSIBLE_* variable.
+    found = [
+        Path(path).expanduser()
+        for path in (
+            *os.environ.get("ANSIBLE_COLLECTIONS_PATH", "").split(os.pathsep),
+            "~/.ansible/collections",
+            "/usr/share/ansible/collections",
+        )
+        if path and (Path(path).expanduser() / "ansible_collections" / "community" / "proxmox").is_dir()
+    ]
+    if not found:
+        pytest.skip("the Galaxy collections are not installed (make deps)")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ANSIBLE_COLLECTIONS_PATH", str(found[0]))
+    playbook = tmp_path / "collections.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "name": "Resolve a module from a Galaxy collection",
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "tasks": [
+                        {
+                            "name": "Never run, only resolved",
+                            "community.proxmox.proxmox_vm_info": {"name": "nothing"},
+                            "when": False,
+                        }
+                    ],
+                }
+            ]
+        )
+    )
+    report = _run(tmp_path, playbook, {})
+    assert report["rc"] == 0, report["stderr"]
+
+
+# A run of the harness from a process whose controlling terminal is a pseudo-
+# terminal of the test's own, as pytest's is under `pytest -s`. It prints what
+# the prompts took.
+RUN_AT_A_TERMINAL = """
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from harness import _results, _run
+report = _run(Path(sys.argv[2]), Path(sys.argv[3]), {}, timeout=30)
+print(json.dumps({"rc": report["rc"], "said": [r.get("msg") for _, _, r in _results(report) if "msg" in r]}))
+"""
+
+
+def test_a_run_never_reads_the_terminal_pytest_runs_at(tmp_path):
+    # pytest's own capture points fd 0 at /dev/null, so this matters only under
+    # `pytest -s` at a terminal, where a run that inherited it would wait at a
+    # prompt and take the developer's keystrokes. Here keys are typed at the
+    # terminal throughout the run: a run reading it would take them, or wait.
+    playbook = tmp_path / "prompts.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "name": "Ask, as the sign-ins do",
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "vars_prompt": [{"name": "answer", "prompt": "Type here", "private": False, "default": "untyped"}],
+                    "tasks": [
+                        {"name": "Ask again", "ansible.builtin.pause": {"prompt": "Type here"}, "register": "paused"},
+                        {"name": "Say", "ansible.builtin.debug": {"msg": "{{ answer }}|{{ paused.user_input }}"}},
+                    ],
+                }
+            ]
+        )
+    )
+    master, slave = pty.openpty()
+    helper = subprocess.Popen(
+        [sys.executable, "-c", RUN_AT_A_TERMINAL, str(Path(__file__).parent), str(tmp_path), str(playbook)],
+        stdin=slave,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - nothing else runs threads here
+    )
+    os.close(slave)
+    os.set_blocking(master, False)
+    deadline = time.monotonic() + 90
+    try:
+        while helper.poll() is None and time.monotonic() < deadline:
+            for act in (lambda: os.write(master, b"typed-at-the-terminal\n"), lambda: os.read(master, 65536)):
+                try:
+                    act()
+                except OSError:
+                    pass
+            time.sleep(0.5)
+    finally:
+        if helper.poll() is None:
+            os.killpg(helper.pid, signal.SIGKILL)
+        stdout, stderr = helper.communicate()
+        os.close(master)
+    assert helper.returncode == 0, stderr.decode(errors="replace")
+    assert json.loads(stdout) == {"rc": 0, "said": ["untyped|"]}, stdout
+
+
+# Calls every opener and clipboard in TOOLS, then BROWSER, each only if it
+# resolves into DESKTOP: a stand-in.
+REACH_FOR_THE_DESKTOP = """
+for tool in $TOOLS; do
+  found=$(command -v "$tool") || exit 3
+  case $found in "$DESKTOP"/*) "$found" https://example.invalid/page ;; *) exit 4 ;; esac
+done
+case $BROWSER in "$DESKTOP"/*) "$BROWSER" https://example.invalid/page ;; *) exit 5 ;; esac
+"""
+
+
+def test_a_run_that_reaches_for_the_desktop_fails_its_test(tmp_path):
+    # Every opener and clipboard the sign-ins look for, and BROWSER, resolve to
+    # a stand-in, and a run that calls one fails its test. Only a stand-in is
+    # ever called here, whatever PATH holds.
+    playbook = tmp_path / "desktop.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "name": "Reach for the desktop, as a sign-in with its switch on would",
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "tasks": [
+                        {
+                            "name": "Call each opener and clipboard, if it is a stand-in",
+                            "ansible.builtin.shell": REACH_FOR_THE_DESKTOP,
+                            "environment": {"DESKTOP": str(tmp_path / ".desktop"), "TOOLS": " ".join(DESKTOP_TOOLS)},
+                            "changed_when": False,
+                        }
+                    ],
+                }
+            ]
+        )
+    )
+    with pytest.raises(pytest.fail.Exception, match="called this machine's browser or clipboard"):
+        _run(tmp_path, playbook, {})
+    calls = (tmp_path / ".desktop" / "calls.log").read_text().splitlines()
+    assert calls == [f"{tool} https://example.invalid/page" for tool in (*DESKTOP_TOOLS, "open")], calls
+
+
+def test_keys_typed_before_a_prompt_is_ready_still_reach_it(tmp_path):
+    # pause flushes the terminal's input as it starts, so keys typed a moment
+    # early are lost; the terminal driver waits for the prompt's raw mode, and
+    # types again when the prompt has not taken its keys. Here the keys are due
+    # three seconds before the prompt.
+    playbook = tmp_path / "early.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "name": "Say a prompt is coming, then ask",
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "tasks": [
+                        {"name": "Say", "ansible.builtin.debug": {"msg": "a prompt comes in three seconds"}},
+                        {"name": "Wait", "ansible.builtin.wait_for": {"timeout": 3}},
+                        {"name": "Ask", "ansible.builtin.pause": {"prompt": "Type here"}, "register": "paused"},
+                        {"name": "Answer", "ansible.builtin.debug": {"msg": "took {{ paused.user_input }}"}},
+                    ],
+                }
+            ]
+        )
+    )
+    steps = [(b"a prompt comes in three seconds", b"typed-early\n")]
+    rc, output, log = _run_at_a_terminal(tmp_path, playbook, {}, {}, steps=steps, timeout=60)
+    assert rc == 0, output
+    assert "took typed-early" in log, output

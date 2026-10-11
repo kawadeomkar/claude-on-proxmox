@@ -34,6 +34,10 @@ ExecStart={{ claude_code_remote_control_bin }} remote-control --name {{ claude_c
 # without a network, and on-failure restarts only an unclean exit. A stop
 # through systemctl is never restarted, so `systemctl stop` still means stop.
 Restart=always
+# The server redraws its status screen on stdout several times a second, which
+# under systemd is the journal: about half a million lines a day, crowding out
+# every other log. Its errors go to stderr, which stays in the journal.
+StandardOutput=null
 # 10 seconds after the first exit, growing over five restarts to five minutes,
 # then every five minutes. systemd only resets the count when the unit is
 # stopped and started again, not after a long healthy run. RestartSteps needs

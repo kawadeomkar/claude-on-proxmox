@@ -185,3 +185,63 @@ claude_code_remote_control_dialogs_seeded: >-
      and ((claude_code_remote_control_cfg.projects | default({}, true))
           .get(claude_code_remote_control_target_dir, {})
           .get('hasTrustDialogAccepted', false)) | bool }}
+
+# Internal: whether the path unit that starts the service when a login lands
+# (templates/claude-remote-control.path.j2) belongs on the VM: only while the
+# login is the one thing missing. A settings blocker would stop the server it
+# started, and a login of any kind means the role decides from here on.
+claude_code_remote_control_bridge_wanted: >-
+  {{ not (claude_code_remote_control_status.loggedIn | default(false)) | bool
+     and claude_code_remote_control_settings_blockers | length == 0 }}
+
+# ------------------------------------------------- the browser sign-in -----
+# Internal: where tasks/browser_login.yml keeps its files on the VM, beside the
+# GitHub device flow's: claude's output, the named pipe its input comes
+# through, and the pid that ends an attempt nobody completes. 0700, the user's.
+claude_code_login_dir: "{{ claude_code_home }}/.config/claude-on-proxmox"
+claude_code_login_output: "{{ claude_code_login_dir }}/claude-login.out"
+claude_code_login_pipe: "{{ claude_code_login_dir }}/claude-login.in"
+claude_code_login_pidfile: "{{ claude_code_login_dir }}/claude-login.pid"
+
+# Internal: what claude printed, and the sign-in page in it. Without a terminal
+# it prints the page as a plain URL; under one it wraps it in an OSC 8
+# hyperlink, whose escape bytes are not part of it.
+claude_code_login_text: >-
+  {{ (claude_code_login_out.content | b64decode) if claude_code_login_out.content is defined else '' }}
+claude_code_login_url: >-
+  {{ claude_code_login_text | regex_search('https://[^\s\x07\x1b]+') or '' }}
+# Internal: the same text without escape sequences or control characters
+# (the plain_text filter, filter_plugins/text.py), for every message that
+# quotes it: the VM's user controls what claude prints, and an escape sequence
+# in a failure would reach this terminal and the run log raw (2.21 prints a
+# failure's [ERROR] line unescaped). The URL above is read from the raw text,
+# where an OSC 8 link's bytes still separate it.
+claude_code_login_said: "{{ claude_code_login_text | plain_text }}"
+# Internal: claude's answer to the code - what it printed after its prompt,
+# "Login successful.", "Login failed: ..." or "Invalid code. ..." - for the
+# message when the sign-in did not complete.
+claude_code_login_answer: >-
+  {{ ((claude_code_login_said | regex_replace('(?s)^.*prompted >', '') | trim).splitlines() or [''])[-1] }}
+# Internal: how long one attempt may last, on top of claude_code_login_timeout:
+# the person reads the page and pastes in between, and past it Ansible's async
+# limit has ended claude, so a code pasted later is said to be too late. And
+# how long claude may take to show the page.
+claude_code_login_attempt_seconds: 1800
+claude_code_login_start_seconds: 30
+
+# Internal: the code to hand claude - the one given instead of the prompt, or
+# what was pasted at it. Empty means nobody answered: Enter alone, or a run
+# with no terminal, whose prompt returns at once with nothing.
+claude_code_login_entered: >-
+  {{ claude_code_login_code if claude_code_login_code | length > 0
+     else ((claude_code_login_prompt | default({})).user_input | default('', true) | trim) }}
+# Internal: the code pasted when asked again, after an "Invalid code".
+claude_code_login_entered_again: >-
+  {{ (claude_code_login_prompt_again | default({})).user_input | default('', true) | trim }}
+
+claude_code_login_command: make claude-login VM_NAME={{ inventory_hostname }}
+
+# Internal: how long the server gets to fail after a start before it counts as
+# up (remote_control.yml). One "active" reading proves nothing: Type=simple is
+# active the moment the process forks.
+claude_code_remote_control_stay_up_seconds: 20

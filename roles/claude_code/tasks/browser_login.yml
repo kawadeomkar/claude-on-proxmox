@@ -1,0 +1,430 @@
+---
+# Claude Code's browser sign-in, driven by Ansible the way github_projects'
+# device_flow.yml drives gh: `claude auth login` runs on the VM in the
+# background with no terminal, which makes it print the sign-in page and wait
+# for a code; the page is read out of its output, shown, and opened on this
+# machine; the code that page shows once you authorise is pasted at a prompt in
+# the terminal running make; it reaches claude through a named pipe; and the run
+# waits for claude's answer. Anthropic's page pre-fills nothing and has no
+# device code to show here, so authorising and pasting the code back are the
+# person's part, and the only part.
+#
+# What it rests on, probed against Claude Code 2.1.296 (ARCHITECTURE §5.5):
+# - With no terminal, claude prints the page as a plain URL and reads the code
+#   as one line from stdin, "<code>#<state>". A pipe is enough.
+# - A wrong code makes it print "Login failed: ..." and exit 1; a right one, write
+#   ~/.claude/.credentials.json, print "Login successful." and exit 0. A line
+#   without its "#" makes it print "Invalid code. ..." and wait for another, so
+#   nothing but the code is ever written to it.
+# - The pipe is opened read-write on claude's own stdin before it starts, so it
+#   never sees the end of its input while it waits; the price is that it never
+#   stops by itself either, so an attempt nobody completes is ended by its pid,
+#   recorded for that. `$$` is claude's pid only because nothing runs in a
+#   subshell: the shell exec's into it.
+# One VM at a time: one terminal answers the prompt, and the playbooks run their
+# sign-in play serially.
+- name: browser_login | Refuse to prompt for more than one VM at a time
+  ansible.builtin.assert:
+    that: ansible_play_batch | length == 1
+    fail_msg: >-
+      The Claude sign-in asks for one code at a time, and this batch has
+      {{ ansible_play_batch | length }} VMs: {{ ansible_play_batch | join(', ') }}. Run the play
+      with serial: 1, as playbooks/claude_login.yml does.
+    quiet: true
+
+- name: browser_login | Find claude
+  ansible.builtin.command:
+    argv: [bash, -lc, command -v claude]
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_login_which
+  changed_when: false
+  failed_when: false
+
+- name: browser_login | Fail when claude is not on the user's PATH
+  ansible.builtin.assert:
+    that: claude_code_login_which.stdout | trim | length > 0
+    fail_msg: >-
+      `claude` is not on {{ claude_code_user }}'s PATH on {{ inventory_hostname }}, so there is
+      nothing to sign in yet: make configure VM_NAME={{ inventory_hostname }} installs it.
+    quiet: true
+
+- name: browser_login | Make the directory for the sign-in's files
+  ansible.builtin.file:
+    path: "{{ claude_code_login_dir }}"
+    state: directory
+    mode: "0700"
+  become: true
+  become_user: "{{ claude_code_user }}"
+
+# A sign-in of this VM still waiting - a run left at its prompt, or a second
+# make claude-login started meanwhile - owns the pipe and the pidfile below;
+# taking them over would hand one run's code to the other's claude and end the
+# other's process. Told by the recorded pid's command line, so a pid reused by
+# something else since is no reason to refuse; with no ps to ask, nothing is.
+- name: browser_login | Look for a sign-in of this VM still waiting
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - 'pid=$(cat "$1" 2>/dev/null) && ps -o args= -p "$pid" 2>/dev/null | grep -q "auth login" && echo "$pid"; exit 0'
+      - sh
+      - "{{ claude_code_login_pidfile }}"
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_login_other
+  changed_when: false
+
+- name: browser_login | Refuse to start over a sign-in still waiting
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: another sign-in of this VM is still waiting for its code (claude, pid
+      {{ claude_code_login_other.stdout | trim }}), from a run still at its prompt. Finish or stop that run, then
+      run {{ claude_code_login_command }} again.
+  when: claude_code_login_other.stdout | trim | length > 0
+
+# Unlinked, never truncated, as in device_flow.yml: an attempt a failed run
+# left behind would otherwise share the output file with this one.
+- name: browser_login | Remove the files of an earlier attempt
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ claude_code_login_output }}"
+    - "{{ claude_code_login_pipe }}"
+    - "{{ claude_code_login_pidfile }}"
+  become: true
+  become_user: "{{ claude_code_user }}"
+  changed_when: false
+
+- name: browser_login | Make the pipe claude reads the code from
+  ansible.builtin.command:
+    argv: [mkfifo, -m, "0600", "{{ claude_code_login_pipe }}"]
+  become: true
+  become_user: "{{ claude_code_user }}"
+  changed_when: false
+
+# A shell for the redirections, and async because claude waits for the code.
+# Generous: the person may read the page for a while before pasting, and an
+# attempt still running past this is ended by Ansible's async timeout.
+- name: browser_login | Start the sign-in in the background
+  ansible.builtin.shell:
+    cmd: >-
+      umask 077 && exec 0<>{{ claude_code_login_pipe | quote }}
+      && echo $$ >{{ claude_code_login_pidfile | quote }}
+      && exec {{ ([claude_code_login_which.stdout | trim, 'auth', 'login'] + claude_code_login_args) | map('quote') | join(' ') }}
+      >{{ claude_code_login_output | quote }} 2>&1
+  become: true
+  become_user: "{{ claude_code_user }}"
+  async: "{{ claude_code_login_timeout | int + claude_code_login_attempt_seconds | int }}"
+  poll: 0
+  register: claude_code_login_job
+  changed_when: false
+
+- name: browser_login | Sign in, then clean up whatever happened
+  block:
+    - name: browser_login | Wait for claude to show the sign-in page
+      ansible.builtin.wait_for:
+        path: "{{ claude_code_login_output }}"
+        search_regex: "https://|rror"
+        timeout: "{{ claude_code_login_start_seconds }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      failed_when: false
+
+    - name: browser_login | Read what claude printed
+      ansible.builtin.slurp:
+        src: "{{ claude_code_login_output }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_out
+      failed_when: false
+
+    # What claude printed, on one line and ending its sentence once: it can
+    # print several lines before an error, and an error ends with its own stop.
+    - name: browser_login | Fail when claude did not start the sign-in
+      vars:
+        claude_code_login_start_why: >-
+          {{ claude_code_login_said | regex_replace('\s+', ' ') | trim
+             or 'no output in ' ~ claude_code_login_start_seconds ~ ' seconds' }}
+      ansible.builtin.fail:
+        msg: >-
+          claude on {{ inventory_hostname }} did not start the sign-in:
+          {{ claude_code_login_start_why ~ ('' if claude_code_login_start_why is search('[.!?]$') else '.') }}
+          Run {{ claude_code_login_command }} again.
+      when: claude_code_login_url | length == 0
+
+    # One line of Jinja per line of text: a more-indented line in a folded
+    # scalar keeps its line break.
+    - name: browser_login | Say the page and what happens next
+      vars:
+        claude_code_login_opens: >-
+          {{ '(the page opens in your browser, if this machine allows it). ' if claude_code_login_desktop | bool else '' }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: sign Claude Code in at {{ claude_code_login_url }}
+          {{ claude_code_login_opens }}Authorise there, then paste the code the page shows at the prompt
+          below. Enter alone skips this VM.
+
+    # The two steps on the controller, both best effort, as in device_flow.yml.
+    # Never in a test (claude_code_login_desktop).
+    - name: browser_login | Look for a browser opener on this machine
+      ansible.builtin.command:
+        argv: [which, open, xdg-open]
+      delegate_to: localhost
+      become: false
+      register: claude_code_login_tools
+      changed_when: false
+      failed_when: false
+      when: claude_code_login_desktop | bool
+
+    # The opener is the page_opener filter's (filter_plugins/desktop.py),
+    # shared with device_flow.yml: the first command BROWSER names, split as a
+    # shell would, else open, else xdg-open.
+    - name: browser_login | Open the sign-in page in your browser
+      vars:
+        claude_code_login_opener: >-
+          {{ claude_code_login_url
+             | page_opener(lookup('ansible.builtin.env', 'BROWSER'), claude_code_login_tools.stdout_lines | default([])) }}
+      ansible.builtin.command:
+        argv: "{{ claude_code_login_opener }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      failed_when: false
+      when:
+        - claude_code_login_desktop | bool
+        - claude_code_login_opener | length > 0
+
+    # The one place the run waits for the person. pause reads this terminal
+    # through the main ansible-playbook process; with no terminal it returns at
+    # once with nothing, which is the skip. no_log keeps the code out of the
+    # run log; the prompt itself is still shown.
+    - name: "browser_login | Paste the code the browser shows for {{ inventory_hostname }}"
+      ansible.builtin.pause:
+        prompt: Code
+      register: claude_code_login_prompt
+      no_log: true
+      when: claude_code_login_code | length == 0
+
+    # For make deploy's GitHub step, VM by VM: a code entered here says
+    # someone is at this terminal for this VM, and Enter - or no terminal to
+    # ask at - skips it there too, as the line above promises. A VM that never
+    # shows this prompt (signed in already, or on an API key) has neither fact,
+    # and GitHub's step asks about it on its own.
+    - name: browser_login | Remember whether a code was entered for this VM
+      ansible.builtin.set_fact:
+        claude_code_login_answered: "{{ claude_code_login_entered | length > 0 }}"
+        claude_code_login_skipped: "{{ claude_code_login_entered | length == 0 }}"
+
+    - name: browser_login | Say that no code was entered
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: no code was entered (Enter, or no terminal to ask at), so Claude Code is left
+          signed out there.
+          {{ claude_code_login_command }} signs it in later.
+      when: claude_code_login_entered | length == 0
+
+    # An attempt lasts claude_code_login_attempt_seconds on top of the wait
+    # below; past it Ansible's async limit has ended claude, and a code handed
+    # over then would go into a pipe nobody reads. Said at once instead.
+    - name: browser_login | Check that the sign-in is still waiting
+      ansible.builtin.async_status:
+        jid: "{{ claude_code_login_job.ansible_job_id }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_still
+      failed_when: false
+      when: claude_code_login_entered | length > 0
+
+    - name: browser_login | Fail when the sign-in ended before the code came
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: the sign-in had ended before the code was pasted
+          ({{ 'its page expired: an attempt lasts ' ~ ((claude_code_login_timeout | int
+              + claude_code_login_attempt_seconds | int) / 60) | int ~ ' minutes'
+              if claude_code_login_still.msg | default('') is search('Timeout exceeded')
+              else 'claude had exited' }}). Run {{ claude_code_login_command }} again for a fresh sign-in page.
+      when:
+        - claude_code_login_entered | length > 0
+        - claude_code_login_still.finished | default(0) | int == 1
+
+    # Opened read-write, which never blocks: written to a pipe nobody reads any
+    # more, the line is dropped, where opening it write-only would wait forever.
+    # The code travels on stdin, never on a command line. Only into the pipe:
+    # if another run has replaced it, `<>` would create a plain file and write
+    # the code into that.
+    - name: browser_login | Hand the code to claude
+      ansible.builtin.command:
+        argv: [sh, -c, '[ -p "$1" ] && exec 3<>"$1" && cat >&3', sh, "{{ claude_code_login_pipe }}"]
+        stdin: "{{ claude_code_login_entered }}"
+        stdin_add_newline: true
+      become: true
+      become_user: "{{ claude_code_user }}"
+      changed_when: false
+      no_log: true
+      when: claude_code_login_entered | length > 0
+
+    # Any answer, not three: claude writes it straight after its prompt, which
+    # has no newline, so this matches success, failure, "Invalid code", a
+    # policy refusal or an account on hold alike. Its status decides below.
+    - name: browser_login | Wait for claude's answer
+      ansible.builtin.wait_for:
+        path: "{{ claude_code_login_output }}"
+        search_regex: 'prompted > \s*\S'
+        timeout: "{{ claude_code_login_timeout | int }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      failed_when: false
+      when: claude_code_login_entered | length > 0
+
+    - name: browser_login | Read claude's answer
+      ansible.builtin.slurp:
+        src: "{{ claude_code_login_output }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_out
+      failed_when: false
+      when: claude_code_login_entered | length > 0
+
+    # A code copied only in part - a double-click selects up to the "#" - is
+    # "Invalid code", and claude goes on waiting on the same page: asked once
+    # more, rather than the attempt thrown away with its page.
+    - name: "browser_login | Paste the whole code the browser shows, what follows # included, for {{ inventory_hostname }}"
+      ansible.builtin.pause:
+        prompt: Code
+      register: claude_code_login_prompt_again
+      no_log: true
+      when:
+        - claude_code_login_code | length == 0
+        - claude_code_login_answer is search('Invalid code')
+
+    - name: browser_login | Hand the whole code to claude
+      ansible.builtin.command:
+        argv: [sh, -c, '[ -p "$1" ] && exec 3<>"$1" && cat >&3', sh, "{{ claude_code_login_pipe }}"]
+        stdin: "{{ claude_code_login_entered_again }}"
+        stdin_add_newline: true
+      become: true
+      become_user: "{{ claude_code_user }}"
+      changed_when: false
+      no_log: true
+      when:
+        - claude_code_login_answer is search('Invalid code')
+        - claude_code_login_entered_again | length > 0
+
+    # claude prints the second answer on the line after the first, so the end
+    # of the attempt is what is waited for here: claude exits on any answer
+    # but another "Invalid code", which the always section then ends.
+    - name: browser_login | Wait for claude to finish with the whole code
+      ansible.builtin.async_status:
+        jid: "{{ claude_code_login_job.ansible_job_id }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_second
+      until: claude_code_login_second.finished | default(0) | int == 1
+      retries: "{{ claude_code_login_timeout | int }}"
+      delay: 1
+      failed_when: false
+      when:
+        - claude_code_login_answer is search('Invalid code')
+        - claude_code_login_entered_again | length > 0
+
+  # Whatever happened above - an answer, no answer, or a failure - claude is
+  # ended if it still waits, its job is collected, and its files go.
+  always:
+    - name: browser_login | Give claude a moment to finish
+      ansible.builtin.async_status:
+        jid: "{{ claude_code_login_job.ansible_job_id }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_finished
+      until: claude_code_login_finished.finished | default(0) | int == 1
+      retries: 3
+      delay: 1
+      failed_when: false
+      when: claude_code_login_entered | length > 0
+
+    # Only while the job still runs is the recorded pid claude's own.
+    - name: browser_login | End the sign-in if claude still waits
+      ansible.builtin.command:
+        argv:
+          - sh
+          - -c
+          - 'pid=$(cat "$1") && kill "$pid" && sleep 1 && kill -9 "$pid"; exit 0'
+          - sh
+          - "{{ claude_code_login_pidfile }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      changed_when: false
+      failed_when: false
+      when: claude_code_login_finished.finished | default(0) | int != 1
+
+    - name: browser_login | Collect claude's result
+      ansible.builtin.async_status:
+        jid: "{{ claude_code_login_job.ansible_job_id }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_result
+      until: claude_code_login_result.finished | default(0) | int == 1
+      retries: 10
+      delay: 1
+      failed_when: false
+
+    # Only this mode removes the job file.
+    - name: browser_login | Clean up claude's job
+      ansible.builtin.async_status:
+        jid: "{{ claude_code_login_job.ansible_job_id }}"
+        mode: cleanup
+      become: true
+      become_user: "{{ claude_code_user }}"
+      changed_when: false
+      failed_when: false
+
+    - name: browser_login | Read what claude printed, now it has finished
+      ansible.builtin.slurp:
+        src: "{{ claude_code_login_output }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_out
+      failed_when: false
+
+    - name: browser_login | Remove the sign-in's files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ claude_code_login_output }}"
+        - "{{ claude_code_login_pipe }}"
+        - "{{ claude_code_login_pidfile }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      changed_when: false
+
+# What decides the outcome: claude's own status, read as everywhere else, not
+# what it printed. Always, never under a condition: a skipped task would
+# replace the status login.yml read with nothing.
+- name: browser_login | Check the login again
+  ansible.builtin.command:
+    argv: [bash, -lc, claude auth status]
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_remote_control_auth
+  changed_when: false
+  failed_when: false
+
+- name: browser_login | Fail when the sign-in did not complete
+  vars:
+    claude_code_login_why: "{{ claude_code_login_answer or 'claude gave no answer within ' ~ claude_code_login_timeout ~ ' seconds' }}"
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: the Claude sign-in did not complete.
+      {{ claude_code_login_why ~ ('' if claude_code_login_why is search('[.!?]$') else '.') }}
+      Run {{ claude_code_login_command }} again for a fresh sign-in page.
+  when:
+    - claude_code_login_entered | length > 0
+    - not (claude_code_remote_control_status.loggedIn | default(false)) | bool
+
+- name: browser_login | Record that this run signed the VM in
+  ansible.builtin.set_fact:
+    claude_code_login_done: true
+  when: claude_code_login_entered | length > 0

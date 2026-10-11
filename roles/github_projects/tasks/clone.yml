@@ -1,4 +1,23 @@
 ---
+# Read before anything is written, each key on its own: an identity set by
+# hand on the VM is never replaced by a derived one (vars/main.yml,
+# github_projects_git_identity_wanted), and the account is asked of GitHub
+# only when something is left to derive.
+- name: clone | Read the git identity of {{ github_projects_user }}
+  ansible.builtin.command:
+    argv: [git, config, --global, --get, "{{ item }}"]
+  become: true
+  become_user: "{{ github_projects_user }}"
+  loop: [user.name, user.email]
+  register: github_projects_git_identity
+  changed_when: false
+  # 1 is "not set", which includes no ~/.gitconfig at all.
+  failed_when: github_projects_git_identity.rc not in [0, 1]
+  check_mode: false
+  when: github_projects_auth | bool
+
+# no_log: the token is an argument. The module's own spec masks it too, and
+# so its failure message is safe to say, which the task below does.
 - name: clone | List repositories of {{ github_projects_username }}
   github_repos:
     username: "{{ github_projects_username }}"
@@ -6,18 +25,32 @@
     api_url: "{{ github_projects_api_url }}"
     include_forks: "{{ github_projects_include_forks }}"
     include_archived: "{{ github_projects_include_archived }}"
+    account: "{{ github_projects_git_identity_needed }}"
   register: github_projects_listing
+  no_log: true
+  failed_when: false
 
+- name: clone | Fail when GitHub did not list the repositories
+  ansible.builtin.fail:
+    msg: >-
+      The repositories of {{ github_projects_username }} could not be listed on {{ inventory_hostname }}:
+      {{ github_projects_listing.msg | default('github_repos gave no reason', true) }}
+  when: github_projects_listing.repos is not defined
+
+# One line of Jinja per line of text: a more-indented line in a folded scalar
+# keeps its line break.
 - name: clone | Report selection
+  vars:
+    github_projects_skipped_empty: "{{ github_projects_listing.repos | selectattr('empty') | map(attribute='name') | list }}"
+    github_projects_skipped_private: >-
+      {{ '; ' ~ github_projects_private_skip_reason ~ ': ' ~ github_projects_private_skipped if github_projects_private_skipped | length > 0 else '' }}
+    github_projects_unlisted_private: >-
+      {{ ' Private repositories are not listed until gh is signed in.' if not github_projects_listing_token_set | bool else '' }}
   ansible.builtin.debug:
     msg: >-
       {{ github_projects_selected | length }} of {{ github_projects_listing.repos | length }}
       repositories selected for {{ github_projects_target_dir }}
-      (skipped as empty: {{ github_projects_listing.repos | selectattr('empty') | map(attribute='name') | list }}{{
-        '; private, skipped until gh is signed in: ' ~ github_projects_private_skipped
-        if github_projects_private_skipped | length > 0 else '' }}).
-      {{ 'Private repositories are not listed until gh is signed in.'
-         if github_projects_listing_token | length == 0 else '' }}
+      (skipped as empty: {{ github_projects_skipped_empty }}{{ github_projects_skipped_private }}).{{ github_projects_unlisted_private }}
 
 # Before the helper: both write ~/.gitconfig, and each checks before writing.
 - name: clone | Set the git identity of {{ github_projects_user }}
@@ -27,10 +60,24 @@
     value: "{{ item.value }}"
   become: true
   become_user: "{{ github_projects_user }}"
-  loop: "{{ {'user.name': github_projects_git_name, 'user.email': github_projects_git_email} | dict2items }}"
+  loop: "{{ github_projects_git_identity_wanted | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
   when: github_projects_auth | bool
+
+# An organisation as github_username, no token, and gh signed out: nobody
+# commits as the organisation, so nothing is derived, and without an identity
+# git refuses a commit. A login of the user's own - the device flow - gives
+# the next run their account to derive it from.
+- name: clone | Say that an organisation gives no git identity
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ github_projects_listing.user.login }} is an organisation, so no git identity is
+      derived from it, and a commit on the VM fails until one is set. Set git_user_name and git_user_email, or sign
+      gh in to your own account, whose identity that run derives: {{ github_projects_login_command }}
+  when:
+    - github_projects_git_identity_needed | bool
+    - (github_projects_listing.user.type | default('')) == 'Organization'
 
 - name: clone | Fetch GitHub's published SSH host keys
   ansible.builtin.uri:

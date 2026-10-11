@@ -158,6 +158,16 @@ def test_ssh_config_passes_vm_name_as_json() -> None:
     assert "playbooks/ssh_config.yml" in result.stdout
 
 
+# The sign-ins take several names, one VM after another (serial in the
+# playbook), unlike code, which opens one window.
+@pytest.mark.parametrize(("target", "playbook"), [("claude-login", "claude_login"), ("github-login", "github_login")])
+def test_the_sign_ins_pass_several_vm_names(target: str, playbook: str) -> None:
+    result = _make("-n", target, "VM_NAME=alpha,beta")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert """-e '{"vm_name": "alpha,beta"}'""" in result.stdout
+    assert f"playbooks/{playbook}.yml" in result.stdout
+
+
 def test_code_passes_one_vm_name(tmp_path: Path) -> None:
     result = _make("-n", "code", "VM_NAME=alpha")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -349,3 +359,51 @@ def test_only_code_reads_project(target: str) -> None:
     result = _make("-n", target, "VM_NAME=alpha", "PROJECT=discord-music-bot")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "vm_project" not in result.stdout
+
+
+# A run with no terminal - `make deploy </dev/null`, an IDE task, an agent's
+# shell - has nobody to paste a code: the sign-ins' browser and clipboard
+# steps are turned off there, so no page opens for a prompt that returns at
+# once. The recipe runs for real, with VENV pointed at a stand-in
+# ansible-playbook that only records its arguments.
+def _recorded_args(tmp_path: Path, target: str, stdin) -> list[str]:
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    record = tmp_path / "args"
+    stand_in = venv / "bin" / "ansible-playbook"
+    stand_in.write_text(f'#!/bin/sh\nfor arg in "$@"; do printf "%s\\n" "$arg"; done > {record}\n')
+    stand_in.chmod(0o755)
+    overrides = [f"VENV={venv}", *_safe_overrides(tmp_path)[1:]]
+    env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/"), "LANG": "en_US.UTF-8"}
+    result = subprocess.run(
+        [MAKE, target, "VM_NAME=alpha", *overrides],
+        cwd=REPO,
+        env=env,
+        stdin=stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return record.read_text().splitlines()
+
+
+@pytest.mark.parametrize("target", ["deploy", "claude-login", "github-login"])
+def test_a_run_with_no_terminal_turns_the_desktop_steps_off(tmp_path: Path, target: str) -> None:
+    args = _recorded_args(tmp_path, target, subprocess.DEVNULL)
+    off = '{"login_desktop":false}'
+    assert off in args and args[args.index(off) - 1] == "-e", args
+
+
+@pytest.mark.parametrize("target", ["deploy", "claude-login", "github-login"])
+def test_a_run_at_a_terminal_leaves_the_desktop_steps_on(tmp_path: Path, target: str) -> None:
+    import pty
+
+    primary, secondary = pty.openpty()
+    try:
+        args = _recorded_args(tmp_path, target, secondary)
+    finally:
+        os.close(primary)
+        os.close(secondary)
+    assert not any("login_desktop" in arg for arg in args), args

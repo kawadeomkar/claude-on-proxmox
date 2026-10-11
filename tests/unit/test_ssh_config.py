@@ -267,6 +267,39 @@ def test_the_mode_of_an_existing_user_config_is_left_alone(tmp_path: Path) -> No
     assert oct(user_config.stat().st_mode & 0o777) == "0o644"
 
 
+def _a_directory_of_a_group_the_user_is_not_in() -> Path | None:
+    """On macOS a new file takes its directory's group, and /private/tmp is wheel's: a place to make one."""
+    base = Path("/private/tmp")
+    if sys.platform != "darwin" or not base.is_dir() or base.stat().st_gid in os.getgroups():
+        return None
+    return base
+
+
+@pytest.mark.skipif(
+    _a_directory_of_a_group_the_user_is_not_in() is None, reason="needs macOS and a directory of a foreign group"
+)
+def test_the_mode_survives_a_group_the_user_is_not_in() -> None:
+    # Ansible's atomic move copies the old file's attributes only after a
+    # chown to its group, which fails for a group the user is not in, and the
+    # file came out 0600: only the explicit mode keeps it as it was.
+    import shutil
+    import tempfile
+
+    root = Path(tempfile.mkdtemp(dir=_a_directory_of_a_group_the_user_is_not_in()))
+    try:
+        user_config = _user_config(root)
+        user_config.parent.mkdir(parents=True)
+        user_config.write_text("Host github.com\n    User git\n")
+        user_config.chmod(0o644)
+        assert user_config.stat().st_gid not in os.getgroups()
+        result = _run(root, [ALPHA])
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert user_config.read_text().startswith("Include ")
+        assert oct(user_config.stat().st_mode & 0o777) == "0o644"
+    finally:
+        shutil.rmtree(root)
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -348,6 +381,27 @@ def test_a_bad_option_fails_validation_and_leaves_the_file_alone(tmp_path: Path)
     assert result.returncode != 0
     assert "failed to validate" in result.stdout + result.stderr
     assert _managed(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "vm",
+    [
+        {"name": "evil", "address": "192.0.2.7\n    ProxyCommand touch owned", "user": "dev"},
+        {"name": "evil", "address": "-oProxyCommand=touch owned", "user": "dev"},
+        {"name": "evil\n    ProxyCommand touch owned", "address": "192.0.2.7", "user": "dev"},
+    ],
+)
+def test_a_name_or_address_that_is_not_one_word_is_refused_and_nothing_is_written(tmp_path: Path, vm: dict) -> None:
+    # The address is what a VM's guest agent reported, which the VM chooses.
+    # guest_ipv4 already refuses this; the task file must hold on its own.
+    assert _run(tmp_path, [ALPHA]).returncode == 0
+    before = _managed(tmp_path)
+    result = _run(tmp_path, [ALPHA, vm])
+    assert result.returncode != 0
+    assert "is not one plain word" in result.stdout
+    assert _managed(tmp_path) == before
+    assert "ProxyCommand" not in _managed(tmp_path)
+    assert not (tmp_path / "owned").exists()
 
 
 # ---------------------------------------------------------------- guards ---
