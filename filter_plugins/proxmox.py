@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 
 from ansible.errors import AnsibleFilterError
@@ -50,6 +51,13 @@ def guest_ipv4(interfaces, mac=None):
     guest may grow (docker0, podman, virbr0) from being picked up on a re-run.
     Loopback and link-local addresses are never returned. Returns ``None`` when
     no address is available yet, so a wait loop can poll on it.
+
+    The agent runs inside the guest, so whatever it reports is the VM's to
+    choose, and the result becomes ``ansible_host`` and the ``HostName`` of an
+    alias in this machine's ssh config. Only a string ``ipaddress`` parses as one
+    IPv4 address is taken: "192.0.2.7" followed by a newline and a ProxyCommand
+    would otherwise be a directive of its own in that file, run on this machine
+    at the next ``ssh``. Anything else counts as no address yet.
     """
     if not interfaces:
         return None
@@ -67,11 +75,21 @@ def guest_ipv4(interfaces, mac=None):
         for address in iface.get("ip-addresses") or []:
             if address.get("ip-address-type") != "ipv4":
                 continue
-            ip = address.get("ip-address", "")
-            if ip.startswith(("127.", "169.254.")):
+            ip = _ipv4(address.get("ip-address"))
+            if ip is None or ip.is_loopback or ip.is_link_local:
                 continue
-            return ip
+            return str(ip)
     return None
+
+
+def _ipv4(text):
+    """The IPv4 address ``text`` is, or None for anything else (a newline, a space, a leading "-", a non-string)."""
+    if not isinstance(text, str):
+        return None
+    try:
+        return ipaddress.IPv4Address(text)
+    except ValueError:
+        return None
 
 
 def guest_address(vm_info, nic="net0"):

@@ -123,6 +123,43 @@ class TestGuestIpv4:
         with pytest.raises(AnsibleFilterError, match="expects a list"):
             guest_ipv4({"eth0": []})
 
+    @pytest.mark.parametrize(
+        "reported",
+        [
+            # The agent runs inside the VM, so this is the VM's to choose. A
+            # newline would start a directive of its own in the alias block of
+            # this machine's ssh config, and ProxyCommand runs here.
+            "192.0.2.7\n    ProxyCommand sh -c 'touch /tmp/owned'",
+            "192.0.2.7 -oProxyCommand=x",
+            "-oProxyCommand=x",
+            " 192.0.2.7",
+            "192.0.2.7\t",
+            "192.0.2.256",
+            "192.0.2",
+            "192.000.002.007",
+            "",
+            None,
+            7,
+            ["192.0.2.7"],
+        ],
+    )
+    def test_anything_but_one_ipv4_address_is_no_address(self, reported):
+        crafted = {
+            "name": "eth0",
+            "hardware-address": LAN_MAC,
+            "ip-addresses": [{"ip-address": reported, "ip-address-type": "ipv4", "prefix": 24}],
+        }
+        assert guest_ipv4([crafted], LAN_MAC) is None
+        assert guest_ipv4([crafted]) is None
+
+    def test_a_crafted_address_does_not_hide_a_real_one_after_it(self):
+        both = iface("eth0", LAN_MAC, [("192.0.2.7\n    ProxyCommand x", "ipv4", 24), ("192.0.2.51", "ipv4", 24)])
+        assert guest_ipv4([both], LAN_MAC) == "192.0.2.51"
+
+    def test_what_comes_back_is_exactly_the_address(self):
+        returned = guest_ipv4([ETH0], LAN_MAC)
+        assert returned == "192.0.2.51" and isinstance(returned, str)
+
 
 class TestNetMacDefault:
     """A fleet-wide sweep must not abort because one VM has no readable NIC."""
