@@ -26,8 +26,8 @@
 # file rather than the folder. It names the folder and holds one task, run when
 # the window opens: a terminal named Claude that starts claude there, signing
 # in to Claude, and to GitHub, first on a VM that has not been. With
-# vscode_session_notes (the default) it also holds the "Session notes" task
-# the Claude task depends on, which opens a page about the VM beside the
+# vscode_session_notes (the default) it also holds a "Session notes" task,
+# run beside the Claude task, which opens a page about the VM beside the
 # terminal each time the window opens, its "Signed in" section read from the
 # VM then (README, "Session notes"). The workspace file and those notes are
 # all that is written on the VM, in a directory of its own beside the projects
@@ -84,13 +84,14 @@
                      if code_notes | bool else {}) }}
       tasks:
         version: "2.0.0"
-        # The notes' task first, and the Claude task depending on it: VS Code
-        # runs a dependency before its task and the Claude task only once the
-        # dependency exits 0, and lists only the folderOpen task when it asks
-        # about automatic tasks.
+        # Two folderOpen tasks, run side by side: the notes never hold Claude
+        # up. Not the Claude task's dependsOn: VS Code looks a dependency up,
+        # misses a task defined in a workspace file, and asks every task
+        # provider instead - npm, gulp (which runs gulp), grunt, jake - about
+        # 7.5 s on a projects directory of 22 repositories before Claude could
+        # start (measured live, 2026-10-12).
         tasks: >-
-          {{ ([code_notes_task] if code_notes | bool else [])
-             + [code_claude_task | combine({'dependsOn': ['Session notes']} if code_notes | bool else {})] }}
+          {{ ([code_notes_task] if code_notes | bool else []) + [code_claude_task] }}
     code_claude_task:
       label: Claude
       type: process
@@ -122,9 +123,9 @@
         # When claude exits, say what the next keypress does.
         showReuseMessage: true
       problemMatcher: []
-    # Run before the Claude task, quietly, its terminal closing when it ends.
-    # In the Run Task list too: "Tasks: Run Task", Session notes refreshes and
-    # opens the notes by hand.
+    # Run when the window opens, beside the Claude task, quietly, its terminal
+    # closing when it ends. In the Run Task list too: "Tasks: Run Task",
+    # Session notes refreshes and opens the notes by hand.
     code_notes_task:
       label: Session notes
       type: process
@@ -136,6 +137,8 @@
         - "{{ code_notes_file }}"
         - "{{ claude_vm_names[0] }}"
         - "{{ code_remote_control_unit }}"
+      runOptions:
+        runOn: folderOpen
       presentation:
         reveal: never
         focus: false
@@ -181,8 +184,8 @@
     # configure that $5 names, and a sign-in that fails does not keep Claude
     # from starting. pipefail, so that gh's exit status survives the read
     # loop. After a sign-in that succeeded here, Claude's or gh's, the notes'
-    # helper runs once more in the background, refresh-only: it ran before
-    # this task and wrote "not signed in", and the preview follows the file.
+    # helper runs once more in the background, refresh-only: it ran as the
+    # window opened and wrote "not signed in", and the preview follows the file.
     # It ignores Ctrl-C, which in this terminal is meant for claude, and
     # prints nothing here. --continue picks the folder's latest conversation up:
     # a task terminal does not survive a window reload, after which the task
@@ -245,21 +248,19 @@
       fi
       exit 0
     # What the "Session notes" task runs: `bash -lc <this> session-notes <notes>
-    # <vm> <Remote Control unit> [refresh-only]`. Its one rule: it can never keep
-    # Claude from starting. It is the Claude task's dependency, and VS Code runs
-    # that task only when this exits 0, so bash stays in charge whatever its
-    # Python part does - raises, hangs, or is missing - waits for it 5 seconds at
-    # most, opens the notes and exits 0; set +e, since a login profile may set
-    # -e. Python reads, at once and 2 seconds each, claude auth status, the
+    # <vm> <Remote Control unit> [refresh-only]`, beside the Claude task. bash
+    # stays in charge whatever its Python part does - raises, hangs, or is
+    # missing - waits for it 5 seconds at most, opens the notes and exits 0, so
+    # the notes always open and VS Code never prints the command line; set +e,
+    # since a login profile may set -e. Python reads, at once and 2 seconds each, claude auth status, the
     # Remote Control unit, gh's login and tailscale status, and rewrites only the
     # part of the notes between the live markers, atomically, mode 0600, and only
     # in a regular file that has them; every value is cleaned as plain_text
     # cleans (filter_plugins/text.py), no command it runs prints a token, and
     # the Tailscale row carries the way in over Tailscale, which only the VM
     # knows. code -r opens the notes in this window, through the remote CLI
-    # VS Code Server puts on every task's PATH; it returns before the editor
-    # opens, so the second's wait lets the notes open before the Claude
-    # terminal takes focus. refresh-only, from the Claude task after a sign-in
+    # VS Code Server puts on every task's PATH, in the foreground, so that the
+    # task's terminal does not close under it. refresh-only, from the Claude task after a sign-in
     # there, waits for Remote Control to start, refreshes, and opens nothing:
     # the preview follows the file. A login shell, because claude is on the
     # login PATH only. Fixed text, quoted heredoc and all: no ${ anywhere,
@@ -428,16 +429,15 @@
       PY
       notes_pid=$!
       tries=0
-      while kill -0 "$notes_pid" 2>/dev/null && [ "$tries" -lt 10 ]; do
-        sleep 0.5
+      while kill -0 "$notes_pid" 2>/dev/null && [ "$tries" -lt 50 ]; do
+        sleep 0.1
         tries=$((tries + 1))
       done
       { kill "$notes_pid"; wait "$notes_pid"; } 2>/dev/null
       [ "$4" != refresh-only ] || exit 0
       if [ -f "$1" ] && [ ! -L "$1" ] && command -v code >/dev/null 2>&1; then
-        code -r "$1" </dev/null >/dev/null 2>&1 &
+        code -r "$1" </dev/null >/dev/null 2>&1
       fi
-      sleep 1
       exit 0
     code_not_installed: >-
       Claude Code is not installed on {{ claude_vm_names[0] }} yet. On your machine, run

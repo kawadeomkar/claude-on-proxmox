@@ -1083,8 +1083,7 @@ differently.
 #### Session notes
 
 Every time the window opens - from `make deploy`, `make code`, *Open Recent*, a restart that restores
-it, or a reload - a page about the VM opens beside the Claude terminal, as a rendered preview, with the
-terminal still focused:
+it, or a reload - a page about the VM opens beside the Claude terminal, as a rendered preview:
 
 - **Signed in**, read from the VM as the window opened: the Claude Code account and plan, whether
   Remote Control is live, the GitHub account `gh` is signed in as, and Tailscale's state with the
@@ -1096,10 +1095,11 @@ terminal still focused:
 
 `make code` writes it as `alpha-session.md` in `~/projects/.claude-on-proxmox/session/` (0600, in a
 0700 directory: it names the accounts signed in there), never in a repository. The window's
-**Session notes** task, which the Claude task waits for, rewrites only its **Signed in** section each
-time, in a second or two, and a sign-in made in the Claude terminal refreshes it a few seconds later;
-*Tasks: Run Task*, *Session notes* refreshes it by hand. That task can never keep the Claude terminal
-from starting: whatever it meets, it opens the notes it has and finishes.
+**Session notes** task runs beside the Claude terminal, never holding it up: it rewrites only the notes'
+**Signed in** section each time, in a second or two, and opens them, which usually moves the keyboard
+focus to the notes - click the Claude terminal to type. A sign-in made in the Claude terminal refreshes
+the section a few seconds later; *Tasks: Run Task*, *Session notes* refreshes it by hand. Whatever the
+task meets, it opens the notes it has and finishes.
 
 In the window of the whole projects directory the notes' folder shows in the Explorer as
 **alpha · session**. A one-project window (`PROJECT=`) opens the same file from outside its own

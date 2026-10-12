@@ -609,13 +609,16 @@ VM opens beside the Claude terminal every time the window opens - from `make cod
 restart that restores the window, or a reload - as a rendered preview, with its sign-in status read from
 the VM at that moment. VS Code has no workspace setting that opens a file, and a file named in the
 `code --remote` call opens only from `make` and stops the window restoring its editors, so the trigger
-is a second task in the workspace file, `Session notes`, which the Claude task `dependsOn`: VS Code runs
-a dependency first, on the same terms (a trusted window, automatic tasks allowed), and asks about the
-`folderOpen` task alone. A dependency that exits non-zero stops the Claude task, so the helper's bash
-(`code_notes_script`) is in charge whatever its Python part does: Python runs in the background, bash
-waits for it 5 s at most, runs `code -r <notes>` through the remote CLI VS Code Server puts on every
-task's `PATH`, waits a second so the notes open before the Claude terminal takes focus, and ends
-`exit 0`. Python reads `claude auth status`, the Remote Control unit, gh's login and `tailscale status
+is a second `folderOpen` task in the workspace file, `Session notes`, run beside the Claude task on the
+same terms (a trusted window, automatic tasks allowed); VS Code's one-time automatic-tasks question lists
+both. Not the Claude task's `dependsOn`, which was the first design: VS Code looks a dependency of a
+workspace-file task up, misses it, and asks every task provider instead - npm, gulp (which runs `gulp`),
+grunt, jake - which held Claude back about 7.5 s on a projects directory of 22 repositories, measured
+live. Side by side, the notes open a moment after the Claude terminal and usually take the keyboard
+focus from it. The helper's bash (`code_notes_script`) is in charge whatever its Python part does:
+Python runs in the background, bash waits for it 5 s at most, runs `code -r <notes>` in the foreground
+through the remote CLI VS Code Server puts on every task's `PATH`, and ends `exit 0`, so the notes always
+open and VS Code never prints the command line. Python reads `claude auth status`, the Remote Control unit, gh's login and `tailscale status
 --json` at once, 2 s each, and rewrites only the section between `<!-- claude-on-proxmox:live -->` and
 its closing marker, atomically, 0600, in a regular file that has them; every value is cleaned as
 `plain_text` cleans, no command it runs prints a token, and the Tailscale row carries the `ssh` command
@@ -1764,7 +1767,7 @@ fails the test if it is called.
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 905 tests. By file:
+pytest over `tests/unit/`: 906 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 27): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -1826,7 +1829,7 @@ pytest over `tests/unit/`: 905 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 110): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 111): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,

@@ -1056,8 +1056,10 @@ def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a
             "**/.claude-on-proxmox/session/*-session.md": "vscode.markdown.preview.editor"
         },
     }
+    # Side by side when the window opens: the notes never hold Claude up. A
+    # dependsOn made VS Code ask every task provider first, 7.5 s live.
     notes, claude = workspace["tasks"]["tasks"]
-    assert notes["label"] == "Session notes" and "runOptions" not in notes
+    assert notes["label"] == "Session notes" and notes["runOptions"] == {"runOn": "folderOpen"}
     assert notes["args"][2:] == ["session-notes", f"{SESSION}/alpha-session.md", "alpha", "claude-remote-control"]
     assert notes["presentation"] == {
         "reveal": "never",
@@ -1066,7 +1068,7 @@ def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a
         "close": True,
         "showReuseMessage": False,
     }
-    assert claude["label"] == "Claude" and claude["dependsOn"] == ["Session notes"]
+    assert claude["label"] == "Claude" and "dependsOn" not in claude
     assert claude["runOptions"] == {"runOn": "folderOpen"}
     assert claude["args"][-3:] == [notes["args"][1], f"{SESSION}/alpha-session.md", "claude-remote-control"]
     assert f"The session notes open beside it each time ({SESSION}/alpha-session.md)." in run["opened"]
@@ -1104,6 +1106,15 @@ def test_with_automatic_tasks_off_the_notes_are_named_with_how_to_open_them(wind
         f'The session notes are at {SESSION}/alpha-session.md: "Tasks: Run Task", Session notes opens them.'
         in run["opened"]
     ), run["opened"]
+
+
+def test_no_task_of_the_workspace_depends_on_another():
+    # VS Code looks a dependency of a workspace-file task up, misses it, and
+    # asks every task provider instead: 7.5 s before Claude started, live.
+    play = _play()
+    for name in ("code_claude_task", "code_notes_task"):
+        assert "dependsOn" not in play["vars"][name], name
+    assert "dependsOn" not in str(play["vars"]["code_workspace_file"])
 
 
 def test_with_the_notes_off_the_workspace_is_as_it_was(windows):
@@ -1305,6 +1316,10 @@ def test_the_helper_hands_bash_nothing_it_could_lose_control_to():
         assert marker not in script
     assert not re.search(r"^\s*exec\b", script, re.M)
     assert script.splitlines()[0] == "set +e" and script.splitlines()[-1] == "exit 0"
+    # Nothing waits on it any more, so no wait of its own; code -r in the
+    # foreground, so the task's terminal does not close under it.
+    assert "sleep 1" not in script
+    assert re.search(r'^  code -r "\$1" </dev/null >/dev/null 2>&1$', script, re.M)
     assert re.search(r"""^python3 - "\$1" "\$2" "\$3" <<'PY' >/dev/null 2>&1 &$""", script, re.M)
 
 

@@ -225,10 +225,13 @@ token; `github_auth_method: token` still fails. The status JSON carries
   questions.** With `vscode_claude_terminal` it writes a `.code-workspace` file in
   `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` task
   runs `claude` in a terminal; with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
-  0700 directory), and a "Session notes" task the Claude task `dependsOn`, which rewrites only the notes'
-  section between the live markers each time the window opens and opens them. That task must exit 0
-  whatever happens - a failed dependency stops the Claude task - so its bash runs the Python part in the
-  background, waits 5 s at most and ends `exit 0`; never `exec` into Python. The notes' directory is a
+  0700 directory), and a second `folderOpen` task, "Session notes", run beside the Claude task, which
+  rewrites only the notes' section between the live markers each time the window opens and opens them.
+  Never make it the Claude task's `dependsOn`: VS Code misses a workspace-file task when it looks a
+  dependency up and asks every task provider instead (npm, gulp running `gulp`, grunt, jake), which held
+  Claude back 7.5 s live; `test_code_session.py` fails on any `dependsOn`. Its bash runs the Python part
+  in the background, waits 5 s at most and ends `exit 0`, so the notes always open; never `exec` into
+  Python. The notes' directory is a
   second workspace folder only where the window's own folder contains it: VS Code stores the folders a
   user trusted, not their parents, so a folder added to a trusted workspace drops it to Restricted Mode.
   `make code` slurps the notes to carry their live section over, so an unchanged VM rewrites nothing.

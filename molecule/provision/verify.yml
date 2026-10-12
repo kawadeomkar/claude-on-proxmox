@@ -1410,12 +1410,12 @@
           - verify_ws_whole.tasks.tasks[1].args == verify_task.args
           - verify_ws_whole.tasks.tasks[0] == verify_notes_task
           - verify_ws_project.tasks.tasks | length == 2
-          # The notes' task, run first: quietly, its terminal closing when it ends.
+          # The notes' task, run beside Claude's when the window opens: quietly, its terminal closing when it ends.
           - verify_notes_task.label == 'Session notes'
           - verify_notes_task.args == ['-lc', verify_notes_script, 'session-notes', verify_notes, 'alpha', 'claude-remote-control']
           - "verify_notes_task.presentation == {'reveal': 'never', 'focus': false, 'echo': false, 'close': true, 'showReuseMessage': false}"
-          - verify_notes_task.runOptions is not defined
-          - verify_task.dependsOn == ['Session notes']
+          - "verify_notes_task.runOptions == {'runOn': 'folderOpen'}"
+          - verify_task.dependsOn is not defined
           - verify_task.label == 'Claude'
           - verify_task.type == 'process'
           - verify_task.command == '/bin/bash'
