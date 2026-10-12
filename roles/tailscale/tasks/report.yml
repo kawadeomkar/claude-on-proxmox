@@ -1,0 +1,108 @@
+---
+# One line per VM: how it is on Tailscale, and the command that does the next
+# thing where there is one. Built in vars, one line of Jinja per piece: a more
+# indented line in a folded scalar would keep its line break. Everything the
+# VM reports - its name, its tailnet, what tailscale printed - goes through
+# plain_text, since the VM's user chooses it.
+- name: report | Say how this VM is on Tailscale
+  vars:
+    tailscale_report_name: "{{ (tailscale_dns_name or tailscale_self.HostName | default('') or tailscale_hostname) | plain_text }}"
+    # The tailnet, so that a login someone else approved first - into their own
+    # tailnet - shows by a name the user knows. Not under a control server of the
+    # user's own, where only its admin approves a login, and Headscale sends its
+    # own constant ("headscale").
+    tailscale_report_tailnet: >-
+      {{ ('in the tailnet ' ~ (tailscale_tailnet | plain_text) ~ ' ')
+         if tailscale_tailnet | length > 0 and tailscale_login_server | length == 0 else '' }}
+    tailscale_report_as: >-
+      {{ tailscale_report_tailnet ~ 'as ' ~ tailscale_report_name ~ ' (' ~ (tailscale_ipv4 or 'no IPv4 address yet') ~ ')' }}
+    tailscale_report_case: >-
+      {{ 'not-ours' if not (tailscale_ours | bool)
+         else 'check-no-package' if tailscale_check_without_package | bool
+         else 'check-daemon-down' if ansible_check_mode and not (tailscale_daemon_up | bool)
+         else 'connecting' if not (tailscale_settled | bool)
+         else 'would-join' if ansible_check_mode and tailscale_first_join | bool and tailscale_key_wanted | bool
+                              and not (tailscale_key_refused_locally | bool)
+         else 'page-pending' if tailscale_backend == 'NeedsLogin' and tailscale_auth_url | length > 0
+         else 'expired' if tailscale_backend == 'NeedsLogin' and tailscale_joined | bool
+         else 'refused' if tailscale_backend == 'NeedsLogin' and tailscale_key_wanted | bool
+                           and (tailscale_join_ran | bool or tailscale_key_refused_locally | bool)
+         else tailscale_backend }}
+    tailscale_report_running:
+      - >-
+        {{ ('joined Tailscale ' if tailscale_joined_now | bool else 'on Tailscale ') ~ tailscale_report_as
+           ~ ('; signed in outside this project, so its settings are left as they are.'
+              if not (tailscale_login_ours | bool) else '.') }}
+      - >-
+        {{ ('A device named ' ~ tailscale_hostname ~ ' is already in your tailnet, likely the VM this one replaced:'
+            ~ ' delete it at ' ~ tailscale_admin_page ~ ', then rename this one to ' ~ tailscale_hostname ~ ' there.')
+           if tailscale_name_taken | bool else '' }}
+      - >-
+        {{ ('Changed: tailscale ' ~ (tailscale_set.cmd[1:] | join(' ')) ~ '.')
+           if (tailscale_set | default({})) is changed and not (tailscale_report_from_login | default(false) | bool)
+           else ('Check mode: tailscale set ' ~ (tailscale_set_flags | join(' ')) ~ ' would run.')
+           if ansible_check_mode and tailscale_login_ours | bool and tailscale_set_flags | length > 0 else '' }}
+      - >-
+        {{ ('It lacks ' ~ (tailscale_tags_missing | join(', ')) ~ ', which tailscale_advertise_tags asks for: set its'
+            ~ ' tags in the admin console (Machines, ' ~ (tailscale_report_name.split('.')[0]) ~ ', Edit ACL tags).')
+           if tailscale_tags_missing | length > 0 else '' }}
+    tailscale_report_or_browser: >-
+      {{ (', or sign in by the browser: ' ~ tailscale_login_command) if tailscale_auth_method != 'key' else '' }}
+    tailscale_report_refused: >-
+      {{ ('Tailscale refused vault_tailscale_auth_key (' ~ tailscale_refused_why ~ '): an OAuth client secret needs the'
+          ~ ' tags it may apply in tailscale_advertise_tags. Set them and run ' ~ tailscale_configure_command)
+         if tailscale_key_refused_locally | bool
+         else ('Tailscale refused vault_tailscale_auth_key (' ~ tailscale_refused_why ~ ') - it has expired, been used'
+               ~ ' up or been revoked. Put a new one in the vault (reusable, pre-approved, tagged) and run '
+               ~ tailscale_configure_command ~ tailscale_report_or_browser)
+         if tailscale_refused_why | length > 0
+         else ('Tailscale did not join with vault_tailscale_auth_key ('
+               ~ ((tailscale_join.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim) or 'no reason given')
+               ~ '). ' ~ tailscale_configure_command ~ ' tries again' ~ tailscale_report_or_browser) }}
+    tailscale_report_said:
+      check-no-package: >-
+        Tailscale is not installed, and check mode installs nothing; make configure VM_NAME={{ inventory_hostname }}
+        installs it.
+      check-daemon-down: >-
+        tailscaled is not running, and check mode starts nothing; make configure VM_NAME={{ inventory_hostname }}
+        starts it.
+      not-ours: >-
+        {{ ('on Tailscale ' ~ tailscale_report_as ~ '; installed') if tailscale_backend == 'Running'
+           else ('Tailscale is installed (' ~ (tailscale_backend if tailscale_daemon_up | bool else 'its daemon is not running')
+                 ~ ')') }} outside this project, so it is left as it is.
+      connecting: >-
+        Tailscale is still connecting ({{ tailscale_backend }}) after {{ tailscale_settle_seconds }} seconds, so nothing
+        was changed. {{ tailscale_configure_command }} reads it again.
+      Running: "{{ tailscale_report_running | select | join(' ') }}"
+      NeedsMachineAuth: >-
+        signed in to Tailscale and waiting for an admin to approve it at {{ tailscale_admin_page }}; it connects by
+        itself once approved.
+      Stopped: Tailscale is down (tailscale down on the VM). sudo tailscale up there brings it back.
+      expired: >-
+        {{ ('signed out of Tailscale (its key expired). It was signed in outside this project, so it is left as it'
+            ~ ' is: sign it in again on the VM, the way it was signed in.')
+           if tailscale_login_expired_elsewhere | bool
+           else ('signed out of Tailscale (its key expired). ' ~ tailscale_login_command ~ ' signs it in again.')
+           if tailscale_auth_method != 'key'
+           else ('signed out of Tailscale (its key expired), and tailscale_auth_method key never signs a VM in by the'
+                 ~ ' browser nor sends the key to a node that had a login: run sudo tailscale logout on it, then '
+                 ~ tailscale_configure_command ~ ' joins it with the key.') }}
+      refused: "{{ tailscale_report_refused }}"
+      would-join: >-
+        Tailscale would join with vault_tailscale_auth_key; check mode sends nothing. {{ tailscale_configure_command }}
+        joins it.
+      # Before an expired key and a refused one: a page still waiting is what to
+      # act on, and a fresh one would end it.
+      page-pending: >-
+        not signed in to Tailscale yet - the page stays valid for 7 days and {{ inventory_hostname }} joins by itself
+        once you approve it; {{ tailscale_login_command }} gives a fresh page.
+      NeedsLogin: >-
+        {{ 'Tailscale is installed; make deploy signs it in next, in this run.'
+           if tailscale_sign_in_follows | bool and tailscale_auth_method != 'key'
+           else ('Tailscale is installed but not signed in. ' ~ tailscale_configure_command ~ ' joins it with'
+                 ~ ' vault_tailscale_auth_key (tailscale_auth_method: key).') if tailscale_auth_method == 'key'
+           else 'Tailscale is installed but not signed in. ' ~ tailscale_login_command ~ ' signs it in from your'
+                ~ ' browser' ~ ('; vault_tailscale_auth_key joins it on the next make configure.'
+                               if tailscale_auth_method == 'auto' else '.') }}
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ tailscale_report_said[tailscale_report_case] | default('Tailscale is ' ~ tailscale_backend ~ '.') }}"

@@ -1,0 +1,100 @@
+---
+# Tailscale on the VM: installed from Tailscale's apt repository, joined to the
+# tailnet, and kept as configured - or, with tailscale_enabled false, removed
+# again. Only what this role made is ever touched: a Tailscale installed or
+# signed in by hand is reported and left as it is (ARCHITECTURE.md, the
+# tailscale role).
+
+# The feature. false turns it off again on a VM where this role installed it:
+# logged out, stopped, and the package and repository removed.
+tailscale_enabled: true
+
+# A key for the VM's first join (tskey-auth-..., or an OAuth client secret,
+# tskey-client-..., which needs tailscale_advertise_tags). Empty means the web
+# login (make tailscale-login, or make deploy's step). Used for a first join
+# only: sent again to a node that is signed in, a key Tailscale no longer
+# accepts logs the node out (tailscale#19501).
+tailscale_auth_key: ""
+
+# How a VM joins. auto: with tailscale_auth_key when there is one, else by the
+# web login. key: with the key only, and an empty one fails by name rather than
+# leave the VM for a browser. web: by the web login only; a key is left unused.
+tailscale_auth_method: auto
+
+# Deleting a VM's device from the tailnet through Tailscale's API, when the VM
+# is destroyed (the release entry point) or Tailscale is turned off on it, so
+# the device leaves the admin console and its name is free for a VM built
+# again. none: the node is only logged out, and the run names the device to
+# delete by hand. token: an API access token (tailscale_api_token, tskey-api-,
+# which lasts at most 90 days). oauth: an OAuth client with the devices:core
+# scope (tailscale_oauth_client_id and _secret, which do not expire). Every
+# call runs on this machine: the credential never reaches a VM.
+tailscale_api_auth_method: none
+tailscale_api_token: ""
+tailscale_oauth_client_id: ""
+tailscale_oauth_client_secret: ""
+# Tailscale's API. Tests point it at a stand-in.
+tailscale_api_url: https://api.tailscale.com
+
+# The machine name asked for: the VM's name made one DNS label, as Tailscale
+# requires ("alpha.lab" and "my_vm" become "alpha-lab" and "my-vm"). One that
+# is already taken in the tailnet gets "-1" from Tailscale, which the report
+# names.
+tailscale_hostname: >-
+  {{ (inventory_hostname | lower | regex_replace('[^a-z0-9-]+', '-') | regex_replace('^-+|-+$', ''))[:63]
+     | regex_replace('-+$', '') }}
+
+# Tailscale SSH: connections to port 22 on the tailnet address go to
+# Tailscale's SSH server instead of sshd, authenticated by the tailnet's
+# policy. Held both ways on every configure, for a login this role made.
+tailscale_ssh: false
+
+# Use the subnet routes other devices advertise.
+tailscale_accept_routes: false
+
+# Let the tailnet's DNS settings change how the VM looks names up. Off, the VM
+# keeps the resolver DHCP gave it: a tailnet that overrides local DNS would send
+# every query to its own nameservers, and one that is itself on the tailnet is
+# out of reach of a VM the recommended policy isolates. Other devices still
+# reach the VM by its tailnet name either way.
+tailscale_accept_dns: false
+
+# Tags asked for at the join, as a list (tag:claude-vm). With a tagged auth key
+# leave this empty: the node takes the key's tags. Set, the node's tags are
+# compared with it and a missing one is reported, never changed.
+tailscale_advertise_tags: []
+
+# Another control server, such as Headscale. Empty is Tailscale's own.
+tailscale_login_server: ""
+
+# Tailscale's own default. false stops tailscaled uploading its logs to
+# log.tailscale.com - which also ends Tailscale's technical support for the
+# node - through a systemd drop-in written before the daemon's first start.
+tailscale_upload_logs: true
+
+# More `tailscale up` flags for a join, as a list.
+tailscale_up_args: []
+
+# More tailscaled flags, as a list, in /etc/default/tailscaled's FLAGS:
+# --tun=userspace-networking where there is no /dev/net/tun.
+tailscale_daemon_flags: []
+
+# Seconds the web login waits for the approval before carrying on.
+tailscale_login_timeout: 300
+
+# Where this role keeps the two markers that say what it made.
+tailscale_marker_dir: /var/lib/claude-on-proxmox
+
+# The sign-in's browser step runs on this machine, never in a test (wired from
+# login_desktop).
+tailscale_login_desktop: true
+
+# make deploy signs the VM in next, in the same run: configuration says so
+# rather than naming make tailscale-login.
+tailscale_sign_in_follows: false
+
+# Set by playbooks/tailscale_login.yml for the login entry point: sign the VM in
+# by the web login (names given, or make deploy for a VM whose Claude code was
+# entered), and whether to ask first (make deploy).
+tailscale_login_interactive: false
+tailscale_login_ask: false

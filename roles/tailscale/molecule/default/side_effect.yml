@@ -1,0 +1,232 @@
+---
+# After converge and idempotence, the VM the role installed and joined is taken
+# through what a fleet meets: a setting changed behind the role's back, the
+# feature turned off and on again, and a package host that cannot be reached.
+# The VM where Tailscale was installed by hand is switched off too, and must
+# come through untouched. verify.yml then checks the state the last step left.
+- name: Side effect on the VM the role installed
+  hosts: claude-on-proxmox-tailscale
+  become: true
+  vars:
+    tailscale_auth_key: tskey-auth-kGood0CNTRL-TestOnly000000000000000000000
+    tailscale_upload_logs: false
+    tailscale_daemon_flags: [--tun=userspace-networking]
+    tailscale_login_desktop: false
+    tailscale_side_effect_state: /root/.tailscale-fake
+  tasks:
+    # --- A setting changed behind the role's back: one `tailscale set`, once.
+    - name: Rename the node behind the role's back
+      ansible.builtin.copy:
+        content: drifted
+        dest: "{{ tailscale_side_effect_state }}/prefs-hostname"
+        mode: "0644"
+
+    - name: Run the role over the drift
+      ansible.builtin.include_role:
+        name: tailscale
+
+    - name: Run the role again, with nothing to change
+      ansible.builtin.include_role:
+        name: tailscale
+
+    - name: Read what the stand-in was asked
+      ansible.builtin.slurp:
+        src: "{{ tailscale_side_effect_state }}/calls.log"
+      register: tailscale_side_effect_calls
+
+    - name: Assert the drift was set back once, by name, and never by up or with the key
+      vars:
+        tailscale_side_effect_sets: >-
+          {{ (tailscale_side_effect_calls.content | b64decode).splitlines() | select('match', '^set ') | list }}
+      ansible.builtin.assert:
+        that:
+          - tailscale_side_effect_sets == ['set --hostname=claude-on-proxmox-tailscale']
+          - (tailscale_side_effect_calls.content | b64decode).count('--auth-key') == 1
+        fail_msg: "{{ tailscale_side_effect_calls.content | b64decode }}"
+        quiet: true
+
+    # --- Off, then off again: logged out and removed once; then nothing. From
+    # here on the stand-in answers only while the package's tailscaled runs, as
+    # the real CLI does, and the daemon is stopped by hand first: logging out
+    # takes a running daemon, which the role starts for it.
+    - name: Have the stand-in answer only while tailscaled runs
+      ansible.builtin.copy:
+        content: ""
+        dest: "{{ tailscale_side_effect_state }}/real-daemon"
+        mode: "0644"
+
+    - name: Stop tailscaled by hand
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        state: stopped
+
+    - name: Turn Tailscale off
+      ansible.builtin.include_role:
+        name: tailscale
+      vars:
+        tailscale_enabled: false
+
+    - name: Turn it off once more, with nothing left to do
+      ansible.builtin.include_role:
+        name: tailscale
+      vars:
+        tailscale_enabled: false
+
+    - name: Read what turning it off left
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/apt/sources.list.d/tailscale.sources
+        - /etc/systemd/system/tailscaled.service.d/10-claude-on-proxmox.conf
+        - /var/lib/claude-on-proxmox/tailscale-installed
+        - /var/lib/claude-on-proxmox/tailscale-joined
+        - /lib/systemd/system/tailscaled.service
+        # The stand-in's login, which only a logout that reached it removes.
+        - "{{ tailscale_side_effect_state }}/nodekey"
+      register: tailscale_side_effect_off
+
+    - name: Read dpkg's word on the package, and what the stand-in was asked
+      ansible.builtin.command:
+        argv: [sh, -c, "dpkg-query --show --showformat='${db:Status-Status}' tailscale; echo; cat {{ tailscale_side_effect_state }}/calls.log"]
+      register: tailscale_side_effect_off_said
+      changed_when: false
+      failed_when: false
+
+    # A Tailscale installed again by hand starts as it should: the package's
+    # postinst enables tailscaled again only when the link its first install
+    # made is still there, and a disable before the removal took it away
+    # (probed against the 1.104.1 package: remove and reinstall leaves it
+    # enabled; disable, remove and reinstall leaves it disabled).
+    - name: Look for the link that has a reinstalled tailscaled start at boot
+      ansible.builtin.stat:
+        path: /etc/systemd/system/multi-user.target.wants/tailscaled.service
+        follow: false
+      register: tailscale_side_effect_wants
+
+    - name: Assert it is all gone, logged out once
+      ansible.builtin.assert:
+        that:
+          - tailscale_side_effect_off.results | selectattr('stat.exists') | list | length == 0
+          - tailscale_side_effect_off_said.stdout_lines[0] != 'installed'
+          - tailscale_side_effect_off_said.stdout_lines | select('equalto', 'logout') | list | length == 1
+          - tailscale_side_effect_wants.stat.islnk | default(false)
+        fail_msg: >-
+          {{ tailscale_side_effect_off.results | selectattr('stat.exists') | map(attribute='item') | list }}
+          {{ tailscale_side_effect_off_said.stdout }}
+        quiet: true
+
+    # --- On again: installed again, and the stand-in, logged out, joins anew.
+    - name: Turn Tailscale on again
+      ansible.builtin.include_role:
+        name: tailscale
+
+    - name: Read the node's state
+      ansible.builtin.command:
+        argv: [tailscale, status, --json]
+      register: tailscale_side_effect_back
+      changed_when: false
+
+    - name: Assert it rejoined
+      ansible.builtin.assert:
+        that: (tailscale_side_effect_back.stdout | from_json).BackendState == 'Running'
+        quiet: true
+
+    # --- A package host that cannot be reached, on a VM from before this
+    # version: the install fails, its repository comes back out, apt still
+    # works, and turning Tailscale off removes what the failed run left.
+    # /etc/hosts is bind-mounted into the container: rename over it fails.
+    - name: Make pkgs.tailscale.com unreachable
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: 127.0.0.1 pkgs.tailscale.com
+        unsafe_writes: true
+
+    - name: Take Tailscale off as on a VM from before this version
+      ansible.builtin.include_role:
+        name: tailscale
+      vars:
+        tailscale_enabled: false
+
+    - name: Run the role with its package host unreachable
+      block:
+        - name: Run the role
+          ansible.builtin.include_role:
+            name: tailscale
+
+        - name: Fail, since the install should have
+          ansible.builtin.fail:
+            msg: The role installed Tailscale with its package host unreachable.
+      rescue:
+        - name: Assert it failed at the install, naming apt's reason
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'install | Install Tailscale'
+              - ansible_failed_result.msg is search('apt cache')
+              - ansible_failed_result.msg is search('could not be fetched')
+            fail_msg: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default('') }}"
+            quiet: true
+
+    - name: Read what the failed install left
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/apt/sources.list.d/tailscale.sources
+        - /var/lib/claude-on-proxmox/tailscale-installed
+      register: tailscale_side_effect_failed
+
+    - name: Refresh apt, as common does at the start of every configure
+      ansible.builtin.command:
+        argv: [apt-get, update]
+      register: tailscale_side_effect_apt
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the repository came back out, the marker stayed, and apt works
+      ansible.builtin.assert:
+        that:
+          - not tailscale_side_effect_failed.results[0].stat.exists
+          - tailscale_side_effect_failed.results[1].stat.exists
+          - tailscale_side_effect_apt.rc == 0
+        fail_msg: "{{ tailscale_side_effect_apt.stderr | default('') }}"
+        quiet: true
+
+    - name: Turn Tailscale off after the failed install
+      ansible.builtin.include_role:
+        name: tailscale
+      vars:
+        tailscale_enabled: false
+
+    - name: Read what turning it off left this time
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /var/lib/claude-on-proxmox/tailscale-installed
+        - /etc/systemd/system/tailscaled.service.d/10-claude-on-proxmox.conf
+      register: tailscale_side_effect_left
+
+    - name: Assert the marker and the drop-in are gone
+      ansible.builtin.assert:
+        that: tailscale_side_effect_left.results | selectattr('stat.exists') | list | length == 0
+        quiet: true
+
+    - name: Make pkgs.tailscale.com reachable again
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: 127.0.0.1 pkgs.tailscale.com
+        state: absent
+        unsafe_writes: true
+
+    - name: Install and join once more, for verify.yml
+      ansible.builtin.include_role:
+        name: tailscale
+
+- name: Side effect on the VM where Tailscale was installed by hand
+  hosts: claude-on-proxmox-tailscale-byhand
+  become: true
+  tasks:
+    - name: Turn Tailscale off there
+      ansible.builtin.include_role:
+        name: tailscale
+      vars:
+        tailscale_enabled: false
+        tailscale_login_desktop: false

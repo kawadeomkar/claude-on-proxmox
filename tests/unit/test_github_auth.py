@@ -1371,10 +1371,11 @@ def test_the_harness_keeps_the_device_flow_off_the_developer_s_desktop(tmp_path)
 
 
 # ------------------------------------------------------- make deploy's step ---
-# deploy.yml decides GitHub VM by VM, from what its Claude step left on each VM:
-# a VM whose Claude code was entered is asked, and Enter signs it in; a VM
-# that showed no Claude prompt (signed in already, or an API key) is asked,
-# and "y" signs it in; Enter at a VM's Claude prompt leaves it unasked.
+# deploy.yml decides GitHub VM by VM, from what its Claude step left on each VM.
+# With github_login_auto_start, the default, the device flow starts by itself
+# for every VM but one whose Claude sign-in was skipped. Off, every VM but that
+# one is asked first: Enter signs in one whose Claude sign-in was answered, and
+# "y" one that showed no Claude prompt (signed in already, or an API key).
 AFTER_CLAUDE = {
     "typed": {"claude_code_login_answered": True, "claude_code_login_skipped": False},
     "skipped": {"claude_code_login_answered": False, "claude_code_login_skipped": True},
@@ -1405,48 +1406,70 @@ def _deploy_github_step(root: Path) -> Path:
     return playbook
 
 
-@pytest.fixture(scope="module")
-def deployed(tmp_path_factory, fake_github):
+def _deploy_github(root: Path, fake_github, **extra) -> tuple[Path, dict]:
     """make deploy's GitHub step for three signed-out VMs, with no terminal to ask at."""
-    root = tmp_path_factory.mktemp("deploy_github")
     hosts = _hosts(root, {name: {"token": ""} for name in AFTER_CLAUDE}, fake_github, home_given=False)
     for name, facts in AFTER_CLAUDE.items():
         hosts[name].update(facts, github_projects_user=ME)
-    report = _run(
-        root, _deploy_github_step(root), hosts, "-e", json.dumps({"ansible_become": False, "deploy_sign_in": True})
-    )
-    return root, report
+    settings = {"ansible_become": False, "deploy_sign_in": True, **extra}
+    return root, _run(root, _deploy_github_step(root), hosts, "-e", json.dumps(settings))
 
 
-def test_deploy_signs_gh_in_only_where_a_claude_code_was_entered(deployed):
-    # With no terminal the question comes back with nothing: Enter, for the
-    # VM someone entered a Claude code for; no "y", for the other.
+def _asked(report: dict) -> set:
+    return {
+        host
+        for name, host, result in _results(report)
+        if "login | Ask whether to sign" in name and not result.get("skipped")
+    }
+
+
+@pytest.fixture(scope="module")
+def deployed(tmp_path_factory, fake_github):
+    return _deploy_github(tmp_path_factory.mktemp("deploy_github"), fake_github)
+
+
+@pytest.fixture(scope="module")
+def deployed_asking(tmp_path_factory, fake_github):
+    return _deploy_github(tmp_path_factory.mktemp("deploy_github_ask"), fake_github, github_login_auto_start=False)
+
+
+def test_deploy_starts_gh_s_sign_in_by_itself_for_every_vm_but_one_whose_claude_sign_in_was_skipped(deployed):
     root, report = deployed
     # A failure after the sign-in (the role's directory task, without a group
     # named after this user) is rescued under deploy, so the run still ends 0.
     assert report["rc"] == 0, _failures(report)
     started = {name for name in AFTER_CLAUDE if DEVICE_LOGIN in _calls(root, name)}
+    assert started == {"typed", "quiet"}, started
+    assert _asked(report) == set()
+
+
+def test_github_login_auto_start_defaults_to_on():
+    defaults = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults.yml").read_text())
+    assert defaults["github_login_auto_start"] is True
+
+
+def test_asking_first_signs_gh_in_only_where_a_claude_code_was_entered(deployed_asking):
+    # With no terminal the question comes back with nothing: Enter, for the
+    # VM someone entered a Claude code for; no "y", for the other.
+    root, report = deployed_asking
+    assert report["rc"] == 0, _failures(report)
+    started = {name for name in AFTER_CLAUDE if DEVICE_LOGIN in _calls(root, name)}
     assert started == {"typed"}, started
 
 
-def test_deploy_asks_every_vm_but_one_whose_claude_prompt_got_enter(deployed):
-    _, report = deployed
-    asked = {
-        host
-        for name, host, result in _results(report)
-        if "login | Ask whether to sign" in name and not result.get("skipped")
-    }
-    assert asked == {"typed", "quiet"}, asked
+def test_asking_first_asks_every_vm_but_one_whose_claude_prompt_got_enter(deployed_asking):
+    _, report = deployed_asking
+    assert _asked(report) == {"typed", "quiet"}
 
 
-def test_deploy_signs_a_vm_that_showed_no_claude_prompt_in_on_a_typed_y(tmp_path, fake_github):
+def test_asking_first_signs_a_vm_that_showed_no_claude_prompt_in_on_a_typed_y(tmp_path, fake_github):
     hosts = _hosts(tmp_path, {"quiet": {"token": ""}}, fake_github, home_given=False)
     hosts["quiet"]["github_projects_user"] = ME
     rc, output, log = _run_at_a_terminal(
         tmp_path,
         _deploy_github_step(tmp_path),
         hosts,
-        {"ansible_become": False, "deploy_sign_in": True},
+        {"ansible_become": False, "deploy_sign_in": True, "github_login_auto_start": False},
         "y",
         prompt=b"or Enter alone to skip",
     )
@@ -1456,7 +1479,7 @@ def test_deploy_signs_a_vm_that_showed_no_claude_prompt_in_on_a_typed_y(tmp_path
     assert not [token for token in CANNED if token in output + log]
 
 
-def test_deploy_skips_a_vm_whose_claude_code_was_entered_on_a_typed_n(tmp_path, fake_github):
+def test_asking_first_skips_a_vm_whose_claude_code_was_entered_on_a_typed_n(tmp_path, fake_github):
     # Someone is here, but cannot approve GitHub now: "n" spares that VM the
     # fifteen-minute wait, and the run goes on.
     hosts = _hosts(tmp_path, {"typed": {"token": ""}}, fake_github, home_given=False)
@@ -1465,7 +1488,7 @@ def test_deploy_skips_a_vm_whose_claude_code_was_entered_on_a_typed_n(tmp_path, 
         tmp_path,
         _deploy_github_step(tmp_path),
         hosts,
-        {"ansible_become": False, "deploy_sign_in": True},
+        {"ansible_become": False, "deploy_sign_in": True, "github_login_auto_start": False},
         "n",
         prompt=b"type n and Enter to skip it",
     )

@@ -19,6 +19,12 @@ should one run anyway, every run's PATH starts with stand-ins for open,
 xdg-open, pbcopy, wl-copy and xclip, and BROWSER names one of them. They record
 their arguments and fail, and a run that called any of them fails its test.
 
+Nor this machine's tailscale: the developer's Mac may have the real CLI (at
+/usr/local/bin/tailscale, say), signed in to their own tailnet, and an `up` or a
+`logout` that reached it would act on it. A failing stand-in for it is first on
+every run's PATH too; tests/unit/test_tailscale.py puts
+tests/molecule/fake_tailscale.sh ahead of it, in a host's bin/.
+
 stdin is /dev/null for every run but those at a pseudo-terminal of the
 harness's own, and each run has a process group of its own: with no terminal a
 pause returns at once, where under `pytest -s` at a terminal it would wait on
@@ -121,8 +127,10 @@ PASSED_ON = frozenset(
 )
 
 # What opens a page or fills a clipboard on this machine, as the sign-ins look
-# for them: each stand-in records its call beside itself and fails.
+# for them, and this machine's tailscale: each stand-in records its call beside
+# itself and fails.
 DESKTOP_TOOLS = ("open", "xdg-open", "pbcopy", "wl-copy", "xclip")
+GUARDED_TOOLS = ("tailscale",)
 DESKTOP_STAND_IN = """#!/bin/sh
 printf '%s %s\\n' "${0##*/}" "$*" >> "$(dirname "$0")/calls.log"
 exit 1
@@ -165,7 +173,7 @@ def _desktop(root: Path) -> Path:
     """The directory of desktop stand-ins for runs under root, made on first use."""
     desktop = root / ".desktop"
     desktop.mkdir(exist_ok=True)
-    for tool in DESKTOP_TOOLS:
+    for tool in (*DESKTOP_TOOLS, *GUARDED_TOOLS):
         (desktop / tool).write_text(DESKTOP_STAND_IN)
         (desktop / tool).chmod(0o755)
     return desktop
@@ -180,7 +188,10 @@ def _desktop_calls(root: Path) -> str:
 def _fail_if_the_desktop_was_reached(root: Path) -> None:
     calls = _desktop_calls(root)
     if calls:
-        pytest.fail(f"a run under {root} called this machine's browser or clipboard (a stand-in caught it):\n{calls}")
+        pytest.fail(
+            f"a run under {root} called this machine's browser or clipboard, or its tailscale"
+            f" (a stand-in caught it):\n{calls}"
+        )
 
 
 def _env(root: Path, **settings: str) -> dict:

@@ -1,7 +1,7 @@
 ---
-# Configure the VMs: OS baseline, developer tooling, Claude Code and a checkout
-# of every GitHub project. Finds them by tag, so it works on its own and not
-# only straight after provisioning.
+# Configure the VMs: OS baseline, developer tooling, Claude Code, a checkout
+# of every GitHub project and, last, Tailscale. Finds them by tag, so it works
+# on its own and not only straight after provisioning.
 #
 #   make configure                    -> every VM tagged claude-on-proxmox
 #   make configure VM_NAME=alpha,beta
@@ -94,6 +94,36 @@
     - role: github_projects
       tags: [github_projects]
 
+  # Tailscale last, and never the VM's undoing: it is optional, so a failure in
+  # it is recorded here and raised at the end of the run - by the last play
+  # below, or under make deploy by deploy's own, after VS Code - while the VM
+  # still gets its alias. From tasks:, which run after roles: and before
+  # post_tasks:. import_role, not include_role: a static import takes the
+  # block's tag, so make configure TAGS=tailscale runs every task of the role,
+  # where an include's tag would reach only the include.
+  tasks:
+    - name: Install Tailscale and keep it joined
+      tags: [tailscale]
+      block:
+        - name: Run the tailscale role
+          ansible.builtin.import_role:
+            name: tailscale
+      rescue:
+        - name: Remember that Tailscale failed, for the end of the run
+          vars:
+            claude_vm_tailscale_why: >-
+              {{ (ansible_failed_result.msg | default('no message', true)) | plain_text | regex_replace('\s+', ' ') | trim }}
+          ansible.builtin.set_fact:
+            claude_vm_configure_failures: >-
+              {{ claude_vm_configure_failures | default([])
+                 + [inventory_hostname ~ ': Tailscale failed at "' ~ (ansible_failed_task.name | default('a task'))
+                    ~ '": ' ~ claude_vm_tailscale_why ~ ('' if claude_vm_tailscale_why is search('[.!?]$') else '.')
+                    ~ ' Retry it with: make configure VM_NAME=' ~ inventory_hostname ~ ' TAGS=tailscale'] }}
+
+        - name: Say why, and go on
+          ansible.builtin.debug:
+            msg: "{{ claude_vm_configure_failures | last }}"
+
   # Where VS Code is pointed: vm_projects_dir, or ~/projects of the VM user,
   # resolved here on the VM where the home directory is known rather than
   # guessed on the controller (Ansible's own user_dir fact is the connecting
@@ -153,3 +183,20 @@
       when:
         - claude_ssh_config | default(true) | bool
         - claude_ssh_configured | default([]) | length > 0
+
+# What failed in a configured VM - Tailscale's role, which configure carries on
+# past - fails it here, at the end, after its alias is written. make deploy
+# imports this playbook with claude_vm_configure_in_deploy and raises the same
+# list in its own last play, after the sign-ins and VS Code.
+- name: Fail each VM whose configuration failed past a rescue
+  hosts: claude_vms
+  gather_facts: false
+  tags: [always]
+
+  tasks:
+    - name: Fail where Tailscale failed
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_configure_failures | join(' ') }}"
+      when:
+        - claude_vm_configure_failures | default([]) | length > 0
+        - not (claude_vm_configure_in_deploy | default(false) | bool)

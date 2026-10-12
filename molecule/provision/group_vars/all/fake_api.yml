@@ -34,3 +34,9 @@ claude_ssh_config_include: false
 # through add_host, so it is set for all of them, not on localhost: a deploy
 # that reached a sign-in must not open this machine's browser or clipboard.
 login_desktop: false
+
+# deploy.yml runs here, and with it configure.yml's Tailscale role for any VM
+# it could reach - none, against the fake API, but a test never reaches
+# Tailscale: log upload off for every VM deploy could add
+# (tests/unit/test_tailscale.py holds every scenario to it).
+tailscale_upload_logs: false

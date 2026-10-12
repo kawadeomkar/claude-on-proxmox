@@ -1,0 +1,125 @@
+---
+- name: Verify the VM the role installed and joined
+  hosts: claude-on-proxmox-tailscale
+  become: true
+  vars:
+    tailscale_verify_key: tskey-auth-kGood0CNTRL-TestOnly000000000000000000000
+  tasks:
+    - name: Read the repository, the log switch and tailscaled's own files
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /etc/apt/sources.list.d/tailscale.sources
+        - /etc/systemd/system/tailscaled.service.d/10-claude-on-proxmox.conf
+        - /etc/default/tailscaled
+        - /var/lib/claude-on-proxmox/tailscale-joined
+        - /root/.tailscale-fake/nodekey
+      register: tailscale_verify_files
+
+    - name: Look for the source list Tailscale's instructions write
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/tailscale.list
+      register: tailscale_verify_legacy
+
+    - name: Read tailscaled's unit state, environment and command line
+      ansible.builtin.command:
+        argv:
+          - sh
+          - -c
+          - >-
+            systemctl is-active tailscaled; systemctl show tailscaled -p Environment;
+            tr '\0' ' ' < /proc/$(systemctl show tailscaled -p MainPID --value)/cmdline
+      register: tailscale_verify_daemon
+      changed_when: false
+
+    - name: Assert the package is the role's, logs are off from the first start, and the conffile is the package's
+      vars:
+        tailscale_verify_text: "{{ tailscale_verify_files.results | map(attribute='content') | map('b64decode') | list }}"
+      ansible.builtin.assert:
+        that:
+          # The deb822 source, signed by the vendored key; no legacy list.
+          - "tailscale_verify_text[0] is search('URIs: https://pkgs.tailscale.com/stable/ubuntu')"
+          - tailscale_verify_text[0] is search('BEGIN PGP PUBLIC KEY BLOCK')
+          - not tailscale_verify_legacy.stat.exists
+          # The log switch as a drop-in, in effect for the running daemon.
+          - tailscale_verify_text[1] is search('Environment=TS_NO_LOGS_NO_SUPPORT=true')
+          - tailscale_verify_daemon.stdout_lines[0] == 'active'
+          - tailscale_verify_daemon.stdout_lines[1] is search('TS_NO_LOGS_NO_SUPPORT=true')
+          # The package's own conffile, PORT kept beside the role's FLAGS - a
+          # file created before the package would have lost PORT, and the
+          # daemon its --port.
+          - tailscale_verify_text[2] is search('(?m)^PORT="41641"$')
+          - tailscale_verify_text[2] is search('(?m)^FLAGS="--tun=userspace-networking"$')
+          - tailscale_verify_daemon.stdout_lines[2] is search('--port=41641')
+          - tailscale_verify_daemon.stdout_lines[2] is search('--tun=userspace-networking')
+          # The login the role made: its node key in the joined marker.
+          - tailscale_verify_text[3] | trim == 'nodekey:' ~ (tailscale_verify_text[4] | trim)
+        fail_msg: "{{ tailscale_verify_text }} {{ tailscale_verify_daemon.stdout_lines }}"
+        quiet: true
+
+    # The needle goes in on standard input, under no_log, as the role sends the
+    # key: in environment:, sudo would log it with the command line, in auth.log
+    # and the journal. Where a key could land - logs, homes, tmp, /var, /run -
+    # with devices and FIFOs skipped (one would block grep), and Ansible's own
+    # temporary directories left out: this task's module file holds the needle
+    # while it runs.
+    - name: Look for the key anywhere on the VM
+      ansible.builtin.command:
+        argv:
+          - sh
+          - -c
+          - >-
+            read -r needle; grep -rlF -D skip --exclude-dir='ansible-tmp-*' -- "$needle"
+            /etc /root /home /tmp /var /run 2>/dev/null | head -5
+        stdin: "{{ tailscale_verify_key }}"
+      register: tailscale_verify_key_files
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Assert the key reached no file - it went in on standard input, not on argv or through a file
+      ansible.builtin.assert:
+        that: tailscale_verify_key_files.stdout | length == 0
+        fail_msg: "Files holding the key: {{ tailscale_verify_key_files.stdout_lines | join(', ') }}"
+        quiet: true
+
+    # With logs off and the stand-in in front, the real tailscaled has nothing
+    # to talk to: no control server was ever named to it.
+    - name: List tailscaled's TCP connections
+      ansible.builtin.command:
+        argv: [sh, -c, "ss -tnp state established 2>/dev/null | grep tailscaled || true"]
+      register: tailscale_verify_sockets
+      changed_when: false
+
+    - name: Assert tailscaled has none
+      ansible.builtin.assert:
+        that: tailscale_verify_sockets.stdout | length == 0
+        fail_msg: "{{ tailscale_verify_sockets.stdout }}"
+        quiet: true
+
+- name: Verify the VM where Tailscale was installed by hand is as it was
+  hosts: claude-on-proxmox-tailscale-byhand
+  become: true
+  tasks:
+    - name: Read what the role would have made, and the stand-in's calls and settings
+      ansible.builtin.command:
+        argv:
+          - sh
+          - -c
+          - >-
+            dpkg-query --show --showformat='${db:Status-Status}\n' tailscale;
+            ls /var/lib/claude-on-proxmox/ /etc/apt/sources.list.d/tailscale.sources 2>/dev/null | wc -l;
+            cat /root/.tailscale-fake/prefs-ssh; echo;
+            cat /root/.tailscale-fake/calls.log
+      register: tailscale_verify_byhand
+      changed_when: false
+
+    - name: Assert the package stayed, the role made nothing, and nothing but reads reached the login
+      ansible.builtin.assert:
+        that:
+          - tailscale_verify_byhand.stdout_lines[0] == 'installed'
+          - tailscale_verify_byhand.stdout_lines[1] == '0'
+          - tailscale_verify_byhand.stdout_lines[2] == 'true'
+          - tailscale_verify_byhand.stdout_lines[3:] | reject('match', '^(status --json|debug prefs)$') | list == []
+        fail_msg: "{{ tailscale_verify_byhand.stdout_lines }}"
+        quiet: true

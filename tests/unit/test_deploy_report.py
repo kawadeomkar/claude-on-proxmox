@@ -88,5 +88,5 @@ def test_a_missing_template_is_said_to_be_built_first(tmp_path):
 @pytest.mark.parametrize("sign_in", [True, False])
 def test_the_stop_for_the_sign_ins_is_said_up_front(tmp_path, sign_in):
     said = _said(tmp_path, built=True, deploy_sign_in=sign_in)
-    assert ("the run stops for you at a prompt here" in said) is sign_in, said
+    assert ("each opens a page in your browser and the run waits for you there" in said) is sign_in, said
     assert "\n" not in said

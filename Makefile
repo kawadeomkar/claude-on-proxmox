@@ -15,7 +15,8 @@ ANSIBLE_ARGS ?=
 #                                            (claude_vm_default_name, in
 #                                            inventory/group_vars/all/defaults.yml)
 #   configure, check, list, ssh-config,
-#   claude-login, github-login            -> every VM tagged claude-on-proxmox
+#   claude-login, github-login,
+#   tailscale-login                       -> every VM tagged claude-on-proxmox
 # `make deploy` configures only what it provisioned, never the rest of the fleet.
 # There is deliberately no LIMIT: --limit is applied before the plays run, and
 # these VMs only enter the inventory once discovery has found them, so it could
@@ -27,11 +28,12 @@ VM_NAME    ?=
 # name check in the proxmox_vm role, which explains the problem. vm-name-check
 # has already rejected anything that could break out of this quoting.
 VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
-# A run with no terminal on stdin cannot be answered: its sign-in prompts
-# return at once with nothing. Then no sign-in page opens and nothing reaches
-# the clipboard either, since nobody is there to use them. A login_desktop given
-# in ANSIBLE_ARGS still wins: it comes later on the command line.
-NO_TTY_ARGS = $$([ -t 0 ] || printf '%s' '-e {"login_desktop":false}')
+# A run with no terminal on stdin has nobody to approve a sign-in: no page
+# opens and nothing reaches the clipboard, since nobody is there to use them,
+# and make deploy skips its sign-ins, which would otherwise start by themselves
+# and wait for a browser. A login_desktop or deploy_sign_in given in
+# ANSIBLE_ARGS still wins: it comes later on the command line.
+NO_TTY_ARGS = $$([ -t 0 ] || printf '%s' '-e {"login_desktop":false,"deploy_sign_in":false}')
 # One project to open with `make code`, rather than the whole projects
 # directory: the name of a folder in it, which is the repository's name when
 # github_projects cloned it. Only `make code` reads it. Passed as JSON for the
@@ -49,7 +51,7 @@ PROJECT_ARGS := $(if $(PROJECT),-e '{"vm_project": "$(PROJECT)"}',)
 # deploy, template build over root SSH included.
 TAGS       ?=
 TAG_ARGS   := $(if $(TAGS),--tags $(TAGS),)
-ROLES      := common vscode_server dev_tools claude_code github_projects proxmox_template proxmox_vm
+ROLES      := common vscode_server dev_tools claude_code github_projects tailscale proxmox_template proxmox_vm
 MOLECULE_ROLES ?= $(ROLES)
 # Hooks make lint already runs. make test skips them in pre-commit so the
 # production-profile ansible-lint and ruff do not run a second time (ruff-format
@@ -78,7 +80,8 @@ PRE_COMMIT_SKIP := yamllint,ansible-lint,ruff-check,ruff-format,gitleaks
 LOG_DIR            ?= $(CURDIR)/.logs
 LOG_RETENTION_DAYS ?= 14
 LOG_STAMP          := $(shell date +%Y%m%d-%H%M%S)
-LOGGED_TARGETS     := template provision list configure deploy destroy claude-login github-login check ssh-config code \
+LOGGED_TARGETS     := template provision list configure deploy destroy claude-login github-login tailscale-login check \
+                      ssh-config code \
                       molecule molecule-scenario molecule-integration molecule-provision test vagrant-up
 ifneq ($(LOG_DIR),)
 $(LOGGED_TARGETS): export ANSIBLE_LOG_PATH ?= $(LOG_DIR)/$(LOG_STAMP)-$(firstword $(MAKECMDGOALS) $@).log
@@ -242,6 +245,16 @@ claude-login: vault-check vm-name-check log-setup ## Sign Claude Code in on the 
 .PHONY: github-login
 github-login: vault-check vm-name-check log-setup ## Sign gh in to GitHub on the VM(s) in VM_NAME by the device flow, one after another, then clone private repositories; without VM_NAME, report every VM
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) playbooks/github_login.yml
+
+# Without an auth key in the vault, a VM joins Tailscale by its web login,
+# which ends with you approving a page; given VM names this runs it as far as
+# it goes - the page opens here - one VM after another, and waits up to
+# tailscale_login_timeout for each approval. A VM approved later joins by
+# itself. Without a name it reports every VM's state. make deploy runs it for
+# its VMs after GitHub's sign-in.
+.PHONY: tailscale-login
+tailscale-login: vault-check vm-name-check log-setup ## Sign the VM(s) in VM_NAME in to Tailscale by its web login, one after another; without VM_NAME, report every VM
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) playbooks/tailscale_login.yml
 
 .PHONY: check
 check: vault-check vm-name-check log-setup ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)

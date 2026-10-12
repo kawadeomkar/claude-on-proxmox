@@ -140,7 +140,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        role: [common, vscode_server, dev_tools, claude_code, github_projects, proxmox_template, proxmox_vm]
+        role: [common, vscode_server, dev_tools, claude_code, github_projects, tailscale, proxmox_template, proxmox_vm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup

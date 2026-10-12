@@ -157,6 +157,10 @@ github_auth: true
 # asks for on top of gh's own: workflow, so that pushes which change
 # .github/workflows/ are not refused.
 github_auth_method: auto
+# make deploy starts GitHub's sign-in by itself for each VM gh is not signed in
+# on: the page opens, the code is on your clipboard, and the run waits for your
+# approval. false asks first at a prompt, so a VM can be left for later.
+github_login_auto_start: true
 github_login_scopes: [workflow]
 # The git identity written on each VM. Empty: the GitHub account's display
 # name (or its login) and GitHub's noreply address for it, so no private email
@@ -197,16 +201,17 @@ claude_login_args: []
 claude_login_timeout: 120
 
 # -------------------------------------------------------------- Sign-in -----
-# make deploy ends with the VM signed in to Claude and to GitHub and open in
-# VS Code. The sign-ins are the two steps only you can take: each opens a page
-# in your browser, and the run waits for you there, one VM at a time.
+# make deploy ends with the VM signed in to Claude, GitHub and Tailscale and
+# open in VS Code. The sign-ins are the steps only you can take: each opens a
+# page in your browser, and the run waits for you there, one VM at a time.
 #   Claude: authorise, then paste the code the page shows at the prompt.
 #   GitHub: paste the code that is already on your clipboard, and authorise.
-# GitHub's is asked first, VM by VM: Enter signs in a VM whose Claude code you
-# entered (n leaves it), "y" one that needed no Claude sign-in; none runs when
-# vault_github_token signs gh in. Enter at a VM's Claude prompt skips both for
-# it, and a run with no terminal skips them all; make claude-login and make
-# github-login do them later. false leaves the sign-ins to those two commands.
+#   Tailscale: sign in and connect the device (none with an auth key).
+# GitHub's and Tailscale's start by themselves (github_login_auto_start,
+# tailscale_login_auto_start), for every VM but one whose Claude sign-in nobody
+# answered; none runs where a vault token or key signs the VM in. A run with
+# no terminal skips them all; make claude-login, make github-login and make
+# tailscale-login do them later. false leaves the sign-ins to those commands.
 deploy_sign_in: true
 # Open the VM in VS Code at the end of make deploy, as make code does, when the
 # run was for one VM; a deploy for several ends with each VM's make code line.
@@ -216,6 +221,64 @@ deploy_code: true
 # Every test turns this off; tests/unit/test_github_auth.py and
 # test_claude_login.py check they do.
 login_desktop: true
+
+# ------------------------------------------------------------ Tailscale -----
+# Each VM joins your tailnet, so you can reach it - ssh, VS Code, a dev server -
+# from anywhere your other devices are, not only from this LAN (README,
+# "Reaching a VM over Tailscale"). Optional, and on by default. false turns it
+# off again where this project installed it: logged out, stopped and removed.
+# A Tailscale installed on a VM by hand is left alone either way.
+tailscale_enabled: true
+# Optional: an auth key (vault_tailscale_auth_key) joins each new VM during
+# configuration, with nothing to click. Without one, make tailscale-login - and
+# make deploy's step - signs a VM in by Tailscale's web login. Only ever used
+# for a VM's first join. A reusable, pre-approved, tagged key is the kind to
+# make.
+tailscale_auth_key: "{{ vault_tailscale_auth_key | default('', true) }}"
+# How a VM joins: auto uses the key above when there is one and the web login
+# otherwise; key uses the key only, and an empty one fails by name; web uses the
+# web login only, and a key in the vault is left unused.
+tailscale_auth_method: auto
+# make deploy starts Tailscale's web login by itself for each VM that is not
+# signed in: the page opens and the run waits for your approval. false asks
+# first at a prompt, so a VM can be left for later.
+tailscale_login_auto_start: true
+# How a VM's device is deleted from your tailnet when make destroy deletes the
+# VM, or tailscale_enabled: false takes Tailscale off it - so it leaves the
+# admin console and its name is free for a VM built again. none: the VM is only
+# logged out, and the run names the device to delete in the admin console.
+# token: an API access token in vault_tailscale_api_token (Settings, Keys;
+# tskey-api-..., which lasts at most 90 days). oauth: an OAuth client with the
+# devices:core scope, in vault_tailscale_oauth_client_id and
+# vault_tailscale_oauth_client_secret (Settings, OAuth clients; it does not
+# expire, but Tailscale scopes it to the tags you give it, which may keep it
+# from deleting a device without them, such as one joined by the web login).
+tailscale_api_auth_method: none
+tailscale_api_token: "{{ vault_tailscale_api_token | default('', true) }}"
+tailscale_oauth_client_id: "{{ vault_tailscale_oauth_client_id | default('', true) }}"
+tailscale_oauth_client_secret: "{{ vault_tailscale_oauth_client_secret | default('', true) }}"
+# Tailscale SSH on the tailnet address, in place of sshd there, authorised by
+# your tailnet's policy, which needs an ssh rule for it (README).
+tailscale_ssh: false
+# Use the subnet routes your other devices advertise.
+tailscale_accept_routes: false
+# Let your tailnet's DNS settings change how the VM looks names up. Off, the VM
+# keeps the resolver DHCP gave it, and your devices still reach it by its
+# tailnet name. On, a tailnet that overrides local DNS sends all the VM's
+# lookups to its nameservers - and one on the tailnet is out of reach of a VM
+# the README's policy isolates.
+tailscale_accept_dns: false
+# Tags asked for at the join, such as [tag:claude-vm]. Leave empty with a tagged
+# key: the VM takes the key's tags. Set it to tag a VM you sign in by the web.
+tailscale_advertise_tags: []
+# Another control server, such as Headscale. Empty is Tailscale's own.
+tailscale_login_server: ""
+# Tailscale's own default. false keeps tailscaled from uploading its logs to
+# Tailscale - which also ends Tailscale's technical support for the VMs.
+tailscale_upload_logs: true
+# How long the web login waits for you to approve the page, in seconds. The
+# page stays valid for 7 days, and a VM approved later joins by itself.
+tailscale_login_timeout: 300
 
 # ------------------------------------------------------------- VS Code -----
 # Make each VM ready for VS Code's Remote - SSH extension: an sshd drop-in that
@@ -333,3 +396,5 @@ github_projects_login_scopes: "{{ github_login_scopes }}"
 github_projects_login_desktop: "{{ login_desktop }}"
 github_projects_git_user_name: "{{ git_user_name }}"
 github_projects_git_user_email: "{{ git_user_email }}"
+
+tailscale_login_desktop: "{{ login_desktop }}"

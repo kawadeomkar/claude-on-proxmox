@@ -1,0 +1,104 @@
+---
+# Sign the VMs in to Tailscale by its web login, or say how each one is on it.
+#
+#   make tailscale-login VM_NAME=alpha        -> signs alpha in: a page opens here
+#   make tailscale-login VM_NAME=alpha,beta   -> the same, one VM after the other
+#   make tailscale-login                      -> reports every VM's state
+#
+# With vault_tailscale_auth_key set, make configure joins each new VM by
+# itself. Without one the join is Tailscale's web login, which ends with a
+# person approving a page: this runs it as far as it goes - one `tailscale up`
+# on the VM, the page read from its state, the page opened on this machine
+# (login_desktop), the approval waited for, up to tailscale_login_timeout. A VM
+# approved after that joins by itself; this says so. make deploy imports this
+# playbook for the VMs it configured, after GitHub's sign-in, and asks VM by
+# VM first: Enter signs in a VM whose Claude code was entered, "y" one that
+# showed no Claude prompt, and one whose Claude prompt got Enter is left.
+- name: Discover VMs on Proxmox
+  ansible.builtin.import_playbook: discover.yml
+  when: claude_vm_discovery | default(true) | bool
+
+# Every VM at once, before any prompt: rescue never sees an unreachable host,
+# and under serial an unreachable VM is a whole batch failed, which ends the
+# run. One that does not answer is said, skipped below, and failed at the end.
+- name: Reach each VM before its sign-in
+  hosts: claude_vms
+  gather_facts: false
+
+  tasks:
+    - name: Reach the VM
+      ansible.builtin.ping:
+      ignore_unreachable: true
+      register: claude_vm_reach
+
+    - name: Remember that the VM could not be reached
+      ansible.builtin.set_fact:
+        claude_vm_tailscale_login_failure: >-
+          {{ inventory_hostname }} could not be reached, so it was not signed in to Tailscale:
+          {{ claude_vm_reach.msg | default('no answer') | trim }}
+      when: claude_vm_reach is unreachable
+
+    - name: Say which VM could not be reached
+      ansible.builtin.debug:
+        msg: "{{ claude_vm_tailscale_login_failure }}"
+      when: claude_vm_reach is unreachable
+
+# One VM at a time where a sign-in can prompt - names given, or make deploy -
+# since each opens its own page and waits for its own approval; a report reads
+# the fleet at once. A failure is caught here, said, and raised by the last
+# play, unless it is the person aborting at a prompt.
+- name: Sign each VM in to Tailscale, or say how it is on it
+  hosts: claude_vms
+  become: true
+  gather_facts: false
+  vars:
+    claude_vm_login_named: >-
+      {{ (vm_name | default('', true) | split(',') | map('trim') | select | list | length) > 0 }}
+  serial: "{{ 1 if (claude_vm_login_in_deploy | default(false) | bool or claude_vm_login_named | bool) else '100%' }}"
+
+  tasks:
+    - name: Sign this VM in
+      block:
+        # The decision is the tailscale role's, so this and make configure
+        # cannot disagree about how a VM is on Tailscale.
+        # tests/unit/test_tailscale.py runs this playbook against stand-ins.
+        - name: Report how the VM is on Tailscale, and sign it in when asked to
+          ansible.builtin.include_role:
+            name: tailscale
+            tasks_from: login
+          vars:
+            # Names given (any number), or make deploy for a VM whose Claude
+            # code was entered: sign in. make deploy asks first.
+            tailscale_login_interactive: "{{ claude_vm_login_interactive | default(claude_vm_login_named) }}"
+            tailscale_login_ask: "{{ claude_vm_login_ask | default(false) }}"
+          # On the task, not the block: a block's condition is its rescue's
+          # too, read again for each task, and the rescue sets this fact.
+          when: claude_vm_tailscale_login_failure is not defined
+      rescue:
+        - name: Stop the run when the person aborted at the prompt
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_result.msg }}"
+          when: ansible_failed_result.msg | default('') is search('user requested abort')
+
+        - name: Remember why this VM's sign-in failed
+          ansible.builtin.set_fact:
+            claude_vm_tailscale_login_failure: "{{ ansible_failed_result.msg | default('the sign-in failed', true) }}"
+
+        - name: Say why, and go on with the next VM
+          ansible.builtin.debug:
+            msg: "{{ claude_vm_tailscale_login_failure }}"
+
+# make deploy carries on past a sign-in that failed - the person's to finish
+# later with make tailscale-login; this command exists to sign in, so here the
+# run fails, VM by VM.
+- name: Fail each VM whose sign-in failed
+  hosts: claude_vms
+  gather_facts: false
+
+  tasks:
+    - name: Fail where the sign-in failed
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_tailscale_login_failure }}"
+      when:
+        - claude_vm_tailscale_login_failure is defined
+        - not (claude_vm_login_in_deploy | default(false) | bool)

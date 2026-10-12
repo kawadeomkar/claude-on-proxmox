@@ -1,0 +1,53 @@
+---
+# Entry point for playbooks/destroy.yml: before the VM is deleted, its node
+# leaves the tailnet. Logged out, which expires its key at once; then, with an
+# API credential (tailscale_api_auth_method), its device is deleted, so it
+# leaves the admin console and its name is free for a VM built again. Whatever
+# Tailscale the VM has, however it got there: the VM itself is going. A daemon
+# stopped by hand is started for the logout, as off does (absent.yml).
+- name: release | Look for tailscaled's unit
+  ansible.builtin.stat:
+    path: "{{ tailscale_unit_path }}"
+  register: tailscale_release_unit
+
+- name: release | Start tailscaled, so that its login can be ended
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    state: started
+  failed_when: false
+  when: tailscale_release_unit.stat.exists
+
+- name: release | Read the node's state
+  ansible.builtin.command:
+    argv: [tailscale, status, --json]
+  register: tailscale_release_status
+  changed_when: false
+  failed_when: false
+  until: >-
+    tailscale_release_status.rc != 0
+    or (tailscale_release_status.stdout | from_json).BackendState | default('NoState') != 'NoState'
+  retries: "{{ tailscale_settle_seconds }}"
+  delay: 1
+
+- name: release | Log the node out
+  ansible.builtin.command:
+    argv: [tailscale, logout]
+  register: tailscale_release_logout
+  changed_when: true
+  failed_when: false
+  when: tailscale_release_joined | bool
+
+- name: release | Delete the node's device from the tailnet
+  ansible.builtin.include_tasks: api_delete.yml
+  vars:
+    tailscale_api_node: "{{ tailscale_release_node }}"
+    tailscale_api_go: >-
+      {{ tailscale_api_auth_method != 'none' and tailscale_release_node | length > 0
+         and (tailscale_release_logout.rc | default(1)) == 0 }}
+
+# What became of the node, for destroy's last play to say per VM: a fact,
+# since that play reads it through hostvars, and set on every run of this file
+# so it can never be an earlier run's.
+- name: release | Record what became of the node
+  ansible.builtin.set_fact:
+    tailscale_release_said: "{{ tailscale_release_summary }}"

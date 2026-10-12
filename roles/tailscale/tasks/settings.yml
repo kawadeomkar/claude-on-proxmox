@@ -1,0 +1,23 @@
+---
+# A Running node whose login this role made (main.yml): the managed settings
+# held to what is configured, both ways, by one `tailscale set` naming only the
+# ones that differ. Never `tailscale up`, which would need every non-default
+# setting again, and never the key. A login made by hand keeps its own.
+#
+# Tags are not set here: `tailscale set` has no --advertise-tags, and joining
+# again to change them can disconnect the node (tailscale#13572). report.yml
+# names a configured tag the node lacks, and the admin console as the fix.
+- name: settings | Change the settings that differ from what is configured
+  ansible.builtin.command:
+    argv: "{{ ['tailscale', 'set'] + tailscale_set_flags }}"
+  register: tailscale_set
+  changed_when: true
+  when:
+    - tailscale_backend == 'Running'
+    - tailscale_login_ours | bool
+    - tailscale_set_flags | length > 0
+
+# The set runs only when something differs, so having run is having changed.
+- name: settings | Read the state after the change
+  ansible.builtin.include_tasks: status.yml
+  when: tailscale_set is not skipped
