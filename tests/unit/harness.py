@@ -88,6 +88,7 @@ exec "{sys.executable}" "$@"
 echo "$*" >> "$STAND_IN/bash.log"
 case "$*" in
   "-lc claude auth status") exec claude auth status ;;
+  "-lc claude auth logout") exec claude auth logout ;;
   "-lc command -v claude") command -v claude ;;
   *) echo "stand-in bash: unexpected arguments: $*" >&2; exit 127 ;;
 esac

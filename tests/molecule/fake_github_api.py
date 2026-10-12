@@ -11,6 +11,11 @@ repositories so the role can be tested without network access:
   /user/repos            every repository of that account, private included
   /meta                  GitHub's published SSH host keys (a placeholder key)
   /users/acme-org        an organisation, which owns no repositories here
+  POST /credentials/revoke
+                         GitHub's credential revocation: 202 for a body of
+                         {"credentials": [...]}, 403 for any authenticated call,
+                         as GitHub answers; what it was handed is kept
+  /fake/revoked          what /credentials/revoke was handed, for the tests
 
 A token is a stand-in too: "bad-token" is refused, one starting with "stranger"
 belongs to another account, and anything else is <name>'s own.
@@ -102,6 +107,8 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/user":
             account = self._account()
             self._send(200, account) if account else self._send(401, {"message": "Bad credentials"})
+        elif url.path == "/fake/revoked":
+            self._send(200, REVOKED)
         elif url.path == "/user/repos":
             account = self._account()
             if account is None:
@@ -111,8 +118,30 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"message": "Not Found"})
 
+    def do_POST(self):  # http.server API name
+        url = urlparse(self.path)
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        if url.path != "/credentials/revoke":
+            self._send(404, {"message": "Not Found"})
+        elif self.headers.get("Authorization"):
+            # GitHub's own rule for this endpoint: it is for anyone, so an
+            # authenticated call is refused.
+            self._send(403, {"message": "Authenticated requests are not allowed"})
+        else:
+            try:
+                credentials = json.loads(body or b"{}").get("credentials")
+            except ValueError:
+                credentials = None
+            if not isinstance(credentials, list) or not credentials:
+                self._send(422, {"message": "Validation failed"})
+            else:
+                REVOKED.extend(credentials)
+                self._send(202, {})
+
     def log_message(self, *args):
         pass
 
 
+REVOKED: list = []
 HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

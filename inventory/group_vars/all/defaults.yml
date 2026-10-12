@@ -220,6 +220,12 @@ deploy_sign_in: true
 # Open the VM in VS Code at the end of make deploy, as make code does, when the
 # run was for one VM; a deploy for several ends with each VM's make code line.
 deploy_code: true
+# Before make destroy deletes a VM, release it from what it signed in to: Claude
+# signs out there and Remote Control stops, the token this project's GitHub
+# sign-in made for it is revoked at GitHub (GitHub tells you it did), and it
+# leaves your tailnet (its device deleted with tailscale_api_auth_method). A
+# stopped VM is started for it. false deletes the VMs as they are.
+destroy_release: true
 # The browser and clipboard steps of both sign-ins happen on this machine.
 # Off, the run only prints the page and the code (a headless controller).
 # Every test turns this off; tests/unit/test_github_auth.py and

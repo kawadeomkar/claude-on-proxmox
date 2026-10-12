@@ -310,3 +310,24 @@ claude_code_login_responded: >-
 # up (remote_control.yml). One "active" reading proves nothing: Type=simple is
 # active the moment the process forks.
 claude_code_remote_control_stay_up_seconds: 20
+
+# --- releasing the VM before it is destroyed (release.yml) ---
+claude_code_release_state: >-
+  {{ (claude_code_release_status.stdout | from_json) if (claude_code_release_status.stdout | default('') | trim)[:1] == '{' else {} }}
+claude_code_release_signed_in: "{{ claude_code_release_state.loggedIn | default(false) | bool }}"
+# The service, not the path unit that waits for a login: only a running
+# server had a session to take offline.
+claude_code_release_rc_stopped: >-
+  {{ claude_code_release_stopped.results | default([]) | selectattr('changed', 'defined') | selectattr('changed')
+     | selectattr('item.item', 'equalto', 'service') | list | length > 0 }}
+# One clause for destroy's report on the VM; empty where Claude Code had no
+# login and no Remote Control to end.
+claude_code_release_why: >-
+  {{ (claude_code_release_logout.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim) or 'no reason given' }}
+claude_code_release_summary: >-
+  {{ ((['Remote Control stopped (its session stays in the Claude app, offline)']
+       if claude_code_release_rc_stopped | bool else [])
+      + ([('signed out' if (claude_code_release_logout.rc | default(1)) == 0
+           else 'could not sign out (' ~ claude_code_release_why ~ ')')]
+         if claude_code_release_signed_in | bool else []))
+     | join('; ') }}

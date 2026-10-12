@@ -139,6 +139,10 @@
 # deploy_sign_in: true
 # Open the VM in VS Code at the end of a one-VM make deploy.
 # deploy_code: true
+# Before make destroy deletes a VM, sign it out of Claude, revoke the GitHub
+# token this project's sign-in made for it, and take it off your tailnet. A
+# stopped VM is started for it. false deletes the VMs as they are.
+# destroy_release: true
 # Open the sign-in pages (and copy GitHub's code) on this machine. Off, the run
 # only prints them, for a controller with no desktop.
 # login_desktop: true

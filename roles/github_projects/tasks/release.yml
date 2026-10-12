@@ -1,0 +1,65 @@
+---
+# Entry point for playbooks/destroy.yml: before the VM is deleted, gh signs out
+# there, and a token this role's device flow made for the VM - told by the
+# digest it left beside gh's config - is revoked at GitHub, through its
+# credential revocation endpoint, which takes no authentication (and refuses
+# any); GitHub then tells the account it did. Such a token was the VM's alone,
+# and would outlive its disk otherwise. Never a personal access token: the
+# vault's is every VM's, and one pasted by hand may be in use elsewhere.
+- name: release | Look up home directory of {{ github_projects_user }}
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ github_projects_user }}"
+  when: github_projects_home | length == 0
+
+# no_log: the output is the token.
+- name: release | Read the token gh stored
+  ansible.builtin.command:
+    argv: [gh, auth, token, --hostname, github.com]
+  become: true
+  become_user: "{{ github_projects_user }}"
+  register: github_projects_release_token_raw
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: release | Read the marker of the login this role's device flow made
+  ansible.builtin.slurp:
+    src: "{{ github_projects_device_marker_file }}"
+  become: true
+  become_user: "{{ github_projects_user }}"
+  register: github_projects_device_marker_raw
+  failed_when: false
+
+# From the VM, whose token it is: it never travels anywhere but to GitHub.
+- name: release | Revoke the token this role's sign-in made for the VM
+  ansible.builtin.uri:
+    url: "{{ github_projects_api_url }}/credentials/revoke"
+    method: POST
+    body_format: json
+    body:
+      credentials: ["{{ github_projects_release_token }}"]
+    headers:
+      Accept: application/vnd.github+json
+    status_code: [202]
+  register: github_projects_release_revoke
+  failed_when: false
+  no_log: true
+  when: github_projects_release_ours | bool
+
+- name: release | Sign gh out
+  ansible.builtin.command:
+    argv: [gh, auth, logout, --hostname, github.com]
+  become: true
+  become_user: "{{ github_projects_user }}"
+  register: github_projects_release_logout
+  changed_when: true
+  failed_when: false
+  when: github_projects_release_token | length > 0
+
+# What became of the login, for destroy's last play to say per VM: a fact,
+# since that play reads it through hostvars, and set on every run of this file
+# so it can never be an earlier run's.
+- name: release | Record what became of the login
+  ansible.builtin.set_fact:
+    github_projects_release_said: "{{ github_projects_release_summary }}"

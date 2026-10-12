@@ -28,6 +28,7 @@
 #                   logging "callback". fake-foreign-page hands BROWSER a page
 #                   that is not Claude's. The listener is Python: the unit
 #                   harness's ($STAND_IN/python) or python3.
+#   auth logout     removes .credentials.json, as claude's own does
 #   remote-control  stays up, as the server does
 #   --version       a version
 state="$HOME/.claude/fake"
@@ -129,6 +130,14 @@ while not server.answered and time.time() < deadline and os.getppid() == parent:
     done
     echo "eof" >> "$state/calls.log"
     exit 1
+    ;;
+esac
+
+case "$1 $2" in
+  "auth logout")
+    rm -f "$credentials"
+    echo "Successfully logged out from your Anthropic account."
+    exit 0
     ;;
 esac
 

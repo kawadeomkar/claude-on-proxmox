@@ -224,7 +224,7 @@ deploy: vault-check vm-name-check log-setup ## Everything, for VM_NAME only: tem
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) deploy.yml
 
 .PHONY: destroy
-destroy: vault-check vm-name-check log-setup ## Stop and delete the VM(s) on Proxmox (default: claude-on-proxmox-default)
+destroy: vault-check vm-name-check log-setup ## Release the VM(s) from Claude, GitHub and Tailscale, then delete them (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 
 # Remote Control needs a claude.ai login on the VM, and Anthropic supports no

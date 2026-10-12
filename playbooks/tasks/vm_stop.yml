@@ -1,0 +1,44 @@
+---
+# Stop again each VM in claude_vm_stop_query - entries of /cluster/resources
+# that destroy.yml started for their release and is not deleting - so that a
+# destroy that fails leaves a VM it found stopped as it found it.
+# claude_vm_stop_why ends the sentence that says so, after "started for the
+# release,". Registers claude_vm_restopped.
+#
+# Best effort: a stop that fails is said, with the VM to stop by hand, rather
+# than one more failure in a run that is failing already. The request carries
+# the token, so it is no_log.
+- name: vm_stop | Stop each VM this run started
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_url }}/nodes/{{ claude_vm_item.node }}/qemu/{{ claude_vm_item.vmid }}/status/stop"
+    method: POST
+    headers: "{{ proxmox_api_headers }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+  register: claude_vm_restopped
+  changed_when: true
+  failed_when: false
+  no_log: true
+  loop: "{{ claude_vm_stop_query }}"
+  loop_control:
+    loop_var: claude_vm_item
+    label: "{{ claude_vm_item.name }}"
+
+- name: vm_stop | Say which VMs were stopped again
+  vars:
+    claude_vm_restopped_names: >-
+      {{ claude_vm_restopped.results | default([]) | selectattr('status', 'defined')
+         | selectattr('status', 'equalto', 200) | map(attribute='claude_vm_item.name') | list }}
+    claude_vm_running_names: "{{ claude_vm_stop_query | map(attribute='name') | difference(claude_vm_restopped_names) }}"
+    claude_vm_stop_said:
+      - >-
+        {{ ('Stopped ' ~ (claude_vm_restopped_names | join(', ')) ~ ' again, as this run found '
+            ~ ('it' if claude_vm_restopped_names | length == 1 else 'them') ~ ': started for the release, '
+            ~ claude_vm_stop_why ~ '.') if claude_vm_restopped_names | length > 0 else '' }}
+      - >-
+        {{ ('Could not stop ' ~ (claude_vm_running_names | join(', ')) ~ ' again, which this run started for the'
+            ~ ' release: stop ' ~ ('it' if claude_vm_running_names | length == 1 else 'them') ~ ' in the Proxmox UI.')
+           if claude_vm_running_names | length > 0 else '' }}
+  ansible.builtin.debug:
+    msg: "{{ claude_vm_stop_said | select | join(' ') }}"
+  when: claude_vm_stop_query | length > 0

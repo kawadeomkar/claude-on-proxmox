@@ -1184,3 +1184,17 @@ def test_a_harness_run_finds_a_stand_in_tailscale_never_this_machine_s(tmp_path)
 def test_the_inventory_wires_the_desktop_switch_into_the_role():
     defaults = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults.yml").read_text())
     assert re.fullmatch(r"\{\{\s*login_desktop\s*\}\}", defaults["tailscale_login_desktop"])
+
+
+def test_destroy_names_the_device_left_of_each_vm_it_could_not_release():
+    # logout frees no name: a VM built again under it would join as <name>-1, for good.
+    # tests/unit/test_release.py runs the report; this holds its wording for an
+    # unreleased VM, and that it reads only the VMs actually deleted.
+    plays = yaml.safe_load((REPO / "playbooks" / "destroy.yml").read_text())
+    tasks = [task for play in plays for task in play.get("tasks", [])]
+    report = next(
+        task for task in tasks if task["name"] == "Say what each deleted VM was released from, and what is left of it"
+    )
+    assert "selectattr('claude_vm_deleted', 'defined')" in report["loop"]
+    assert "https://login.tailscale.com/admin/machines" in report["vars"]["claude_release_where"]
+    assert "<name>-1" in report["vars"]["claude_release_left"]
