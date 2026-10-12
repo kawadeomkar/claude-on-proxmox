@@ -199,12 +199,16 @@ claude_remote_control: true
 # how many seconds it may take to accept the code you paste.
 claude_login_args: []
 claude_login_timeout: 120
+# How many seconds the sign-in waits for you to authorise in the browser, when
+# the browser comes back to the VM by itself.
+claude_login_approval_timeout: 300
 
 # -------------------------------------------------------------- Sign-in -----
 # make deploy ends with the VM signed in to Claude, GitHub and Tailscale and
 # open in VS Code. The sign-ins are the steps only you can take: each opens a
 # page in your browser, and the run waits for you there, one VM at a time.
-#   Claude: authorise, then paste the code the page shows at the prompt.
+#   Claude: authorise, and the browser comes back to the VM by itself (where
+#           it cannot, paste the code the page shows at the prompt).
 #   GitHub: paste the code that is already on your clipboard, and authorise.
 #   Tailscale: sign in and connect the device (none with an auth key).
 # GitHub's and Tailscale's start by themselves (github_login_auto_start,
@@ -384,6 +388,7 @@ claude_code_remote_control_dir: "{{ vm_projects_dir }}"
 claude_code_login_desktop: "{{ login_desktop }}"
 claude_code_login_args: "{{ claude_login_args }}"
 claude_code_login_timeout: "{{ claude_login_timeout }}"
+claude_code_login_approval_timeout: "{{ claude_login_approval_timeout }}"
 
 github_projects_user: "{{ vm_user }}"
 github_projects_username: "{{ github_username }}"

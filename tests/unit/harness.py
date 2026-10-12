@@ -230,19 +230,26 @@ def _end(process: subprocess.Popen) -> None:
 
 
 def _run(
-    root: Path, playbook: Path, hosts: dict, *args: str, ordered: bool = False, timeout: float | None = None
+    root: Path,
+    playbook: Path,
+    hosts: dict,
+    *args: str,
+    ordered: bool = False,
+    timeout: float | None = None,
+    env: dict | None = None,
 ) -> dict:
     """Run a playbook against hosts, without the project's config or inventory; return the json callback's report.
 
     The report gains the run's rc and stderr. ordered keeps the hosts in the
     order given, where the inventory otherwise lists them by name; a run that
-    takes longer than timeout seconds fails the test.
+    takes longer than timeout seconds fails the test. env sets variables of
+    this machine's own on top of the harness's - a run over SSH, no BROWSER.
     """
     inventory = _inventory(root, hosts, ordered)
     process = subprocess.Popen(
         [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, str(playbook)],
         cwd=root,
-        env=_env(root, ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json"),
+        env=_env(root, ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json", **(env or {})),
         # Never the developer's terminal: a pause would wait on it. With no
         # terminal the sign-in's prompt returns at once, as in an unattended run.
         stdin=subprocess.DEVNULL,

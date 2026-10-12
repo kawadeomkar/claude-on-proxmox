@@ -43,15 +43,22 @@ What these guard:
   run log even at -vvv, a partly copied code is asked for again, a code typed
   after the attempt expired is said to be too late, and Ctrl-C then A at the
   prompt ends the run there.
+- The browser coming back by itself: claude's callback port is forwarded from
+  this machine, and once the browser brings the code back, the VM is signed in
+  with no prompt shown; a forward that fails, and a page that is not Claude's,
+  fall back to the code; a browser that never comes back ends the attempt and
+  skips the VM's later sign-ins; and it is on only where the page opens here.
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -119,6 +126,8 @@ def _hosts(root: Path, cases: dict) -> dict:
             (fake / "fake-refusal").write_text(case["refusal"])
         if "no_page" in case:
             (fake / "fake-no-page").write_text(case["no_page"])
+        if case.get("foreign_page"):
+            (fake / "fake-foreign-page").touch()
         (home / "python").symlink_to(bin_dir / "python")
         hosts[name] = {
             "ansible_connection": "local",
@@ -158,9 +167,20 @@ def _leftovers(root: Path, host: str) -> list[str]:
     return found + ([p.name for p in async_dir.iterdir()] if async_dir.exists() else [])
 
 
-def _extra(*names: str) -> dict:
-    """make claude-login VM_NAME=<names>, as the harness runs it: no discovery, and no sudo to give."""
-    return {"claude_vm_discovery": False, "ansible_become": False, "vm_name": ",".join(names)}
+# The ssh a forward to the VM would run, as an extra var: it is an internal of
+# the role (vars/main.yml), which outranks a host's own. Nowhere, unless a test
+# gives its stand-in: no test may reach this machine's ssh.
+NO_SSH = "/nonexistent/claude-login-test-ssh"
+
+
+def _extra(*names: str, ssh: str = NO_SSH) -> dict:
+    """make claude-login VM_NAME=<names>, as the harness runs it: no discovery, no sudo to give, no real ssh."""
+    return {
+        "claude_vm_discovery": False,
+        "ansible_become": False,
+        "vm_name": ",".join(names),
+        "claude_code_login_ssh": ssh,
+    }
 
 
 def _turns(report: dict) -> list[str]:
@@ -388,6 +408,178 @@ def test_each_vm_records_whether_its_code_was_entered(tmp_path):
         # The facts are the VM's own: nothing is written onto this machine.
         "localhost": "here=unset",
     }, said
+
+
+# ------------------------------------------- the browser coming back by itself
+# With claude_code_login_redirect, claude's callback port is forwarded from this
+# machine and the page that redirects to it opens here, so the browser comes
+# back to claude by itself and nothing is pasted. The VM is this machine here,
+# so the callback is reachable as it is: a stand-in ssh records the forward it
+# was asked for, and the test plays the browser, calling the callback with a
+# code and the page's state - and never following its redirect to Anthropic.
+FORWARD = """#!/bin/sh
+printf '%s\\n' "$*" >> "$(dirname "$0")/forward.log"
+[ -e "$(dirname "$0")/forward-refused" ] && exit 255
+exit 0
+"""
+
+
+def _forwarding(root: Path, hosts: dict, refused: bool = False, wait: int = 30) -> Path:
+    """A stand-in ssh for the forward, and every host set to come back by itself; returns the stand-in, for _extra."""
+    ssh = root / "forward" / "ssh"
+    ssh.parent.mkdir()
+    ssh.write_text(FORWARD)
+    ssh.chmod(0o755)
+    if refused:
+        (ssh.parent / "forward-refused").touch()
+    for host in hosts.values():
+        host.update(claude_code_login_redirect=True, claude_code_login_approval_timeout=wait)
+    return ssh
+
+
+def _browser(root: Path, host: str, answers: list) -> threading.Thread:
+    """The browser, for one host: once claude has handed its browser the page, its callback gets a code."""
+
+    def come_back():
+        page_file = _login_dir(root, host) / "claude-login.page"
+        end = time.time() + 60
+        while time.time() < end:
+            page = page_file.read_text().strip() if page_file.exists() else ""
+            if page:
+                # A moment, as a person takes, so the run is waiting by then.
+                time.sleep(2)
+                port = re.search(r"localhost%3A([0-9]+)%2Fcallback", page).group(1)
+                state = re.search(r"[?&]state=([^&]+)", page).group(1)
+                connection = http.client.HTTPConnection("127.0.0.1", int(port), timeout=10)
+                connection.request("GET", f"/callback?code=fake-code-browser&state={state}")
+                answers.append((port, connection.getresponse().status))
+                return
+            time.sleep(0.2)
+
+    thread = threading.Thread(target=come_back, daemon=True)
+    thread.start()
+    return thread
+
+
+def _task_ran(report: dict, host: str, step: str) -> bool:
+    return any(vm == host and step in name and not result.get("skipped") for name, vm, result in _results(report))
+
+
+def test_the_browser_coming_back_signs_the_vm_in_with_nothing_pasted(tmp_path):
+    hosts = _hosts(tmp_path, {"browser": {}})
+    ssh = _forwarding(tmp_path, hosts)
+    answers: list = []
+    thread = _browser(tmp_path, "browser", answers)
+    report = _run(tmp_path, PLAYBOOK, hosts, "-e", json.dumps(_extra("browser", ssh=str(ssh))))
+    thread.join(timeout=5)
+    assert report["rc"] == 0, _failures(report)
+    assert (tmp_path / "browser" / ".claude" / ".credentials.json").read_text().count(CREDENTIALS) == 1
+    calls = _calls(tmp_path, "browser")
+    assert "callback" in calls and "accepted" in calls, calls
+    # The browser was answered with claude's redirect, which nobody follows here.
+    ((port, status),) = answers
+    assert status == 302
+    # No prompt: the person's part was in the browser.
+    assert not _task_ran(report, "browser", "Paste the code the browser shows for")
+    said = _messages(report, "browser_login | Say the page and what happens next")["browser"]
+    assert said.startswith("browser: sign Claude Code in at https://claude.com/cai/oauth/authorize?"), said
+    assert "redirect_uri=http%3A%2F%2Flocalhost%3A" + port in said
+    assert said.endswith(
+        "this run carries on by itself once your browser comes back, waiting up to 30 seconds;"
+        " Ctrl-C ends the whole run."
+    ), said
+    # One forward, of that port, on this machine's loopback, to the VM user at the VM.
+    (forwarded,) = (ssh.parent / "forward.log").read_text().splitlines()
+    assert f"-L localhost:{port}:127.0.0.1:{port}" in forwarded, forwarded
+    assert " -f " in f" {forwarded} " and "ExitOnForwardFailure=yes" in forwarded, forwarded
+    assert "dev@192.0.2.10 " in forwarded and "exec sleep 90" in forwarded, forwarded
+    assert _leftovers(tmp_path, "browser") == []
+
+
+def test_a_forward_that_cannot_be_made_falls_back_to_the_code(tmp_path):
+    # A port already taken on this machine fails the forward: the printed page
+    # and its code then, as before - here with no terminal, so nothing is entered.
+    hosts = _hosts(tmp_path, {"taken": {}})
+    ssh = _forwarding(tmp_path, hosts, refused=True)
+    report = _run(tmp_path, PLAYBOOK, hosts, "-e", json.dumps(_extra("taken", ssh=str(ssh))))
+    assert report["rc"] == 0, _failures(report)
+    assert _task_ran(report, "taken", "Paste the code the browser shows for")
+    said = _messages(report, "browser_login | Say the page and what happens next")["taken"]
+    assert (
+        said == f"taken: sign Claude Code in at {URL} Authorise there, then paste the code the page shows at the"
+        " prompt below. Enter alone skips this VM."
+    ), said
+    assert not (tmp_path / "taken" / ".claude" / ".credentials.json").exists()
+
+
+@pytest.mark.parametrize(
+    "here",
+    [
+        # make run over SSH: the person's browser is on another machine, and the
+        # page would send it to that machine's localhost.
+        {"SSH_CONNECTION": "192.0.2.1 50000 192.0.2.2 22"},
+        # Nothing on this machine to open the page in.
+        {"BROWSER": ""},
+    ],
+    ids=["over-ssh", "no-browser"],
+)
+def test_a_browser_that_could_not_come_back_falls_back_to_the_code(tmp_path, here):
+    hosts = _hosts(tmp_path, {"elsewhere": {}})
+    ssh = _forwarding(tmp_path, hosts)
+    report = _run(tmp_path, PLAYBOOK, hosts, "-e", json.dumps(_extra("elsewhere", ssh=str(ssh))), env=here)
+    assert report["rc"] == 0, _failures(report)
+    assert not (ssh.parent / "forward.log").exists()
+    assert _task_ran(report, "elsewhere", "Paste the code the browser shows for")
+    said = _messages(report, "browser_login | Say the page and what happens next")["elsewhere"]
+    assert said == (
+        f"elsewhere: sign Claude Code in at {URL} Authorise there, then paste the code the page shows at the prompt"
+        " below. Enter alone skips this VM."
+    ), said
+
+
+def test_a_page_that_is_not_claude_s_is_neither_forwarded_nor_opened(tmp_path):
+    hosts = _hosts(tmp_path, {"foreign": {"foreign_page": True}})
+    ssh = _forwarding(tmp_path, hosts)
+    report = _run(tmp_path, PLAYBOOK, hosts, "-e", json.dumps(_extra("foreign", ssh=str(ssh))))
+    assert report["rc"] == 0, _failures(report)
+    assert not (ssh.parent / "forward.log").exists()
+    assert _task_ran(report, "foreign", "Paste the code the browser shows for")
+
+
+def test_a_browser_that_never_comes_back_ends_the_attempt_and_skips_the_vm(tmp_path):
+    hosts = _hosts(tmp_path, {"away": {}})
+    ssh = _forwarding(tmp_path, hosts, wait=6)
+    playbook = tmp_path / "away.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                {"import_playbook": str(PLAYBOOK)},
+                {
+                    "hosts": "claude_vms",
+                    "gather_facts": False,
+                    "tasks": [{"ansible.builtin.debug": {"msg": "skipped={{ claude_code_login_skipped }}"}}],
+                },
+            ]
+        )
+    )
+    report = _run(tmp_path, playbook, hosts, "-e", json.dumps(_extra("away", ssh=str(ssh))))
+    assert report["rc"] == 0, _failures(report)
+    said = _messages(report, "browser_login | Say that the browser did not come back")["away"]
+    assert said == (
+        "away: the browser did not come back within 6 seconds, so Claude Code is left signed out there. make"
+        " claude-login VM_NAME=away signs it in later."
+    )
+    # claude was ended, not left waiting on its callback.
+    assert "TERM" in _calls(tmp_path, "away")
+    assert {r["msg"] for _, host, r in _results(report) if str(r.get("msg", "")).startswith("skipped=")} == {
+        "skipped=True"
+    }
+    assert _leftovers(tmp_path, "away") == []
+
+
+def test_the_browser_comes_back_by_itself_only_where_the_page_opens_here():
+    defaults = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text())
+    assert re.fullmatch(r"\{\{\s*claude_code_login_desktop\s*\}\}", defaults["claude_code_login_redirect"])
 
 
 # ----------------------------------------------------- what else claude can do
@@ -656,7 +848,12 @@ def _writers():
 
 def test_the_steps_on_this_machine_never_use_its_sudo():
     on_here = [t for t in _flow() if t.get("delegate_to") == "localhost"]
-    assert len(on_here) == 2, [t["name"] for t in on_here]
+    # The opener is looked for before the forward, which only a browser here needs.
+    assert [t["name"] for t in on_here] == [
+        "browser_login | Look for a browser opener on this machine",
+        "browser_login | Forward the sign-in's callback from this machine to the VM",
+        "browser_login | Open the sign-in page in your browser",
+    ]
     for task in on_here:
         assert task.get("become") is False, task["name"]
 
