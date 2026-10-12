@@ -22,17 +22,21 @@ What these guard:
   it to remove by hand.
 - No token, key or secret reaches the output, module arguments included.
 - destroy starts a stopped VM to release it, only with destroy_release, and
-  releases before it deletes.
+  releases before it deletes - finding the address of a VM it started though
+  the cluster listing, seconds behind, still says it is stopped.
 """
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import socket
+import ssl
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -536,3 +540,111 @@ def test_every_api_call_is_made_on_this_machine_and_never_logged():
     )
     # From the VM, unauthenticated: GitHub refuses any authenticated call there.
     assert revoke["no_log"] is True and "Authorization" not in revoke["ansible.builtin.uri"].get("headers", {})
+
+
+# ------------------------------------- destroy.yml against the fake Proxmox ---
+PVE_SECRET = "unit-test-pve-secret"
+PARKED = 9001
+
+
+def _certificate(directory: Path) -> tuple[Path, Path]:
+    """A self-signed certificate for the fake Proxmox's TLS; returns the certificate's file and the key's."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    now = datetime.datetime.now(datetime.UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    cert, key_file = directory / "cert.pem", directory / "key.pem"
+    cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(
+        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    return cert, key_file
+
+
+def _pve(base: str, method: str, path: str, **params) -> dict:
+    """One request to the fake Proxmox, as a fixture makes it."""
+    request = urllib.request.Request(
+        f"{base}/api2/json/{path}",
+        data=urllib.parse.urlencode(params).encode() if params else None,
+        method=method,
+        headers={"Authorization": f"PVEAPIToken=ansible@pve!ansible={PVE_SECRET}"},
+    )
+    unverified = ssl.create_default_context()
+    unverified.check_hostname = False
+    unverified.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(request, timeout=10, context=unverified) as answer:
+        return json.loads(answer.read() or b"{}")
+
+
+@pytest.fixture
+def fake_pve(tmp_path):
+    """The fake Proxmox, holding one stopped VM of this project's, its listing lagging a start by one listing."""
+    cert, key = _certificate(tmp_path)
+    for base in _serve(FAKES / "fake_pve_api.py", str(cert), str(key), str(tmp_path / "pve"), PVE_SECRET):
+        base = base.replace("http://", "https://")
+        _pve(base, "POST", "nodes/pve/qemu/9000/clone", newid=PARKED, name="parked")
+        _pve(base, "PUT", f"nodes/pve/qemu/{PARKED}/config", tags="claude-on-proxmox")
+        _pve(base, "PUT", "fake/listing-lag", listings=1)
+        yield base
+
+
+def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_stopped(tmp_path, fake_pve):
+    # Proxmox lists the status it last polled, up to ten seconds old. A VM that
+    # booted within those seconds of destroy's start was listed as stopped
+    # after it, not asked for its address, and deleted without its release.
+    root = tmp_path / "run"
+    (root / "group_vars" / "all").mkdir(parents=True)
+    (root / "group_vars" / "all" / "defaults.yml").symlink_to(
+        REPO / "inventory" / "group_vars" / "all" / "defaults.yml"
+    )
+    port = int(fake_pve.rsplit(":", 1)[1])
+    (root / "group_vars" / "all" / "fake_api.yml").write_text(
+        yaml.safe_dump(
+            {
+                "proxmox_api_host": "127.0.0.1",
+                "proxmox_api_port": port,
+                "vault_proxmox_api_token_secret": PVE_SECRET,
+                "vm_user": "dev",
+            }
+        )
+    )
+    plays = yaml.safe_load(DESTROY.read_text())
+    # Its task files where they are: the play runs from a copy here.
+    confirm = json.loads(json.dumps(plays[0]).replace('"tasks/', f'"{REPO / "playbooks" / "tasks"}/'))
+    playbook = root / "destroy_head.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                confirm,
+                {
+                    "name": "Say where each VM would be released",
+                    "hosts": "claude_vm_doomed",
+                    "gather_facts": False,
+                    "tasks": [{"name": "Address", "ansible.builtin.debug": {"var": "claude_vm_release_address"}}],
+                },
+            ]
+        )
+    )
+    report = _run(root, playbook, {}, "-e", json.dumps({"vm_name": "parked", "confirm_destroy": "yes"}), timeout=120)
+    assert report["rc"] == 0, _failures(report)
+    said = {
+        host: result.get("claude_vm_release_address") for name, host, result in _results_of(report) if name == "Address"
+    }
+    assert said == {"parked": f"192.0.2.{PARKED % 200 + 50}"}
+    # The listing did lag: the run's own relisting still showed it stopped.
+    calls = [json.loads(line) for line in (tmp_path / "pve" / "calls.log").read_text().splitlines()]
+    assert [c["path"] for c in calls].count("/api2/json/cluster/resources") >= 2

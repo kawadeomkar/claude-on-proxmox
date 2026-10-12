@@ -22,6 +22,12 @@ are listed the way a real cluster lists them once the node's statistics have
 expired: VMID, node, type, tags and status "unknown", with no name or template
 key at all.
 
+/cluster/resources reports each VM's status the moment it changes, unless a
+fixture turns on the lag with PUT /api2/json/fake/listing-lag?listings=N: then,
+after a start or a stop, the next N listings still report the status from
+before it, the way a real cluster lists the status pvestatd last polled, up to
+ten seconds old. /nodes/<node>/qemu/<id>/status/current is never stale.
+
 A second token id, "noagent", stands for a token created without the
 guest-agent privilege (VM.Monitor on PVE 8, VM.GuestAgent.Audit on 9): every
 request is accepted except the agent's, which is refused with 403.
@@ -118,6 +124,11 @@ TASKS = 0
 # first poll succeeded, so a fleet never exercised the loop more than once.
 AGENT_CALLS = {}
 AGENT_READY_AFTER = 2
+# The listing's lag (see the docstring): how many listings after a status
+# change still report the old status, and per VM, that status and how many
+# listings it has left.
+LISTING_LAG = {"listings": 0}
+STALE = {}
 
 
 def normalise_tags(raw):
@@ -267,8 +278,20 @@ class Handler(BaseHTTPRequestHandler):
                     {"node": DOWN_NODE, "status": "online" if NODES_ONLINE[DOWN_NODE] else "offline"},
                 ],
             )
+        if parts[:2] == ["fake", "listing-lag"] and method == "PUT":
+            # Not a PVE endpoint: a fixture's switch for the listing's lag.
+            LISTING_LAG["listings"] = int(params.get("listings", "0"))
+            return self._reply(200, dict(LISTING_LAG))
         if parts == ["cluster", "resources"]:
-            return self._reply(200, [resource(vm) for vm in VMS.values()])
+            entries = [resource(vm) for vm in VMS.values()]
+            for entry in entries:
+                stale = STALE.get(entry["vmid"])
+                if stale:
+                    entry["status"] = stale[0]
+                    stale[1] -= 1
+                    if stale[1] <= 0:
+                        del STALE[entry["vmid"]]
+            return self._reply(200, entries)
         if parts == ["cluster", "nextid"]:
             return self._reply(200, str(next(i for i in range(NEXTID_LOWER, NEXTID_LOWER + 10000) if i not in VMS)))
         if parts[:2] == ["nodes", DOWN_NODE] and not NODES_ONLINE[DOWN_NODE]:
@@ -364,6 +387,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, {"status": vm["status"], "vmid": vmid, "name": vm["name"]})
         if sub[:1] == ["status"] and method == "POST":
             action = sub[1]
+            if LISTING_LAG["listings"] > 0 and vmid not in STALE:
+                STALE[vmid] = [vm["status"], LISTING_LAG["listings"]]
             vm["status"] = "running" if action in ("start", "reboot", "reset", "resume") else "stopped"
             save_state()
             return self._reply(200, new_task())

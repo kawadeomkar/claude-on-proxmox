@@ -202,10 +202,14 @@
         - name: List the VMs again, with the ones just started
           ansible.builtin.import_tasks: tasks/cluster_vms.yml
 
+        # The listing above still shows a VM started seconds ago as stopped -
+        # Proxmox polls a VM's status every ten seconds or so - so the VMs this
+        # run started are named, and asked whatever it says.
         - name: Read the address of each VM to release
           ansible.builtin.import_tasks: tasks/vm_addresses.yml
           vars:
             claude_vm_query: "{{ claude_vm_release_query }}"
+            claude_vm_just_started: "{{ claude_vm_release_started | map(attribute='vmid') | list }}"
           when: claude_vm_releasing | bool
 
         # How the release play below reaches the VM: host variables, never

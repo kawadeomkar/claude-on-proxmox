@@ -328,7 +328,11 @@ against 41 s.
    for its agent to report an IPv4 address on `proxmox_nic` - by the MAC its config gives, as
    `vm_addresses.yml` pairs them, so a bridge the guest grew (`docker0`, `tailscale0`) cannot end the wait
    before DHCP has answered - list the cluster again and read every requested VM's address
-   (`tasks/vm_addresses.yml`). A VM that does not start or report one gets no address. The VMs started are
+   (`tasks/vm_addresses.yml`). The listing gives the status Proxmox last polled, up to ten seconds old,
+   so a VM started seconds before is still "stopped" there: the VMs started are passed as
+   `claude_vm_just_started` and asked whatever it says. Read by the listing alone, a VM that booted
+   within those seconds got no address and was deleted unreleased (seen live). A VM that does not start
+   or report one gets no address. The VMs started are
    kept in `claude_vm_release_started`, and stopped again (`tasks/vm_stop.yml`) by whatever ends the run
    without deleting one, so a failed destroy leaves a VM as it found it: a rescue around the listing, the
    addresses and the `add_host` - which can still fail - stops them and fails again; the last play stops
@@ -1710,7 +1714,7 @@ pytest over `tests/unit/`: 818 tests. By file:
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
   that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
-- **Destroy's release** (`test_release.py` 21): `destroy.yml`'s release play and report against the
+- **Destroy's release** (`test_release.py` 22): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
   Tailscale API: a VM released from everything; the vault token and one pasted by hand signed out, never
   revoked, the vault token not even under a marker claiming it, and a logout gh refuses said as such; a
@@ -1718,7 +1722,8 @@ pytest over `tests/unit/`: 818 tests. By file:
   VM reports names another device; a VM that could not be reached, with what is left of it named; every
   canned credential searched for in the output; and, read from `destroy.yml`, a name two VMs share
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
-  stopped again however the run then fails - before it deletes anything, or at every deletion.
+  stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
+  against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
 - **`make code`** (`test_code_session.py` 76): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine.
@@ -1867,7 +1872,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 
 | Fake | Stands in for | Notes |
 |---|---|---|
-| `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log |
+| `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does |
 | `fake_qm.sh` | `qm` on the PVE node | stateful, one config file per VMID, logs every invocation |
 | `fake_virt_customize.sh` | `virt-customize` | so `proxmox_template` runs in a container |
 | `fake_github_api.py` | the GitHub REST API | serves local bare repositories; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took |

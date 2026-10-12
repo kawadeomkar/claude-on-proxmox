@@ -265,7 +265,8 @@ runs the role across them so Ansible fans out over `forks`, play 3 publishes. A 
 **`destroy.yml` has the same shape.** A localhost play prompts, lists the cluster, checks every name
 and adds each as a placeholder host - refusing, before anything starts, a name two VMs carry, since the
 release finds a VM by name; with `destroy_release` it first starts each stopped VM through the API and
-reads every VM's address from its agent. A VM it started is stopped again (`tasks/vm_stop.yml`) when the
+reads every VM's address from its agent - asking the ones it started whatever the cluster listing says
+(`claude_vm_just_started`). A VM it started is stopped again (`tasks/vm_stop.yml`) when the
 run then fails before deleting (a rescue in that play) or its deletion fails: the delete play rescues a
 failed deletion and the last play raises it, after the stop and the report - a play in which every host
 fails ends the run, which once left a lone VM running. A release play then connects to each VM over SSH
@@ -381,6 +382,12 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   exist there; the unit test had forced every connection local with `-e` and hid it. How to reach a host
   goes on the host (`add_host`, the inventory); a play may only force `ansible_connection: local`.
   `tests/unit/test_release.py` holds every playbook to that.
+- **`/cluster/resources` lags a start by up to ten seconds.** It lists the status pvestatd last polled,
+  so a VM destroy had just started, booted and reporting its address, was still "stopped" there;
+  `vm_addresses.yml`, which asks only running VMs, skipped it, and destroy deleted it unreleased (live,
+  2026-10-12). Never decide from the listing's status what a run itself just changed;
+  `test_release.py` runs destroy's first play against the fake with its lag on
+  (`PUT /api2/json/fake/listing-lag`).
 - **A skipped task still overwrites its register.** A `when` on destroy's second cluster listing left
   `claude_vm_all` without its listing whenever no VM had been started, and destroy failed before it
   began; register only in a task that always runs, or read it with a `default`.
