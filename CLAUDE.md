@@ -25,7 +25,7 @@ make claude-login    # print the one Remote Control step Ansible cannot do
 make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push an API key
 make list            # read-only: the VMs this project created, and their addresses
 make ssh-config      # refresh the SSH alias per VM on this machine; fleet-wide also prunes
-make code VM_NAME=alpha [PROJECT=repo]   # refresh one alias, check the folder over SSH, open it in VS Code
+make code VM_NAME=alpha [PROJECT=repo]   # refresh one alias, check the folder over SSH, open it in VS Code with a Claude terminal
 make logs            # the run logs, newest first: read these instead of asking for terminal output
 ```
 
@@ -80,6 +80,19 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   added only when `ssh -G` says the user's config does not reach the managed file yet (a `${HOME}`
   spelling counts on OpenSSH 9.9+ and not before; an `Include` inside a `Host` block never does),
   and never rewrites or changes the mode of the user's file.
+- **`make code` writes one thing on the VM, and never answers VS Code's security questions.** With
+  `vscode_claude_terminal` it writes a `.code-workspace` file in `<projects>/.claude-on-proxmox/`,
+  beside the repositories and never in one, whose `folderOpen` task runs `claude` in a terminal.
+  VS Code runs that task only in a trusted window and once the user has allowed automatic tasks;
+  `code.yml` reads `task.allowAutomaticTasks` from the user's VS Code settings to say which to
+  expect, and must never write it, set trust, or lower `security.workspace.trust.*` or
+  `terminal.integrated.allowInUntrustedWorkspace`. The script is fixed text in `code.yml`'s vars;
+  anything variable reaches it as an argument. `tests/unit/test_code_session.py` runs it, and holds
+  every task in `code.yml` to an allowlist: read-only on this machine (plus `which`/`code` and the
+  alias through `tasks/ssh_config.yml`), or `stat`/`getent`/`find` and the two writes delegated to
+  the VM; a `shell`, a writer in a `block`, or a `connection` fails it by name. The `provision`
+  scenario, which runs `code.yml`, points `vscode_user_settings_file` into the ephemeral directory,
+  since the message depends on it, and asserts that file's bytes and mtime after every run.
 - **Tests never write into the developer's `~/.ssh`.** The `configure` scenario runs the real
   playbook and its `localhost` is the developer's machine, so every playbook scenario points
   `claude_ssh_config_file` and `claude_ssh_user_config` into `MOLECULE_EPHEMERAL_DIRECTORY` with
