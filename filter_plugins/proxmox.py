@@ -145,9 +145,68 @@ def proxmox_access_denied(msg):
     return isinstance(msg, str) and DENIED_RE.search(msg) is not None
 
 
+# The managed SSH config on the controller (playbooks/tasks/ssh_config.yml):
+# one blockinfile block per VM, keyed by the VM's name.
+BLOCK_RE = re.compile(
+    r"^# BEGIN claude-on-proxmox: (?P<name>\S+)$\n(?P<body>.*?)^# END claude-on-proxmox: (?P=name)$",
+    re.M | re.S,
+)
+
+
+def ssh_config_blocks(content):
+    """The alias blocks in a managed ssh config, as ``{name}``, in file order."""
+    if content is None:
+        content = ""
+    if not isinstance(content, str):
+        raise AnsibleFilterError(f"ssh_config_blocks expects the file's text, got {type(content).__name__}")
+    return [{"name": match.group("name")} for match in BLOCK_RE.finditer(content)]
+
+
+def ssh_config_prune(blocks, resources, tag_pattern):
+    """Which alias blocks a fleet-wide refresh should remove, and which it must not.
+
+    ``blocks`` is what ``ssh_config_blocks`` read; ``resources`` the cluster's
+    ``/cluster/resources`` listing; ``tag_pattern`` the project's whole-tag
+    regex. Pruning only ever removes alias blocks, never VMs, and a block was
+    only ever written for a tagged VM, so the question is just whether that VM
+    is still there. Returns a dict:
+
+    - ``prune``: names with no VM of that name left anywhere in the cluster.
+    - ``untagged``: names a VM still carries but without the tag. Left alone
+      and reported: an untagged VM is not this project's to reason about, as
+      provisioning and destroy already refuse it.
+    - ``nameless``: VMIDs of tagged VMs the listing shows without a name,
+      which is what a node that is down looks like. Any block could be one of
+      those VMs, so when this is non-empty nothing is pruned: ``prune`` is
+      empty and the names it would have held are in ``held`` instead.
+    """
+    if not isinstance(blocks, list) or not isinstance(resources, list):
+        raise AnsibleFilterError("ssh_config_prune expects the blocks and the cluster listing as lists")
+    qemu = [vm for vm in resources if isinstance(vm, dict) and vm.get("type") == "qemu"]
+    tagged = [vm for vm in qemu if re.search(tag_pattern, str(vm.get("tags", "")))]
+    tagged_names = {vm["name"] for vm in tagged if vm.get("name")}
+    all_names = {vm["name"] for vm in qemu if vm.get("name")}
+    nameless = [str(vm.get("vmid", "?")) for vm in tagged if not vm.get("name")]
+
+    result = {"prune": [], "held": [], "untagged": [], "nameless": nameless}
+    for block in blocks:
+        name = block.get("name", "")
+        if name in tagged_names:
+            continue
+        if name in all_names:
+            result["untagged"].append(name)
+        elif nameless:
+            result["held"].append(name)
+        else:
+            result["prune"].append(name)
+    return result
+
+
 class FilterModule:
     def filters(self):
         return {
+            "ssh_config_blocks": ssh_config_blocks,
+            "ssh_config_prune": ssh_config_prune,
             "net_mac": net_mac,
             "guest_ipv4": guest_ipv4,
             "guest_address": guest_address,

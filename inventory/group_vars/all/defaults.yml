@@ -159,6 +159,49 @@ anthropic_api_key: "{{ vault_anthropic_api_key | default('') }}"
 # and removes a server an earlier run installed.
 claude_remote_control: true
 
+# ------------------------------------------------------------- VS Code -----
+# Make each VM ready for VS Code's Remote - SSH extension: an sshd drop-in that
+# keeps the port forward the VS Code Server is reached through enabled, a
+# check that sshd really runs with it, and a higher inotify limit for the file
+# watcher (README, "Using VS Code on the VM"). Set false to remove both files.
+vscode_remote: true
+
+# Where the code lives on each VM: what github_projects clones into, where a
+# Remote Control session opens, and what VS Code is pointed at. Empty means
+# ~/projects of vm_user, resolved on the VM itself. One value, because three
+# things read it and they must agree.
+vm_projects_dir: ""
+
+# An SSH alias per VM on this machine, kept in step with the VM's address:
+# `make deploy` and `make configure` write one for each VM they configure,
+# `make ssh-config` refreshes the whole fleet, `make destroy` removes it. The
+# aliases live in the managed file below, as one block per VM, and
+# ~/.ssh/config gets exactly one line, an Include of that file at its top.
+# Nothing else in ~/.ssh is ever edited. Set false to keep this project out of
+# ~/.ssh altogether (the Vagrantfile does).
+claude_ssh_config: true
+claude_ssh_config_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/claude-on-proxmox.conf"
+claude_ssh_user_config: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/config"
+# Set false to leave ~/.ssh/config untouched; the run then prints the Include
+# line to add by hand.
+claude_ssh_config_include: true
+# When set, each alias points at <name>.<domain> instead of the address the
+# guest agent reported, and a lease that moves no longer matters - for a
+# network whose DNS resolves VM names (a router that registers DHCP leases,
+# or avahi with "local").
+claude_ssh_host_domain: ""
+# Written into each alias when set. Empty lets ssh pick, which is the default
+# key vm_ssh_public_keys reads.
+claude_ssh_identity_file: ""
+# Off on purpose: the VM user has passwordless sudo and runs Claude Code, and
+# ForwardAgent hands every key in your agent to both for the life of the
+# connection. For pushes, `gh auth login` on the VM instead (README).
+claude_ssh_forward_agent: false
+# Extra "Key value" lines for each alias, verbatim. ServerAliveInterval keeps
+# a VS Code connection from going stale behind a NAT or a sleeping laptop.
+claude_ssh_options:
+  ServerAliveInterval: "30"
+
 # --------------------------------------------------- role variable wiring ---
 # Roles are self-contained and prefix their variables; wire them to the
 # project-level values above so a single change flows everywhere.
@@ -182,13 +225,18 @@ proxmox_template_storage: "{{ proxmox_storage }}"
 common_user: "{{ vm_user }}"
 common_user_ssh_public_keys: "{{ vm_ssh_public_keys }}"
 
+vscode_server_enabled: "{{ vscode_remote }}"
+vscode_server_user: "{{ vm_user }}"
+
 dev_tools_user: "{{ vm_user }}"
 
 claude_code_user: "{{ vm_user }}"
 claude_code_anthropic_api_key: "{{ anthropic_api_key }}"
 claude_code_remote_control: "{{ claude_remote_control }}"
+claude_code_remote_control_dir: "{{ vm_projects_dir }}"
 
 github_projects_user: "{{ vm_user }}"
 github_projects_username: "{{ github_username }}"
 github_projects_token: "{{ github_token }}"
 github_projects_include: "{{ github_projects }}"
+github_projects_dir: "{{ vm_projects_dir }}"

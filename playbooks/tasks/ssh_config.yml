@@ -1,0 +1,203 @@
+---
+# One SSH alias per VM, on this machine, so `ssh alpha` and the host picker of
+# VS Code's Remote - SSH extension follow the address DHCP gave the VM
+# (README, "Using VS Code on the VM").
+#
+# Inputs, always as `vars:` on the import:
+#   claude_ssh_vms    a list of {name, address, user, workspace?}; workspace is
+#                     only shown in the connect line, and only a caller that has
+#                     read it on the VM (configure) passes it
+#   claude_ssh_state  present (the default) or absent
+#
+# Never set_fact either name in a calling play. A fact outranks task vars,
+# so a play that builds its list as a claude_ssh_vms fact and later imports
+# this file again with `claude_ssh_vms: <another list>` acts on the fact:
+# ssh_config.yml once removed the aliases it had just refreshed instead of
+# the vanished ones, this way. Build the list under another name and pass it.
+#
+# The aliases live in one managed file, claude_ssh_config_file, as one
+# blockinfile block per VM, and the user's own ssh config gets exactly one
+# line, an Include of that file at the top. Never anything else: the body of
+# ~/.ssh/config is the user's, and the Include stays once added because
+# removing it would mean editing that file on destroy, while an Include of a
+# missing file is harmless. A block is written only for a VM this project
+# owns - every caller lists the fleet by its tag - so the file never names a
+# VM the user runs outside this project.
+#
+# Runs on the controller: every caller is a localhost play, so there is one
+# writer per run and the loops below are sequential.
+- name: ssh_config | Check the inputs
+  ansible.builtin.assert:
+    that:
+      - claude_ssh_vms is sequence
+      - claude_ssh_vms is not string
+      - claude_ssh_state | default('present') in ['present', 'absent']
+    quiet: true
+
+- name: ssh_config | Stat the managed file
+  ansible.builtin.stat:
+    path: "{{ claude_ssh_config_file }}"
+  register: claude_ssh_managed
+
+# The alias is the VM's name, and an entry the user wrote for that name wins
+# nothing: the managed file is included first, so writing it would make the
+# user's own entry stop working with no error anywhere. Refuse by name instead.
+# Every `Host` line is read, including ones that name several hosts.
+- name: ssh_config | Refuse an alias the user's own ssh config already defines
+  vars:
+    claude_ssh_user_hosts: >-
+      {{ (lookup('ansible.builtin.file', claude_ssh_user_config, errors='ignore') or '')
+         | regex_findall('^\s*Host\s+(.+?)\s*$', multiline=True, ignorecase=True)
+         | map('split') | flatten | list }}
+    claude_ssh_taken: "{{ claude_ssh_vms | map(attribute='name') | intersect(claude_ssh_user_hosts) | list }}"
+  ansible.builtin.assert:
+    that: claude_ssh_taken | length == 0
+    fail_msg: >-
+      {{ claude_ssh_user_config }} already has a Host entry named {{ claude_ssh_taken | join(', ') }},
+      and the alias this project keeps for a VM is the VM's name. The managed file is included
+      ahead of your own entries, so writing it would silently override yours. Rename the VM, or
+      rename that entry in your ssh config.
+    quiet: true
+  when: claude_ssh_state | default('present') == 'present'
+
+- name: ssh_config | Ensure the ssh directory exists
+  ansible.builtin.file:
+    path: "{{ claude_ssh_config_file | dirname }}"
+    state: directory
+    mode: "0700"
+  when: claude_ssh_state | default('present') == 'present'
+
+# HostName is the address the guest agent reported, or <name>.<domain> when
+# the network resolves VM names. Nothing else is recorded: the block holds
+# what ssh reads and no state of this project's. Each write is validated by
+# the real ssh client parsing the file, so a bad option fails this task
+# instead of every `ssh` on this machine.
+- name: ssh_config | Write the alias for each VM
+  vars:
+    claude_ssh_hostname: >-
+      {{ claude_ssh_vm.name ~ '.' ~ claude_ssh_host_domain
+         if claude_ssh_host_domain | default('') | length > 0 else claude_ssh_vm.address }}
+    claude_ssh_block: |-
+      Host {{ claude_ssh_vm.name }}
+          HostName {{ claude_ssh_hostname }}
+          User {{ claude_ssh_vm.user }}
+      {% if claude_ssh_identity_file | default('') | length > 0 %}
+          IdentityFile {{ claude_ssh_identity_file }}
+      {% endif %}
+      {% if claude_ssh_forward_agent | default(false) | bool %}
+          ForwardAgent yes
+      {% endif %}
+      {% for claude_ssh_key, claude_ssh_value in (claude_ssh_options | default({})).items() %}
+          {{ claude_ssh_key }} {{ claude_ssh_value }}
+      {% endfor %}
+  ansible.builtin.blockinfile:
+    path: "{{ claude_ssh_config_file }}"
+    create: true
+    mode: "0600"
+    marker: "# {mark} claude-on-proxmox: {{ claude_ssh_vm.name }}"
+    block: "{{ claude_ssh_block }}"
+    validate: "ssh -G -F %s {{ claude_ssh_vm.name }}"
+  loop: "{{ claude_ssh_vms }}"
+  loop_control:
+    loop_var: claude_ssh_vm
+    label: "{{ claude_ssh_vm.name }}"
+  when: claude_ssh_state | default('present') == 'present'
+
+# blockinfile refuses a path that does not exist unless it may create it, and
+# a missing managed file has nothing to remove anyway.
+- name: ssh_config | Remove the alias for each VM
+  ansible.builtin.blockinfile:
+    path: "{{ claude_ssh_config_file }}"
+    marker: "# {mark} claude-on-proxmox: {{ claude_ssh_vm.name }}"
+    state: absent
+  loop: "{{ claude_ssh_vms }}"
+  loop_control:
+    loop_var: claude_ssh_vm
+    label: "{{ claude_ssh_vm.name }}"
+  when:
+    - claude_ssh_state | default('present') == 'absent'
+    - claude_ssh_managed.stat.exists
+
+- name: ssh_config | Stat the user's ssh config
+  ansible.builtin.stat:
+    path: "{{ claude_ssh_user_config }}"
+  register: claude_ssh_user
+  when:
+    - claude_ssh_state | default('present') == 'present'
+    - claude_ssh_config_include | default(true) | bool
+
+# Whether a line already in the user's config reaches the managed file is
+# ssh's to say, not a regex's: ${HOME}/... is expanded only from OpenSSH 9.9
+# on (Ubuntu 24.04 ships 9.6, which reads it as a literal path and includes
+# nothing), and an Include below a Host block is scoped to that block. So the
+# user's config is handed to the real client, and the first VM's alias must
+# come back with the HostName the managed file just gave it.
+- name: ssh_config | Ask ssh whether the user's config reaches the managed file
+  ansible.builtin.command:
+    argv: [ssh, -G, -F, "{{ claude_ssh_user_config }}", "{{ claude_ssh_vms[0].name }}"]
+  register: claude_ssh_probe
+  changed_when: false
+  failed_when: false
+  when:
+    - claude_ssh_state | default('present') == 'present'
+    - claude_ssh_config_include | default(true) | bool
+    - claude_ssh_vms | length > 0
+    - claude_ssh_user.stat.exists
+
+# At the top, because an Include below a Host block is scoped to that block.
+# Only when the managed file is not reached already: a line in a spelling
+# ssh accepts for the same file - the absolute path, ~/..., ${HOME}/... or,
+# for a file in ~/.ssh, the bare name ssh resolves against it - that ssh
+# itself, asked above, reads. Then the user's line is left exactly as it is,
+# not rewritten into this one. A spelling ssh does not read ($HOME/..., or
+# ${HOME}/... on an older ssh) includes nothing, and this line is added. The
+# mode is set only on a file this task creates: the user's own keeps its own.
+- name: ssh_config | Include the managed file from the user's ssh config
+  vars:
+    claude_ssh_home: "{{ lookup('ansible.builtin.env', 'HOME') }}"
+    claude_ssh_rest: >-
+      {{ claude_ssh_config_file[claude_ssh_home | length:]
+         if claude_ssh_config_file.startswith(claude_ssh_home ~ '/') else '' }}
+    claude_ssh_spellings: >-
+      {{ [claude_ssh_config_file]
+         + (['~' ~ claude_ssh_rest, '${HOME}' ~ claude_ssh_rest]
+            if claude_ssh_rest | length > 0 else [])
+         + ([claude_ssh_config_file | basename]
+            if (claude_ssh_config_file | dirname) == (claude_ssh_user_config | dirname) else []) }}
+    claude_ssh_first_hostname: >-
+      {{ claude_ssh_vms[0].name ~ '.' ~ claude_ssh_host_domain
+         if claude_ssh_host_domain | default('') | length > 0 else claude_ssh_vms[0].address }}
+    claude_ssh_included: >-
+      {{ (lookup('ansible.builtin.file', claude_ssh_user_config, errors='ignore') or '')
+         is search('^\s*include\s+(' ~ (claude_ssh_spellings | map('regex_escape') | join('|')) ~ ')\s*$',
+                   multiline=True, ignorecase=True)
+         and ('hostname ' ~ claude_ssh_first_hostname) in (claude_ssh_probe.stdout_lines | default([])) }}
+  ansible.builtin.lineinfile:
+    path: "{{ claude_ssh_user_config }}"
+    create: true
+    mode: "{{ omit if claude_ssh_user.stat.exists | default(false) else '0600' }}"
+    line: "Include {{ claude_ssh_config_file }}"
+    insertbefore: BOF
+  when:
+    - claude_ssh_state | default('present') == 'present'
+    - claude_ssh_config_include | default(true) | bool
+    - claude_ssh_vms | length > 0
+    - not claude_ssh_included | bool
+
+- name: ssh_config | Show how to connect
+  ansible.builtin.debug:
+    msg: |-
+      {% for claude_ssh_vm in claude_ssh_vms %}
+      {% if claude_ssh_vm.workspace | default('') | length > 0 %}
+      {{ claude_ssh_vm.name }}: ssh {{ claude_ssh_vm.name }}   |   code --remote ssh-remote+{{ claude_ssh_vm.name }} {{ claude_ssh_vm.workspace }}
+      {% else %}
+      {{ claude_ssh_vm.name }}: ssh {{ claude_ssh_vm.name }}   |   make code VM_NAME={{ claude_ssh_vm.name }}
+      {% endif %}
+      {% endfor %}
+      {% if not claude_ssh_config_include | default(true) | bool %}
+      Not added to {{ claude_ssh_user_config }} (claude_ssh_config_include is off).
+      Put this line at its top: Include {{ claude_ssh_config_file }}
+      {% endif %}
+  when:
+    - claude_ssh_state | default('present') == 'present'
+    - claude_ssh_vms | length > 0

@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+# VS Code's Remote - SSH extension reaches the VS Code Server it starts on this
+# host through a port forward over the SSH connection (a Unix socket forward
+# when remote.SSH.remoteServerListenOnSocket is set), so both stay on. The
+# keepalive reaps a session whose client went to sleep.
+AllowTcpForwarding yes
+AllowStreamLocalForwarding yes
+ClientAliveInterval {{ vscode_server_client_alive_interval }}
+ClientAliveCountMax {{ vscode_server_client_alive_count_max }}

@@ -38,6 +38,10 @@ patterns=(
   # Credentials.
   '(^|/)\.vault_pass'
   '(^|/)\.env'
+  # Run logs: the Makefile writes every Ansible run to .logs/, and Ansible's
+  # output names the Proxmox host and every VM by address.
+  '(^|/)\.logs/'
+  '\.log$'
 )
 
 # Tracked files a rule above matches that hold no real values.

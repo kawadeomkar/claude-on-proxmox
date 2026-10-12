@@ -1,0 +1,18 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    - name: Create the target user
+      ansible.builtin.user:
+        name: dev
+        shell: /bin/bash
+
+    # What the common role would have installed: sshd itself (its postinst
+    # generates the host keys `sshd -T` needs) and the two download tools the
+    # role looks for.
+    - name: Install prerequisites normally provided by the common role
+      ansible.builtin.apt:
+        name: [openssh-server, curl, wget]
+        state: present
+        update_cache: true

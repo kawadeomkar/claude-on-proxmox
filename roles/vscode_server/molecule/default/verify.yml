@@ -1,0 +1,48 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Read the sshd drop-in
+      ansible.builtin.slurp:
+        src: /etc/ssh/sshd_config.d/20-vscode-server.conf
+      register: vscode_server_verify_dropin
+
+    - name: Read the sysctl file
+      ansible.builtin.slurp:
+        src: /etc/sysctl.d/60-vscode-server.conf
+      register: vscode_server_verify_sysctl
+
+    - name: Stat both files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: vscode_server_verify_stat
+      loop:
+        - /etc/ssh/sshd_config.d/20-vscode-server.conf
+        - /etc/sysctl.d/60-vscode-server.conf
+
+    # What sshd runs with, not what the file says: the common role's
+    # hardening drop-in must still be honoured next to this one.
+    - name: Read the effective sshd configuration
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -T]
+      register: vscode_server_verify_sshd
+      changed_when: false
+
+    - name: Assert the host is ready for Remote - SSH
+      vars:
+        vscode_server_verify_dropin_text: "{{ vscode_server_verify_dropin.content | b64decode }}"
+        vscode_server_verify_sysctl_text: "{{ vscode_server_verify_sysctl.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'AllowTcpForwarding yes' in vscode_server_verify_dropin_text"
+          - "'AllowStreamLocalForwarding yes' in vscode_server_verify_dropin_text"
+          - "'ClientAliveInterval 45' in vscode_server_verify_dropin_text"
+          - "'ClientAliveCountMax 4' in vscode_server_verify_dropin_text"
+          - vscode_server_verify_sysctl_text is search('^fs\.inotify\.max_user_watches\s*=\s*262144$', multiline=True)
+          - vscode_server_verify_stat.results | map(attribute='stat.mode') | list == ['0644', '0644']
+          - "'allowtcpforwarding yes' in vscode_server_verify_sshd.stdout_lines"
+          - "'allowstreamlocalforwarding yes' in vscode_server_verify_sshd.stdout_lines"
+          - "'clientaliveinterval 45' in vscode_server_verify_sshd.stdout_lines"
+          - "'clientalivecountmax 4' in vscode_server_verify_sshd.stdout_lines"
+        quiet: true

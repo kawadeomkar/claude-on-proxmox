@@ -54,5 +54,23 @@ def test_a_role_tag_keeps_every_discovery_task(tmp_path):
     everything = _listed_tasks(tmp_path)[DISCOVERY]
     assert everything, "discover.yml lists no tasks at all"
     # The tag that pushes a new API key. Every role tag behaves the same way
-    # here, so one stands for all four.
+    # here, so one stands for all five.
     assert _listed_tasks(tmp_path, "--tags", "claude_code")[DISCOVERY] == everything
+
+
+# The alias play at the end, and the lookup it reads at the end of the
+# configure play, are tagged the same way for the same reason: a
+# `make configure TAGS=claude_code` after a lease moved must still refresh
+# the alias, or `ssh alpha` keeps pointing at the old address.
+ALIASES = "Keep an SSH alias for each configured VM"
+CONFIGURE = "Configure Claude development VMs"
+
+
+def test_a_role_tag_keeps_the_alias_play_and_its_lookup(tmp_path):
+    everything = _listed_tasks(tmp_path)
+    tagged = _listed_tasks(tmp_path, "--tags", "claude_code")
+    assert everything[ALIASES], "configure.yml lists no alias tasks at all"
+    assert tagged[ALIASES] == everything[ALIASES]
+    lookup = ["Look up the VM user's home directory", "Record where the code lives, for the alias play below"]
+    assert all(task in everything[CONFIGURE] for task in lookup), everything[CONFIGURE]
+    assert all(task in tagged[CONFIGURE] for task in lookup), tagged[CONFIGURE]

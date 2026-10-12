@@ -15,7 +15,7 @@ repository can be shared as-is.
 
 | Where | What |
 |-------|------|
-| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core), `make`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`) |
+| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core), `make`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `make code` (optional) |
 | Proxmox VE 8.x or 9.x | Root SSH access (template build only) and an API token. A fresh install needs the setup below first |
 | Testing (optional) | Docker Engine for Molecule; Vagrant + VirtualBox for a full VM test |
 
@@ -217,12 +217,15 @@ beta                        9002  running   192.0.2.52
 gamma                       9003  stopped   -
 
 3 VMs tagged "claude-on-proxmox".
+VS Code: make code VM_NAME=<name> [PROJECT=<repo>] (make ssh-config refreshes the aliases).
 No address for gamma: the guest agent has not reported one.
-Those VMs may be stopped, still booting, or built without the agent.
+Those VMs may be stopped, still booting, built without the agent, or on a node that is down.
 ```
 
 Then `ssh dev@192.0.2.51` and run `claude`. If you did not set `vault_anthropic_api_key`, log in
-interactively the first time.
+interactively the first time. Or open the VM in VS Code on your own machine: the run has already
+written an SSH alias named after the VM, so `ssh alpha` works too, and `make code VM_NAME=alpha`
+opens its `~/projects` in the editor (see [Using VS Code on the VM](#using-vs-code-on-the-vm)).
 
 ### Naming and multiple VMs
 
@@ -240,7 +243,8 @@ Given, `VM_NAME` narrows every target to those names. Left out, what it means de
 | Target | Without `VM_NAME` |
 |--------|-------------------|
 | `make deploy`, `make provision`, `make destroy` | `claude-on-proxmox-default` |
-| `make configure`, `make check`, `make list`, `make claude-login` | every VM this project created (tagged `claude-on-proxmox`) |
+| `make configure`, `make check`, `make list`, `make claude-login`, `make ssh-config` | every VM this project created (tagged `claude-on-proxmox`) |
+| `make code` | refused: it opens one VM, so it needs one name; `PROJECT` optionally narrows it to one project |
 
 So a bare `make deploy` creates and configures `claude-on-proxmox-default` and leaves any other VMs
 alone, while a bare `make configure` re-applies the configuration to all of them.
@@ -369,6 +373,7 @@ and set `proxmox_validate_certs: true` in `local.yml`.
 | Role | Purpose | Key variables |
 |------|---------|---------------|
 | `common` | apt upgrade, baseline packages, login user with passwordless sudo and SSH keys, sshd hardening (key-only login), timezone, qemu-guest-agent, `~/.local/bin` on PATH | `common_packages`, `common_extra_packages`, `common_timezone`, `common_harden_ssh` |
+| `vscode_server` | What VS Code's Remote - SSH extension needs on the host: an sshd drop-in that keeps the port forward the VS Code Server is reached through enabled, plus keepalives, checked against what sshd actually runs with; and a higher inotify limit for the file watcher. Off removes both files | `vscode_remote`, `vscode_server_client_alive_interval`, `vscode_server_inotify_watches` |
 | `dev_tools` | Node.js (NodeSource), Docker Engine, GitHub CLI, uv/uvx (release pinned by version and SHA256), pipx, build tools. Apt signing keys are vendored in `roles/dev_tools/files` | `dev_tools_install_*`, `dev_tools_node_major`, `dev_tools_uv_version`, `dev_tools_npm_global_packages` |
 | `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md`, and optionally a Remote Control server so the session is reachable from claude.ai and the mobile app | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions`, `claude_code_remote_control` |
 | `github_projects` | Lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters) and clones them | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_projects_clone_protocol` |
@@ -420,8 +425,8 @@ show up as changes) and the Claude Code binary, which updates itself on the `sta
 #### Re-running one part of it
 
 `TAGS` narrows a run to one role, which is much faster than the whole thing when you have changed a single
-variable. The tags are `common`, `dev_tools`, `claude_code` and `github_projects`; discovery always runs, so
-the VMs are still found. `TAGS` works with `make configure` and `make check`; `make deploy` refuses it,
+variable. The tags are `common`, `vscode_server`, `dev_tools`, `claude_code` and `github_projects`; discovery
+always runs, so the VMs are still found, and so does the step at the end that refreshes each VM's SSH alias. `TAGS` works with `make configure` and `make check`; `make deploy` refuses it,
 because building the template and creating VMs carry no tags and a tagged deploy would do nothing.
 
 ```bash
@@ -553,6 +558,135 @@ Bypass permissions cannot be selected there. The value is passed to Claude Code 
 mode it accepts works; one it does not stops the server at startup, and on a signed-in VM
 `make configure` then fails with the command that shows why.
 
+### Using VS Code on the VM
+
+VS Code's [Remote - SSH](https://code.visualstudio.com/docs/remote/ssh) extension runs the editor's
+back end on the VM, over the same key-only SSH everything else uses: the window is on your machine,
+the files, the terminal, the extensions and `claude` are on the VM. Nothing new is opened, relayed or
+logged into. The one thing it needs that `ssh dev@<address>` does not have is a name that follows the
+address DHCP gave the VM, and that is what this project keeps for you.
+
+```bash
+make deploy VM_NAME=alpha          # as before; the run ends with
+#   alpha: ssh alpha   |   code --remote ssh-remote+alpha /home/dev/projects
+make code VM_NAME=alpha            # later: refresh the alias from Proxmox, then open the VM in VS Code
+make code VM_NAME=alpha PROJECT=discord-music-bot   # just that project, in a window of its own
+```
+
+`make code` looks the VM up on Proxmox, rewrites its alias in case the lease moved, checks over SSH
+that the folder it is about to open is there, installs the Remote - SSH extension if VS Code does
+not have it, and runs `code --remote ssh-remote+alpha /home/dev/projects`.
+
+`PROJECT` opens one folder of `~/projects` instead: the repository's name, as `github_projects`
+cloned it. A window rooted at the project is what most editor features expect - the source control
+view, search, a debugger's launch configuration and the Claude Code extension all start from the
+repository, where with `~/projects` open they see every repository at once. Names are checked
+before anything runs: a GitHub repository name is letters, digits, `.`, `-` and `_`, so a `/`, a
+`..` or a quote is refused. A name that is not there is reported with what is, and a name that
+differs only in case gets a suggestion, because folder names on the VM are case-sensitive:
+
+```
+There is no project named parkbnb in /home/dev/projects on alpha. Did you mean ParkBnb? Folder names are case-sensitive.
+```
+
+The same check catches a VM that was never configured, which has no `~/projects` yet; the message
+says to run `make configure` first. The first connection installs VS Code Server on the VM and takes about a minute;
+the VM downloads it from Microsoft over HTTPS, so it needs that route out. You can also pick `alpha`
+in the extension's host picker (*Remote-SSH: Connect to Host…*) and open any folder.
+
+**Where the alias lives.** In `~/.ssh/claude-on-proxmox.conf`, one block per VM, included from the
+top of `~/.ssh/config` with a single `Include` line. That file and that line are the only things this
+project writes in `~/.ssh` besides `known_hosts`; the body of `~/.ssh/config` is never touched, its
+permissions are left as they are, and the `Include` stays once added (an `Include` of a missing file
+is harmless). An `Include` of the same file that you already have, as `~/.ssh/claude-on-proxmox.conf`,
+`${HOME}/...` or the bare name, counts if your ssh reads it - the question is put to `ssh -G` rather
+than guessed from the spelling, since `${HOME}/...` is expanded only from OpenSSH 9.9 on (Ubuntu
+24.04 ships 9.6) and an `Include` below a `Host` block is scoped to that block - and your line is
+left exactly as you wrote it either way. The alias is the VM's
+name. If your own `~/.ssh/config` already has a `Host` entry of that name, the run refuses to write
+the alias and names the line: rename the VM, or the entry, since the managed file is included first
+and would otherwise override yours silently. Set `claude_ssh_config: false` to keep the project out
+of `~/.ssh` altogether, or `claude_ssh_config_include: false` to write the file but add the `Include`
+yourself.
+
+```
+# ~/.ssh/claude-on-proxmox.conf
+# BEGIN claude-on-proxmox: alpha
+Host alpha
+    HostName 192.0.2.51
+    User dev
+    ServerAliveInterval 30
+# END claude-on-proxmox: alpha
+```
+
+**Keeping it current.** `make deploy` and `make configure` write the alias of each VM they finish,
+`make destroy` removes it with the VM (as it already forgets the host key; a VM whose deletion
+fails keeps its alias, since it is still there), and `make ssh-config`
+brings the whole fleet back in step at any time: a lease that moved, a VM deleted in the Proxmox UI,
+a second machine. Fleet-wide it also prunes the aliases of VMs that no longer exist. Pruning only
+ever removes blocks from the managed file, never VMs, and a block is only ever written for a VM
+tagged `claude-on-proxmox`, so a VM you run outside this project cannot be affected. Two cases are
+left alone and reported instead: a name that an *untagged* VM still carries (not this project's to
+reason about, exactly as `make destroy` refuses it), and anything at all while a tagged VM is listed
+without a name, which is what a node that is down looks like. `make ssh-config VM_NAME=alpha`
+refreshes one VM and never prunes.
+
+On a network whose DNS resolves VM names (a router that registers DHCP leases, or avahi with
+`local`), set `claude_ssh_host_domain: lan` and every alias points at `alpha.lan` instead of the
+address; a lease that moves then never matters.
+
+**Agent forwarding is off**, and should stay off: the VM user has passwordless sudo and runs Claude
+Code, and `ForwardAgent yes` would hand every key in your agent to both for the life of the
+connection. For `git push` from the VM, `gh auth login && gh auth setup-git` there once (the `gh`
+CLI is installed), or clone over SSH with a key that lives on the VM. `claude_ssh_forward_agent: true`
+turns it on if you have decided otherwise.
+
+**What the VM gets.** The `vscode_server` role writes `/etc/ssh/sshd_config.d/20-vscode-server.conf`,
+which keeps `AllowTcpForwarding` and `AllowStreamLocalForwarding` on (the server is reached through
+a port forward over the SSH connection) and adds a keepalive so an editor left open on a laptop that
+went to sleep is reaped in minutes. Then it asks sshd what it will apply to your connection - as
+the VM user, from your machine's address, so `Match` blocks count - and fails, naming the file, if
+forwarding ends up off, limited to the remote direction, or removed by `DisableForwarding`: sshd
+keeps the first value it reads, so a `05-*.conf` of yours wins over ours without a word, and a
+`Match User dev` block applies whatever sorts first. It also raises
+`fs.inotify.max_user_watches` to the 524288 VS Code recommends, or the editor warns that it cannot
+watch a large workspace. `vscode_remote: false` removes both files. The Claude Code extension
+(`anthropic.claude-code`) installs on the VM's side of the connection like any other extension and
+uses the VM's `claude` and its login; `remote.SSH.defaultExtensions` in your VS Code settings
+installs it on every VM you open.
+
+**When things go wrong.** A connection that hangs or a server that will not start is reset with
+*Remote-SSH: Kill VS Code Server on Host* (or `rm -rf ~/.vscode-server` on the VM); a `HOST KEY
+VERIFICATION FAILED` after a rebuild means a lease was reused by a VM that `make destroy` did not
+delete, and `ssh-keygen -R <address>` clears it. If Ansible runs somewhere other than the machine
+VS Code is on, copy the managed file and the key there; a VS Code on Windows reads
+`%USERPROFILE%\.ssh\config`, not WSL's, so point `remote.SSH.configFile` at the managed file
+(`\\wsl.localhost\<distro>\home\<you>\.ssh\claude-on-proxmox.conf`) and keep the key readable from
+Windows.
+
+### Run logs
+
+Every `make` target that runs Ansible keeps a copy of the whole run in `.logs/`, one file per run,
+named after when it started and the target:
+
+```bash
+make deploy VM_NAME=beta
+#   Logging this run to /home/you/claude-on-proxmox/.logs/20261007-203015-deploy.log
+make logs                         # the newest 20, newest first
+make logs-clean                   # delete them all
+```
+
+The terminal shows exactly what it did before; Ansible copies its output to the file with a
+timestamp on every line, so a run can be read back after the terminal has scrolled away or the
+window is gone. Tasks marked `no_log` are hidden in the file as on screen, so the API token and
+the GitHub token never reach it. The files do name the Proxmox host and every VM by address, so
+`.logs/` is git-ignored, refused by the tracked-file guard even with `git add -f`, and readable only
+by you. Logs older than 14 days are deleted whenever a logged run starts (`LOG_RETENTION_DAYS`).
+`LOG_DIR=` turns logging off for one run, `LOG_DIR=/some/where` moves it, and an
+`ANSIBLE_LOG_PATH` of your own is used as it is. Molecule runs (`make molecule`, `make test`) are
+logged the same way. A command you run with `.venv/bin/ansible-playbook` directly is not; put
+`ANSIBLE_LOG_PATH=.logs/<name>.log` in front of it for the same result.
+
 ### Tearing down
 
 ```bash
@@ -572,7 +706,7 @@ before this project tagged its VMs, see
 ```bash
 make lint                 # yamllint + ansible-lint (production profile) + ruff
 make syntax               # --syntax-check of every playbook against your inventory/
-make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, Makefile guards (no network)
+make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the managed SSH config, Makefile guards (no network)
 make molecule             # Molecule (Docker) test of every role, incl. idempotence
 make molecule-integration # playbooks/configure.yml end to end in a container
 make molecule-provision   # provision.yml + discover.yml against a fake Proxmox API
@@ -594,7 +728,12 @@ so the tests are deterministic:
   wait loop is exercised, and reports a docker0 interface the role has to ignore.
 - The `provision` scenario runs `provision.yml` exactly as `make provision VM_NAME=alpha,beta` does,
   then rediscovers both VMs from their tag in a separate stage - proving a later `make configure` can
-  find them without anything stored locally.
+  find them without anything stored locally. It ends with `make ssh-config` and `make code` against
+  the fake fleet, with a stand-in `code` that records what it was asked.
+- `vscode_server` proves the role refuses an sshd that a drop-in sorted before its own has turned
+  forwarding off on, naming the file, and removes what it wrote when switched off.
+- Everything the playbooks write on the controller - the SSH aliases - goes into Molecule's ephemeral
+  directory, never the developer's `~/.ssh`; `tests/unit/test_ssh_config.py` checks every scenario.
 - `proxmox_template` runs against a stateful fake `qm` (`tests/molecule/fake_qm.sh`), a fake
   `virt-customize`, a fake `/etc/pve/.vmlist` that places a VMID on a second node, and a locally
   served "cloud image" with a real SHA256SUMS file.
@@ -644,16 +783,21 @@ generated from the commits since the previous tag.
 
 ```
 ansible.cfg                 project-wide Ansible settings (accept-new host keys, forks, yaml output)
+.logs/                      one log per make run that used Ansible (git-ignored, pruned after 14 days)
 deploy.yml                  template (if missing) + provision + configure
-playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, list.yml, claude_login.yml, destroy.yml
-playbooks/tasks/            cluster_vms.yml (the shared cluster listing) and vm_addresses.yml (each VM's config and
-                            agent reply), imported by the fleet-wide playbooks
+playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, list.yml, claude_login.yml, destroy.yml,
+                            ssh_config.yml (the SSH aliases, fleet-wide), code.yml (one VM in VS Code)
+playbooks/tasks/            cluster_vms.yml (the shared cluster listing), vm_addresses.yml (each VM's config and
+                            agent reply) and ssh_config.yml (one alias per VM in ~/.ssh/claude-on-proxmox.conf),
+                            imported by the playbooks above
 filter_plugins/             net_mac, guest_ipv4, guest_address and guest_addresses, for reading guest agent
-                            output; proxmox_access_denied, for telling a refused token from a slow boot
+                            output; proxmox_access_denied, for telling a refused token from a slow boot;
+                            ssh_config_blocks and ssh_config_prune, for the managed SSH config
 inventory/                  controller.yml, hosts.yml.example, group_vars/all/{defaults.yml,local.yml.example,vault.yml.example}
 roles/                      one role per concern, each with defaults, meta/argument_specs, molecule/
 roles/github_projects/library/github_repos.py   custom module
-tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, Makefile guards
+tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, the managed SSH
+                            config, Makefile guards
 tests/molecule/             shared fakes for Molecule scenarios
 molecule/configure/         integration scenario for the full configure playbook
 molecule/provision/         end-to-end scenario for provisioning + discovery

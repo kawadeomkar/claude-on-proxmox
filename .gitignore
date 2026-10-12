@@ -31,6 +31,9 @@ vault*.json
 # Credentials.
 .vault_pass*
 .env*
+# Run logs (the Makefile's LOG_DIR): they name hosts and addresses.
+.logs/
+*.log
 # A committed template carries no real values.
 !*.example
 
@@ -51,7 +54,6 @@ collections/ansible_collections/
 
 # --- Vagrant ---
 .vagrant/
-*.log
 
 # --- Editors / OS ---
 .idea/
