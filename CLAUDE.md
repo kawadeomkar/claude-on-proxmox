@@ -223,8 +223,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   and never rewrites or changes the mode of the user's file.
 - **`make code` writes in one directory of its own on the VM, and never answers VS Code's security
   questions.** With `vscode_claude_terminal` it writes a `.code-workspace` file in
-  `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` task
-  runs `claude` in a terminal; with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
+  `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` tasks
+  run `claude` in a terminal and a login shell split to its left (one presentation group); with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
   0700 directory), and a second `folderOpen` task, "Session notes", run beside the Claude task, which
   rewrites only the notes' section between the live markers each time the window opens and opens them.
   Never make it the Claude task's `dependsOn`: VS Code misses a workspace-file task when it looks a

@@ -1386,7 +1386,8 @@
       vars:
         verify_ws: "{{ verify_ssh_dir }}/projects"
         verify_notes_task: "{{ verify_ws_project.tasks.tasks[0] }}"
-        verify_task: "{{ verify_ws_project.tasks.tasks[1] }}"
+        verify_shell_task: "{{ verify_ws_project.tasks.tasks[1] }}"
+        verify_task: "{{ verify_ws_project.tasks.tasks[2] }}"
         verify_code_play: "{{ (lookup('ansible.builtin.file', verify_code_playbook) | from_yaml)[0] }}"
         verify_code_script: "{{ verify_code_play.vars.code_terminal_script }}"
         verify_notes_script: "{{ verify_code_play.vars.code_notes_script }}"
@@ -1405,11 +1406,18 @@
           - "verify_ws_project.settings == {'workbench.editorAssociations': verify_preview}"
           - verify_ws_whole.tasks.version == '2.0.0'
           - verify_ws_project.tasks.version == '2.0.0'
-          - verify_ws_whole.tasks.tasks | length == 2
+          - verify_ws_whole.tasks.tasks | length == 3
+          - verify_ws_whole.tasks.tasks[2].options.cwd == verify_ws
+          - verify_ws_whole.tasks.tasks[2].args == verify_task.args
           - verify_ws_whole.tasks.tasks[1].options.cwd == verify_ws
-          - verify_ws_whole.tasks.tasks[1].args == verify_task.args
           - verify_ws_whole.tasks.tasks[0] == verify_notes_task
-          - verify_ws_project.tasks.tasks | length == 2
+          - verify_ws_project.tasks.tasks | length == 3
+          # A login shell in the same folder, split to the left of Claude's terminal: one presentation group.
+          - verify_shell_task.label == 'Shell'
+          - verify_shell_task.args == ['-l']
+          - verify_shell_task.options.cwd == verify_ws ~ '/discord-music-bot'
+          - "verify_shell_task.runOptions == {'runOn': 'folderOpen'}"
+          - verify_shell_task.presentation.group == 'claude'
           # The notes' task, run beside Claude's when the window opens: quietly, its terminal closing when it ends.
           - verify_notes_task.label == 'Session notes'
           - verify_notes_task.args == ['-lc', verify_notes_script, 'session-notes', verify_notes, 'alpha', 'claude-remote-control']
@@ -1430,7 +1438,7 @@
           - verify_task.args[7] is search('make configure VM_NAME=alpha TAGS=github_projects$')
           - verify_task.options.cwd == verify_ws ~ '/discord-music-bot'
           - "verify_task.runOptions == {'runOn': 'folderOpen'}"
-          - "verify_task.presentation == {'reveal': 'always', 'focus': true, 'panel': 'dedicated', 'clear': true, 'showReuseMessage': true}"
+          - "verify_task.presentation == {'reveal': 'always', 'focus': true, 'panel': 'dedicated', 'group': 'claude', 'clear': true, 'showReuseMessage': true}"
           - verify_task.problemMatcher == []
         fail_msg: "make code wrote {{ verify_ws_whole }} and {{ verify_ws_project }}"
         quiet: true
@@ -1588,6 +1596,9 @@
             verify_off.stdout is search('It will not start on its own: task.allowAutomaticTasks is \\W+off\\W+ in \\S+/vscode/settings.json')
           - verify_off.stdout is search('once you have trusted the window')
           - verify_off.stdout is not search('trust the window')
+          # Nor the shell beside it: it is started by hand too.
+          - verify_off.stdout is search('Shell opens a shell')
+          - verify_off.stdout is not search('opens to its left')
           # Switched off: the bare folder, as before this feature, and nothing on the VM.
           - verify_code_log_now[-1] == '--remote ssh-remote+alpha ' ~ verify_ws ~ '/ParkBnb'
           - verify_bare.stdout is search(('VS Code is opening ' ~ verify_ws ~ '/ParkBnb on alpha') | regex_escape)

@@ -90,8 +90,33 @@
         # provider instead - npm, gulp (which runs gulp), grunt, jake - about
         # 7.5 s on a projects directory of 22 repositories before Claude could
         # start (measured live, 2026-10-12).
+        # The shell before Claude's terminal: VS Code starts the folderOpen
+        # tasks in the order listed, and tasks of one presentation group share
+        # a terminal as split panes in the order they start, so the shell is on
+        # the left.
         tasks: >-
-          {{ ([code_notes_task] if code_notes | bool else []) + [code_claude_task] }}
+          {{ ([code_notes_task] if code_notes | bool else []) + [code_shell_task, code_claude_task] }}
+    # A shell in the window's folder, beside Claude's terminal: an interactive
+    # login shell, as a terminal VS Code opens itself would be, its pane closing
+    # when it exits.
+    code_shell_task:
+      label: Shell
+      type: process
+      command: /bin/bash
+      args: [-l]
+      options:
+        cwd: "{{ code_target }}"
+      runOptions:
+        runOn: folderOpen
+      presentation:
+        reveal: always
+        focus: false
+        panel: dedicated
+        group: claude
+        clear: true
+        close: true
+        showReuseMessage: false
+      problemMatcher: []
     code_claude_task:
       label: Claude
       type: process
@@ -119,6 +144,8 @@
         reveal: always
         focus: true
         panel: dedicated
+        # Split beside the shell (code_shell_task), on its right.
+        group: claude
         clear: true
         # When claude exits, say what the next keypress does.
         showReuseMessage: true
@@ -991,6 +1018,11 @@
                 {{ 'A terminal named Claude then starts claude in it, signing in to Claude'
                    ~ (' and to GitHub' if code_github_signed_in | length > 0 else '') ~ ' first if '
                    ~ claude_vm_names[0] ~ ' has not been. ' ~ code_first_time if code_terminal else '' }}
+              # The shell starts as Claude's terminal does: by itself, or by hand.
+              - >-
+                {{ ('"Tasks: Run Task", Shell opens a shell in the same folder beside it.'
+                    if code_vscode_auto_tasks == 'off' else 'A shell in the same folder opens to its left.')
+                   if code_terminal else '' }}
               - "{{ code_notes_said }}"
           ansible.builtin.debug:
             msg: "{{ code_said | select | join(' ') | trim }}"

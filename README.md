@@ -994,8 +994,8 @@ Windows.
 #### A Claude session in the window
 
 `make code` does not stop at the window. VS Code is handed a small workspace file that names the
-folder and holds one task, so once the window has connected a terminal named **Claude** opens in it
-running `claude` in the folder: `make deploy` ends in a Claude session in the repository, and so does
+folder and holds its tasks, so once the window has connected a terminal named **Claude** opens in it
+running `claude` in the folder, split beside a plain **Shell** in the same folder on its left: `make deploy` ends in a Claude session in the repository, and so does
 `make code` later. `make deploy` has signed the VM in already; on a VM that has not signed in to Claude
 yet, the terminal runs `claude auth login` first. The sign-in page opens in the browser on your
 machine - VS Code Server sends every URL a terminal opens there - and if the page shows a code, paste

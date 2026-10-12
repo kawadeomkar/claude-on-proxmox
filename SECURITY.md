@@ -81,7 +81,7 @@ that only restate them are not treated as vulnerabilities:
   defaults to anyway; the VM user can forward ports, as a user with passwordless sudo always could.
   SSH agent forwarding to the VM is off by default and documented as a choice, because the VM user is
   root-equivalent and runs an AI agent.
-- `make code` opens a workspace file whose task starts `claude` in a terminal when the window opens
+- `make code` opens a workspace file whose tasks start `claude` in a terminal, and a shell beside it, when the window opens
   (`vscode_claude_terminal`, on by default). The file is written by this project beside the
   repositories, never in one, and its command is fixed in `playbooks/code.yml`. VS Code still runs
   it only in a window you have trusted and once you have allowed automatic tasks; the project reads

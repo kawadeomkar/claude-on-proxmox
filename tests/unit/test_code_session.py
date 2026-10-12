@@ -1058,7 +1058,7 @@ def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a
     }
     # Side by side when the window opens: the notes never hold Claude up. A
     # dependsOn made VS Code ask every task provider first, 7.5 s live.
-    notes, claude = workspace["tasks"]["tasks"]
+    notes, shell, claude = workspace["tasks"]["tasks"]
     assert notes["label"] == "Session notes" and notes["runOptions"] == {"runOn": "folderOpen"}
     assert notes["args"][2:] == ["session-notes", f"{SESSION}/alpha-session.md", "alpha", "claude-remote-control"]
     assert notes["presentation"] == {
@@ -1071,6 +1071,15 @@ def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a
     assert claude["label"] == "Claude" and "dependsOn" not in claude
     assert claude["runOptions"] == {"runOn": "folderOpen"}
     assert claude["args"][-3:] == [notes["args"][1], f"{SESSION}/alpha-session.md", "claude-remote-control"]
+    # A shell beside Claude's terminal, on its left: one presentation group
+    # splits a terminal in the order its tasks start, which is the order listed.
+    assert (shell["label"], shell["command"], shell["args"]) == ("Shell", "/bin/bash", ["-l"])
+    assert shell["options"] == {"cwd": "/home/dev/projects"} == claude["options"]
+    assert shell["runOptions"] == {"runOn": "folderOpen"}
+    assert shell["presentation"]["group"] == claude["presentation"]["group"] == "claude"
+    assert shell["presentation"]["focus"] is False and claude["presentation"]["focus"] is True
+    assert shell["presentation"]["close"] is True
+    assert "A shell in the same folder opens to its left." in run["opened"]
     assert f"The session notes open beside it each time ({SESSION}/alpha-session.md)." in run["opened"]
     assert "may ask" not in run["opened"]
     assert run["opened"].endswith("vscode_session_notes: false turns them off.")
@@ -1082,7 +1091,8 @@ def test_a_project_s_window_keeps_its_one_folder_and_says_the_question_vs_code_m
     run = windows["notes, one project"]
     workspace = _workspace(run)
     assert workspace["folders"] == [{"path": "/home/dev/projects/discord-music-bot"}]
-    assert [task["label"] for task in workspace["tasks"]["tasks"]] == ["Session notes", "Claude"]
+    assert [task["label"] for task in workspace["tasks"]["tasks"]] == ["Session notes", "Shell", "Claude"]
+    assert workspace["tasks"]["tasks"][1]["options"] == {"cwd": "/home/dev/projects/discord-music-bot"}
     assert (
         "VS Code may ask once whether to open them, as a file outside this window's folder: Open, or trust the"
         " window of make code VM_NAME=alpha, which covers them." in run["opened"]
@@ -1106,13 +1116,16 @@ def test_with_automatic_tasks_off_the_notes_are_named_with_how_to_open_them(wind
         f'The session notes are at {SESSION}/alpha-session.md: "Tasks: Run Task", Session notes opens them.'
         in run["opened"]
     ), run["opened"]
+    # The shell does not start by itself either.
+    assert '"Tasks: Run Task", Shell opens a shell in the same folder beside it.' in run["opened"]
+    assert "opens to its left" not in run["opened"]
 
 
 def test_no_task_of_the_workspace_depends_on_another():
     # VS Code looks a dependency of a workspace-file task up, misses it, and
     # asks every task provider instead: 7.5 s before Claude started, live.
     play = _play()
-    for name in ("code_claude_task", "code_notes_task"):
+    for name in ("code_claude_task", "code_notes_task", "code_shell_task"):
         assert "dependsOn" not in play["vars"][name], name
     assert "dependsOn" not in str(play["vars"]["code_workspace_file"])
 
@@ -1122,7 +1135,8 @@ def test_with_the_notes_off_the_workspace_is_as_it_was(windows):
     workspace = _workspace(run)
     assert workspace["folders"] == [{"path": "/home/dev/projects"}]
     assert workspace["settings"] == {"files.exclude": {".claude-on-proxmox": True}}
-    (claude,) = workspace["tasks"]["tasks"]
+    shell, claude = workspace["tasks"]["tasks"]
+    assert (shell["label"], claude["label"]) == ("Shell", "Claude")
     assert "dependsOn" not in claude
     assert claude["args"][-3:] == ["", "", "claude-remote-control"]
     assert "session notes" not in run["opened"]

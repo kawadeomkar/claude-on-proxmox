@@ -558,7 +558,9 @@ outranks a play var, and no task var shares a fact's name.
 
 **The workspace file** is built as data and written with `to_nice_json`, so no path breaks its JSON;
 `copy` leaves an unchanged file alone. It names the folder by absolute path, hides its own directory
-from the explorer of the window that shows it, and holds one task, `Claude`: a `process` task,
+from the explorer of the window that shows it, and holds a `Shell` task - `/bin/bash -l` in the folder,
+`folderOpen` too, in the same presentation group as Claude's so the two share a terminal as split panes,
+the shell on the left because it is listed, and so started, first - and the `Claude` task: a `process` task,
 `/bin/bash -lc <script> make-code` and eight arguments (the line without `claude`, the two lines a
 sign-in ends with, the path unit's file, GitHub's line, the git protocol, the scopes, the VM's name),
 `cwd` the folder, `runOptions.runOn:
