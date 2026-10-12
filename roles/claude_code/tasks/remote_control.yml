@@ -306,6 +306,16 @@
           Open claude.ai/code or the Claude mobile app, signed in as the same
           account, and it appears in the session list.
 
+    # Nothing left to do for Remote Control (NEXT STEPS).
+    - name: remote_control | Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_code_next: >-
+            {{ {inventory_hostname: {'remote_control': ''}} }}
+        aggregate: true
+        per_host: false
+      when: not ansible_check_mode
+
 # The path unit that starts the service the moment a login lands, however it
 # is made (templates/claude-remote-control.path.j2): there only while the login
 # is the one thing missing, and gone once the service runs, which this role
@@ -381,3 +391,15 @@
         msg: >-
           Remote Control is configured on {{ inventory_hostname }} but not started:
           {{ claude_code_remote_control_blocker }} {{ claude_code_remote_control_next }}
+      register: claude_code_remote_control_reported
+
+    # NEXT STEPS: the line above only while Claude is signed in. Signed out,
+    # the sign-in is the one thing to do, and login.yml's line says it.
+    - name: remote_control | Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_code_next: >-
+            {{ {inventory_hostname: {'remote_control': claude_code_remote_control_reported.msg
+                 if (claude_code_remote_control_status.loggedIn | default(false)) | bool else ''}} }}
+        aggregate: true
+        per_host: false

@@ -65,6 +65,7 @@ from harness import (
     REPO,
     _env,
     _failures,
+    _left_to_do,
     _messages,
     _results,
     _run,
@@ -296,6 +297,20 @@ def test_configure_names_the_sign_in_that_comes_next(check_mode):
     # A sign-in leaves a VM with a blocking setting stopped: no promise to start it.
     assert 'Sign in once: "make claude-login VM_NAME=not-ready-blocked"' in said["not-ready-blocked"]
     assert "and starts it" not in said["not-ready-blocked"]
+
+
+def test_next_steps_keep_a_blocker_only_where_claude_is_signed_in(check_mode):
+    # What the run's last lines list (callback_plugins/claude_on_proxmox.py).
+    _, _, report = check_mode
+    said = _messages(report, "Say exactly what to run")
+    left = {host: matters.get("remote_control") for host, matters in _left_to_do(report).items()}
+    # Signed out, the sign-in is the one thing left, and the login report says it.
+    for host in ("not-ready", "not-ready-in-deploy", "not-ready-blocked"):
+        assert left[host] == "", host
+    blocked = [host for host, (_, expected) in SETTINGS.items() if expected]
+    assert blocked
+    for host in blocked:
+        assert left[host] == said[host], host
 
 
 @pytest.mark.parametrize("host", sorted(SETTINGS))

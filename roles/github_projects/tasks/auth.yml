@@ -102,6 +102,16 @@
       and git push on the VM will fail. Add read:org (and workflow, for pushes that change
       .github/workflows/) to the token and run {{ github_projects_configure_command }}; or set
       github_auth_method: web and sign gh in by the device flow with {{ github_projects_login_command }}
+  register: github_projects_token_short_reported
+  when: github_projects_token_short | bool
+
+- name: auth | Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      github_projects_next: >-
+        {{ {inventory_hostname: {'github': github_projects_token_short_reported.msg}} }}
+    aggregate: true
+    per_host: false
   when: github_projects_token_short | bool
 
 # The login the user made by hand - for pushing, say, beside a token that
@@ -115,6 +125,17 @@
       by a login of your own, which this role leaves as it is, so vault_github_token only lists the
       repositories there. To sign gh in with the token instead, set github_auth_method: token and run
       {{ github_projects_configure_command }}
+  when: github_projects_token_beside | bool
+
+# A login the user made, said with how to change it: nothing left to do (NEXT
+# STEPS), which also clears an earlier record of this VM.
+- name: auth | Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      github_projects_next: >-
+        {{ {inventory_hostname: {'github': ''}} }}
+    aggregate: true
+    per_host: false
   when: github_projects_token_beside | bool
 
 # The other direction, like the API key in roles/claude_code: the login this
@@ -225,6 +246,22 @@
     msg: >-
       {{ inventory_hostname }}: gh is not signed in to GitHub, so only public repositories are
       listed and cloned, and git push on the VM will fail. {{ github_projects_sign_in_next }}
+  register: github_projects_sign_in_reported
+  when:
+    - github_projects_auth_wanted | bool
+    - not github_projects_signed_in | bool
+    - not github_projects_token_short | bool
+
+# NEXT STEPS: the line above, unless the sign-in follows in this run, whose
+# own report then says what is left.
+- name: auth | Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      github_projects_next: >-
+        {{ {inventory_hostname: {'github': '' if github_projects_sign_in_follows | bool
+                                           else github_projects_sign_in_reported.msg}} }}
+    aggregate: true
+    per_host: false
   when:
     - github_projects_auth_wanted | bool
     - not github_projects_signed_in | bool

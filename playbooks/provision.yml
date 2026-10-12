@@ -187,3 +187,20 @@
       loop_control:
         loop_var: claude_vm_name_item
         label: "{{ claude_vm_name_item }}"
+      register: claude_vm_shown
+
+    # NEXT STEPS (callback_plugins/claude_on_proxmox.py): each VM's line above
+    # while it is stopped or failed, nothing once it is up.
+    - name: Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_vm_next: >-
+            {{ {claude_vm_shown_item.claude_vm_name_item: {'vm':
+                 '' if hostvars[claude_vm_shown_item.claude_vm_name_item].proxmox_vm_address | default('') | length > 0
+                 else claude_vm_shown_item.msg}} }}
+        aggregate: true
+        per_host: false
+      loop: "{{ claude_vm_shown.results }}"
+      loop_control:
+        loop_var: claude_vm_shown_item
+        label: "{{ claude_vm_shown_item.claude_vm_name_item }}"

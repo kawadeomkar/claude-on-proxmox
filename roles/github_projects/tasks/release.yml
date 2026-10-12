@@ -47,3 +47,4 @@
 - name: release | Record what became of the login
   ansible.builtin.set_fact:
     github_projects_release_said: "{{ github_projects_release_summary }}"
+    github_projects_release_left: "{{ github_projects_release_unrevoked | bool }}"

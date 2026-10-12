@@ -68,7 +68,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from harness import STAND_INS, _failures, _messages, _results, _run, _run_at_a_terminal
+from harness import STAND_INS, _failures, _left_to_do, _messages, _results, _run, _run_at_a_terminal
 
 REPO = Path(__file__).resolve().parents[2]
 ROLE = REPO / "roles" / "github_projects"
@@ -705,6 +705,26 @@ def test_under_deploy_a_signed_out_vm_is_told_the_sign_in_comes_next(configured)
     assert "make github-login" not in message
 
 
+def test_next_steps_keep_each_sign_in_left_to_do_and_nothing_where_none_is(configured):
+    # What the run's last lines list (callback_plugins/claude_on_proxmox.py):
+    # recorded beside each message, the message itself, or nothing.
+    _, first, _ = configured
+    left = _left_to_do(first)
+    told = _messages(first, "Say how to sign gh in")
+    for host in ("signed-out-no-token", "token-cleared-ours", "email-by-hand", "org-no-token"):
+        assert left[host]["github"] == told[host], host
+    # make deploy signs it in next, in this run: nothing to run, so nothing listed.
+    assert left["deploy-signed-out"]["github"] == ""
+    assert left["token-repo-only"]["github"] == _messages(first, "Say that the token only lists")["token-repo-only"]
+    # A login of the user's own, said with how to change it: nothing to do.
+    for host in ("token-beside-oauth", "token-beside-pat"):
+        assert left[host]["github"] == "", host
+    identity = _messages(first, "Say that an organisation gives no git identity")["org-no-token"]
+    assert left["org-no-token"]["github_identity"] == identity
+    for host in TOKEN_SIGNED_IN | {"auth-off-with-token"}:
+        assert left.get(host, {}).get("github", "") == "", host
+
+
 def test_a_second_run_changes_nothing(configured):
     root, _, second = configured
     assert second["rc"] == 0, _failures(second)
@@ -784,6 +804,17 @@ def test_github_login_says_how_a_vm_is_signed_in(login, host, how):
     assert "auth login" not in login[host]
 
 
+def test_github_login_records_what_is_left_to_do(login_run, login):
+    left = {host: matters.get("github") for host, matters in _left_to_do(login_run).items()}
+    # The missing workflow scope names no make command and is still left to do;
+    # so is the make configure a vault token waits for, under a bare run.
+    for host in ("signed-out", "old-gh", "oauth", "pending-token"):
+        assert left[host] == login[host], host
+    # Signed in, or gh left alone.
+    for host in ("pat", "fine-grained", "ours", "env", "auth-off", "old-gh-auth-off"):
+        assert left[host] == "", host
+
+
 def test_github_login_names_a_gh_too_old_to_report_its_state(login):
     assert "needs gh 2.81.0 or newer" in login["old-gh"]
     assert "unknown flag: --json" in login["old-gh"]
@@ -835,6 +866,8 @@ def test_github_login_says_the_role_signs_a_pending_vault_token_in_next(pending_
     said = _messages(report, "Report the login state and what to do about it")["pending"]
     assert "the role signs gh in with it next, in this run" in said, said
     assert "make " not in said
+    # Not left to do: the role run after the report signs it in.
+    assert _left_to_do(report)["pending"]["github"] == ""
     assert DEVICE_LOGIN not in _calls(root, "pending")
     if _has_own_group():
         # And it does: the role run after the report signs gh in with it.
@@ -1474,6 +1507,8 @@ def test_asking_first_signs_a_vm_that_showed_no_claude_prompt_in_on_a_typed_y(tm
         prompt=b"or Enter alone to skip",
     )
     assert rc == 0, output
+    block = "##  USER INPUT REQUIRED  -  quiet  -  GitHub sign-in"
+    assert block in output and output.index(block) < output.index("or Enter alone to skip") < output.index("Answer:")
     assert DEVICE_LOGIN in _calls(tmp_path, "quiet"), output
     # The token that sign-in stored reaches neither this terminal nor the run log.
     assert not [token for token in CANNED if token in output + log]

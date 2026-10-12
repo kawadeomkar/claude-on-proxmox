@@ -3,8 +3,9 @@
 # thing where there is one. Built in vars, one line of Jinja per piece: a more
 # indented line in a folded scalar would keep its line break. Everything the
 # VM reports - its name, its tailnet, what tailscale printed - goes through
-# plain_text, since the VM's user chooses it.
-- name: report | Say how this VM is on Tailscale
+# plain_text, since the VM's user chooses it. A block, so that the record for
+# NEXT STEPS after the message reads the same vars.
+- name: report | Report how this VM is on Tailscale, and keep what is left to do
   vars:
     tailscale_report_name: "{{ (tailscale_dns_name or tailscale_self.HostName | default('') or tailscale_hostname) | plain_text }}"
     # The tailnet, so that a login someone else approved first - into their own
@@ -28,6 +29,17 @@
          else 'refused' if tailscale_backend == 'NeedsLogin' and tailscale_key_wanted | bool
                            and (tailscale_join_ran | bool or tailscale_key_refused_locally | bool)
          else tailscale_backend }}
+    # The cases that leave something to do whatever else holds (NEXT STEPS).
+    tailscale_report_open:
+      - check-no-package
+      - check-daemon-down
+      - connecting
+      - would-join
+      - page-pending
+      - expired
+      - refused
+      - NeedsMachineAuth
+      - Stopped
     tailscale_report_running:
       - >-
         {{ ('joined Tailscale ' if tailscale_joined_now | bool else 'on Tailscale ') ~ tailscale_report_as
@@ -104,5 +116,27 @@
            else 'Tailscale is installed but not signed in. ' ~ tailscale_login_command ~ ' signs it in from your'
                 ~ ' browser' ~ ('; vault_tailscale_auth_key joins it on the next make configure.'
                                if tailscale_auth_method == 'auto' else '.') }}
-  ansible.builtin.debug:
-    msg: "{{ inventory_hostname }}: {{ tailscale_report_said[tailscale_report_case] | default('Tailscale is ' ~ tailscale_backend ~ '.') }}"
+  block:
+    - name: report | Say how this VM is on Tailscale
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ tailscale_report_said[tailscale_report_case] | default('Tailscale is ' ~ tailscale_backend ~ '.') }}"
+      register: tailscale_report_reported
+
+    # NEXT STEPS (callback_plugins/claude_on_proxmox.py): the line above while
+    # something is left to do - a page waiting, a login expired, a key refused,
+    # a node stopped or still connecting, an approval or a sign-in to come, a
+    # name taken or tags missing - and nothing once it runs as it should, or
+    # for a Tailscale this role leaves alone. A later record of the VM wins.
+    - name: report | Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          tailscale_next: >-
+            {{ {inventory_hostname: {'tailscale': tailscale_report_reported.msg
+                 if tailscale_report_case in tailscale_report_open
+                    or (tailscale_report_case == 'NeedsLogin'
+                        and not (tailscale_sign_in_follows | bool and tailscale_auth_method != 'key'))
+                    or (tailscale_report_case == 'Running'
+                        and (tailscale_name_taken | bool or tailscale_tags_missing | length > 0))
+                 else ''}} }}
+        aggregate: true
+        per_host: false

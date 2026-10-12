@@ -75,6 +75,18 @@
       {{ inventory_hostname }}: {{ github_projects_listing.user.login }} is an organisation, so no git identity is
       derived from it, and a commit on the VM fails until one is set. Set git_user_name and git_user_email, or sign
       gh in to your own account, whose identity that run derives: {{ github_projects_login_command }}
+  register: github_projects_identity_reported
+  when:
+    - github_projects_git_identity_needed | bool
+    - (github_projects_listing.user.type | default('')) == 'Organization'
+
+- name: clone | Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      github_projects_next: >-
+        {{ {inventory_hostname: {'github_identity': github_projects_identity_reported.msg}} }}
+    aggregate: true
+    per_host: false
   when:
     - github_projects_git_identity_needed | bool
     - (github_projects_listing.user.type | default('')) == 'Organization'

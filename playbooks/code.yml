@@ -281,6 +281,16 @@
               {{ ['VS Code opens one VM at a time, so this deploy for ' ~ claude_vm_names | length
                   ~ ' VMs opened none. To open one:']
                  + claude_vm_names | map('regex_replace', '^', 'make code VM_NAME=') | list }}
+          register: code_fleet_reported
+
+        # NEXT STEPS (callback_plugins/claude_on_proxmox.py): the lines above,
+        # once for the fleet.
+        - name: Keep what is left to do for the end of the run
+          ansible.builtin.set_stats:
+            data:
+              code_next: "{{ {claude_vm_names | join(', '): {'vscode': code_fleet_reported.msg | join('\n')}} }}"
+            aggregate: true
+            per_host: false
 
         - name: Stop before the window
           ansible.builtin.meta: end_play
@@ -665,6 +675,15 @@
           ansible.builtin.debug:
             msg: "{{ code_said | select | join(' ') | trim }}"
 
+        # What it says is for the window opening now: nothing left for NEXT
+        # STEPS.
+        - name: Keep what is left to do for the end of the run
+          ansible.builtin.set_stats:
+            data:
+              code_next: "{{ {claude_vm_names[0]: {'vscode': ''}} }}"
+            aggregate: true
+            per_host: false
+
       rescue:
         # Outside make deploy the failure stands, said once more: for a
         # command, with what it printed.
@@ -676,3 +695,15 @@
         - name: Say how to open the VM later
           ansible.builtin.debug:
             msg: "{{ code_later }}"
+          register: code_later_reported
+
+        # NEXT STEPS: the line above. For a VM the deploy left stopped it takes
+        # the place of provision's line about the same thing.
+        - name: Keep what is left to do for the end of the run
+          ansible.builtin.set_stats:
+            data:
+              code_next: >-
+                {{ {claude_vm_names[0]: {('vm' if code_status | default('') == 'stopped' else 'vscode'):
+                                         code_later_reported.msg}} }}
+            aggregate: true
+            per_host: false

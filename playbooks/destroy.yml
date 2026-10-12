@@ -25,10 +25,24 @@
       {{ claude_vm_all.json.data | selectattr('type', 'equalto', 'qemu') | selectattr('name', 'defined')
          | selectattr('name', 'in', claude_vm_names) | list }}
     claude_vm_releasing: "{{ destroy_release | default(true) | bool }}"
+    # The names the prompt below says. A vars_prompt is templated before any
+    # host is in scope, with the play's vars and the extra vars only: an
+    # inventory variable - claude_vm_names, claude_vm_default_name,
+    # destroy_release - is undefined there, and fails every run of this
+    # playbook before it asks, even one that answers with -e. So this repeats
+    # claude_vm_names' split on vm_name, the one value there is then, through
+    # plain_text since a direct ansible-playbook -e skips the Makefile's check.
+    claude_vm_confirm_names: >-
+      {{ (vm_name | default('', true) | string | plain_text).split(',') | map('trim') | select | list }}
 
   vars_prompt:
     - name: confirm_destroy
-      prompt: "This deletes the VM(s) and their disks. Type 'yes' to continue"
+      prompt: >-
+        {{ ('This deletes ' ~ claude_vm_confirm_names | join(', ')
+            ~ (' and its disks.' if claude_vm_confirm_names | length == 1 else ' and their disks.')
+            if claude_vm_confirm_names | length > 0
+            else 'This deletes the default VM, the one claude_vm_default_name names in your inventory, and its disks.')
+           | banner('CONFIRM DELETION') ~ 'Type yes to continue' }}
       private: false
       # A run with no terminal - CI, a cron job, a nested playbook - takes the
       # default rather than hanging, so it must be the safe answer.
@@ -436,6 +450,29 @@
            | selectattr('claude_vm_deleted', 'defined') | map(attribute='inventory_hostname') | list }}
       loop_control:
         loop_var: claude_release_name
+      register: claude_release_reported
+
+    # NEXT STEPS (callback_plugins/claude_on_proxmox.py): each VM's line above
+    # unless it was released with nothing left - no Tailscale device and no
+    # GitHub token for the user to deal with. Claude Code's login has no
+    # remedy to name, so it leaves nothing to do.
+    - name: Keep what is left to do for the end of the run
+      vars:
+        claude_release_vm: "{{ hostvars[claude_release_item.claude_release_name] }}"
+      ansible.builtin.set_stats:
+        data:
+          claude_vm_next: >-
+            {{ {claude_release_item.claude_release_name: {'destroy':
+                 '' if claude_release_vm.claude_vm_released | default(false) | bool
+                       and not claude_release_vm.github_projects_release_left | default(false) | bool
+                       and not claude_release_vm.tailscale_release_left | default(false) | bool
+                 else claude_release_item.msg}} }}
+        aggregate: true
+        per_host: false
+      loop: "{{ claude_release_reported.results }}"
+      loop_control:
+        loop_var: claude_release_item
+        label: "{{ claude_release_item.claude_release_name }}"
 
     - name: Say which aliases were kept, and why
       vars:
@@ -450,9 +487,20 @@
           Kept the SSH alias of {{ claude_ssh_kept | join(', ') }}: its deletion failed above, so the VM is
           still there. `make destroy VM_NAME={{ claude_ssh_kept | join(',') }}` again once the cause is fixed
           removes it with the VM.
+      register: claude_ssh_kept_reported
       when:
         - claude_ssh_config | default(true) | bool
         - claude_ssh_kept | length > 0
+
+    # NEXT STEPS: the line above, once for the VMs it names, which it holds.
+    # Read from its register: the list it names them from is that task's own.
+    - name: Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_vm_next: "{{ {'kept SSH aliases': {'destroy': claude_ssh_kept_reported.msg}} }}"
+        aggregate: true
+        per_host: false
+      when: claude_ssh_kept_reported is not skipped
 
     # Last: the delete play records a deletion that failed rather than raising
     # it, since a play in which every VM fails ends the run before this one.

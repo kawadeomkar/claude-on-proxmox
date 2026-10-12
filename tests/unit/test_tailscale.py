@@ -49,7 +49,17 @@ from pathlib import Path
 
 import pytest
 import yaml
-from harness import GUARDED_TOOLS, STAND_INS, _env, _failures, _messages, _results, _run
+from harness import (
+    GUARDED_TOOLS,
+    STAND_INS,
+    _env,
+    _failures,
+    _left_to_do,
+    _messages,
+    _results,
+    _run,
+    _run_at_a_terminal,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 ROLE = REPO / "roles" / "tailscale"
@@ -541,6 +551,19 @@ def test_tailscale_auth_method_decides_whether_the_key_is_used(configured):
 
 
 # ------------------------------------------------------- what reaches text ---
+def test_next_steps_keep_what_is_left_to_do_and_nothing_where_it_runs_as_it_should(configured):
+    # What the run's last lines list (callback_plugins/claude_on_proxmox.py):
+    # the report itself while something is left, whether or not it names a make
+    # command - a stopped node, missing tags, an admin's approval.
+    root, first, first_calls, second = configured
+    said = _said(first)
+    left = {host: matters.get("tailscale") for host, matters in _left_to_do(first).items()}
+    for host in ("stopped", "missing-tag", "approval", "name-taken", "refused", "starting", "expired-key-set"):
+        assert left[host] == said[host], host
+    for host in ("fresh-key", "logged-out-key", "not-ours", "tagged-key"):
+        assert left[host] == "", host
+
+
 def test_every_report_is_one_line_of_plain_text(configured):
     root, first, first_calls, second = configured
     for report in (first, second):
@@ -778,6 +801,9 @@ def test_a_vm_it_cannot_sign_in_gets_one_line_and_nothing_else(web_logins):
         messages["switched-off"]
         == "switched-off: Tailscale is off (tailscale_enabled: false), so there is nothing to sign in."
     )
+    left = _left_to_do(report)
+    assert left["not-installed"]["tailscale"] == messages["not-installed"]
+    assert left["switched-off"]["tailscale"] == ""
     assert _said(report)["installed-by-hand"].endswith("outside this project, so it is left as it is.")
     assert _said(report)["installed-outside-dpkg"] == (
         "installed-outside-dpkg: Tailscale is installed (NeedsLogin) outside this project, so it is left as it is."
@@ -894,6 +920,21 @@ def test_asking_first_signs_in_only_where_someone_is(tmp_path):
     assert len(_ups(_calls(tmp_path, "typed"))) == 1
     assert _ups(_calls(tmp_path, "quiet")) == [] and _ups(_calls(tmp_path, "skipped")) == []
     assert report["rc"] == 0, _failures(report)
+
+
+def test_asking_first_at_a_terminal_asks_under_a_block(tmp_path):
+    # Enter at a VM that showed no Claude prompt leaves it: the question is the
+    # one place this step waits for the person, set apart from the run.
+    hosts = _hosts(tmp_path, {"quiet": {"ts": {"approve-after": "7"}, "tailscale_login_timeout": 30}})
+    hosts["quiet"].update(AFTER_CLAUDE["quiet"])
+    settings = {**WEB_EXTRA, "vm_name": "quiet", "deploy_sign_in": True, "tailscale_login_auto_start": False}
+    rc, output, _ = _run_at_a_terminal(
+        tmp_path, _deploy_tailscale(tmp_path), hosts, settings, "", prompt=b"or Enter alone to skip"
+    )
+    assert rc == 0, output
+    block = "##  USER INPUT REQUIRED  -  quiet  -  Tailscale sign-in"
+    assert block in output and output.index(block) < output.index("or Enter alone to skip") < output.index("Answer:")
+    assert _ups(_calls(tmp_path, "quiet")) == []
 
 
 @pytest.mark.parametrize("switch", ["deploy_sign_in", "tailscale_enabled"])

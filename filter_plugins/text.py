@@ -5,11 +5,17 @@ The VM's user controls what claude, gh and ssh print there, and ansible-core
 escape sequence quoted in a message would retitle the terminal, recolour it, or
 write the clipboard (OSC 52). Removing only the control characters left the
 sequences' payload behind as text: a base64 clipboard write, a window title.
+
+banner draws the block that sets a moment the run waits for the person apart
+from the task output around it: in a pause or vars_prompt prompt, which
+ansible-core prints as written, and in the stdout callback
+(callback_plugins/claude_on_proxmox.py), so both look the same.
 """
 
 from __future__ import annotations
 
 import re
+import shutil
 
 # Each escape sequence whole: a string sequence (OSC, DCS, SOS, PM, APC) up to
 # its terminator, or the end of its line when it has none; a CSI with its
@@ -30,6 +36,33 @@ def plain_text(text):
     return _CONTROL.sub("", _SEQUENCES.sub("", str(text)))
 
 
+# The block's width: these columns, or the terminal's when it is narrower,
+# never less than the narrowest that still reads as a block.
+_WIDTH = 80
+_NARROWEST = 20
+
+
+def banner(body, title, host="", topic="", width=None):
+    """Return ``body`` under a ``#`` block titled ``title``, ending in a newline.
+
+    The title line names ``host`` and ``topic`` after the title where given.
+    Body lines are never wrapped, so a URL or a command in one stays whole to
+    copy: the terminal soft-wraps it. A list body is one line per item. The
+    block ends in a newline because a prompt's last word must start a line of
+    its own, and a "\n" inside the Jinja of a folded YAML scalar reaches the
+    screen as a backslash and an n. Every part goes through plain_text.
+    """
+    if width is None:
+        width = min(_WIDTH, shutil.get_terminal_size((_WIDTH, 24)).columns)
+    rule = "#" * max(int(width), _NARROWEST)
+    heading = "  -  ".join(
+        plain_text(part).strip() for part in (title, host, topic) if part is not None and plain_text(part).strip()
+    )
+    lines = body if isinstance(body, (list, tuple)) else [body]
+    text = "\n".join(plain_text(line) for line in lines if line is not None).strip("\n")
+    return f"{rule}\n##  {heading}\n{rule}\n" + (f"{text}\n" if text else "")
+
+
 class FilterModule:
     def filters(self):
-        return {"plain_text": plain_text}
+        return {"plain_text": plain_text, "banner": banner}
