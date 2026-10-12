@@ -20,9 +20,11 @@ make unit            # pytest, tests/unit/
 make molecule MOLECULE_ROLES="proxmox_vm"      # one role scenario
 make molecule-scenario SCENARIO=provision      # one playbook scenario
 make test            # everything, including pre-commit — the CI gate
-make deploy          # template (if missing) + provision + configure + both sign-ins + VS Code, all idempotent
-make claude-login VM_NAME=alpha   # sign Claude in by the browser (page opens here, paste its code at the prompt), start Remote Control
+make deploy          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent
+make destroy VM_NAME=alpha        # release the VM from Claude, GitHub and Tailscale, then delete it
+make claude-login VM_NAME=alpha   # sign Claude in by the browser (page opens here, comes back over an SSH forward), start Remote Control
 make github-login VM_NAME=alpha   # sign gh in to GitHub by the device flow (page opens here, code on the clipboard), then clone private repos
+make tailscale-login VM_NAME=alpha   # sign the VM in to Tailscale by its web login (page opens here), one VM after another
 make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push an API key
 make list            # read-only: the VMs this project created, and their addresses
 make ssh-config      # refresh the SSH alias per VM on this machine; fleet-wide also prunes
@@ -41,7 +43,7 @@ which is the one value a user types that reaches the shell.
 Scenarios are slow and disk-hungry. Run the ones your change touches, one at a time, rather than
 `make test`, until you are ready to finish.
 
-`common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects` and the `configure`
+`common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects`, `tailscale` and the `configure`
 scenario install packages inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_template` and
 the `provision` scenario talk only to local fakes, so they still run when the network is down —
 if apt fails to resolve a mirror, that is the machine, not the change.
@@ -93,15 +95,16 @@ token; `github_auth_method: token` still fails. The status JSON carries
   always, over https with gh signed in and git's helper - and otherwise skipped and named, not cloned
   and failed. See
   ARCHITECTURE.md §5.6.
-- **Tests never open the developer's browser, touch their clipboard, or read their terminal.** Both
-  sign-ins - GitHub's device flow (`roles/github_projects/tasks/device_flow.yml`) and Claude's
-  browser sign-in (`roles/claude_code/tasks/browser_login.yml`), run by `make github-login`, `make
-  claude-login` and `make deploy` - open a page (and GitHub's copies its code) on `localhost`, which in
+- **Tests never open the developer's browser, touch their clipboard, or read their terminal.** The
+  sign-ins - GitHub's device flow (`roles/github_projects/tasks/device_flow.yml`), Claude's browser
+  sign-in (`roles/claude_code/tasks/browser_login.yml`) and Tailscale's web login
+  (`roles/tailscale/tasks/web_login.yml`), run by `make github-login`, `make claude-login`, `make
+  tailscale-login` and `make deploy` - open a page (and GitHub's copies its code) on `localhost`, which in
   the unit harness and every playbook scenario is the developer's machine. `login_desktop` (roles:
-  `github_projects_login_desktop`, `claude_code_login_desktop`, both wired from it in
-  `inventory/group_vars/all/defaults.yml`) gates those steps; every scenario and both harnesses set it
-  false, and `tests/unit/test_github_auth.py` and `test_claude_login.py` fail if one stops, if the
-  wiring goes, or if a desktop step runs. Behind that, `tests/unit/harness.py` puts stand-ins for
+  `github_projects_login_desktop`, `claude_code_login_desktop`, `tailscale_login_desktop`, all wired from
+  it in `inventory/group_vars/all/defaults.yml`) gates those steps; every scenario and the harnesses set
+  it false, and `tests/unit/test_github_auth.py`, `test_claude_login.py` and `test_tailscale.py` fail if
+  one stops, if the wiring goes, or if a desktop step runs. Behind that, `tests/unit/harness.py` puts stand-ins for
   `open`, `xdg-open`, `pbcopy`, `wl-copy` and `xclip` first on every run's PATH and points `BROWSER` at
   one: they record the call and fail, and a run that made one fails its test. A run inherits only the
   variables the harness names (`PASSED_ON`), and a stand-in host's modules get its own directory as
@@ -127,8 +130,20 @@ token; `github_auth_method: token` still fails. The status JSON carries
   deploy's last play, since it is not a failed sign-in and the VM is not done.
   `tests/unit/test_sign_in_plays.py` runs both playbooks, and deploy's sign-ins as deploy.yml has them,
   against stand-ins, a VM whose ssh exits 255 among them. `make configure` never prompts.
-- **Claude's sign-in hands the code over a pipe, and nothing decides from a terminal probe.** `claude
-  auth login` with no terminal prints the page and reads one line, `<code>#<state>`: a wrong code exits
+- **Claude's sign-in comes back over a forward, or hands the code over a pipe, and nothing decides from a
+  terminal probe.** Given `BROWSER`, `claude auth login` runs it with a page that redirects to
+  `http://localhost:<port>/callback`, listens on the VM's `127.0.0.1:<port>`, and takes a code from that
+  callback or from stdin, whichever comes first (one attempt: both pages share state and challenge).
+  `browser_login.yml` gives it a `BROWSER` that only records the page, forwards that port from the
+  controller with `ssh -f -L localhost:<port>:127.0.0.1:<port>` (`ExitOnForwardFailure`, the far end a
+  `sleep` whose pid the VM records, killed when the sign-in ends, only while it is a sleep), opens the page
+  here only when it matches `claude_code_login_page_pattern`, and waits on the async job
+  (`claude_code_login_approval_timeout`) - no prompt. `claude_code_login_redirect` follows
+  `login_desktop`; a forward that fails, a page that is not Claude's, a code given, no browser on this
+  machine to open the page (`page_opener` finds none), or `make` itself run over SSH (`SSH_CONNECTION`: the
+  page would send another machine's browser to its own localhost) falls back to the paste. Tests reach no ssh: `claude_code_login_ssh` is a stand-in, passed as an extra var, since an
+  internal in `vars/main.yml` outranks a host var. `claude auth login` with no terminal prints the page
+  and reads one line, `<code>#<state>`: a wrong code exits
   1, a right one writes `~/.claude/.credentials.json` and exits 0, and a line without `#` prints
   `Invalid code` and waits, so only the pasted code is ever written and an attempt nobody completes is
   ended by its recorded pid (`$$` is claude's because the shell exec's into it; never a subshell). The
@@ -141,18 +156,58 @@ token; `github_auth_method: token` still fails. The status JSON carries
   removes whole escape sequences and then every control character but tab and newline (gh's text and
   `make code`'s SSH error go through it too). A `/dev/tty` probe cannot tell an
   attended run - Ansible runs lookups in workers detached from the terminal - so `pause` returning
-  nothing is the skip. `make deploy` decides GitHub's fifteen-minute device flow VM by VM, from facts
-  on each VM: Enter at its Claude prompt (`claude_code_login_skipped`) leaves it, and every other VM is
-  asked by `github_projects_login_ask` - Enter signs in one whose Claude code was entered
-  (`claude_code_login_answered`) and `n` leaves it, while one that showed no Claude prompt (signed in
-  already, an API key) signs in on `y` only - never one fact for the whole
-  run, which made one answer start every VM's flow. The path unit that starts Remote
+  nothing is the skip. `make deploy` decides GitHub's fifteen-minute device flow and Tailscale's web
+  login VM by VM, from facts on each VM: a Claude sign-in nobody answered (`claude_code_login_skipped`:
+  Enter, or a browser that never came back) leaves it. With `github_login_auto_start` /
+  `tailscale_login_auto_start` (default true) every other VM starts at once; off, each is asked by
+  `*_login_ask` - Enter signs in one whose Claude sign-in was answered (`claude_code_login_answered`) and
+  `n` leaves it, while one that showed no Claude sign-in (signed in already, an API key) signs in on `y`
+  only - never one fact for the whole run, which made one answer start every VM's flow. A run with no
+  terminal gets `deploy_sign_in: false` from the Makefile (`NO_TTY_ARGS`), since sign-ins that start by
+  themselves would otherwise wait for a browser nobody watches. The path unit that starts Remote
   Control when a login lands is `PathChanged=`, never `PathExists=`, which restarts a stopped service
   instantly, and exists only while the login is the one thing missing (ARCHITECTURE §5.5).
-- **Tests never touch a real Proxmox, GitHub or hypervisor.** `tests/molecule/` holds the fakes:
-  a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, a GitHub API over
-  local bare repos (the authenticated endpoints included), and a stand-in `gh` installed ahead of
-  the real one on PATH. Extend a fake rather than reaching for the network.
+- **Tests never touch a real Proxmox, GitHub, Tailscale or hypervisor.** `tests/molecule/` holds the
+  fakes: a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, a GitHub API over
+  local bare repos (the authenticated endpoints included), a stand-in `gh` installed ahead of the real
+  one on PATH, and a stand-in `tailscale` (`fake_tailscale.sh`, Tailscale's own output as research and a
+  Headscale run recorded it). Extend a fake rather than reaching for the network.
+- **Tailscale's auth key joins a VM once, and the role touches only the Tailscale it installed.** The key
+  is used from a settled `NeedsLogin` with no `HaveNodeKey` only - a node that never joined, or one logged
+  out by hand, which reads the same - and never sent to a node that has a login: one Tailscale no longer
+  accepts logs the node out (tailscale#19501). It goes in as `--auth-key=file:/dev/stdin` with the key as
+  the `command` module's `stdin`, under `no_log` - nothing on argv, no file, never `copy` (which stages
+  its content in `~/.ansible/tmp`); only that task renders the key, and `tests/unit/test_tailscale.py`
+  holds it so. Every decision comes from `tailscale status --json`, read until it is neither `NoState`
+  nor `Starting` (tailscaled is ready for systemd before its backend has a state), never from human
+  output. The web login runs one `up` per attempt and reads the page once - each keyless `up` mints a
+  new one - and opens it here only when it is Tailscale's own page (or one under
+  `tailscale_login_server`). It never runs over an expired login made by hand
+  (`tailscale_login_expired_elsewhere`): its `up --reset` would put the role's settings over that login's
+  and record it as the role's; an expired login of the role's keeps its node key, which the marker holds. `/var/lib/claude-on-proxmox/tailscale-installed`, written before the
+  repository, marks the Tailscale as the role's: only then are the package, service, log switch and
+  removal its business, and a Tailscale installed any other way - by dpkg, or as one dpkg does not know:
+  static binaries, the snap - is reported and left alone, off too. `tailscale-joined` holds the node key
+  of the role's own login: only that login's settings are changed, by one `tailscale set` naming what
+  differs. It holds `pending` while a sign-in the role started has not ended (written before the page is
+  shown, and after a key join that ran out of time - that one only: `up`'s timeout line and no `invalid key:`;
+  any other failed join removes the marker), and the next configure records the login it ends in,
+  so a page approved after the run is still the role's. A login is recorded only once `Running` or
+  `NeedsMachineAuth`, never from `HaveNodeKey` alone: an expired node keeps its old key while the page
+  waits. A page still waiting is reported before an expired or refused key. Off starts a stopped
+  `tailscaled` to log it out, and a logout that fails is said, not failed on. The log switch is a systemd drop-in written before the
+  package - never a pre-created `/etc/default/tailscaled`, which dpkg keeps as the conffile without
+  `PORT`, and the daemon fails. Tags are compared only when configured and never "fixed" by a web login.
+  `playbooks/configure.yml` runs the role last, from `tasks:` through `import_role` in a block whose
+  rescue appends to `claude_vm_configure_failures`; a last play raises it, skipped under deploy
+  (`claude_vm_configure_in_deploy`), whose own last play raises it after VS Code. A failed install takes
+  its repository back out (an unreachable source fails every apt refresh, `common`'s first), and the role
+  has no handlers (one would run outside the rescue). Check mode skips what needs the package: `apt`
+  cannot find a package from a repository the same `--check` run adds. Tests reach no Tailscale service
+  and never this machine's real CLI: `tailscale` is among the harness's failing stand-ins, every scenario
+  that runs the role installs `fake_tailscale.sh` in `prepare.yml` and turns log upload off, the
+  Vagrantfile is keyless with logs off, and a guard holds each - and the role's scenario to `ROLES` and
+  CI's matrix. The template is never signed in to anything.
 - **The project writes exactly two things outside the repo on the controller:** `~/.ssh/known_hosts`
   and the managed SSH config `~/.ssh/claude-on-proxmox.conf`, plus one `Include` line at the top of
   `~/.ssh/config` that is added once and never removed. Nothing else in `~/.ssh` is ever edited.
@@ -208,8 +263,23 @@ runs the role across them so Ansible fans out over `forks`, play 3 publishes. A 
 `include_role` would serialise the waiting.
 
 **`destroy.yml` has the same shape.** A localhost play prompts, lists the cluster, checks every name
-and adds each as a placeholder host; a second play runs the role with `proxmox_vm_state: absent`
-across them, so VMs are stopped and deleted in parallel. It used to loop `include_role` on
+and adds each as a placeholder host - refusing, before anything starts, a name two VMs carry, since the
+release finds a VM by name; with `destroy_release` it first starts each stopped VM through the API and
+reads every VM's address from its agent. A VM it started is stopped again (`tasks/vm_stop.yml`) when the
+run then fails before deleting (a rescue in that play) or its deletion fails: the delete play rescues a
+failed deletion and the last play raises it, after the stop and the report - a play in which every host
+fails ends the run, which once left a lone VM running. A release play then connects to each VM over SSH
+(`add_host` gives each VM its SSH settings as host vars; the delete play forces `ansible_connection: local`)
+and runs the `release` entry point of
+`claude_code`, `github_projects` and `tailscale`, each in a block whose rescue records a failure: a
+release never stops a deletion. A VM with no address or that does not answer is ended and deleted as it
+is. Each entry point leaves one clause in a `*_release_said` fact, and the last play says per VM what it
+was released from or what is left of it. GitHub revokes only a token this project's device flow made
+(digest in `~/.config/claude-on-proxmox/gh-device-login`), through the unauthenticated
+`POST /credentials/revoke` from the VM; never the vault token nor one pasted by hand. Tailscale's device
+is deleted with `tailscale_api_auth_method` (`token` or `oauth`, `devices:core`) from the controller, by
+the node's `Self.ID`, read before the logout. Another play then runs the role with
+`proxmox_vm_state: absent` across them, so VMs are stopped and deleted in parallel. It used to loop `include_role` on
 localhost: against the fake, 20 VMs took 168 s that way and take 41 s now. The pre-check honours
 `proxmox_vm_allow_untagged_delete` but never admits a template. Deleting in parallel is why
 `absent.yml`'s `known_hosts` task is `throttle: 1`.
@@ -305,6 +375,15 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   warns ("Not prompting as we are not in interactive mode") and uses the `default:`, or `None` when
   there is none. So every prompt needs a `default:`, and it must be the safe answer (`destroy.yml`
   defaults to `no`).
+- **A play's `vars:` apply to the tasks it delegates.** destroy's release play set `ansible_connection:
+  ssh` and `ansible_host` as play vars, so its `delegate_to: localhost` calls to Tailscale's API ran on
+  the VM, credential included - caught on a live run only because this machine's Python path does not
+  exist there; the unit test had forced every connection local with `-e` and hid it. How to reach a host
+  goes on the host (`add_host`, the inventory); a play may only force `ansible_connection: local`.
+  `tests/unit/test_release.py` holds every playbook to that.
+- **A skipped task still overwrites its register.** A `when` on destroy's second cluster listing left
+  `claude_vm_all` without its listing whenever no VM had been started, and destroy failed before it
+  began; register only in a task that always runs, or read it with a `default`.
 - **A `set_fact` outranks the `vars:` of a later `import_tasks`.** `ssh_config.yml` built its
   refresh list as a `claude_ssh_vms` fact, then imported `tasks/ssh_config.yml` a second time with
   `claude_ssh_vms: <the prune list>` and `state: absent`. The fact won, and the prune removed the

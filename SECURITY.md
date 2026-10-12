@@ -13,7 +13,8 @@ This project provisions a VM and installs software on it, so the interesting sur
 what it stores:
 
 - **The custom module** `roles/github_projects/library/github_repos.py`, which handles a GitHub token.
-- **Supply chain**: the vendored apt signing keys in `roles/dev_tools/files/`, the checksum-pinned uv
+- **Supply chain**: the vendored apt signing keys in `roles/dev_tools/files/` and
+  `roles/tailscale/files/`, the checksum-pinned uv
   download, the Ubuntu cloud image verified against its published `SHA256SUMS`, and the Claude Code
   installer fetched over TLS.
 - **Credential handling**: the Proxmox API token, GitHub token and Anthropic API key, which live in an
@@ -36,6 +37,18 @@ what it stores:
   machine's command line for the whole run. `tests/unit/test_claude_login.py` holds both prompts and both
   writers to `no_log` and greps whole runs for the code. The login it
   produces is Claude Code's own `~/.claude/.credentials.json`, mode 0600, which the project never reads.
+  The Tailscale auth key (`vault_tailscale_auth_key`) is used for a VM's first join only, and goes to the
+  VM the same way: `tailscale up --auth-key=file:/dev/stdin`, the key as the `command` module's stdin
+  under `no_log`, so it is on no command line and in no file, and never stored on the VM - tailscaled
+  keeps the node's own keys, not the auth key. `tests/unit/test_tailscale.py` holds that task to be the
+  only one that renders the key, and greps every run, module arguments included, and every file, for every
+  canned key; the role's Molecule scenario searches the VM for it after the join.
+  The Tailscale API credential that deletes a VM's device (`vault_tailscale_api_token`, or
+  `vault_tailscale_oauth_client_id` and `_secret`) is used only on this machine, in `uri` calls under
+  `no_log`, and never reaches a VM. When `make destroy` releases a VM, a GitHub token this project's
+  device flow made for it is revoked from the VM itself, unauthenticated, through GitHub's credential
+  revocation endpoint, under `no_log`; the vault token is never revoked. `tests/unit/test_release.py` greps
+  the release's whole output, module arguments included, for every canned credential.
 - **What the VM ends up trusting**: the SSH key material, the passwordless sudo rule and the docker group
   membership.
 - **What is written on the controller**: `~/.ssh/known_hosts`, the managed SSH config
@@ -89,6 +102,39 @@ that only restate them are not treated as vulnerabilities:
   the template's NIC). A fixed address from `proxmox_vm_ipconfig`, outside the DHCP pool, keeps the
   address from being leased to anything else, but only for a single VM: that one value applies to every
   VM a run provisions, so a second VM would be given the same address.
+
+- **Tailscale reach.** A tailnet's default policy lets every device reach every other, tagged devices
+  included, and these VMs run an AI agent with passwordless sudo. The README's policy edit narrows the
+  default rule to the people's own devices, so a tagged VM can be reached but can open no connection, and
+  adds a test the admin console runs on every save; a VM joined by the web login without a tag is the
+  user's own device, and reaches what the user's devices reach. On the VM, sudo can always log the node
+  out, use `tailscale serve` or `funnel` where the policy allows them, or read
+  `/var/lib/tailscale/tailscaled.state`: only the tag and the policy bound what the node can reach. By
+  default the VM keeps its own resolver (`tailscale_accept_dns: false`): a tailnet's DNS settings that
+  override local DNS would otherwise answer every lookup on the VM. Tailscale's log upload is on, as
+  Tailscale ships it; `tailscale_upload_logs: false` turns it off.
+- **What a destroyed VM tells the controller.** `make destroy` releases a VM before deleting it, from
+  what the VM reports - and the VM runs an agent with sudo. The Tailscale node ID the device is deleted by
+  is the VM's to report, and the API credential can delete any device in the tailnet, so the device is
+  looked up first and deleted only when its name is the one this project asked the VM to join as
+  (`tailscale_hostname`, or that name with Tailscale's `-<n>`); anything else is said, not deleted. The
+  GitHub token revoked is the VM's own, which it could revoke itself; the vault token is never revoked,
+  whatever the VM's marker says. A VM whose address was recycled since is released wherever that address
+  now answers - an SSH host key it does not hold fails the connection first, and nothing is sent to it but
+  the release's own commands.
+- **The Claude sign-in's forward.** While Claude's browser sign-in waits, one port on this machine's
+  loopback (`ssh -L localhost:<port>`) reaches claude's callback on the VM's own `127.0.0.1`, so any process
+  on this machine can reach that callback for those minutes - as any process on the VM always can. The
+  port is the VM's to choose, read from the page its claude handed its browser: it must be between 1024 and
+  65535, the forward fails rather than share a port already in use here, and its far end ends with the
+  sign-in. The page opens here only when it is Claude's own sign-in page; the recycled-address trade-off
+  above applies to it as to the code it replaces.
+- **A pending web login.** While Tailscale's web login waits for an approval, its page is readable by
+  every local user on the VM (`tailscale status --json`), and whoever approves it first decides which
+  tailnet the VM joins. Each report names the tailnet joined, so one that is not yours shows; the key path
+  has no page at all. The page is opened on this machine only when it is Tailscale's own sign-in page.
+  The recycled-address trade-off above extends to it: an impostor's page, approved, joins the impostor to
+  your tailnet.
 
 If you can show one of these is exploitable beyond the documented trade-off, please report it.
 
