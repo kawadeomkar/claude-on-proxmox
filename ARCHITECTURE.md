@@ -567,7 +567,7 @@ shells non-login and `claude` is on the login `PATH` only (`make claude-login` u
 the same reason). The script checks `claude` is installed, runs `claude auth login` when
 `claude auth status` fails (a failed one says how to retry), signs gh in by the device flow when
 `gh auth status --hostname github.com --active` fails (Ctrl-C skips it: `trap ':' INT`), and then
-`exec claude --continue` - the folder's latest conversation, or a new one, because a task terminal
+`claude --continue` - the folder's latest conversation; where there is none, Claude Code 2.1 exits 1 at once ("No conversation found to continue"), and a `--continue` that fails within five seconds starts a fresh `claude` instead, the script ending `exit 0` either way - because a task terminal
 does not survive a window reload, after which the task runs again; its messages arrive as arguments,
 never as script text, and
 `tests/unit/test_code_session.py` runs it against a stand-in `claude`. `${workspaceFolder}`
@@ -1764,7 +1764,7 @@ fails the test if it is called.
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 903 tests. By file:
+pytest over `tests/unit/`: 905 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 27): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -1826,7 +1826,7 @@ pytest over `tests/unit/`: 903 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 108): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 110): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,

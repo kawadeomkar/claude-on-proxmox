@@ -184,10 +184,15 @@
     # helper runs once more in the background, refresh-only: it ran before
     # this task and wrote "not signed in", and the preview follows the file.
     # It ignores Ctrl-C, which in this terminal is meant for claude, and
-    # prints nothing here. --continue picks the folder's latest conversation up, or starts
-    # one when there is none: a task terminal does not survive a window
-    # reload, after which the task runs again, so without it a reload would
-    # end the conversation (/clear starts a fresh one). Anything variable is an
+    # prints nothing here. --continue picks the folder's latest conversation up:
+    # a task terminal does not survive a window reload, after which the task
+    # runs again, so without it a reload would end the conversation (/clear
+    # starts a fresh one). Where there is none to continue - a VM nobody has
+    # talked to Claude on yet, whose only session may be Remote Control's -
+    # Claude Code 2.1 says "No conversation found to continue" and exits 1 at
+    # once, so a --continue that fails within its first seconds starts a fresh
+    # claude instead; one that ran and then failed is not started again. No
+    # exec, so the script ends with exit 0 whatever claude did. Anything variable is an
     # argument, never script text, and a stop ends with exit 0: on a non-zero
     # exit VS Code prints the whole command line, script and messages
     # included, under the line that matters.
@@ -232,7 +237,13 @@
         shift 8
         ( trap '' INT; bash -c "$1" session-notes "$2" "$vm" "$3" refresh-only ) </dev/null >/dev/null 2>&1 &
       fi
-      exec claude --continue
+      started=$SECONDS
+      claude --continue
+      continued=$?
+      if [ "$continued" -ne 0 ] && [ $((SECONDS - started)) -lt 5 ]; then
+        claude
+      fi
+      exit 0
     # What the "Session notes" task runs: `bash -lc <this> session-notes <notes>
     # <vm> <Remote Control unit> [refresh-only]`. Its one rule: it can never keep
     # Claude from starting. It is the Claude task's dependency, and VS Code runs

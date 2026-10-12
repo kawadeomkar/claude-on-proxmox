@@ -74,11 +74,18 @@ GITHUB_FAILED = "Not signed in to GitHub. From your machine: make github-login V
 GITHUB_CODE = "FAKE-C0DE"
 GITHUB_EXPIRED = "failed to authenticate via web browser: This 'device_code' has expired. (expired_token)"
 
+# --continue as Claude Code 2.1 answers it in a folder with nothing to continue,
+# with CONTINUE_RC: at once, or with CONTINUE_SLEEP after a session of that long.
 STAND_IN = """#!/bin/sh
 echo "claude $*" >> "$CLAUDE_LOG"
 case "$1 $2" in
   "auth status") exit "$STATUS_RC";;
   "auth login") exit "$LOGIN_RC";;
+  "--continue "*)
+    [ -n "$CONTINUE_RC" ] || exit 0
+    [ -z "$CONTINUE_SLEEP" ] || /bin/sleep "$CONTINUE_SLEEP"
+    echo "No conversation found to continue"
+    exit "$CONTINUE_RC";;
 esac
 exit 0
 """
@@ -135,6 +142,8 @@ def _terminal(
     gh_status_any_rc=None,
     gh_login_rc=0,
     github_signed_in=GITHUB_SIGNED_IN,
+    continue_rc=None,
+    continue_sleep=None,
 ) -> tuple[list[str], dict]:
     """The script's command line and environment, with the stand-ins in place."""
     bin_dir = tmp_path / "bin"
@@ -162,6 +171,8 @@ def _terminal(
         "GH_STATUS_RC": str(gh_status_rc),
         "GH_STATUS_ANY_RC": str(gh_status_rc if gh_status_any_rc is None else gh_status_any_rc),
         "GH_LOGIN_RC": str(gh_login_rc),
+        "CONTINUE_RC": "" if continue_rc is None else str(continue_rc),
+        "CONTINUE_SLEEP": "" if continue_sleep is None else str(continue_sleep),
     }
     return [*argv, "https", "workflow", "alpha"], env
 
@@ -231,6 +242,21 @@ def test_the_script_and_its_messages_are_not_templates():
         "code_github_signed_in",
     ):
         assert "${" not in _play()["vars"][message]
+
+
+def test_with_nothing_to_continue_a_fresh_claude_starts(tmp_path):
+    # Claude Code 2.1 exits 1 at once on --continue in a folder with no
+    # conversation of its own; VS Code then printed the whole command line.
+    result, asked = _run(tmp_path, status_rc=0, continue_rc=1)
+    assert result.returncode == 0
+    assert asked == ["claude auth status", GITHUB_STATUS, "claude --continue", "claude"]
+
+
+def test_a_continued_session_that_ends_badly_is_not_started_again(tmp_path):
+    # Only a --continue that fails at once means there was nothing to continue.
+    result, asked = _run(tmp_path, status_rc=0, continue_rc=1, continue_sleep=6)
+    assert result.returncode == 0
+    assert asked[-1] == "claude --continue"
 
 
 def test_without_claude_it_says_how_to_install_it_and_stops(tmp_path):
