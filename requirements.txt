@@ -10,6 +10,6 @@ pytest==9.1.1
 ruff==0.16.6
 # Required on the controller by the community.proxmox collection
 proxmoxer==2.3.0
-requests==2.32.5
+requests==2.34.2
 # Required by the Docker driver for Molecule
 docker==7.1.0
