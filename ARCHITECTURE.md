@@ -348,9 +348,11 @@ them, credential included, on the VM - all VMs at once: a VM with no address, or
 `ignore_unreachable` finds unreachable or failing (`failed_when: false`: a failed host leaves the run, and
 a play in which every host fails ends it), is ended and deleted as it is. Then the `release` entry point of
 `claude_code` (stop Remote Control's path unit and service, `claude auth logout`), `github_projects`
-(revoke the token this project's device flow made, told by `~/.config/claude-on-proxmox/gh-device-login`,
-the digest that flow writes, through GitHub's unauthenticated `POST /credentials/revoke` from the VM -
-never the vault token, whatever the marker says, nor a token pasted by hand - then `gh auth logout`) and
+(`gh auth logout`, and no token revoked: revoking the one this project's device flow made, through
+GitHub's `POST /credentials/revoke`, ended every GitHub CLI sign-in of the account, the controller's own
+included - seen live - so the report says where to revoke it and what that does; the digest that flow
+writes, `~/.config/claude-on-proxmox/gh-device-login`, tells its token from the vault token, whatever the
+marker says, and from one pasted by hand) and
 `tailscale` (start a stopped `tailscaled`, read `Self.ID`, `tailscale logout`, then with
 `tailscale_api_auth_method` look the device up and delete it from the controller, only when its name is
 `tailscale_hostname` or `<it>-<n>`, since the VM reports the ID). Each runs in a block whose rescue
@@ -1014,8 +1016,9 @@ Remote Control's decision (§5.5): derived from what the VM holds, never from a 
    marker holds, removing the marker with it. No marker, a stale one, a device-flow login, a
    `GH_TOKEN`: each stays whatever the vault says. A device-flow login the role made leaves a marker
    of its own, `gh-device-login` (the digest of the token that sign-in stored), apart from this one so
-   that its logout rules stay the vault token's: it is what `make destroy`'s `release` entry point
-   revokes at GitHub (§4.5) - a token made for that VM alone, which would outlive its disk.
+   that its logout rules stay the vault token's: `make destroy`'s `release` entry point reads it to say
+   where that token is revoked (§4.5). It does not revoke it: GitHub ends every GitHub CLI sign-in of
+   the account with it.
 4. **Make gh git's credential helper** with `gh auth setup-git --hostname github.com`, once:
    gh writes `credential.https://github.com.helper` twice, an empty entry that cuts any inherited
    helper chain and then `!/usr/bin/gh auth git-credential`, and the role looks for an entry whose
@@ -1714,10 +1717,11 @@ pytest over `tests/unit/`: 818 tests. By file:
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
   that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
-- **Destroy's release** (`test_release.py` 22): `destroy.yml`'s release play and report against the
+- **Destroy's release** (`test_release.py` 23): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
-  Tailscale API: a VM released from everything; the vault token and one pasted by hand signed out, never
-  revoked, the vault token not even under a marker claiming it, and a logout gh refuses said as such; a
+  Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
+  pasted by hand signed out and told apart, the vault token even under a marker claiming it, and a logout
+  gh refuses said as such; a
   device deleted by an API token and by an OAuth client, refused, already gone, and never when the ID the
   VM reports names another device; a VM that could not be reached, with what is left of it named; every
   canned credential searched for in the output; and, read from `destroy.yml`, a name two VMs share
@@ -1875,7 +1879,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 | `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does |
 | `fake_qm.sh` | `qm` on the PVE node | stateful, one config file per VMID, logs every invocation |
 | `fake_virt_customize.sh` | `virt-customize` | so `proxmox_template` runs in a container |
-| `fake_github_api.py` | the GitHub REST API | serves local bare repositories; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took |
+| `fake_github_api.py` | the GitHub REST API | serves local bare repositories; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took, so a test can hold that nothing reaches it |
 | `fake_tailscale_api.py` | Tailscale's API | the OAuth client exchange, and a device looked up and deleted by node ID, each device with the name it was started with; 403 and 404 on cue, and `/fake/deleted` lists what went |
 | `fake_gh.sh` | `gh` | the auth commands only; one login per user, in a file under HOME, with every call logged |
 | `fake_tailscale.sh` | `tailscale` | the commands the role runs, against a node whose state is files under HOME: `status --json` and `debug prefs` shaped as a Running and a signed-out node really print, a join with a canned key on stdin, a refused or slow key, the web login's page and an approval that lands after `up` has exited, `NeedsMachineAuth`, a taken name, `NoState` reads after a start, logout resetting the prefs, a node ID (`node-id`), and with `real-daemon` an answer only while the real daemon's socket exists; a key is never written, and `calls.log` shows `KEY` in its place |

@@ -293,7 +293,7 @@
               {{ claude_vm_release_failures | default([])
                  + ['Claude Code: ' ~ (ansible_failed_result.msg | default('failed', true) | plain_text)] }}
 
-    - name: Sign gh out, and revoke the token this project made for the VM
+    - name: Sign gh out
       block:
         - name: Run github_projects' release
           ansible.builtin.include_role:

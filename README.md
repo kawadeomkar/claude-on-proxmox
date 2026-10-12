@@ -1124,7 +1124,7 @@ as they are deleted:
 | Service | What `make destroy` does first | What is left |
 |---|---|---|
 | Claude | stops Remote Control and the unit that starts it, then `claude auth logout` | the session stays in the Claude app's list, offline: Anthropic has no way to revoke a Claude Code login from outside |
-| GitHub | revokes the token this project's sign-in made for the VM, through GitHub's [credential revocation](https://docs.github.com/en/rest/credentials/revoke) endpoint (GitHub emails you that it did), then `gh auth logout` | nothing. `vault_github_token`, which every VM shares, and a token you pasted into gh by hand are signed out, never revoked |
+| GitHub | `gh auth logout` | the token, valid until you revoke it. Revoking the one this project's sign-in made means revoking GitHub CLI under [Settings → Applications](https://github.com/settings/applications), which signs out every `gh` you have, this machine's included, so `make destroy` does not do it. `vault_github_token`, which every VM shares, is never revoked |
 | Tailscale | logs the node out, then deletes its device with `tailscale_api_auth_method` (see [Removing devices for you](#reaching-a-vm-over-tailscale)) | nothing with a credential; without one, the device, logged out, until you delete it |
 
 Each step is best effort: one that fails is said, and the VM is deleted anyway, as you asked. The run ends

@@ -8,11 +8,11 @@ with them is the Molecule scenarios' to show. The release play and the report
 are taken from destroy.yml as they stand.
 
 What these guard:
-- A released VM is signed out of Claude Code and of gh. A gh token this
-  project's device flow made for it - told by the digest that sign-in left - is
-  revoked at GitHub, through the credential revocation endpoint and
-  unauthenticated; the vault's token, which every VM shares, and a token pasted
-  by hand never are.
+- A released VM is signed out of Claude Code and of gh. No gh token is revoked
+  at GitHub: revoking the one this project's device flow made ended every gh
+  sign-in of the account (seen live), so the report says where to revoke it and
+  what that does; the vault's token, which every VM shares, and a token pasted
+  by hand are told apart from it.
 - Its Tailscale node is logged out, and with an API credential its device is
   deleted from the tailnet, from this machine: by an API access token, or an
   OAuth client exchanged for one - and only a device named as this project
@@ -77,7 +77,7 @@ CASES = {
     "gone": {"node": "nGONE", "api": "token"},
     # A VM reporting another device's ID - a laptop's: never deleted.
     "liar": {"node": "nLAPTOP", "api": "token"},
-    # A VM whose marker claims the vault token: it is every VM's, never revoked.
+    # A VM whose marker claims the vault token: it is every VM's, never taken for this project's sign-in.
     "marked-vault": {"gh": VAULT_TOKEN, "vault": True, "device_marker": True},
     # Two accounts in gh: with no terminal, its logout will not choose one.
     "two-accounts": {"gh": HAND_TOKEN, "two_accounts": True},
@@ -268,26 +268,33 @@ def test_a_vm_signed_in_to_everything_is_released_from_everything(released):
     assert not (root / "everything" / ".claude" / ".credentials.json").exists()
     assert "auth logout" in _calls(root, "everything", ".claude", "fake", "calls.log")
     assert not (root / "everything" / ".config" / "gh" / "fake-token").exists()
-    assert revoked == [DEVICE_TOKEN]
     assert "logout" in _calls(root, "everything", ".tailscale-fake", "calls.log")
     assert "nEVERYTHING" in deleted
     assert _said(report)["everything"] == (
-        "everything: released - Claude Code: signed out; GitHub: the token this project signed gh in with is revoked"
-        " at GitHub, and gh signed out; Tailscale: removed from your tailnet."
+        "everything: released - Claude Code: signed out; GitHub: gh signed out; the token this project signed it in"
+        " with stays valid until revoked at https://github.com/settings/applications, under GitHub CLI - which signs"
+        " out every gh you have, so destroy does not; Tailscale: removed from your tailnet."
     )
 
 
-def test_the_vault_token_and_a_token_pasted_by_hand_are_signed_out_never_revoked(released):
+def test_no_token_is_ever_revoked_at_github(released):
+    # Revoking one GitHub CLI token through the credential revocation endpoint
+    # ended every gh sign-in of the account - the developer's own included.
+    _, _, revoked, _ = released
+    assert revoked == []
+
+
+def test_the_vault_token_and_a_token_pasted_by_hand_are_signed_out_and_told_apart(released):
     root, report, revoked, deleted = released
-    assert VAULT_TOKEN not in revoked and HAND_TOKEN not in revoked
     for host in ("vault-token", "by-hand"):
         assert not (root / host / ".config" / "gh" / "fake-token").exists(), host
     said = _said(report)
     assert "GitHub: gh signed out (vault_github_token is every VM's, so it is not revoked)" in said["vault-token"]
     assert (
         "GitHub: gh signed out; its token is not one this project recorded making (a sign-in by hand, or one before"
-        " this version), so it is not revoked - revoke it at https://github.com/settings/applications under GitHub"
-        " CLI if it was this VM's alone;"
+        " this version), and stays valid until revoked - at https://github.com/settings/tokens if it is a personal"
+        " access token, or under GitHub CLI at https://github.com/settings/applications, which signs out every gh"
+        " you have;"
     ) in said["by-hand"]
 
 
@@ -297,8 +304,9 @@ def test_a_logout_gh_refuses_is_said_never_reported_as_done(released):
     assert _said(report)["two-accounts"] == (
         "two-accounts: released - GitHub: gh could not sign out (unable to determine which account to log out of,"
         " please specify `--hostname` and `--user`); its token is not one this project recorded making (a sign-in"
-        " by hand, or one before this version), so it is not revoked - revoke it at"
-        " https://github.com/settings/applications under GitHub CLI if it was this VM's alone."
+        " by hand, or one before this version), and stays valid until revoked - at https://github.com/settings/tokens"
+        " if it is a personal access token, or under GitHub CLI at https://github.com/settings/applications, which"
+        " signs out every gh you have."
     )
 
 
@@ -344,9 +352,8 @@ def test_a_device_is_deleted_only_under_the_name_this_project_asked_the_vm_to_jo
     )
 
 
-def test_the_vault_token_is_never_revoked_whatever_the_vm_s_marker_says(released):
-    _, report, revoked, _ = released
-    assert VAULT_TOKEN not in revoked
+def test_the_vault_token_is_never_taken_for_this_project_s_sign_in_whatever_the_vm_s_marker_says(released):
+    _, report, _, _ = released
     assert "GitHub: gh signed out (vault_github_token is every VM's" in _said(report)["marked-vault"]
 
 
@@ -533,13 +540,9 @@ def test_every_api_call_is_made_on_this_machine_and_never_logged():
     for task in api:
         assert task["delegate_to"] == "localhost" and task["become"] is False, task["name"]
         assert task["no_log"] is True, task["name"]
-    revoke = next(
-        task
-        for task in yaml.safe_load((REPO / "roles" / "github_projects" / "tasks" / "release.yml").read_text())
-        if "ansible.builtin.uri" in task
-    )
-    # From the VM, unauthenticated: GitHub refuses any authenticated call there.
-    assert revoke["no_log"] is True and "Authorization" not in revoke["ansible.builtin.uri"].get("headers", {})
+    # GitHub's release calls no API at all: it signs gh out, and says the rest.
+    github = yaml.safe_load((REPO / "roles" / "github_projects" / "tasks" / "release.yml").read_text())
+    assert not [task["name"] for task in github if "ansible.builtin.uri" in task]
 
 
 # ------------------------------------- destroy.yml against the fake Proxmox ---

@@ -252,8 +252,8 @@
   ansible.builtin.set_fact:
     github_projects_login_done: true
 
-# The digest of the token this sign-in left gh, never the token: what make
-# destroy revokes at GitHub before the VM goes (release.yml).
+# The digest of the token this sign-in left gh, never the token: how make
+# destroy's report tells this sign-in's token from others (release.yml).
 - name: device_flow | Remember the token this sign-in made for the VM
   ansible.builtin.copy:
     content: "{{ github_projects_stored_token | hash('sha256') }}\n"

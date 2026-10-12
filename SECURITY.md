@@ -45,10 +45,11 @@ what it stores:
   canned key; the role's Molecule scenario searches the VM for it after the join.
   The Tailscale API credential that deletes a VM's device (`vault_tailscale_api_token`, or
   `vault_tailscale_oauth_client_id` and `_secret`) is used only on this machine, in `uri` calls under
-  `no_log`, and never reaches a VM. When `make destroy` releases a VM, a GitHub token this project's
-  device flow made for it is revoked from the VM itself, unauthenticated, through GitHub's credential
-  revocation endpoint, under `no_log`; the vault token is never revoked. `tests/unit/test_release.py` greps
-  the release's whole output, module arguments included, for every canned credential.
+  `no_log`, and never reaches a VM. When `make destroy` releases a VM, gh signs out there and no GitHub
+  token is revoked: revoking one GitHub CLI token through GitHub's credential revocation endpoint ended
+  every GitHub CLI sign-in of the account, the controller's included, so the report says where to revoke
+  it. `tests/unit/test_release.py` holds that nothing reaches that endpoint, and greps the release's whole
+  output, module arguments included, for every canned credential.
 - **What the VM ends up trusting**: the SSH key material, the passwordless sudo rule and the docker group
   membership.
 - **What is written on the controller**: `~/.ssh/known_hosts`, the managed SSH config
@@ -117,9 +118,9 @@ that only restate them are not treated as vulnerabilities:
   what the VM reports - and the VM runs an agent with sudo. The Tailscale node ID the device is deleted by
   is the VM's to report, and the API credential can delete any device in the tailnet, so the device is
   looked up first and deleted only when its name is the one this project asked the VM to join as
-  (`tailscale_hostname`, or that name with Tailscale's `-<n>`); anything else is said, not deleted. The
-  GitHub token revoked is the VM's own, which it could revoke itself; the vault token is never revoked,
-  whatever the VM's marker says. A VM whose address was recycled since is released wherever that address
+  (`tailscale_hostname`, or that name with Tailscale's `-<n>`); anything else is said, not deleted. No
+  GitHub token is revoked, so nothing the VM reports can get one revoked. A VM whose address was recycled
+  since is released wherever that address
   now answers - an SSH host key it does not hold fails the connection first, and nothing is sent to it but
   the release's own commands.
 - **The Claude sign-in's forward.** While Claude's browser sign-in waits, one port on this machine's

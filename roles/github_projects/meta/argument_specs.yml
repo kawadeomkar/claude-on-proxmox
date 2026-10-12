@@ -126,11 +126,11 @@ argument_specs:
   # tasks_from: release, which playbooks/destroy.yml runs on each VM before it
   # is deleted.
   release:
-    short_description: Sign gh out, and revoke the token this role's sign-in made, before the VM is destroyed
+    short_description: Sign gh out before the VM is destroyed
     description:
-      - Revokes at GitHub, through its credential revocation endpoint, a token this role's device flow made for the
-        VM - told by the digest it left - then signs gh out. A personal access token is never revoked. Records what
-        became of the login in github_projects_release_said, for destroy's report.
+      - Signs gh out, and records what became of the login in github_projects_release_said, for destroy's report. No
+        token is revoked at GitHub - revoking one gh sign-in there ends every gh sign-in of the account - so the report
+        says where to revoke it, and what that does.
     options:
       github_projects_user:
         type: str
@@ -142,7 +142,4 @@ argument_specs:
         type: str
         default: ""
         no_log: true
-        description: The vault token, only to say that a login with it is not revoked.
-      github_projects_api_url:
-        type: str
-        default: https://api.github.com
+        description: The vault token, only to say that a login with it is every VM's.

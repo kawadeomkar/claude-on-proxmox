@@ -275,9 +275,11 @@ and runs the `release` entry point of
 `claude_code`, `github_projects` and `tailscale`, each in a block whose rescue records a failure: a
 release never stops a deletion. A VM with no address or that does not answer is ended and deleted as it
 is. Each entry point leaves one clause in a `*_release_said` fact, and the last play says per VM what it
-was released from or what is left of it. GitHub revokes only a token this project's device flow made
-(digest in `~/.config/claude-on-proxmox/gh-device-login`), through the unauthenticated
-`POST /credentials/revoke` from the VM; never the vault token nor one pasted by hand. Tailscale's device
+was released from or what is left of it. GitHub's release only signs gh out and revokes no token:
+revoking the one this project's device flow made, through `POST /credentials/revoke`, ended every
+GitHub CLI sign-in of the account, the developer's own included, so the report says where to revoke it
+and what that does (the digest in `~/.config/claude-on-proxmox/gh-device-login` tells that token from
+the vault's and from one pasted by hand). Tailscale's device
 is deleted with `tailscale_api_auth_method` (`token` or `oauth`, `devices:core`) from the controller, by
 the node's `Self.ID`, read before the logout. Another play then runs the role with
 `proxmox_vm_state: absent` across them, so VMs are stopped and deleted in parallel. It used to loop `include_role` on
