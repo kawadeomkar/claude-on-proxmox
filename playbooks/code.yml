@@ -25,11 +25,15 @@
 # With vscode_claude_terminal (the default), VS Code is handed a workspace
 # file rather than the folder. It names the folder and holds one task, run when
 # the window opens: a terminal named Claude that starts claude there, signing
-# in to Claude, and to GitHub, first on a VM that has not been. That file is
-# the one thing written on the VM, in a directory of its own beside the
-# projects (<projects>/.claude-on-proxmox/), never in a repository; cloud-init
-# placed the key at provisioning, so nothing else needs changing. VS Code runs
-# the task only in a window the user has trusted, and only once they have
+# in to Claude, and to GitHub, first on a VM that has not been. With
+# vscode_session_notes (the default) it also holds the "Session notes" task
+# the Claude task depends on, which opens a page about the VM beside the
+# terminal each time the window opens, its "Signed in" section read from the
+# VM then (README, "Session notes"). The workspace file and those notes are
+# all that is written on the VM, in a directory of its own beside the projects
+# (<projects>/.claude-on-proxmox/), never in a repository; cloud-init placed
+# the key at provisioning, so nothing else needs changing. VS Code runs the
+# tasks only in a window the user has trusted, and only once they have
 # allowed automatic tasks; this playbook reads their VS Code settings to say
 # which of those to expect, and never writes them (README, "A Claude session
 # in the window").
@@ -58,55 +62,102 @@
       failed, so VS Code could not connect either: {{ code_ssh.msg | default('no reason given') | plain_text | regex_replace('\s+', ' ') | trim }}
       A VM that has just booted can need another minute; `ssh {{ claude_vm_names[0] }}` shows why.
     code_terminal: "{{ vscode_claude_terminal | default(true) | bool }}"
+    # The session notes need the workspace file's tasks: they come with the terminal.
+    code_notes: "{{ code_terminal and vscode_session_notes | default(true) | bool }}"
 
     # The workspace file, built as data and written with to_nice_json so no
     # path or message can break its JSON. Absolute paths throughout:
     # ${workspaceFolder} is ambiguous in a task that belongs to a workspace
     # file rather than to a folder. The workspace files' own directory is hidden
-    # from the explorer in the window that shows it, the whole directory's.
+    # from the explorer in the window that shows it, the whole directory's. The
+    # notes' directory is a second folder only where this window's own folder
+    # contains it: VS Code stores the folders a user trusted, not their parents,
+    # so a folder added beside them would put a window trusted before back in
+    # Restricted Mode, without the Claude terminal (ARCHITECTURE.md §4.9).
     code_workspace_file:
-      folders:
-        - path: "{{ code_target }}"
+      folders: >-
+        {{ [{'path': code_target}]
+           + ([{'path': code_notes_dir, 'name': claude_vm_names[0] ~ ' · session'}] if code_notes_folder | bool else []) }}
       settings: >-
-        {{ {'files.exclude': {code_ws_dir | basename: true}}
-           if code_ws_dir | dirname == code_target else {} }}
+        {{ ({'files.exclude': {code_ws_dir | basename: true}} if code_ws_dir | dirname == code_target else {})
+           | combine({'workbench.editorAssociations': {code_notes_glob: 'vscode.markdown.preview.editor'}}
+                     if code_notes | bool else {}) }}
       tasks:
         version: "2.0.0"
-        tasks:
-          - label: Claude
-            type: process
-            command: /bin/bash
-            args:
-              - -lc
-              - "{{ code_terminal_script }}"
-              - make-code
-              - "{{ code_not_installed }}"
-              - "{{ code_signed_in_watched }}"
-              - "{{ code_signed_in_unwatched }}"
-              - "{{ code_login_watch }}"
-              - "{{ code_github_signed_in }}"
-              - "{{ github_projects_clone_protocol | default('https') }}"
-              - "{{ github_projects_login_scopes | default(['workflow']) | join(',') }}"
-              - "{{ claude_vm_names[0] }}"
-            options:
-              cwd: "{{ code_target }}"
-            runOptions:
-              runOn: folderOpen
-            presentation:
-              reveal: always
-              focus: true
-              panel: dedicated
-              clear: true
-              # When claude exits, say what the next keypress does.
-              showReuseMessage: true
-            problemMatcher: []
+        # The notes' task first, and the Claude task depending on it: VS Code
+        # runs a dependency before its task and the Claude task only once the
+        # dependency exits 0, and lists only the folderOpen task when it asks
+        # about automatic tasks.
+        tasks: >-
+          {{ ([code_notes_task] if code_notes | bool else [])
+             + [code_claude_task | combine({'dependsOn': ['Session notes']} if code_notes | bool else {})] }}
+    code_claude_task:
+      label: Claude
+      type: process
+      command: /bin/bash
+      args:
+        - -lc
+        - "{{ code_terminal_script }}"
+        - make-code
+        - "{{ code_not_installed }}"
+        - "{{ code_signed_in_watched }}"
+        - "{{ code_signed_in_unwatched }}"
+        - "{{ code_login_watch }}"
+        - "{{ code_github_signed_in }}"
+        - "{{ github_projects_clone_protocol | default('https') }}"
+        - "{{ github_projects_login_scopes | default(['workflow']) | join(',') }}"
+        - "{{ claude_vm_names[0] }}"
+        - "{{ code_notes_script if code_notes | bool else '' }}"
+        - "{{ code_notes_file if code_notes | bool else '' }}"
+        - "{{ code_remote_control_unit }}"
+      options:
+        cwd: "{{ code_target }}"
+      runOptions:
+        runOn: folderOpen
+      presentation:
+        reveal: always
+        focus: true
+        panel: dedicated
+        clear: true
+        # When claude exits, say what the next keypress does.
+        showReuseMessage: true
+      problemMatcher: []
+    # Run before the Claude task, quietly, its terminal closing when it ends.
+    # In the Run Task list too: "Tasks: Run Task", Session notes refreshes and
+    # opens the notes by hand.
+    code_notes_task:
+      label: Session notes
+      type: process
+      command: /bin/bash
+      args:
+        - -lc
+        - "{{ code_notes_script }}"
+        - session-notes
+        - "{{ code_notes_file }}"
+        - "{{ claude_vm_names[0] }}"
+        - "{{ code_remote_control_unit }}"
+      presentation:
+        reveal: never
+        focus: false
+        echo: false
+        close: true
+        showReuseMessage: false
+      problemMatcher: []
+    # Whether the notes' directory is this window's second folder (above).
+    code_notes_folder: "{{ code_notes | bool and code_notes_dir.startswith(code_target ~ '/') }}"
+    # Opened as a rendered preview: VS Code matches a key with a "/" against the
+    # file's scheme and path, so this follows vscode_workspaces_dir.
+    code_notes_glob: "**/{{ code_ws_dir | basename }}/session/*-session.md"
+    code_remote_control_unit: "{{ claude_code_remote_control_service | default('claude-remote-control') }}"
 
-    # What the task runs: `bash -lc <this> make-code <$1> ... <$8>`, the eight
+    # What the task runs: `bash -lc <this> make-code <$1> ... <$11>`, the
     # arguments being, in order: what to say without claude; the line a
     # sign-in here ends with where the claude_code role's path unit watches
     # for the login, and so starts Remote Control, and the line where nothing
     # does; that unit's file; GitHub's line, empty to leave GitHub alone; the
-    # git protocol and the scopes for gh; and the VM's name. A login shell,
+    # git protocol and the scopes for gh; the VM's name; and the session notes'
+    # helper, their path and the Remote Control unit, the helper empty without
+    # notes - reached by shift, since ${10} is VS Code's to resolve. A login shell,
     # because tasks start non-login shells and claude is on the login PATH
     # only. `claude auth status` exits non-zero until the VM is signed in, by
     # claude.ai or by an API key; `claude auth login` is the browser flow, and
@@ -129,7 +180,11 @@
     # terminal works at once; the private repositories still take the make
     # configure that $5 names, and a sign-in that fails does not keep Claude
     # from starting. pipefail, so that gh's exit status survives the read
-    # loop. --continue picks the folder's latest conversation up, or starts
+    # loop. After a sign-in that succeeded here, Claude's or gh's, the notes'
+    # helper runs once more in the background, refresh-only: it ran before
+    # this task and wrote "not signed in", and the preview follows the file.
+    # It ignores Ctrl-C, which in this terminal is meant for claude, and
+    # prints nothing here. --continue picks the folder's latest conversation up, or starts
     # one when there is none: a task terminal does not survive a window
     # reload, after which the task runs again, so without it a reload would
     # end the conversation (/clear starts a fresh one). Anything variable is an
@@ -150,6 +205,7 @@
         fi
         if [ -e "$4" ]; then said=$2; else said=$3; fi
         [ -z "$said" ] || printf '%s\n' "$said"
+        refresh=1
       fi
       if [ -n "$5" ] && command -v gh >/dev/null 2>&1 && ! gh auth status --hostname github.com --active >/dev/null 2>&1; then
         printf '%s %s\n' "Signing in to GitHub next, so that git push and gh work here; Ctrl-C skips this." \
@@ -165,12 +221,213 @@
             esac
           done && gh auth setup-git -h github.com; then
           printf '%s\n' "$5"
+          refresh=1
         else
           printf '%s\n' "Not signed in to GitHub. From your machine: make github-login VM_NAME=$8"
         fi
       fi
       trap - INT
+      if [ -n "$refresh" ] && [ -n "$9" ]; then
+        vm=$8
+        shift 8
+        ( trap '' INT; bash -c "$1" session-notes "$2" "$vm" "$3" refresh-only ) </dev/null >/dev/null 2>&1 &
+      fi
       exec claude --continue
+    # What the "Session notes" task runs: `bash -lc <this> session-notes <notes>
+    # <vm> <Remote Control unit> [refresh-only]`. Its one rule: it can never keep
+    # Claude from starting. It is the Claude task's dependency, and VS Code runs
+    # that task only when this exits 0, so bash stays in charge whatever its
+    # Python part does - raises, hangs, or is missing - waits for it 5 seconds at
+    # most, opens the notes and exits 0; set +e, since a login profile may set
+    # -e. Python reads, at once and 2 seconds each, claude auth status, the
+    # Remote Control unit, gh's login and tailscale status, and rewrites only the
+    # part of the notes between the live markers, atomically, mode 0600, and only
+    # in a regular file that has them; every value is cleaned as plain_text
+    # cleans (filter_plugins/text.py), no command it runs prints a token, and
+    # the Tailscale row carries the way in over Tailscale, which only the VM
+    # knows. code -r opens the notes in this window, through the remote CLI
+    # VS Code Server puts on every task's PATH; it returns before the editor
+    # opens, so the second's wait lets the notes open before the Claude
+    # terminal takes focus. refresh-only, from the Claude task after a sign-in
+    # there, waits for Remote Control to start, refreshes, and opens nothing:
+    # the preview follows the file. A login shell, because claude is on the
+    # login PATH only. Fixed text, quoted heredoc and all: no ${ anywhere,
+    # which VS Code would resolve in the arguments before bash saw them.
+    code_notes_script: |-
+      set +e
+      [ "$4" != refresh-only ] || sleep 5
+      python3 - "$1" "$2" "$3" <<'PY' >/dev/null 2>&1 &
+      import json
+      import os
+      import pwd
+      import re
+      import shutil
+      import stat
+      import subprocess
+      import sys
+      import tempfile
+      import time
+      from concurrent.futures import ThreadPoolExecutor
+
+      notes, vm, unit = sys.argv[1], sys.argv[2], sys.argv[3]
+      START, END = "<!-- claude-on-proxmox:live -->", "<!-- /claude-on-proxmox:live -->"
+      # What plain_text removes (filter_plugins/text.py): whole escape sequences, then every control character.
+      SEQUENCES = re.compile(
+          r"(?:\x1b[\]PX^_]|[\x9d\x90\x98\x9e\x9f])[^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c)?"
+          r"|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?"
+          r"|\x1b[ -/]*[0-~]?"
+      )
+      CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+      def clean(value):
+          # One table cell: no control character, no column break, no code span to break out of.
+          text = CONTROL.sub(" ", SEQUENCES.sub("", str(value))).strip()
+          return text.replace("|", "\\|").replace("`", "'")
+
+
+      def run(*argv):
+          # Its exit status and output; None for a tool that is not there, "timeout" for one that did not answer.
+          if shutil.which(argv[0]) is None:
+              return None
+          try:
+              done = subprocess.run(argv, capture_output=True, encoding="utf-8", errors="replace", timeout=2, stdin=subprocess.DEVNULL, check=False)
+          except subprocess.TimeoutExpired:
+              return "timeout"
+          except OSError:
+              return None
+          return done.returncode, done.stdout
+
+
+      def parsed(answer):
+          try:
+              return json.loads(answer[1])
+          except (TypeError, ValueError, IndexError):
+              return None
+
+
+      def claude_row(answer):
+          if answer is None:
+              return "not installed"
+          if answer == "timeout":
+              return "unknown (no answer in 2 s)"
+          status = parsed(answer)
+          if not isinstance(status, dict):
+              return "unknown (claude auth status gave no status)"
+          if not status.get("loggedIn"):
+              return f"not signed in: make claude-login VM_NAME={vm} on your machine"
+          if status.get("apiKeySource") or status.get("authMethod") == "api_key":
+              return f"an API key ({clean(status.get('apiKeySource') or 'ANTHROPIC_API_KEY')})"
+          plan = status.get("subscriptionType")
+          return f"`{clean(status.get('email') or '?')}` · {clean(status.get('authMethod') or '?')}" + (
+              f", {clean(plan)} plan" if plan else ""
+          )
+
+
+      def remote_control_row(answer):
+          if answer is None:
+              return "unknown (no systemctl)"
+          if answer == "timeout":
+              return "unknown (no answer in 2 s)"
+          state = clean(answer[1].strip() or "unknown")
+          if state == "active":
+              return f"live: open claude.ai/code or the Claude app, and pick **{clean(vm)}**"
+          return f"not running ({state})"
+
+
+      def github_row(answer):
+          if answer is None:
+              return "gh not installed"
+          if answer == "timeout":
+              return "unknown (no answer in 2 s)"
+          # Signed out, gh prints {"hosts":{}}: no github.com entry. Only output that is
+          # not that JSON at all is a gh too old for --json.
+          report = parsed(answer)
+          hosts = report.get("hosts") if isinstance(report, dict) else None
+          if not isinstance(hosts, dict):
+              return "unknown (gh auth status gave no status; it needs gh 2.81.0 or newer)"
+          accounts = hosts.get("github.com") or []
+          active = next((account for account in accounts if isinstance(account, dict) and account.get("active")), None)
+          if active is None:
+              return f"not signed in: make github-login VM_NAME={vm} on your machine"
+          if active.get("state") != "success":
+              return f"`{clean(active.get('login') or '?')}`, but its token is refused: make github-login VM_NAME={vm}"
+          return f"`{clean(active.get('login') or '?')}` · git over {clean(active.get('gitProtocol') or '?')}"
+
+
+      def tailscale_row(answer, user):
+          if answer is None:
+              return "not installed"
+          if answer == "timeout":
+              return "unknown (no answer in 2 s)"
+          status = parsed(answer)
+          if not isinstance(status, dict):
+              return "unknown (tailscale status gave no status)"
+          backend = clean(status.get("BackendState") or "unknown")
+          if backend != "Running":
+              return f"{backend}: make tailscale-login VM_NAME={vm} signs it in" if backend == "NeedsLogin" else backend
+          node = status.get("Self") or {}
+          name = clean(str(node.get("DNSName") or "").rstrip("."))
+          addresses = [clean(address) for address in node.get("TailscaleIPs") or [] if ":" not in str(address)]
+          row = "running" + (f" as `{name}`" if name else "") + (f" · `{addresses[0]}`" if addresses else "")
+          return row + (f" · `ssh {clean(user)}@{name}`" if name else "")
+
+
+      def main():
+          info = os.lstat(notes)
+          if not stat.S_ISREG(info.st_mode):
+              return
+          with open(notes, encoding="utf-8") as handle:
+              text = handle.read()
+          start, end = text.find(START), text.find(END)
+          if start < 0 or end < start:
+              return
+          user = pwd.getpwuid(os.getuid()).pw_name
+          with ThreadPoolExecutor(max_workers=4) as pool:
+              claude = pool.submit(run, "claude", "auth", "status")
+              remote = pool.submit(run, "systemctl", "is-active", unit)
+              github = pool.submit(run, "gh", "auth", "status", "--hostname", "github.com", "--json", "hosts")
+              tailscale = pool.submit(run, "tailscale", "status", "--json")
+              rows = [
+                  ("Claude Code", claude_row(claude.result())),
+                  ("Remote Control", remote_control_row(remote.result())),
+                  ("GitHub (`gh`)", github_row(github.result())),
+                  ("Tailscale", tailscale_row(tailscale.result(), user)),
+              ]
+          live = "\n".join(
+              [START, "## Signed in", "", f"| | as of {time.strftime('%H:%M %Z on %d %b')} |", "|---|---|"]
+              + [f"| {label} | {value} |" for label, value in rows]
+              + [END]
+          )
+          updated = text[:start] + live + text[end + len(END) :]
+          if updated == text:
+              return
+          descriptor, temporary = tempfile.mkstemp(dir=os.path.dirname(notes), prefix=".session-")
+          try:
+              with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                  handle.write(updated)
+              os.chmod(temporary, 0o600)
+              os.replace(temporary, notes)
+          finally:
+              if os.path.exists(temporary):
+                  os.unlink(temporary)
+
+
+      main()
+      PY
+      notes_pid=$!
+      tries=0
+      while kill -0 "$notes_pid" 2>/dev/null && [ "$tries" -lt 10 ]; do
+        sleep 0.5
+        tries=$((tries + 1))
+      done
+      { kill "$notes_pid"; wait "$notes_pid"; } 2>/dev/null
+      [ "$4" != refresh-only ] || exit 0
+      if [ -f "$1" ] && [ ! -L "$1" ] && command -v code >/dev/null 2>&1; then
+        code -r "$1" </dev/null >/dev/null 2>&1 &
+      fi
+      sleep 1
+      exit 0
     code_not_installed: >-
       Claude Code is not installed on {{ claude_vm_names[0] }} yet. On your machine, run
       make configure VM_NAME={{ claude_vm_names[0] }}, then "Tasks: Run Task", Claude here.
@@ -192,7 +449,7 @@
           ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
          if claude_code_remote_control | default(true) | bool else '' }}
     # The role's own default, unless the inventory names the service otherwise.
-    code_login_watch: "/etc/systemd/system/{{ claude_code_remote_control_service | default('claude-remote-control') }}.path"
+    code_login_watch: "/etc/systemd/system/{{ code_remote_control_unit }}.path"
     # Empty when github_projects_auth is off or the token method is chosen,
     # which is also what tells the script to leave GitHub alone. The role's
     # names, which the inventory wires to github_auth and github_auth_method,
@@ -440,6 +697,9 @@
             code_target: >-
               {{ code_root_given ~ ('/' ~ vm_project if vm_project | default('', true) | string | length > 0 else '') }}
             code_ws_dir: "{{ code_ws_dir_given }}"
+            # The session notes, one file per VM, in a directory of their own.
+            code_notes_dir: "{{ code_ws_dir_given ~ '/session' }}"
+            code_notes_file: "{{ code_ws_dir_given ~ '/session/' ~ claude_vm_names[0] ~ '-session.md' }}"
             # One project's file in project/, so a repository that shares the
             # projects directory's name cannot collide with the whole directory's.
             code_ws_file: >-
@@ -579,11 +839,22 @@
           when: "'ms-vscode-remote.remote-ssh' not in (code_extensions.stdout_lines | map('lower') | list)"
           changed_when: true
 
-        # The one write on the VM, as the VM user, last: every refusal above
+        # The writes on the VM, as the VM user, last: every refusal above
         # leaves the VM as it was. An unchanged file is not rewritten, so a run
         # that only reopens a window reports no change there, and a directory
         # that already exists keeps its mode: vscode_workspaces_dir may name one
-        # of the user's own, the home directory included.
+        # of the user's own, the home directory included. The notes' "Signed
+        # in" section is the window's to write, each time it opens: read here
+        # and carried into the notes written below, so a VM whose facts did not
+        # change gets the same file again.
+        - name: Read the session notes already on the VM
+          ansible.builtin.slurp:
+            src: "{{ code_notes_file }}"
+          delegate_to: "{{ claude_vm_names[0] }}"
+          register: code_notes_found
+          failed_when: false
+          when: code_notes | bool
+
         - name: Look for the directory for VS Code workspace files on the VM
           ansible.builtin.stat:
             path: "{{ code_ws_file | dirname }}"
@@ -607,6 +878,29 @@
             mode: "0644"
           delegate_to: "{{ claude_vm_names[0] }}"
           when: code_terminal
+
+        # The notes say who is signed in where and the VM's addresses: the
+        # VM user's alone.
+        - name: Make the directory for the session notes on the VM
+          ansible.builtin.file:
+            path: "{{ code_notes_dir }}"
+            state: directory
+            mode: "0700"
+          delegate_to: "{{ claude_vm_names[0] }}"
+          when: code_notes | bool
+
+        - name: Write the session notes on the VM
+          vars:
+            code_notes_live: >-
+              {{ (code_notes_found.content | default('') | b64decode)
+                 | regex_search('(?s)<!-- claude-on-proxmox:live -->.*?<!-- /claude-on-proxmox:live -->')
+                 or '' }}
+          ansible.builtin.copy:
+            dest: "{{ code_notes_file }}"
+            content: "{{ lookup('ansible.builtin.template', 'vm_session.md.j2') }}"
+            mode: "0600"
+          delegate_to: "{{ claude_vm_names[0] }}"
+          when: code_notes | bool
 
         # VS Code opens a path ending in .code-workspace as a workspace, not as a
         # file to edit; the same workspace already open is focused, and its task
@@ -665,6 +959,20 @@
                               ~ ' notification that goes quiet after a moment ("Tasks: Manage Automatic Tasks" offers'
                               ~ ' the same choice later)')
                       ~ '. ' ~ code_settings_note ~ code_trust_once }}
+            # Where the notes are, and how they open. In a window without the
+            # notes' folder they are a file outside its folders, which VS Code
+            # asks about once per workspace unless a folder the user trusted
+            # holds them: the projects directory, trusted in its own window.
+            code_notes_said: >-
+              {{ '' if not (code_notes | bool)
+                 else ('The session notes are at ' ~ code_notes_file ~ ': "Tasks: Run Task", Session notes opens them.'
+                       if code_vscode_auto_tasks == 'off'
+                       else 'The session notes open beside it each time (' ~ code_notes_file ~ ').')
+                      ~ ('' if code_notes_folder | bool
+                         else " VS Code may ask once whether to open them, as a file outside this window's folder: Open"
+                              ~ (', or trust the window of make code VM_NAME=' ~ claude_vm_names[0] ~ ', which covers them'
+                                 if code_ws_dir.startswith(code_root ~ '/') else '') ~ '.')
+                      ~ ' vscode_session_notes: false turns them off.' }}
             code_said:
               - VS Code is opening {{ code_target }} on {{ claude_vm_names[0] }} ({{ code_reach }}).
               - The first connection installs VS Code Server on the VM and takes a minute.
@@ -672,6 +980,7 @@
                 {{ 'A terminal named Claude then starts claude in it, signing in to Claude'
                    ~ (' and to GitHub' if code_github_signed_in | length > 0 else '') ~ ' first if '
                    ~ claude_vm_names[0] ~ ' has not been. ' ~ code_first_time if code_terminal else '' }}
+              - "{{ code_notes_said }}"
           ansible.builtin.debug:
             msg: "{{ code_said | select | join(' ') | trim }}"
 

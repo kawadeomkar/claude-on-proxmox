@@ -319,6 +319,14 @@ vscode_claude_terminal: true
 # directory that already exists keeps its mode; files written before a move
 # stay where they were.
 vscode_workspaces_dir: ""
+# Session notes: a page about the VM - its addresses, how to reach it, what is
+# signed in, the make commands - that opens as a rendered preview beside the
+# Claude terminal every time the window opens. make code writes them in
+# session/ under the workspaces directory, never in a repository; the window's
+# "Session notes" task rewrites their "Signed in" section from the VM each
+# time it opens. They need that task, so they come with vscode_claude_terminal
+# (README, "Session notes"). Set false for neither.
+vscode_session_notes: true
 # The VS Code user settings make code reads, and never writes, to say whether
 # that terminal will start on its own. Empty: where VS Code itself would keep
 # them - $VSCODE_APPDATA or $XDG_CONFIG_HOME if set, else

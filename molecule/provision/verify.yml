@@ -1365,6 +1365,11 @@
           - verify_runs[0].stdout is search('No VS Code settings file at \S+/vscode/settings.json, so whether you have answered')
           - verify_runs[0].stdout is search(('Trusting this window trusts every project in ' ~ verify_ws ~ '.') | regex_escape)
           - verify_runs[2].stdout is search('Trusting the window of make code VM_NAME=alpha instead trusts every project')
+          # The session notes: beside the window each time, and in a project's window from outside its folder.
+          - verify_runs[0].stdout is search(('The session notes open beside it each time (' ~ verify_code_ws_dir
+                                             ~ '/session/alpha-session.md).') | regex_escape)
+          - verify_runs[0].stdout is not search('VS Code may ask once')
+          - verify_runs[2].stdout is search("VS Code may ask once whether to open them, as a file outside this window's folder")
         fail_msg: >-
           make code exited {{ verify_runs | map(attribute='rc') | list }} and asked for {{ verify_code_log }}:
           {{ verify_runs | map(attribute='stdout') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
@@ -1376,33 +1381,47 @@
         verify_ws_project: >-
           {{ lookup('ansible.builtin.file', verify_code_ws_dir ~ '/project/discord-music-bot.code-workspace') | from_json }}
 
-    # The script in the file is the one the unit tests run, byte for byte.
+    # The scripts in the file are the ones the unit tests run, byte for byte.
     - name: Assert each workspace opens its folder and starts Claude in it when the window opens
       vars:
         verify_ws: "{{ verify_ssh_dir }}/projects"
-        verify_task: "{{ verify_ws_project.tasks.tasks[0] }}"
-        verify_code_script: "{{ (lookup('ansible.builtin.file', verify_code_playbook) | from_yaml)[0].vars.code_terminal_script }}"
+        verify_notes_task: "{{ verify_ws_project.tasks.tasks[0] }}"
+        verify_task: "{{ verify_ws_project.tasks.tasks[1] }}"
+        verify_code_play: "{{ (lookup('ansible.builtin.file', verify_code_playbook) | from_yaml)[0] }}"
+        verify_code_script: "{{ verify_code_play.vars.code_terminal_script }}"
+        verify_notes_script: "{{ verify_code_play.vars.code_notes_script }}"
+        verify_notes: "{{ verify_code_ws_dir }}/session/alpha-session.md"
+        verify_preview: "{{ {'**/.claude-on-proxmox/session/*-session.md': 'vscode.markdown.preview.editor'} }}"
       ansible.builtin.assert:
         that:
           - verify_ws_whole | dict2items | map(attribute='key') | sort == ['folders', 'settings', 'tasks']
           - verify_ws_project | dict2items | map(attribute='key') | sort == ['folders', 'settings', 'tasks']
-          - "verify_ws_whole.folders == [{'path': verify_ws}]"
+          # The notes' directory is a folder of the window whose own folder holds it, and of no other:
+          # one added beside a folder trusted earlier would put that window in Restricted Mode.
+          - "verify_ws_whole.folders == [{'path': verify_ws}, {'path': verify_code_ws_dir ~ '/session', 'name': 'alpha · session'}]"
           - "verify_ws_project.folders == [{'path': verify_ws ~ '/discord-music-bot'}]"
-          # The workspace files stay out of the explorer of the window that shows them.
-          - "verify_ws_whole.settings == {'files.exclude': {'.claude-on-proxmox': true}}"
-          - verify_ws_project.settings == {}
+          # The workspace files stay out of the explorer of the window that shows them; the notes open as a preview.
+          - "verify_ws_whole.settings == {'files.exclude': {'.claude-on-proxmox': true}, 'workbench.editorAssociations': verify_preview}"
+          - "verify_ws_project.settings == {'workbench.editorAssociations': verify_preview}"
           - verify_ws_whole.tasks.version == '2.0.0'
           - verify_ws_project.tasks.version == '2.0.0'
-          - verify_ws_whole.tasks.tasks | length == 1
-          - verify_ws_whole.tasks.tasks[0].options.cwd == verify_ws
-          - verify_ws_whole.tasks.tasks[0].args == verify_task.args
-          - verify_ws_project.tasks.tasks | length == 1
+          - verify_ws_whole.tasks.tasks | length == 2
+          - verify_ws_whole.tasks.tasks[1].options.cwd == verify_ws
+          - verify_ws_whole.tasks.tasks[1].args == verify_task.args
+          - verify_ws_whole.tasks.tasks[0] == verify_notes_task
+          - verify_ws_project.tasks.tasks | length == 2
+          # The notes' task, run first: quietly, its terminal closing when it ends.
+          - verify_notes_task.label == 'Session notes'
+          - verify_notes_task.args == ['-lc', verify_notes_script, 'session-notes', verify_notes, 'alpha', 'claude-remote-control']
+          - "verify_notes_task.presentation == {'reveal': 'never', 'focus': false, 'echo': false, 'close': true, 'showReuseMessage': false}"
+          - verify_notes_task.runOptions is not defined
+          - verify_task.dependsOn == ['Session notes']
           - verify_task.label == 'Claude'
           - verify_task.type == 'process'
           - verify_task.command == '/bin/bash'
           - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4],
                                  verify_task.args[5], '/etc/systemd/system/claude-remote-control.path', verify_task.args[7],
-                                 'https', 'workflow', 'alpha']
+                                 'https', 'workflow', 'alpha', verify_notes_script, verify_notes, 'claude-remote-control']
           - verify_task.args[3] is search('make configure VM_NAME=alpha,')
           # What a sign-in there says: Remote Control started by the path unit that watches for the login, or not.
           - verify_task.args[4] is search('starts by itself.* make configure VM_NAME=alpha TAGS=claude_code$')
@@ -1420,6 +1439,30 @@
       ansible.builtin.stat:
         path: "{{ verify_code_ws_dir }}/project/discord-music-bot.code-workspace"
       register: verify_ws_before
+
+    - name: Stat the session notes and their directory before the VM is opened again
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ verify_code_ws_dir }}/session/alpha-session.md"
+        - "{{ verify_code_ws_dir }}/session"
+      register: verify_notes_before
+
+    # What make code wrote: the placeholder where the window's task writes, and
+    # the VM's facts, the alias and the commands with its name.
+    - name: Assert the session notes are the VM user's alone and say what the window fills in
+      vars:
+        verify_notes_text: "{{ lookup('ansible.builtin.file', verify_code_ws_dir ~ '/session/alpha-session.md') }}"
+      ansible.builtin.assert:
+        that:
+          - verify_notes_before.results[0].stat.mode == '0600'
+          - verify_notes_before.results[1].stat.mode == '0700'
+          - verify_notes_text is match('# alpha\n')
+          - verify_notes_text is search('<!-- claude-on-proxmox:live -->\n## Signed in\n\nOpening the window fills this in;')
+          - verify_notes_text is search('\| LAN address \| `192.0.2.51`')
+          - verify_notes_text is search('`make claude-login VM_NAME=alpha`')
+        fail_msg: "make code wrote {{ verify_notes_before.results | map(attribute='stat.mode') | list }}: {{ verify_notes_text }}"
+        quiet: true
 
     - name: Make a directory for the VS Code settings make code reads
       ansible.builtin.file:
@@ -1462,6 +1505,11 @@
       ansible.builtin.stat:
         path: "{{ verify_code_ws_dir }}/project/discord-music-bot.code-workspace"
       register: verify_ws_after
+
+    - name: Stat the session notes after the VM was opened again
+      ansible.builtin.stat:
+        path: "{{ verify_code_ws_dir }}/session/alpha-session.md"
+      register: verify_notes_after
 
     - name: Stat the VS Code settings after make code read them
       ansible.builtin.stat:
@@ -1529,6 +1577,9 @@
           - verify_code_allowed.stdout is not search('choose Allow')
           - verify_ws_after.stat.mtime == verify_ws_before.stat.mtime
           - verify_ws_after.stat.checksum == verify_ws_before.stat.checksum
+          # The notes too: nothing in them changes for a VM that did not.
+          - verify_notes_after.stat.mtime == verify_notes_before.results[0].stat.mtime
+          - verify_notes_after.stat.checksum == verify_notes_before.results[0].stat.checksum
           # The user's settings were read, never written.
           - verify_settings_on_after.stat.mtime == verify_settings_on.stat.mtime
           - verify_settings_on_after.stat.checksum == verify_settings_on.stat.checksum
@@ -1542,7 +1593,8 @@
           - verify_bare.stdout is search(('VS Code is opening ' ~ verify_ws ~ '/ParkBnb on alpha') | regex_escape)
           - verify_bare.stdout is not search('terminal named Claude')
           - verify_ws_files.files | map(attribute='path') | sort
-            == [verify_code_ws_dir ~ '/project/discord-music-bot.code-workspace', verify_code_ws_dir ~ '/projects.code-workspace']
+            == [verify_code_ws_dir ~ '/project/discord-music-bot.code-workspace', verify_code_ws_dir ~ '/projects.code-workspace',
+                verify_code_ws_dir ~ '/session/alpha-session.md']
         fail_msg: >-
           make code exited {{ [verify_code_allowed.rc, verify_off.rc, verify_bare.rc] }}, asked for {{ verify_code_log_now[-5:] }},
           left {{ verify_ws_files.files | map(attribute='path') | list }}:
@@ -1636,10 +1688,11 @@
         loop_var: verify_code_refusal
         label: "{{ verify_code_refusal.verify_case.vars }}"
 
-    - name: Find the workspace files on the VM after the refusals
+    # The session notes too: a refusal writes none.
+    - name: Find the workspace files and session notes on the VM after the refusals
       ansible.builtin.find:
         paths: "{{ verify_ssh_dir }}"
-        patterns: "*.code-workspace"
+        patterns: ["*.code-workspace", "*-session.md"]
         recurse: true
         hidden: true
       register: verify_ws_files_final
@@ -1650,7 +1703,7 @@
           - lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() | length == 13
           - verify_ws_files_final.files | map(attribute='path') | sort | list == verify_ws_files.files | map(attribute='path') | sort | list
         fail_msg: >-
-          VS Code was asked for more than the six runs above, or a refusal left a workspace file
+          VS Code was asked for more than the six runs above, or a refusal left a workspace file or notes
           ({{ verify_ws_files_final.files | map(attribute='path') | list }}): {{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log') }}
         quiet: true
 

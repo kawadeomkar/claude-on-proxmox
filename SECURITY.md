@@ -88,6 +88,12 @@ that only restate them are not treated as vulnerabilities:
   that setting to explain what will happen, and never writes it, sets trust, or relaxes either check.
   Allowing automatic tasks is a VS Code-wide choice: it also lets a trusted repository's own
   `folderOpen` tasks run, as it would without this project.
+- The same file's "Session notes" task writes a page about the VM next to it (`vscode_session_notes`,
+  on by default): its addresses, and the Claude, GitHub and Tailscale accounts signed in there, read
+  from the VM as the window opens. It is the VM user's alone (0600, in a 0700 directory), never in a
+  repository; no command the task runs prints a token, and what the VM reports is stripped of escape
+  sequences and control characters before it is written. A window it would put back in Restricted
+  Mode never gets the notes' folder: the project does not change what a window you trusted covers.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
   once - and `make configure` then sends it your SSH keys, GitHub token and Anthropic API key. The

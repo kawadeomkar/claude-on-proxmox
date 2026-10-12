@@ -1041,7 +1041,8 @@ and this project does not turn trust off, allow terminals in untrusted windows, 
 `git status` stays clean: `~/projects/.claude-on-proxmox/<directory's name>.code-workspace` for the
 whole directory (`projects.code-workspace` with the default `vm_projects_dir`) and
 `~/projects/.claude-on-proxmox/project/<repo>.code-workspace` for one project, hidden from the
-explorer. They are the one thing `make code` writes on the VM, and only when they would change. A
+explorer. They and the session notes beside them (below) are all `make code` writes on the VM, and only
+when they would change. A
 repository named `.claude-on-proxmox` would land on the same path; `make code` refuses to open that
 name, and `github_projects` would clone it there, so leave it out of `github_projects`.
 
@@ -1060,6 +1061,7 @@ session; two windows on one project would share the conversation. Quitting `clau
 
 **Switches.** `vscode_claude_terminal: false` opens the bare folder, as before, and writes nothing
 on the VM; for one run, `make code VM_NAME=alpha ANSIBLE_ARGS="-e vscode_claude_terminal=false"`.
+`vscode_session_notes: false` keeps the terminal and leaves the session notes out.
 `vscode_workspaces_dir` moves the workspace files to an absolute path of its own on the VM (outside
 the projects directory, each window is trusted on its own; a directory that exists keeps its
 mode). Switching off, or moving them, leaves the files written before where they were: harmless,
@@ -1077,6 +1079,36 @@ login; its panel is there if you would rather have it than the terminal. To keep
 unchanged in 1.141: both gates changed in 2026 (automatic tasks off by default since 1.109,
 Restricted Mode with only a banner since 1.126), so a VS Code that changes them again may ask
 differently.
+
+#### Session notes
+
+Every time the window opens - from `make deploy`, `make code`, *Open Recent*, a restart that restores
+it, or a reload - a page about the VM opens beside the Claude terminal, as a rendered preview, with the
+terminal still focused:
+
+- **Signed in**, read from the VM as the window opened: the Claude Code account and plan, whether
+  Remote Control is live, the GitHub account `gh` is signed in as, and Tailscale's state with the
+  `ssh` command that reaches the VM over it.
+- **At a glance**: VMID, node, cores, memory and disk, the user, the projects folder, the LAN
+  address, and the SSH alias.
+- **Reach this VM**, **Start here**, **From your machine** (each `make` target with this VM's name),
+  and **When something is off**.
+
+`make code` writes it as `alpha-session.md` in `~/projects/.claude-on-proxmox/session/` (0600, in a
+0700 directory: it names the accounts signed in there), never in a repository. The window's
+**Session notes** task, which the Claude task waits for, rewrites only its **Signed in** section each
+time, in a second or two, and a sign-in made in the Claude terminal refreshes it a few seconds later;
+*Tasks: Run Task*, *Session notes* refreshes it by hand. That task can never keep the Claude terminal
+from starting: whatever it meets, it opens the notes it has and finishes.
+
+In the window of the whole projects directory the notes' folder shows in the Explorer as
+**alpha · session**. A one-project window (`PROJECT=`) opens the same file from outside its own
+folder, which VS Code asks about once for that window - *Open* is remembered - unless you trusted
+the whole directory's window, which covers it. The folder is not added to the project's window on
+purpose: VS Code trusts a workspace only as far as the folders you trusted, so a folder added later
+would put a window you trusted back in Restricted Mode, without its Claude terminal. Like the
+terminal, the notes need a trusted window and automatic tasks; until then `make code` says where
+they are. `vscode_session_notes: false` turns them off.
 
 ### What a run asks of you
 

@@ -176,6 +176,17 @@ def guest_type(vm):
     return vm.get("type", "qemu")
 
 
+UNITS = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+
+
+def disk_bytes(config):
+    """scsi0's size=, in bytes, as Proxmox reports maxdisk; 0 when there is none."""
+    for option in str(config.get("scsi0", "")).split(","):
+        if option.startswith("size=") and option[-1:] in UNITS:
+            return int(float(option[5:-1]) * UNITS[option[-1]])
+    return 0
+
+
 def resource(vm):
     entry = {
         "vmid": vm["vmid"],
@@ -183,6 +194,10 @@ def resource(vm):
         "type": guest_type(vm),
         "status": vm["status"],
         "id": f"{guest_type(vm)}/{vm['vmid']}",
+        # What a guest is given, as Proxmox lists it: cores, and bytes.
+        "maxcpu": int(vm["config"].get("cores", 1)),
+        "maxmem": int(vm["config"].get("memory", 512)) * 1024**2,
+        "maxdisk": disk_bytes(vm["config"]),
     }
     # Proxmox fills name, template and the real status from the node's
     # statistics, which the cluster drops five minutes after a node stops
