@@ -3,7 +3,8 @@
 How `claude-on-proxmox` is built and why. The rest of this wiki is the user manual, `CONTRIBUTING.md`
 the workflow, `SECURITY.md` the threat model; these pages are the technical reference behind all
 three, and the source of truth when they disagree. They keep the numbering of the single
-`ARCHITECTURE.md` they began as, which code comments cite ("`docs/architecture/roles.md` §5.5"):
+`ARCHITECTURE.md` they began as, which code comments cite ("`docs/architecture/roles.md`
+[§5.5](roles.md#55-claude_code--install-claude-code)"):
 sections 1 to 3 are on this page, and each later section is a page of its own.
 
 **Contents**
@@ -100,7 +101,7 @@ itself did not assign.
 
 ## 3. The identity model
 
-Three separate identifiers, each owned by a different party. Understanding who owns what explains
+Four separate identifiers, each owned by a different party. Understanding who owns what explains
 most of the design.
 
 | Identifier | Assigned by | Used for | Persisted? |

@@ -3,7 +3,9 @@
 Idempotence is enforced mechanically: Molecule's idempotence stage re-runs converge and fails on any
 task reporting `changed`.
 
-**Existence is not convergence.** A run that dies between the clone and the settings call leaves a VM
+## Existence is not convergence
+
+A run that dies between the clone and the settings call leaves a VM
 that exists but has no cloud-init user, no SSH keys and no agent. Keying the settings call off
 existence would skip the repair forever and then wait out the whole agent poll budget for an agent
 that was never enabled. So:
@@ -37,12 +39,16 @@ compares size strings, not sizes, so a size Proxmox writes back in other units w
 report a change on every run, and a disk someone grew by hand would fail every run, because
 Proxmox cannot shrink one.
 
-**Ownership comes before repair.** The marker used to be the tag, which the settings call also
+## Ownership comes before repair
+
+The marker used to be the tag, which the settings call also
 writes. That made "untagged" mean "ours, but unfinished" — so provisioning a name that belonged to an
 unrelated VM rewrote it and stamped the tag, and deletion then accepted it. Now the role tags a new VM
 in a call of its own the moment it is cloned, and refuses any existing VM that is a template or lacks
 the tag. Only a failure in the instant between the clone and the tag leaves an untagged VM of this
 project's, and the refusal says how to claim it: add the tag in the Proxmox UI and re-run.
+
+## Related switches
 
 Three related switches:
 

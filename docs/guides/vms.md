@@ -53,3 +53,13 @@ make configure VM_NAME=alpha TAGS=claude_code
 
 Pushing an API key to a VM that was built without one is the common case: see
 [An API key instead of a claude.ai login](remote-control.md#an-api-key-instead-of-a-claudeai-login).
+
+## See also
+
+- Settings: [VMs](../reference/settings.md#vms) and [Proxmox](../reference/settings.md#proxmox)
+- Roles: [`proxmox_vm`](../reference/roles/proxmox_vm.md) and
+  [`proxmox_template`](../reference/roles/proxmox_template.md)
+- How it works: names, VMIDs, addresses and the tag in
+  [§3](../architecture/README.md#3-the-identity-model), provisioning in
+  [§4.2](../architecture/lifecycle.md#42-playbooksprovisionyml--three-plays), what a re-run repairs in
+  [§8](../architecture/convergence.md)

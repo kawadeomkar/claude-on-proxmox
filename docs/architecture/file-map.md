@@ -1,16 +1,17 @@
 # 14. File map
 
 ```
-ansible.cfg                       inventory dir, accept-new host keys, forks, the stdout callback
+ansible.cfg                       inventory dir, accept-new host keys, forks, the stdout callback, YAML results
 callback_plugins/claude_on_proxmox.py   the default output, the waits set apart, NEXT STEPS after the recap (§7.5)
 .logs/                            one log per make run that used Ansible (git-ignored, 0700, pruned after 14 days)
 deploy.yml                        template (when missing) + provision + configure + the three sign-ins + VS Code
 CLAUDE.md                         agent-facing operating rules
 README.md                         getting started; everything else is in docs/
-docs/                             the wiki: getting-started/, guides/, reference/ (generated in part),
-                                  architecture/ (these pages), development/
+docs/                             the wiki (docs/development/docs.md): getting-started/, guides/, reference/
+                                  (generated in part), architecture/ (these pages), development/
 zensical.toml                     the wiki as a site: navigation, theme, GitHub-style anchors
 tools/docs.py                     make docs: the generated reference sections; templates/role.md.j2 for aar-doc
+pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
 
 playbooks/
   template.yml                    one-time: build the cloud-init template (SSH to PVE)
@@ -31,7 +32,7 @@ playbooks/
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
   tasks/ssh_config.yml            one blockinfile block per VM in ~/.ssh/claude-on-proxmox.conf, Include once
 
-roles/
+roles/                            one role per concern, each with defaults/, meta/argument_specs.yml, molecule/
   proxmox_template/               qm + virt-customize on the PVE node
   proxmox_vm/                     the Proxmox API role (tasks/{main,present,absent}.yml, vars/main.yml)
   common/                         OS baseline, user, sudo, keys, sshd hardening
@@ -41,16 +42,17 @@ roles/
                                   starts it when a login lands; tasks/login.yml, browser_login.yml (the sign-in),
                                   after_login.yml, path_unit_absent.yml
   github_projects/                tasks/auth.yml (gh sign-in, credential helper), clone.yml, login.yml,
-                                  device_flow.yml (the sign-in); library/github_repos.py
+                                  device_flow.yml (the sign-in); library/github_repos.py, the custom module
   tailscale/                      tasks/ownership.yml, install.yml, status.yml, connect.yml (the key), settings.yml,
                                   report.yml, absent.yml, login.yml and web_login.yml (the sign-in);
                                   files/tailscale.asc (the vendored signing key)
 
-filter_plugins/proxmox.py         net_mac, guest_ipv4, tailnet_ipv4, guest_address, guest_addresses, proxmox_access_denied,
-                                  ssh_config_blocks, ssh_config_prune
-filter_plugins/vscode.py          vscode_setting (JSONC, read-only)
+filter_plugins/proxmox.py         reading guest agent output: net_mac, guest_ipv4, guest_address, guest_addresses;
+                                  a VM's tailnet address: tailnet_ipv4; a refused token told from a slow boot:
+                                  proxmox_access_denied; the managed SSH config: ssh_config_blocks, ssh_config_prune
+filter_plugins/vscode.py          vscode_setting (JSONC, read-only): VS Code's settings, never written
 filter_plugins/desktop.py         page_opener, the sign-ins' browser command
-filter_plugins/text.py            plain_text, what a VM printed made safe to quote
+filter_plugins/text.py            plain_text, what a VM printed made safe to quote; banner, the block a prompt is set in
 inventory/
   hosts.yml.example               the only address anyone supplies
   controller.yml                  localhost, so it picks up group_vars/all
@@ -59,13 +61,15 @@ inventory/
 
 tests/
   check_no_local_files.sh         tracked-file guard (also runs in CI)
-  unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the GitHub
-                                  sign-in, the managed SSH config, the Claude terminal's script, Makefile guards,
-                                  the wiki (test_docs.py)
-  molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh, claude, tailscale
+  unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the three
+                                  sign-ins and deploy's sign-in steps, Tailscale, destroy's release, the managed SSH
+                                  config, the Claude terminal's script, Makefile guards, the wiki (test_docs.py)
+  molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh, claude, tailscale,
+                                  Tailscale API
 molecule/
   provision/                      provision.yml + discover.yml against the fake API
   configure/                      configure.yml end to end in a container
+                                  (in both, group_vars/all/defaults.yml is a symlink to the real one; keep it a git checkout)
 .config/molecule/config.yml       driver, pinned image, shared provisioner settings
 .github/                          CI, release, the composite setup action, Dependabot
 ```

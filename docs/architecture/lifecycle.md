@@ -115,11 +115,12 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
 5. Per VM, `proxmox_vm_info vmid=...` with `config: current` + `network: true`, which asks only that
    VM's node. A VM that is stopped, whose agent is not up or whose node is down is skipped; a refused
    token is **fatal**, because it applies to every VM and swallowing it means configuring zero hosts
-   and exiting 0, which looks like success. "Refused" is the `proxmox_access_denied` filter (§7.1),
-   shared with `list.yml` and the role's agent wait.
-6. `add_host` each VM for which `guest_address(proxmox_nic)` (§7.1) returns an address. Without the
-   MAC of that NIC the VM is skipped rather than guessed at — an address picked without one could be
-   a bridge the guest grew later (`docker0`).
+   and exiting 0, which looks like success. "Refused" is the `proxmox_access_denied` filter
+   ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)), shared with `list.yml` and the role's agent wait.
+6. `add_host` each VM for which `guest_address(proxmox_nic)`
+   ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)) returns an address. Without the MAC of that NIC
+   the VM is skipped rather than guessed at — an address picked without one could be a bridge the
+   guest grew later (`docker0`).
 7. If nothing was found, print a diagnostic that distinguishes "no tagged VMs exist", "tagged VMs
    exist but none match `VM_NAME`", and "tagged VMs exist but none reported an address yet" (stopped,
    still booting, or a token without guest-agent access).
@@ -167,7 +168,8 @@ VM with such a failure - skipped when `claude_vm_configure_in_deploy` is set, as
 import sets it, since deploy's own last play raises the same list (§4.7). `import_role`, not
 `include_role`: a static import takes the block's tag, so `make configure TAGS=tailscale` runs the role's
 tasks, where an include's tag reaches only the include. Tailscale is optional, which is why only it gets
-this treatment: a failure in it is the VM's last, not its first (§5.8).
+this treatment: a failure in it is the VM's last, not its first
+([§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)).
 
 > `when:` on an `import_playbook` propagates to the imported plays' tasks rather than skipping the
 > import. Equivalent here because `discover.yml` is a single play.
@@ -184,9 +186,11 @@ against 41 s.
 
 1. `vars_prompt` confirmation with `default: "no"` — a run with no terminal (CI, cron, a nested
    playbook) takes the default rather than hanging, so the default must be the safe answer. The
-   question, under a `CONFIRM DELETION` block (§7.5), names the VMs from `vm_name` alone, through the
-   play var `claude_vm_confirm_names`: a `vars_prompt` is templated before any inventory variable is
-   in scope, `-e` answer or not, so naming `claude_vm_names` failed every run.
+   question, under a `CONFIRM DELETION` block
+   ([§7.5](custom-code.md#75-callback_pluginsclaude_on_proxmoxpy--the-waits-and-next-steps)), names the
+   VMs from `vm_name` alone, through the play var `claude_vm_confirm_names`: a `vars_prompt` is
+   templated before any inventory variable is in scope, `-e` answer or not, so naming
+   `claude_vm_names` failed every run.
 2. List the cluster (§4.3, step 1) and assert every requested name exists among this project's VMs.
    Asking for a name that was never created is an error naming the VMs that *do* exist, not a
    confirmation prompt followed by silence. A name that exists but is untagged gets a hint: tag it,
@@ -293,7 +297,8 @@ stopped is not in `claude_vms`, and a host that failed a role has been dropped f
 it. `claude_login.yml` and `github_login.yml` are imported with discovery off,
 `claude_vm_login_in_deploy` (a failed sign-in is said, not raised, so deploy goes on) and
 `when: deploy_sign_in | bool`. The Claude one is interactive (`claude_vm_login_interactive: true`); the
-GitHub one decides VM by VM, from what the Claude step left on each VM (§5.5): a VM whose Claude sign-in
+GitHub one decides VM by VM, from what the Claude step left on each VM
+([§5.5](roles.md#55-claude_code--install-claude-code)): a VM whose Claude sign-in
 nobody answered (`claude_code_login_skipped` - Enter at the prompt, or a browser that never came back) is
 left. With `github_login_auto_start` (the default) every other VM starts at once; off, each is asked
 first (`claude_vm_login_ask`, the role's `github_projects_login_ask`): Enter signs in one whose Claude
@@ -365,8 +370,8 @@ check for a value the VM chose (see `guest_ipv4`, section 7).
 
 `ssh_config.yml` (`make ssh-config`) is the fleet-wide resync: the cluster listing, the addresses
 (§4.3 steps 1 and 4), `present` for every tagged VM with an address, keeping a workspace an earlier
-configure recorded, then pruning through `ssh_config_prune` (§7.1). Pruning removes blocks, never
-VMs, and only a block whose name no VM in the cluster carries any more. A name an untagged VM
+configure recorded, then pruning through `ssh_config_prune`
+([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)). Pruning removes blocks, never VMs, and only a block whose name no VM in the cluster carries any more. A name an untagged VM
 carries is left alone and reported, as `destroy.yml` refuses such a VM. While any tagged VM is listed
 without a name, which is what a node that is down looks like (§4.3), nothing is pruned, because any
 block could be that VM's. With `VM_NAME`, only those VMs are refreshed and nothing is pruned. Two
@@ -444,8 +449,8 @@ is not used: in a task that belongs to a workspace file rather than a folder it 
 Sign-in is not scripted, because it cannot be: it is a browser flow. VS Code Server puts its
 `browser.sh` helper in `BROWSER` for every terminal it starts, which opens the URL on the client,
 and `claude` shows the URL as well and accepts a pasted code. A login made there starts Remote
-Control through the path unit of §5.5 where one waits, which the script finds by its file on the VM;
-elsewhere the terminal names `make configure VM_NAME=<name> TAGS=claude_code`, which starts it through
+Control through the path unit of [§5.5](roles.md#55-claude_code--install-claude-code) where one
+waits, which the script finds by its file on the VM; elsewhere the terminal names `make configure VM_NAME=<name> TAGS=claude_code`, which starts it through
 the role's own eligibility checks. The terminal never starts it itself.
 
 **What VS Code decides, and what this does not touch.** VS Code runs a `folderOpen` task only in a
@@ -519,6 +524,6 @@ reach play (every VM at once, `ignore_unreachable`, an unreachable one recorded 
 play, `serial: 1` when names are given or under deploy and the fleet at once for a bare report, its
 `block` including the role's `login` entry point with the condition on the include task and a `rescue`
 that re-raises `pause`'s abort and records the failure; and a last play failing those VMs, which deploy
-skips. The role decides everything (§5.8): a VM with Tailscale off, not installed, or installed by hand
-gets one line and nothing else, a VM signed in already is reported, and only one this role installed that
+skips. The role decides everything ([§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)): a VM
+with Tailscale off, not installed, or installed by hand gets one line and nothing else, a VM signed in already is reported, and only one this role installed that
 is waiting in `NeedsLogin` is asked (under deploy) and signed in by the web login.

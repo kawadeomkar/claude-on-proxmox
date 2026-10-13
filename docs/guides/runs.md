@@ -42,7 +42,7 @@ make logs                         # the newest 20, newest first
 make logs-clean                   # delete them all
 ```
 
-The terminal shows exactly what it did before; Ansible copies its output to the file with a
+Logging changes nothing in the terminal: Ansible copies its output to the file with a
 timestamp on every line, so a run can be read back after the terminal has scrolled away or the
 window is gone. Tasks marked `no_log` are hidden in the file as on screen, so the API token and
 the GitHub token never reach it. The files do name the Proxmox host and every VM by address, so
@@ -52,3 +52,11 @@ by you. Logs older than 14 days are deleted whenever a logged run starts (`LOG_R
 `ANSIBLE_LOG_PATH` of your own is used as it is. Molecule runs (`make molecule`, `make test`) are
 logged the same way. A command you run with `.venv/bin/ansible-playbook` directly is not; put
 `ANSIBLE_LOG_PATH=.logs/<name>.log` in front of it for the same result.
+
+## See also
+
+- Settings: [Sign-ins and teardown](../reference/settings.md#sign-ins-and-teardown), for the sign-ins a
+  run starts, and [Make targets](../reference/make-targets.md) for `make logs` and `LOG_DIR`
+- How it works: the blocks and NEXT STEPS in
+  [§7.5](../architecture/custom-code.md#75-callback_pluginsclaude_on_proxmoxpy--the-waits-and-next-steps),
+  the run logs in [the security model](../architecture/security-model.md#run-logs)

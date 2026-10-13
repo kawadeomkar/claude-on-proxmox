@@ -5,17 +5,33 @@
 
 | Job | Contents |
 |---|---|
-| `lint` | tracked-file guard → `make lint` → `make syntax` → `make unit` → pre-commit (minus the linters already run) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
+| `lint` | tracked-file guard → `make lint` → `make syntax` → `make unit` → pre-commit (minus the linters already run, so private-key detection, the large-file check and the whitespace hooks) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
 | `dependency-review` | PRs only, fails on moderate severity |
-| `molecule` | matrix over all seven roles, `needs: lint` |
+| `molecule` | matrix over all eight roles, `needs: lint` |
 | `playbooks` | matrix over the `configure` and `provision` scenarios, `needs: lint` |
-| `canary` | schedule/dispatch only, runs `configure` against the **unpinned** Ubuntu image; allowed to fail — that failure is the notification |
+| `canary` | schedule/dispatch only: checks that the cloud image URL in `roles/proxmox_template/defaults/main.yml` still answers and that Ubuntu's `SHA256SUMS` still lists it, then runs `configure` against the **unpinned** Ubuntu container image (`MOLECULE_IMAGE=...:latest`); allowed to fail — that failure is the notification |
 
 `.github/actions/setup` is a composite action installing Python 3.12 and uv (at the version
 `uv.lock` pins), restoring the uv and Galaxy caches, and running `make deps`. The Galaxy cache key hashes
-`requirements.yml`, which is only correct because those versions are exact.
+`requirements.yml`, which is only correct because those versions are exact. Third-party actions are
+pinned to commit SHAs, and Dependabot updates them along with the uv lock every week. Locally, `pre-commit` runs the same linters from the
+virtualenv.
+
+The weekly run is a canary. Most of what this project installs lives outside the repository - the
+Ubuntu cloud image, the Docker, NodeSource and GitHub CLI apt repositories, the Claude Code installer
+and the uv release - and any of it can break without a commit here. (The Galaxy collections are pinned
+to exact versions, so they cannot.) The Molecule scenarios never fetch the real cloud image, which is
+why the canary checks its URL and checksum list. The unpinned-image job never runs on a push or a pull
+request: its failure is how you learn the current Ubuntu image no longer works before you bump the
+digest.
+
+The gitleaks scans, and what they cannot see, are in [Secret scanning](security-model.md#secret-scanning).
+A secret they find has already been pushed and is public: revoke it rather than only rewriting history.
 
 **No job uses a secret**, so the full suite runs on pull requests from forks. Keep it that way.
 `make test` runs everything the CI gate runs locally, pre-commit included, but it is not a strict
 superset: CI also scans the working tree and the commits a push brings in with gitleaks, which a
 local run cannot reproduce from the git index alone.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes a GitHub release with notes
+generated from the commits since the previous tag.

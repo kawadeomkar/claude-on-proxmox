@@ -1,4 +1,7 @@
-# GitHub repositories and sign-in
+# GitHub
+
+The `github_projects` role clones your GitHub repositories onto each VM and signs `gh` in there, so
+that `git push` and `gh pr create` work from the VM.
 
 ## Choosing repositories
 
@@ -37,24 +40,30 @@ make deploy VM_NAME=alpha        # ... the GitHub page opens, the code is on you
 make github-login VM_NAME=alpha  # the same, later, for a VM make configure left signed out
 ```
 
-  Without a name, `make github-login` only reports each VM's state; given several, it signs them in one
-  after another, since the browser takes one sign-in at a time. A code left unapproved expires after
-  fifteen minutes and that VM's sign-in fails saying so, after the others have had their turn; run it
-  again for a fresh code. `make deploy` starts it for every VM but one whose Claude sign-in nobody
-  answered, and a run with no terminal skips it, as nobody is there to approve it. Once the code is shown
-  the run waits until it is approved or expires, and Ctrl-C there ends the whole run; with
-  `github_login_auto_start: false` it asks first, and `n` leaves a VM for later. `make configure` never
-  runs it. On a controller with no browser or clipboard the run prints the page and the
-  code and waits all the same, and `login_desktop: false` makes it never try. The terminal that `make
-  code` opens runs the same flow after the Claude sign-in, with the page opening by itself and the code
-  printed to copy (a Remote-SSH terminal cannot fill your clipboard); Ctrl-C there skips it and starts
-  Claude. The private repositories then take one `make configure`, or `make github-login VM_NAME=alpha`,
-  which on a VM already signed in runs the clone straight away.
+### Signing VMs in by the device flow
+
+Without a name, `make github-login` only reports each VM's state; given several, it signs them in one
+after another, since the browser takes one sign-in at a time. A code left unapproved expires after
+fifteen minutes and that VM's sign-in fails saying so, after the others have had their turn; run it
+again for a fresh code. `make deploy` starts it for every VM but one whose Claude sign-in nobody
+answered, and a run with no terminal skips it, as nobody is there to approve it. Once the code is shown
+the run waits until it is approved or expires, and Ctrl-C there ends the whole run; with
+`github_login_auto_start: false` it asks first, and `n` leaves a VM for later. `make configure` never
+runs it. On a controller with no browser or clipboard the run prints the page and the
+code and waits all the same, and `login_desktop: false` makes it never try. The terminal that `make
+code` opens runs the same flow after the Claude sign-in, with the page opening by itself and the code
+printed to copy (a Remote-SSH terminal cannot fill your clipboard); Ctrl-C there skips it and starts
+Claude. The private repositories then take one `make configure`, or `make github-login VM_NAME=alpha`,
+which on a VM already signed in runs the clone straight away.
+
+### Choosing the sign-in
 
 `github_auth_method` picks between the two: `auto` (the default) is the token when there is one and the
 device flow otherwise, `web` is the device flow always, with a token used for the listing only, and
 `token` is the token only, where an empty vault fails by name instead of falling back. `github_login_scopes`
 is what the device flow asks for on top of gh's own, `workflow` by default.
+
+### Pushing from the VM
 
 Either way `gh` becomes git's credential helper for github.com (`gh auth setup-git`), so the checkouts
 keep their HTTPS remotes and `git push` and `gh pr create` work, in a terminal, in the `make code` window
@@ -69,6 +78,8 @@ token then only lists. A private repository is cloned over HTTPS only where git 
 signed in and made git's credential helper, by this role or by you (`gh auth setup-git`) - and is
 otherwise skipped and named rather than failed; over SSH your key clones it either way.
 
+## Commit identity
+
 Commits need an identity. `git_user_name` and `git_user_email` (in `local.yml`) are written to
 `~/.gitconfig` on the VM when set; left empty, each is derived only where `~/.gitconfig` has none, so an
 identity you set on the VM stays: the display name (or login) and GitHub's noreply address,
@@ -76,6 +87,16 @@ identity you set on the VM stays: the display name (or login) and GitHub's norep
 without one, so no private email lands in commits by default. An organisation gives none, which the run
 says: set the two, or sign gh in as yourself.
 
+## Cloning over SSH
+
 `github_projects_clone_protocol: ssh` clones over SSH instead, with a key of your own on the VM; the role
 pre-seeds GitHub's published host keys, so there is no trust-on-first-use prompt. That covers `git` only:
 `gh pr create` still needs the login above.
+
+## See also
+
+- Settings: [GitHub](../reference/settings.md#github) and
+  [Secrets: GitHub](../reference/settings.md#secrets-github)
+- Role: [`github_projects`](../reference/roles/github_projects.md)
+- How it works: [§5.6](../architecture/roles.md#56-github_projects--sign-in-to-github-clone-an-accounts-repositories),
+  and the listing module in [§7.2](../architecture/custom-code.md#72-rolesgithub_projectslibrarygithub_repospy)

@@ -2,7 +2,9 @@
 
 The traps this design exists to avoid, and how each is handled.
 
-**VMID allocation is racy.** Proxmox offers no atomic reservation: `proxmox_kvm` asks
+## VMID allocation is racy
+
+Proxmox offers no atomic reservation: `proxmox_kvm` asks
 `/cluster/nextid` and then clones, so two concurrent clones are handed the same free ID and the
 second fails with `Unable to clone vm beta`. A clone that asks Proxmox for its VMID is therefore
 `throttle: 1`. That used to apply to every clone, and it cost more than it looked: under the linear
@@ -19,47 +21,69 @@ that clone: `proxmox_kvm` checks, and the role asserts the clone changed somethi
 cannot see every guest could be handed a VMID in use by one it cannot see; that clone fails too,
 and provisioning one VM at a time avoids it.
 
-**A VMID collision reports success.** `proxmox_kvm` returns `changed=False` and the *clone source's*
+## A VMID collision reports success
+
+`proxmox_kvm` returns `changed=False` and the *clone source's*
 VMID. Taking that on trust points every subsequent task at the template and reconfigures it. Hence
 the explicit `assert: proxmox_vm_clone is changed`.
 
-**`add_host` bypasses the play's host loop.** Covered in [§4.2](lifecycle.md#42-playbooksprovisionyml--three-plays).
+## `add_host` bypasses the play's host loop
 
-**A 403 looks like a slow boot.** A token without the guest-agent privilege (`VM.Monitor` on PVE 8,
+Covered in [§4.2](lifecycle.md#42-playbooksprovisionyml--three-plays).
+
+## A 403 looks like a slow boot
+
+A token without the guest-agent privilege (`VM.Monitor` on PVE 8,
 `VM.GuestAgent.Audit` on PVE 9, which removed `VM.Monitor`) fails the agent poll identically to a
 VM that has not finished booting. Waiting the full `60 × 5s` to say so helps nobody, so the `until:`
 breaks early on an access failure, as recognised by the `proxmox_access_denied` filter
 ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)). In `discover.yml` the same condition is `failed_when`, because
 there it applies to every VM and swallowing it means exiting 0 with zero hosts.
 
-**Duplicate names.** Proxmox permits them. The role refuses to act on one; `discover.yml` refuses to
+## Duplicate names
+
+Proxmox permits them. The role refuses to act on one; `discover.yml` refuses to
 continue with one, because the second `add_host` would silently overwrite the first.
 
-**Tag substring matching.** An unanchored search for `claude-on-proxmox` also claims
+## Tag substring matching
+
+An unanchored search for `claude-on-proxmox` also claims
 `claude-on-proxmox-staging`. See [§3](README.md#3-the-identity-model).
 
-**Stale host keys.** The host key is removed in `absent.yml`. See
+## Stale host keys
+
+The host key is removed in `absent.yml`. See
 [§5.2](roles.md#52-proxmox_vm--the-core-role). There is no fact cache to go stale ([§13](toolchain.md)).
 
-**`/cluster/resources` lags.** `proxmox_vm_info` builds its answer from it, and it can trail a VM
+## `/cluster/resources` lags
+
+`proxmox_vm_info` builds its answer from it, and it can trail a VM
 cloned moments ago, returning nothing. The post-start config read retries rather than indexing into
 an empty list.
 
-**A migrated VM.** `proxmox_kvm`'s `update` sends the settings call to the node it is given rather
+## A migrated VM
+
+`proxmox_kvm`'s `update` sends the settings call to the node it is given rather
 than looking the VM up, so addressed to `proxmox_vm_node` it failed for a VM moved to another node
 with `Configuration file 'nodes/pve/qemu-server/9001.conf' does not exist`. Every call about an
 existing VM goes to `proxmox_vm_found_node`, the node the lookup returned; only the clone, which needs
 the template, goes to `proxmox_vm_node`.
 
-**`-e key=value` splits on whitespace.** `VM_NAME="alpha beta"` silently provisioned half the fleet.
+## `-e key=value` splits on whitespace
+
+`VM_NAME="alpha beta"` silently provisioned half the fleet.
 The Makefile passes JSON (`-e '{"vm_name": "..."}'`) so the value arrives whole and reaches the name
 check, which explains the problem.
 
-**`vars_prompt` silently takes its default without a terminal.** It does not hang — ansible-core
+## `vars_prompt` silently takes its default without a terminal
+
+It does not hang — ansible-core
 warns and uses the `default:` (or `None` when there is none), so the risk is an unattended run
 quietly taking the default. Every prompt has a `default:`, and it is the safe answer.
 
-**An API key silently outranks the subscription login.** Claude Code's credential precedence puts
+## An API key silently outranks the subscription login
+
+Claude Code's credential precedence puts
 `ANTHROPIC_API_KEY` above the `/login` credential, so a VM configured with both would authenticate
 as the API account — and Remote Control, which needs the subscription login, would refuse to start
 with no obvious cause. The role never runs both: a configured key turns Remote Control off and
@@ -67,6 +91,8 @@ removes a server an earlier run installed, clearing the key removes it from `set
 and eligibility requires `claude auth status` to report no `apiKeySource`, which also catches a key
 from somewhere the role does not manage. See [§5.5](roles.md#55-claude_code--install-claude-code).
 
-**There is deliberately no `LIMIT`.** `--limit` is applied before the plays run, and these VMs only
+## There is deliberately no `LIMIT`
+
+`--limit` is applied before the plays run, and these VMs only
 enter the inventory once discovery has found them, so it could never match. `VM_NAME` is the
 selector for every target.

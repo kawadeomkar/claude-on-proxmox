@@ -1,10 +1,13 @@
-# Using VS Code on the VM
+# VS Code
 
-VS Code's [Remote - SSH](https://code.visualstudio.com/docs/remote/ssh) extension runs the editor's
-back end on the VM, over the same key-only SSH everything else uses: the window is on your machine,
-the files, the terminal, the extensions and `claude` are on the VM. Nothing new is opened, relayed or
-logged into. The one thing it needs that `ssh dev@<address>` does not have is a name that follows the
-address DHCP gave the VM, and that is what this project keeps for you.
+You use VS Code on a VM through its [Remote - SSH](https://code.visualstudio.com/docs/remote/ssh)
+extension, which runs the editor's back end on the VM, over the same key-only SSH everything else
+uses: the window is on your machine, the files, the terminal, the extensions and `claude` are on the
+VM. Nothing new is opened, relayed or logged into. The one thing it needs that `ssh dev@<address>`
+does not have is a name that follows the address DHCP gave the VM, and that is what this project
+keeps for you.
+
+## Opening a VM
 
 ```bash
 make deploy VM_NAME=alpha          # ends by opening alpha in VS Code; configuration printed
@@ -28,6 +31,12 @@ not have it, and opens the folder with `code --remote ssh-remote+alpha`, by way 
 that also starts `claude` in a terminal of the window ([A Claude session in the
 window](#a-claude-session-in-the-window)).
 
+The first connection installs VS Code Server on the VM and takes about a minute; the VM downloads it
+from Microsoft over HTTPS, so it needs that route out. You can also pick `alpha` in the extension's
+host picker (*Remote-SSH: Connect to Host…*) and open any folder.
+
+## Opening one project
+
 `PROJECT` opens one folder of `~/projects` instead: the repository's name, as `github_projects`
 cloned it. A window rooted at the project is what most editor features expect - the source control
 view, search, a debugger's launch configuration and the Claude Code extension all start from the
@@ -41,9 +50,7 @@ There is no project named parkbnb in /home/dev/projects on alpha. Did you mean P
 ```
 
 The same check catches a VM that was never configured, which has no `~/projects` yet; the message
-says to run `make configure` first. The first connection installs VS Code Server on the VM and takes about a minute;
-the VM downloads it from Microsoft over HTTPS, so it needs that route out. You can also pick `alpha`
-in the extension's host picker (*Remote-SSH: Connect to Host…*) and open any folder.
+says to run `make configure` first.
 
 ## Where the alias lives
 
@@ -128,8 +135,8 @@ Windows.
 
 `make code` does not stop at the window. VS Code is handed a small workspace file that names the
 folder and holds its tasks, so once the window has connected a terminal named **Claude** opens in it
-running `claude` in the folder, split beside a plain **Shell** in the same folder on its left: `make deploy` ends in a Claude session in the repository, and so does
-`make code` later. `make deploy` has signed the VM in already; on a VM that has not signed in to Claude
+running `claude` in the folder, split beside a plain **Shell** in the same folder on its left: `make
+deploy` ends in a Claude session in the repository, and so does `make code` later. `make deploy` has signed the VM in already; on a VM that has not signed in to Claude
 yet, the terminal runs `claude auth login` first. The sign-in page opens in the browser on your
 machine - VS Code Server sends every URL a terminal opens there - and if the page shows a code, paste
 it into the terminal. Remote Control then starts by itself where the `claude_code` role left a unit
@@ -143,7 +150,9 @@ private repositories follow on the next `make configure` (see
 [Private repositories, and pushing from the VM](github.md#private-repositories-and-pushing-from-the-vm));
 `github_auth: false`, or `github_auth_method: token`, leaves GitHub out of the terminal too.
 
-The first time, VS Code waits for two answers that are yours to give:
+### The first time
+
+The first time, VS Code waits for two answers that are yours to give, and Claude for one:
 
 1. **Trust.** VS Code opens a folder it has not seen before in Restricted Mode, which starts nothing
    on its own, terminals and tasks included. Choose *Manage* on the banner, then *Trust*, and the
@@ -163,12 +172,12 @@ The first time, VS Code waits for two answers that are yours to give:
 After that, `make code` opens straight into Claude. It reads your VS Code user settings, and never
 writes them, to say which of the two VS Code answers to expect; with `task.allowAutomaticTasks` set
 to `"off"` it says the terminal will not start, and *Tasks: Run Task*, *Claude* starts it by hand in
-a trusted window. The settings are looked for where VS Code keeps them - `VSCODE_APPDATA` or
-`XDG_CONFIG_HOME` if set, else stock VS Code's place on macOS and Linux, the snap's and the
-flatpak's - and a file not found, not readable or not parsable is said as such rather than taken
-for "not answered yet". Neither answer is given for you, on purpose: Restricted Mode and the
-automatic-tasks question are VS Code's guard against code that runs because a folder was opened,
-and this project does not turn trust off, allow terminals in untrusted windows, or write the setting.
+a trusted window. Where it looks for the settings, and what it says when it cannot read them, is in
+[§4.9](../architecture/lifecycle.md#49-playbookscodeyml), step 9; `vscode_user_settings_file`
+([Switches](#switches)) points it at another file. Neither answer is given for you, on purpose:
+Restricted Mode and the automatic-tasks question are VS Code's guard against code that runs because
+a folder was opened, and this project does not turn trust off, allow terminals in untrusted windows,
+or write the setting.
 
 ### What it writes
 
@@ -183,7 +192,7 @@ name, and `github_projects` would clone it there, so leave it out of `github_pro
 
 ### After the first sign-in
 
-Remote Control ([Reaching a VM from your phone](remote-control.md))
+[Remote Control](remote-control.md)
 waits for exactly that login. The terminal says it starts by itself, and `make configure VM_NAME=alpha
 TAGS=claude_code` keeps it on across reboots; where nothing waits for the login, it says that same
 command starts it. A VM configured with an API key is already signed in, and goes straight to `claude`.
@@ -252,3 +261,12 @@ purpose: VS Code trusts a workspace only as far as the folders you trusted, so a
 would put a window you trusted back in Restricted Mode, without its Claude terminal. Like the
 terminal, the notes need a trusted window and automatic tasks; until then `make code` says where
 they are. `vscode_session_notes: false` turns them off.
+
+## See also
+
+- Settings: [VS Code and SSH](../reference/settings.md#vs-code-and-ssh)
+- Role: [`vscode_server`](../reference/roles/vscode_server.md)
+- How it works: the aliases in [§4.8](../architecture/lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml),
+  `make code`, its workspace file and the session notes in
+  [§4.9](../architecture/lifecycle.md#49-playbookscodeyml), and the VM's side in
+  [§5.7](../architecture/roles.md#57-vscode_server--what-vs-codes-remote---ssh-needs-on-the-host)

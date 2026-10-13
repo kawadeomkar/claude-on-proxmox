@@ -1,8 +1,11 @@
-# Reaching a VM over Tailscale
+# Tailscale
 
-[Tailscale](https://tailscale.com) puts each VM on your tailnet - the private network your other devices
-are on - so `ssh`, VS Code's Remote - SSH and a dev server on any port reach the VM from anywhere, not only
-from the LAN Proxmox sits on. It is on by default; `tailscale_enabled: false` in `local.yml` turns it off.
+You can reach a VM over [Tailscale](https://tailscale.com): it puts each VM on your tailnet - the private
+network your other devices are on - so `ssh`, VS Code's Remote - SSH and a dev server on any port reach the
+VM from anywhere, not only from the LAN Proxmox sits on. It is on by default; `tailscale_enabled: false` in
+`local.yml` turns it off.
+
+## Joining a VM to your tailnet
 
 There are two ways in. `tailscale_auth_method` picks: `auto` (the default) is the key when the vault holds
 one and the web login otherwise, `key` is the key only (an empty one fails by name, and no VM is ever sent
@@ -37,15 +40,16 @@ tail1234.ts.net`, the aliases this project writes and `make code` use `<VM name>
 of the LAN address; the machine running Ansible must be on the tailnet then, and Ansible itself keeps
 using the LAN. That is the VM's tailnet name only when the VM joined under its own name: a VM name that is
 not one DNS label joins under a cleaned-up one (`alpha.lab` as `alpha-lab`), and a name already taken gets
-a suffix (`alpha-1`). The report shows the name each VM has.
+a suffix (`alpha-1`). The report shows the name each VM has; `tailscale_hostname`
+([Other settings](#other-settings)) asks for another.
 
 ## Keeping an agent VM off your other devices
 
-A new tailnet's policy lets every device reach every other
-- its one rule has `"src": ["*"]`, and `*` matches tagged devices too - and these VMs run an AI agent with
-passwordless sudo. With a tagged key, one edit to the policy (Access controls in the admin console) keeps
-your devices reaching the VMs while a VM can open no connection at all. **Merge** it into your policy;
-never paste it over the whole file, and never as `"acls": []`, which cuts off every other device you have:
+A new tailnet's policy lets every device reach every other - its one rule has `"src": ["*"]`, and `*`
+matches tagged devices too - and these VMs run an AI agent with passwordless sudo. With a tagged key, one
+edit to the policy (Access controls in the admin console) keeps your devices reaching the VMs while a VM
+can open no connection at all. **Merge** it into your policy; never paste it over the whole file, and
+never as `"acls": []`, which cuts off every other device you have:
 
 ```jsonc
 {
@@ -78,23 +82,38 @@ reach it by its tailnet name. With `true` it takes your tailnet's DNS settings -
 overrides local DNS then answers every lookup on the VM, from nameservers that, if they are on the tailnet,
 a VM the policy above isolates cannot reach.
 
+## Other settings
+
+`tailscale_login_server` points the VMs at another control server, such as Headscale; empty, the
+default, is Tailscale's own. The web login then opens a page only when it is under that server.
+`tailscale_accept_routes: true` has the VMs use the subnet routes other devices on the tailnet
+advertise; it is off by default. `tailscale_hostname` is the machine name each VM asks for, by default
+the VM's name made one DNS label (`alpha.lab` and `my_vm` become `alpha-lab` and `my-vm`). Every
+Tailscale setting, with its default, is in [Settings](../reference/settings.md#tailscale).
+
 ## What the role touches
 
 Only the Tailscale it installed. A Tailscale you installed on a VM yourself -
 the package, the snap or Tailscale's static binaries - is reported and left exactly as it is,
 `tailscale_enabled: false` included. To hand one to this project, run `sudo tailscale logout` on the VM
 and remove it the way you installed it; for the package that is `sudo apt purge tailscale` - purge, so the
-next install does not start under the old login. A login you made by hand on a Tailscale this project
-installed keeps its own settings, and when its key expires `make tailscale-login` and `make deploy` leave it
-for you to sign in again the way you made it, rather than put this project's settings over it. A sign-in
-this project started is its own, however late it ends - a page you approve after the run, or a join with
-the key that ran out of time - and so is a login made by hand while that page still waits, which cannot be
-told from it; a join with the key that Tailscale refused is over, and leaves nothing waiting. Log upload to Tailscale is on, as Tailscale ships it; `tailscale_upload_logs: false` turns
-it off from the daemon's first start, which also ends Tailscale's technical support for the VMs. If
-installing Tailscale fails - its package site out of reach, say - the VM is configured otherwise and keeps
-its alias, `make deploy` still signs it in and opens it, and the run fails at its end with `make configure
-VM_NAME=alpha TAGS=tailscale`; Tailscale's repository is taken back out, so `apt` on the VM works as
-before.
+next install does not start under the old login.
+
+A login you made by hand on a Tailscale this project installed keeps its own settings, and when its key
+expires `make tailscale-login` and `make deploy` leave it for you to sign in again the way you made it,
+rather than put this project's settings over it. A sign-in this project started is its own, however late
+it ends - a page you approve after the run, or a join with the key that ran out of time - and so is a
+login made by hand while that page still waits, which cannot be told from it; a join with the key that
+Tailscale refused is over, and leaves nothing waiting. How the role tells its own login from yours is
+in [§5.8](../architecture/roles.md#58-tailscale--join-the-vm-to-a-tailnet).
+
+Log upload to Tailscale is on, as Tailscale ships it; `tailscale_upload_logs: false` turns it off from
+the daemon's first start, which also ends Tailscale's technical support for the VMs.
+
+If installing Tailscale fails - its package site out of reach, say - the VM is configured otherwise and
+keeps its alias, `make deploy` still signs it in and opens it, and the run fails at its end with `make
+configure VM_NAME=alpha TAGS=tailscale`; Tailscale's repository is taken back out, so `apt` on the VM
+works as before.
 
 ## Turning it off
 
@@ -128,3 +147,11 @@ A deletion Tailscale refuses is said, with the device to delete by hand, and the
 
 Delete the old device first - `make destroy` does with a credential above, and says
 so otherwise - or the new VM joins as `alpha-1`; a configure that finds the name taken says so.
+
+## See also
+
+- Settings: [Tailscale](../reference/settings.md#tailscale) and
+  [Secrets: Tailscale](../reference/settings.md#secrets-tailscale)
+- Role: [`tailscale`](../reference/roles/tailscale.md)
+- How it works: [§5.8](../architecture/roles.md#58-tailscale--join-the-vm-to-a-tailnet), and the sign-in
+  playbook in [§4.10](../architecture/lifecycle.md#410-playbookstailscale_loginyml)

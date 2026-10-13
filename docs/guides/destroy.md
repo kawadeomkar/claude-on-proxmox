@@ -12,7 +12,7 @@ project created: a name that does not exist, or a VM without the `claude-on-prox
 before anything is deleted, and the error lists the VMs it did create. So is a name two VMs share, which
 Proxmox allows: rename or remove one first. A template is never deleted. For a VM created before this
 project tagged its VMs, see
-[Adopting VMs created before tagging](../getting-started/upgrading.md#adopting-vms-created-before-tagging).
+[Adopting VMs created before tagging](upgrading.md#adopting-vms-created-before-tagging).
 
 **Releasing a VM** happens on the VM, over SSH, since what it signed in with is on its disk; a stopped VM is
 started for it (and stopped again should the run then fail to delete it), and the VMs are released at once,
@@ -28,3 +28,14 @@ Each step is best effort: one that fails is said, and the VM is deleted anyway, 
 with one line per VM saying what it was released from and what is left of it - and for a VM that could not
 be reached (stopped and not starting, or not answering over SSH), what to remove by hand and where.
 `destroy_release: false` deletes the VMs as they are, and says the same.
+
+## See also
+
+- Settings: [Sign-ins and teardown](../reference/settings.md#sign-ins-and-teardown) for
+  `destroy_release`, and [Secrets: Tailscale](../reference/settings.md#secrets-tailscale) for the API
+  credential that deletes a device
+- Roles: [`proxmox_vm`](../reference/roles/proxmox_vm.md), which deletes the VM, and the releases of
+  [`claude_code`](../reference/roles/claude_code.md),
+  [`github_projects`](../reference/roles/github_projects.md) and
+  [`tailscale`](../reference/roles/tailscale.md)
+- How it works: [§4.5](../architecture/lifecycle.md#45-playbooksdestroyyml--confirm-release-delete)

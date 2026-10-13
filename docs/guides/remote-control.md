@@ -1,8 +1,11 @@
-# Reaching a VM from your phone
+# Remote Control
 
+Remote Control lets you reach a VM's Claude Code session from claude.ai and from your phone.
 [Remote Control](https://code.claude.com/docs/en/remote-control) runs a server on the VM so its
 Claude Code session appears at claude.ai/code and in the Claude mobile app, while the session itself
 keeps running on the VM with the VM's filesystem and tools.
+
+## What it needs
 
 It is **on by default**, but there is no switch that makes it work — Anthropic supports exactly one
 credential for it, an interactive claude.ai login on a Pro, Max, Team or Enterprise plan. API keys
@@ -10,6 +13,8 @@ are **not** supported, and neither is the long-lived token from `claude setup-to
 model requests but explicitly cannot establish a Remote Control session. On Team and Enterprise, an
 organization Owner has to enable Remote Control for the organization before any member's login can
 use it; on Pro and Max the login is enough.
+
+## What a run does on each VM
 
 So `make configure` derives what to do from the credentials it finds on the VM:
 
@@ -21,6 +26,11 @@ So `make configure` derives what to do from the credentials it finds on the VM:
 | No key configured, but Claude Code on the VM still uses one | Service left stopped, and you are told where that key comes from (`claude auth status` reports it as `apiKeySource`) |
 | No key, signed in, but `~/.claude/settings.json` switches the feature off | Service left stopped, and the keys are named. A telemetry opt-out (`DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK`), an `apiKeyHelper`, a token or provider in `env`, or an `ANTHROPIC_BASE_URL` pointing anywhere but `api.anthropic.com` each disable Remote Control. Remove it, or keep it and set `claude_remote_control: false` |
 
+How each of these is decided is in
+[Remote Control, step by step](../architecture/roles.md#remote-control-step-by-step).
+
+## Signing a VM in
+
 Activating it is therefore: leave the API key empty and sign in once. `make deploy` asks for that
 itself, after configuring the VM; for a VM that exists, `make claude-login` does the same:
 
@@ -30,26 +40,28 @@ make claude-login VM_NAME=alpha  # the sign-in page opens in your browser: autho
                                  # ... and Remote Control starts; the session appears on your phone
 ```
 
-The run starts `claude auth login` on the VM with no terminal. On a machine with a browser, Claude signs
-in by sending the browser back to a port it listens on, on its own `127.0.0.1`; the VM has no browser,
-so the run hands claude a stand-in that records that page, forwards that one port from this machine to
-the VM over SSH (`ssh -L`, bound to this machine's loopback, closed when the sign-in ends), and opens the
-page here. You authorise, the browser comes back to claude through the forward, and the run carries on
-by itself, waiting up to `claude_login_approval_timeout` (300 seconds). The page opens only when it is
-Claude's own sign-in page.
-
-Where the browser could not come back - the port is already taken on this machine, `login_desktop:
-false`, nothing here to open a browser with, or `make` run over SSH, where the browser is on another machine
-and the page would send it to that machine's own localhost - claude's other page opens instead, which shows a code once you authorise:
-paste it at the `Code:` prompt and the run hands it to claude through a pipe. The code is read with the
-run log's no_log, so it never lands in `.logs/`. Enter alone at the prompt skips a VM, and a code claude
-refuses fails that VM by name once the others have had their turn; a code copied only up to its `#` (a
-double-click stops there) is asked for again, and Ctrl-C then `A` at the prompt ends the run. A sign-in
-page lasts `claude_login_timeout` plus half an hour: a code pasted later is said to be too late at once,
-with the command for a fresh page.
+The run starts `claude auth login` on the VM, forwards the one port it listens on from this machine to
+the VM over SSH, and opens Claude's sign-in page here. You authorise, the browser comes back to claude
+through the forward, and the run carries on by itself, waiting up to `claude_login_approval_timeout`
+(300 seconds). The page opens only when it is Claude's own sign-in page. How the page and the forward
+work is in [the browser sign-in](../architecture/roles.md#the-browser-sign-in).
 
 Once every VM named has had its turn, the run starts the service on each one signed in, in the same run.
 Given several names it signs them in one after another; given none it only reports each VM's state.
+
+### When the browser cannot come back
+
+Where the browser could not come back - the port is already taken on this machine, `login_desktop:
+false`, nothing here to open a browser with, or `make` run over SSH, where the browser is on another
+machine and the page would send it to that machine's own localhost - claude's other page opens instead,
+which shows a code once you authorise: paste it at the `Code:` prompt and the run hands it to claude
+through a pipe. The code is read with the run log's no_log, so it never lands in `.logs/`. Enter alone
+at the prompt skips a VM, and a code claude refuses fails that VM by name once the others have had their
+turn; a code copied only up to its `#` (a double-click stops there) is asked for again, and Ctrl-C then
+`A` at the prompt ends the run. A sign-in page lasts `claude_login_timeout` plus half an hour: a code
+pasted later is said to be too late at once, with the command for a fresh page.
+
+### Sign-in settings
 
 Three variables tune it: `claude_login_args` passes extra arguments to `claude auth login` (`[--sso]`
 for a single sign-on login, say), `claude_login_approval_timeout` (300) is how long the run waits for
@@ -57,23 +69,30 @@ your browser to come back, and `claude_login_timeout` (120) is how many seconds 
 a code you paste. A VM whose Remote Control is off on purpose - `vault_anthropic_api_key`
 set, or `claude_remote_control: false` - is reported as such, with nothing to fix.
 
+## Signing in another way
+
 A sign-in made any other way starts the service by itself too. While a VM waits for its first login,
 `make configure` leaves a systemd path unit, `claude-remote-control.path`, watching for the login file;
 the moment one lands - from `make claude-login`, the Claude terminal of `make code`, or by hand with
 `ssh -t dev@<address> "bash -lc 'claude auth login'"` - it starts the server. The next `make configure`
 enables the server for boot, runs the stay-up check below, and removes the path unit, so a server you
-stop later stays stopped. By hand, it goes through `bash -lc` because only a login shell puts
-`~/.local/bin`, where the native installer puts `claude`, on `PATH`; a command given to `ssh` runs
-without one, so a bare `claude auth login` is `command not found`.
+stop later stays stopped ([the path unit](../architecture/roles.md#the-path-unit) says why). By hand, it goes
+through `bash -lc` because only a login shell puts `~/.local/bin`, where the native installer puts
+`claude`, on `PATH`; a command given to `ssh` runs without one, so a bare `claude auth login` is
+`command not found`.
 
 `make claude-login` decides from the same `claude auth status` fields as `make configure`, so a VM
 signed in another way — a Console account, a `claude setup-token` token, an API key — is told by both
 what is in the way, and never signed in over it.
 
+## Turning it off
+
 Set `claude_remote_control: false` in `local.yml` to turn it off. Like adding a key, that stops,
 disables and removes a server an earlier run installed. It is also the right answer when a privacy
 setting in `claude_code_settings.env` is there on purpose: none of the above fails the run, so the
 other roles still run, but the service stays stopped until one or the other changes.
+
+## Keeping the server running
 
 The first time `claude remote-control` runs, Claude Code explains what Remote Control does and asks
 `Enable Remote Control? (y/n)`. A systemd service has no terminal to answer it, so `make configure`
@@ -81,11 +100,11 @@ records that answer in `~/.claude.json` for you, alongside first-run onboarding 
 `~/projects`: leaving Remote Control on is taken as the yes.
 
 The server runs as the `claude-remote-control` systemd unit, as the VM user, from `~/projects`.
-systemd restarts it whenever it exits, whatever the exit status, which includes server mode giving up
-after about ten minutes without a network. The first restart comes after 10 seconds and the delay
-backs off to five minutes. There is no start limit, so the server comes back on its own after an
-outage, and an expired login costs a retry every five minutes rather than a spin. `systemctl stop`
-still stops it.
+systemd restarts it whenever it exits, whatever the exit status - server mode gives up after about
+ten minutes without a network - first after 10 seconds, backing off to five minutes, with no start
+limit: the server comes back on its own after an outage, and an expired login costs a retry every five
+minutes rather than a spin. `systemctl stop` still stops it. The unit's settings, and why each, are in
+[the service unit](../architecture/roles.md#the-service-unit).
 
 On a signed-in VM, `make configure` then waits 20 seconds and fails, with the `journalctl` command to
 read why, unless the server process it started is still the one running. That is there to catch a
@@ -147,3 +166,11 @@ want, leave the key empty and sign the VM in, as at the top of this page.
 `ANTHROPIC_API_KEY` it wrote from `~/.claude/settings.json` and leaves the rest of the file alone. A
 key set through `claude_code_settings.env` is yours, and stays. The VM then needs its claude.ai login:
 `make claude-login VM_NAME=alpha` signs it in and starts Remote Control (`make deploy` does both too).
+
+## See also
+
+- Settings: [Claude Code](../reference/settings.md#claude-code) and
+  [Secrets: Claude Code](../reference/settings.md#secrets-claude-code)
+- Role: [`claude_code`](../reference/roles/claude_code.md)
+- How it works: [§5.5](../architecture/roles.md#55-claude_code--install-claude-code), from
+  [Remote Control](../architecture/roles.md#remote-control) on

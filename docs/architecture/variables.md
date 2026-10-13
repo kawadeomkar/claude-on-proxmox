@@ -12,8 +12,9 @@ role defaults/main.yml                    lowest — every variable has one
                            └─ -e extra vars      highest
 ```
 
-Files in `group_vars/all/` load alphabetically, which is why the layering is
-`defaults.yml` < `local.yml` < `vault.yml`.
+This is Ansible's own precedence with the project's files placed in it. The files a user edits, and
+the alphabetical load of `group_vars/all/` that ranks `defaults.yml` < `local.yml` < `vault.yml`, are
+on the user-facing [Settings](../reference/settings.md#variable-layering) page.
 
 ## 6.2 The wiring file
 
@@ -43,7 +44,7 @@ per playbook:
 | `proxmox_nic` | discovery and `make list` directly, and the role through `proxmox_vm_nic` |
 | `claude_vm_requested` | `discover.yml`, `list.yml`, `ssh_config.yml` and `code.yml`, for what `VM_NAME` selects |
 | `vm_projects_dir` | where the code lives on a VM, read by `github_projects` (`github_projects_dir`), `claude_code` (`claude_code_remote_control_dir`) and the alias play; empty means `~/projects` of `vm_user`, resolved on the VM |
-| `claude_ssh_config`, `claude_ssh_config_file`, `claude_ssh_user_config`, `claude_ssh_config_include`, `claude_ssh_host_domain`, `claude_ssh_identity_file`, `claude_ssh_forward_agent`, `claude_ssh_options` | `tasks/ssh_config.yml`, from every caller (§4.8) |
+| `claude_ssh_config`, `claude_ssh_config_file`, `claude_ssh_user_config`, `claude_ssh_config_include`, `claude_ssh_host_domain`, `claude_ssh_identity_file`, `claude_ssh_forward_agent`, `claude_ssh_options` | `tasks/ssh_config.yml`, from every caller ([§4.8](lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml)) |
 
 The role keeps its own `module_defaults`, built from the `proxmox_vm_api_*` wiring, since a role
 cannot depend on a project's group vars.

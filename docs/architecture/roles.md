@@ -125,6 +125,8 @@ of two install paths:
   with an `always:` cleanup.
 - **npm**: `community.general.npm` with `version: omit` for `stable`/`latest`.
 
+### Managed settings
+
 `settings.yml` merges managed settings *over* whatever is on the VM (`slurp` with
 `failed_when: false`, `combine(recursive=True)`), so a user's own edits to `~/.claude/settings.json`
 survive a re-run. Every task there is `no_log: true` because the API key passes through.
@@ -166,6 +168,8 @@ does one of three things:
 
 A login is what activates it: `make claude-login` and `make deploy` start the server in the run that
 signs the VM in, and a login made any other way starts it through the path unit.
+
+### Remote Control, step by step
 
 The role automates everything around the login and stops at it:
 
@@ -236,6 +240,8 @@ The role automates everything around the login and stops at it:
    the role against the live server and asserts the PID and `NRestarts` are untouched, then changes
    the permission mode and asserts a new PID and the new unit text.
 
+### The service unit
+
 The unit runs as the VM user from `~/projects`, with `Restart=always`, `RestartSec=10`,
 `RestartSteps=5` and `RestartMaxDelaySec=300`, and no start limit (`StartLimitIntervalSec=0`).
 `always` because the server stops by itself for reasons that are not failures — server mode exits
@@ -244,6 +250,8 @@ limit because once reached it left the unit failed until someone intervened, aft
 boot that raced the network. The delay backing off from 10 seconds to five minutes is what keeps an
 expired login, which cannot be renewed without a browser, from spinning. `RestartSteps` needs
 systemd 254; the VMs run Ubuntu 24.04 with 255.
+
+### The sign-in playbook
 
 `playbooks/claude_login.yml` (`make claude-login`, and the sign-in step of `make deploy`) discovers
 the VMs and runs the role's `login` entry point (`tasks_from: login`) on them, one VM at a time
@@ -262,6 +270,9 @@ configure` would, to start the server in the same run. The report says how each 
 VM whose Remote Control is off on purpose (an API key from the vault, or `claude_remote_control: false`)
 is said to be so, with nothing to fix; `make configure VM_NAME=<vm> TAGS=claude_code` is named only for a
 VM signed in in a way Remote Control cannot use, which a fix by hand then needs started.
+
+### The browser sign-in
+
 What it rests on was probed against Claude Code 2.1.296 in throwaway containers, never against a real
 account. With no terminal, `claude auth login` prints `Opening browser to sign in…`, `If the browser
 didn't open, visit: <url>` and `Paste code here if prompted >`, then reads one line from stdin. The
@@ -311,13 +322,18 @@ claude printed reaches a message only without its control characters (`claude_co
 user controls that text, and 2.21 writes a failure's `[ERROR]` line to this terminal and the run log
 raw.
 
+### No terminal probe
+
 Nothing decides from a terminal probe. A `( : < /dev/tty )` in a `pipe` lookup runs in an Ansible
 worker detached from the controlling terminal, so it says "no terminal" even on `make deploy` at one,
 where `pause` reads fine; the main process reads only when it owns the terminal's foreground process
 group. An answer is the one proof of an attended run, and it is per VM: the sign-in sets
 `claude_code_login_answered` (a code entered, or the browser come back) or `claude_code_login_skipped`
 (Enter, no terminal, or a browser that never came back) on the VM itself, and `make deploy` runs GitHub's
-device flow and Tailscale's web login, which wait for a browser, never for the second (§4.7, §5.6).
+device flow and Tailscale's web login, which wait for a browser, never for the second
+([§4.7](lifecycle.md#47-deployyml), §5.6).
+
+### Failures under `serial: 1`
 
 The sign-in play is `serial: 1` only when it can prompt (names given, or `make deploy`); a bare report
 reads the fleet at once. Under serial a VM whose sign-in fails is a whole batch failed, which
@@ -334,6 +350,8 @@ so it runs in the follow-on play, after the last prompt, and a failure there is 
 `claude_vm_configure_failures` with the command that retries it, failing the VM at the end of `make
 claude-login` and at the end of `make deploy` alike.
 
+### The path unit
+
 A VM that waits for its first login also gets a path unit, `claude-remote-control.path`, with
 `PathChanged=` on the credentials file and `Unit=` the service, so a login made any other way - the
 Claude terminal of `make code`, or by hand - starts the server by itself. Probed in a systemd
@@ -346,6 +364,8 @@ only while the login is the one thing missing (`claude_code_remote_control_bridg
 that finds the VM signed in, or a settings blocker, removes it (`tasks/path_unit_absent.yml`, shared
 with turning Remote Control off) before it starts the service, so a start the server refuses - an
 organisation that disabled Remote Control - leaves no path unit behind to start it again later.
+
+### How it is tested
 
 `tests/unit/test_remote_control_playbooks.py` runs the playbook against canned `claude auth status`
 output, and the check-mode path against a stand-in `systemctl`; `tests/unit/test_claude_login.py` runs
@@ -368,6 +388,8 @@ all three jobs the same token through `gh` on the VM, which stores the token it 
 (`~/.config/gh/hosts.yml`, 0600), prints it back with `gh auth token`, and answers git's credential
 helper protocol with it (`gh auth git-credential`). Which token that is follows the same shape as
 Remote Control's decision (§5.5): derived from what the VM holds, never from a switch alone.
+
+### Signing gh in: `auth.yml`
 
 `auth.yml`, as `github_projects_user`:
 
@@ -401,8 +423,8 @@ Remote Control's decision (§5.5): derived from what the VM holds, never from a 
    `GH_TOKEN`: each stays whatever the vault says. A device-flow login the role made leaves a marker
    of its own, `gh-device-login` (the digest of the token that sign-in stored), apart from this one so
    that its logout rules stay the vault token's: `make destroy`'s `release` entry point reads it to say
-   where that token is revoked (§4.5). It does not revoke it: GitHub ends every GitHub CLI sign-in of
-   the account with it.
+   where that token is revoked ([§4.5](lifecycle.md#45-playbooksdestroyyml--confirm-release-delete)).
+   It does not revoke it: GitHub ends every GitHub CLI sign-in of the account with it.
 4. **Make gh git's credential helper** with `gh auth setup-git --hostname github.com`, once:
    gh writes `credential.https://github.com.helper` twice, an empty entry that cuts any inherited
    helper chain and then `!/usr/bin/gh auth git-credential`, and the role looks for an entry whose
@@ -412,6 +434,8 @@ Remote Control's decision (§5.5): derived from what the VM holds, never from a 
    `github_projects_sign_in_follows`, that the deploy signs it in next), which adds `-s workflow` to
    gh's default scopes (`repo`, `read:org`, `gist`) so that a push changing `.github/workflows/` is
    not refused, and that private repositories are not listed until then.
+
+### Listing and cloning: `clone.yml`
 
 `clone.yml` lists with `github_projects_listing_token` - the vault token, else whatever gh holds -
 so the run after a device-flow login reaches the private repositories with nothing in the vault.
@@ -433,6 +457,8 @@ under `sudo -H`, so git reads that user's `~/.gitconfig` and the helper reads th
 role first fetches GitHub's published host keys from `<api_url>/meta` and seeds them into the
 user's `known_hosts`. `update_existing` defaults to **false** so a re-run never disturbs local work.
 
+### `make github-login`
+
 `playbooks/github_login.yml` (`make github-login`) runs the role's `login` entry point, which looks
 the user's home up for itself (the marker lives under it, and only `main.yml` had resolved it, which
 the first real run found), decides from the same vars and reports how a VM is signed in - and, for a
@@ -442,7 +468,11 @@ what can run there: with `github_auth: false` nothing, and for a vault token not
 flow itself (`device_flow.yml`) for each VM signed out, then, after the last approval, the whole role
 for every VM named, signed in now or before, so the private repositories arrive in that run (and a
 vault token is applied); under `make deploy`, whose configure has just run the role, only for the VMs
-signed in just now. The flow, as far as GitHub allows it to go: gh is started on the VM
+signed in just now.
+
+### The device flow
+
+The flow, as far as GitHub allows it to go: gh is started on the VM
 in the background with no terminal (`async`, stdin closed, both streams to a file under the user's
 config; `async_status` resolves `~/.ansible_async` through the connection's shell rather than the
 task's environment, which on a VM is the same home the wrapper used and in the unit harness is not,
@@ -470,6 +500,9 @@ insists on: the code entered on the page. `github_projects_auth_method` picks th
 takes the token when set and the device flow otherwise, `web` the device flow always with a token
 used for the listing only, `token` the token only with an empty vault a named failure. The device
 flow asks for `github_projects_login_scopes` on top of gh's own and tells gh the clone protocol.
+
+### Under `make deploy`, one VM at a time
+
 `make deploy` asks first: Enter goes for a VM whose Claude code was entered and `n` skips it; any other
 VM goes on `y` only, and with no terminal a question returns nothing at once. One VM at a time:
 `github_login.yml` runs its sign-in play `serial: 1` where it can prompt (names given, or `make
@@ -517,9 +550,10 @@ a client setting).
 
 ## 5.8 `tailscale` — join the VM to a tailnet
 
-Runs last in `configure.yml`, in a rescued block (§4.4). The design rests on facts established against
-Tailscale 1.104.1 - its source, a probe that never logged in, and a Headscale run on an internal Docker
-network - and recorded with their sources in the plan's research record.
+Runs last in `configure.yml`, in a rescued block ([§4.4](lifecycle.md#44-playbooksconfigureyml)).
+The design rests on facts established against Tailscale 1.104.1 - its source, a probe that never
+logged in, and a Headscale run on an internal Docker network - and recorded with their sources in the
+plan's research record.
 
 - **Ownership.** `/var/lib/claude-on-proxmox/tailscale-installed` is written before the repository: a
   Tailscale with it, or none at all, is the role's to install, maintain and remove; a package dpkg has

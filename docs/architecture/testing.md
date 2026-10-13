@@ -124,10 +124,11 @@ still works, and turning Tailscale off removes what the failed run left. Verify 
 file (searched for with the needle on stdin, since sudo logs a command's environment), no connection of
 `tailscaled`'s, and the hand-installed VM as it was.
 
-`proxmox_vm`'s scenario is the interesting one:`proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
+`proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
 came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —
-`192.0.2.51`, not `172.17.0.1`, which would mean the docker bridge was picked up. Its side effect
-proves the ownership guards: an untagged VM and the template are refused by both provisioning and
+`192.0.2.51`, not `172.17.0.1`, which would mean the docker bridge was picked up. It asserts the
+exact clone, config, resize, start, shutdown and delete requests, the deletes in a destroy pass of
+its side effect. That side effect also proves the ownership guards: an untagged VM and the template are refused by both provisioning and
 deletion without a single config write reaching either, and a VM left tagged but unconfigured — what
 an interrupted run leaves — is repaired. `proxmox_template`'s side effect runs the role against a
 VMID the fake `/etc/pve/.vmlist` places on a second node and asserts the refusal names that node and
@@ -137,7 +138,7 @@ that no build started.
 
 | Scenario | What it proves |
 |---|---|
-| `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs |
+| `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `make configure` needs nothing stored locally |
 | `configure` | `configure.yml` end to end against a container standing in for a provisioned VM |
 
 Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scenario inventory, so the
@@ -226,10 +227,10 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 | `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does |
 | `fake_qm.sh` | `qm` on the PVE node | stateful, one config file per VMID, logs every invocation |
 | `fake_virt_customize.sh` | `virt-customize` | so `proxmox_template` runs in a container |
-| `fake_github_api.py` | the GitHub REST API | serves local bare repositories; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took, so a test can hold that nothing reaches it |
+| `fake_github_api.py` | the GitHub REST API | serves local bare repositories, in paginated responses; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took, so a test can hold that nothing reaches it |
 | `fake_tailscale_api.py` | Tailscale's API | the OAuth client exchange, and a device looked up and deleted by node ID, each device with the name it was started with; 403 and 404 on cue, and `/fake/deleted` lists what went |
-| `fake_gh.sh` | `gh` | the auth commands only; one login per user, in a file under HOME, with every call logged |
-| `fake_tailscale.sh` | `tailscale` | the commands the role runs, against a node whose state is files under HOME: `status --json` and `debug prefs` shaped as a Running and a signed-out node really print, a join with a canned key on stdin, a refused or slow key, the web login's page and an approval that lands after `up` has exited, `NeedsMachineAuth`, a taken name, `NoState` reads after a start, logout resetting the prefs, a node ID (`node-id`), and with `real-daemon` an answer only while the real daemon's socket exists; a key is never written, and `calls.log` shows `KEY` in its place |
+| `fake_gh.sh` | `gh` | the auth commands only, installed ahead of the real one on PATH; one login per user, in a file under HOME, with every call logged |
+| `fake_tailscale.sh` | `tailscale` | output that is Tailscale's own, as the research and a Headscale run recorded it, for the commands the role runs, against a node whose state is files under HOME: `status --json` and `debug prefs` shaped as a Running and a signed-out node really print, a join with a canned key on stdin, a refused or slow key, the web login's page and an approval that lands after `up` has exited, `NeedsMachineAuth`, a taken name, `NoState` reads after a start, logout resetting the prefs, a node ID (`node-id`), and with `real-daemon` an answer only while the real daemon's socket exists; a key is never written, and `calls.log` shows `KEY` in its place |
 | `fake_claude.sh` | `claude` | `auth status` and `auth login` as probed against Claude Code: the page, the `Paste code here if prompted >` prompt, then `Login successful.`, `Login failed: ...` or `Invalid code` for the line read from stdin, writing `~/.claude/.credentials.json` on success; given `BROWSER`, it hands it the page that redirects to its own callback on `127.0.0.1` and takes a code from there as from stdin; `auth logout`; `fake-refusal`, `fake-no-page`, `fake-gone` and `fake-foreign-page` in its state directory make it refuse in other words, print an error in place of the page, exit before reading a code, or hand its browser a page that is not Claude's |
 
 `fake_pve_api.py` is deliberately faithful where fidelity has caught bugs:
@@ -256,6 +257,13 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 - A config write carrying `fake-verbatim-tags` keeps its tags as sent, for the comma-joined fixture.
   It is not a PVE parameter.
 
+Beside these, the `proxmox_template` scenario serves a "cloud image" locally, with a real `SHA256SUMS`
+file, and a fake `/etc/pve/.vmlist` that places a VMID on a second node. The `tailscale` role scenario
+and the `configure` scenario install the real Tailscale package and daemon - log upload off from its
+first start - with the stand-in `tailscale` in front of it, so no test reaches a Tailscale service.
+Every scenario and both unit harnesses turn `login_desktop` off, so no test opens this machine's
+browser or touches its clipboard.
+
 ## 11.5 Vagrant — `make vagrant-up`
 
 `configure.yml` against a real VirtualBox VM, with `claude_vm_discovery: false`. Not part of CI.
@@ -265,3 +273,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 `common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects`, `tailscale` and the `configure` scenario
 install packages inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_template` and the
 `provision` scenario talk only to local fakes and still run offline.
+
+The packages are real downloads, so those scenarios need internet access. The `configure` scenario
+leaves the Docker Engine install out, since a daemon cannot run in the test container; the `dev_tools`
+scenario installs it but does not start it.

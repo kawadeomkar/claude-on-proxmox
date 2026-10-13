@@ -3,10 +3,27 @@
 Everything is pinned in `pyproject.toml`, locked with every package it pulls in (version and hash) in
 `uv.lock`, and lives in `.venv`. Use `make`, or `.venv/bin/<tool>`. `make venv` is `uv sync --locked`,
 which refuses a lock that no longer matches `pyproject.toml`; Dependabot's uv ecosystem moves the pins
-and the lock.
+and the lock. The playbooks' own pins are `[project]`'s dependencies, the linters' and tests' the `dev`
+group, and the wiki's the `docs` group; `make venv` installs all three. The versions are the ones
+`pyproject.toml` pins - this page names what each tool is for, so that a bump cannot leave it stale:
 
-Collections: `community.proxmox 2.0.0`, `community.general 12.4.0`, `community.docker 5.3.0`,
-`ansible.posix 2.1.0`.
+| Tool | For |
+|---|---|
+| ansible-core | the playbooks and roles |
+| ansible-lint, yamllint | `make lint`, with ruff |
+| ruff | Python lint and format |
+| molecule, with molecule-plugins' Docker driver and the `docker` package | the role and playbook scenarios |
+| pytest | `make unit` |
+| pre-commit | the hooks run on commit, and the file checks CI runs with them |
+| proxmoxer, requests | the `community.proxmox` collection, on the controller |
+| aar-doc | `make docs`: each role's reference page, rendered from its `meta/argument_specs.yml` |
+| Zensical | the wiki in `docs/` built as a site (`make docs-serve`, `make docs-build`) |
+| Markdown, pymdown-extensions | the site's rendering and its heading anchors, kept the ones GitHub makes |
+| markdown-it-py | the pages rendered as GitHub does, for the test that compares the two |
+| uv | `.venv` (`make venv`) and the lock (`make lock`); the one tool on `PATH` by design, and pinned in the `dev` group for CI |
+
+Collections: `community.proxmox`, `community.general`, `community.docker` and `ansible.posix`, pinned
+to exact versions in `requirements.yml`.
 
 > **Molecule resolves `ansible-playbook` from `PATH` and only appends the virtualenv**, so `.venv/bin`
 > must be **prepended** or a different ansible-core is silently used. The `molecule` targets do this;

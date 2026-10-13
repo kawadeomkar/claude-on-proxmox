@@ -49,13 +49,10 @@ at a prompt. Use it rather than a `subprocess` call of your own: a run inherits 
 names, never reads your terminal, and fails its test if it calls a browser opener, a clipboard or this
 machine's `tailscale`.
 
-Tests never talk to a real Proxmox, a real GitHub, a real Tailscale or a real hypervisor. `tests/molecule/` holds fakes for
-all of them: a stateful Proxmox API (including the guest agent), a stateful `qm`, a `virt-customize`, and
-a GitHub API serving local bare repositories, a stand-in `gh` for the GitHub sign-in, and a stand-in
-`claude` (`fake_claude.sh`) that answers the Claude sign-in the way Claude Code was probed to, and a
-stand-in `tailscale` (`fake_tailscale.sh`) for the join and the web login, and a fake Tailscale API
-(`fake_tailscale_api.py`) for deleting a device when a VM is destroyed. If
-your change needs a new external interaction, extend a fake rather than reaching for the network.
+Tests never talk to a real Proxmox, a real GitHub, a real Tailscale or a real hypervisor:
+`tests/molecule/` holds a fake or a stand-in for each, listed in
+[docs/architecture/testing.md](docs/architecture/testing.md#114-the-fakes--testsmolecule). If your change
+needs a new external interaction, extend a fake rather than reaching for the network.
 
 Secrets in tests are canned and searched for. `tests/unit/test_github_auth.py` holds every task that
 renders a GitHub token to `no_log` (`test_every_task_that_renders_a_token_is_no_log`) and greps every
@@ -82,8 +79,10 @@ secret gets a canned value and a place in those searches.
   reference.
 - **Documentation** lives in the wiki in `docs/`, and changes in the same pull request as the
   behaviour it describes. Its reference pages are generated: after changing a role's
-  `argument_specs.yml`, `local.yml.example`, `vault.yml.example` or a Makefile target's `## ` text,
-  run `make docs` and commit the result ([docs/development/docs.md](docs/development/docs.md)).
+  `argument_specs.yml` or `defaults/main.yml`, `inventory/group_vars/all/defaults.yml` (these two
+  defaults files feed the settings page's Default column), `local.yml.example`, `vault.yml.example` or
+  a Makefile target's `## ` text, run `make docs` and commit the result
+  ([docs/development/docs.md](docs/development/docs.md)).
 - **Idempotence** is not optional. A task that reports `changed` on a second run will fail CI.
 - **A moment the run waits for the person is set apart.** A `pause` or `vars_prompt` passes its text
   through the `banner` filter (`'…' | banner('USER INPUT REQUIRED', host=inventory_hostname,
