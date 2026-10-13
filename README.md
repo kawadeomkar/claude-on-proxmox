@@ -16,8 +16,9 @@ One command, `make deploy VM_NAME=alpha`:
 Every step is idempotent, so the same command is how you apply a change later. Everything specific to
 your environment - the Proxmox address, tokens - lives in git-ignored files.
 
-**Documentation:** [`docs/`](docs/README.md) covers every feature, setting and design decision. This
-page gets you to a first deploy.
+**Documentation:** [`docs/`](docs/README.md) covers every feature, setting and design decision, and
+reads as a site with search at <https://kawadeomkar.github.io/claude-on-proxmox/>. This page gets you to
+a first deploy.
 
 ## What you need
 

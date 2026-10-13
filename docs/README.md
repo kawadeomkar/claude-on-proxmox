@@ -7,7 +7,8 @@ opens it in VS Code with a Claude terminal.
 
 This wiki is the project's documentation, and the source of truth for it. The
 [README](https://github.com/kawadeomkar/claude-on-proxmox#readme) gets you to a first deploy; everything
-else is here.
+else is here. It reads the same in the repository and as a site with search, at
+<https://kawadeomkar.github.io/claude-on-proxmox/>.
 
 ## Getting started
 

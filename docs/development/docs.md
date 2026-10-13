@@ -2,8 +2,8 @@
 
 The documentation lives in `docs/`, as Markdown, beside the code it describes, and changes in the
 same pull request as that code. It reads the same on GitHub, where every page is a file, and as a
-site that Zensical builds from the same files, with navigation and search. The site is not published
-anywhere yet: `make docs-serve` is how to read it as one.
+site that Zensical builds from the same files, with navigation and search, published at
+<https://kawadeomkar.github.io/claude-on-proxmox/> from `main` (see [Publishing](#publishing)).
 
 ## How it is organised
 
@@ -74,6 +74,15 @@ dependable - and 0.0.70 is the first with `exclude_docs`, which the configuratio
 are the `docs` group in `pyproject.toml`, and Dependabot proposes them as one pull request of their own.
 Nothing here depends on a site-generator plugin - the generation is `tools/docs.py`, run before the
 build - so the pages would build with another generator unchanged.
+
+## Publishing
+
+`.github/workflows/docs.yml` builds the site strictly and deploys it to GitHub Pages whenever a push
+to `main` changes `docs/`, `zensical.toml`, `pyproject.toml` or `uv.lock`, and on demand from the Actions
+tab. It installs only the `docs` group, at the versions `uv.lock` locks, so the published site is the
+one the tests build. Pull requests need no job of their own: `make unit` builds the site and compares it
+with GitHub's rendering already. The repository's Pages source must be set to GitHub Actions (Settings →
+Pages) for the deploy to run.
 
 ## What the tests hold
 

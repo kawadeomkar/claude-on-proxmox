@@ -10,6 +10,8 @@
 
 [project]
 site_name = "claude-on-proxmox"
+# Where .github/workflows/docs.yml publishes it, from main.
+site_url = "https://kawadeomkar.github.io/claude-on-proxmox/"
 site_description = "Ansible that turns a Proxmox VE host into Claude Code development VMs"
 repo_url = "https://github.com/kawadeomkar/claude-on-proxmox"
 repo_name = "kawadeomkar/claude-on-proxmox"

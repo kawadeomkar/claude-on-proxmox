@@ -35,3 +35,6 @@ local run cannot reproduce from the git index alone.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes a GitHub release with notes
 generated from the commits since the previous tag.
+
+A push to `main` that changes the wiki runs `.github/workflows/docs.yml`, which builds the site
+strictly and deploys it to GitHub Pages; [This wiki](../development/docs.md#publishing) says how.
