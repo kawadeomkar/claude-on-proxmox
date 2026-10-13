@@ -258,8 +258,8 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
    exist but none match `VM_NAME`", and "tagged VMs exist but none reported an address yet" (stopped,
    still booting, or a token without guest-agent access).
 
-Without `VM_NAME`, step 3 keeps every tagged VM, so `make configure`, `make check` and
-`make claude-login` are fleet-wide by default.
+Without `VM_NAME`, step 3 keeps every tagged VM, so `make configure`, `make check`,
+`make claude-login` and `make github-login` are fleet-wide by default.
 
 ### 4.4 `playbooks/configure.yml`
 
@@ -758,15 +758,99 @@ callback server, so it shows a code to paste back — that is the documented flo
 `tests/unit/test_remote_control_playbooks.py` runs the playbook against canned `claude auth status`
 output, and the check-mode path against a stand-in `systemctl`.
 
-### 5.6 `github_projects` — clone an account's repositories
+### 5.6 `github_projects` — sign in to GitHub, clone an account's repositories
 
-Validates the username, resolves the target directory, calls the custom `github_repos` module,
-filters (`exclude`, then `include` if non-empty, never-pushed repos dropped as `empty`), reports the
-selection, and clones.
+`main.yml` validates the username, resolves the target directory (the user's home is looked up only
+when `github_projects_dir` is empty), then includes `auth.yml` and `clone.yml`.
 
-For SSH clones it first fetches GitHub's published host keys from `<api_url>/meta` and seeds them
-into the user's `known_hosts`, avoiding trust-on-first-use. `update_existing` defaults to **false**
-so a re-run never disturbs local work.
+**Two credentials, one token.** A private repository is *listed* with an API token and *cloned*
+with a git credential, and a push or `gh pr create` later needs the latter again. The role gives
+all three jobs the same token through `gh` on the VM, which stores the token it is signed in with
+(`~/.config/gh/hosts.yml`, 0600), prints it back with `gh auth token`, and answers git's credential
+helper protocol with it (`gh auth git-credential`). Which token that is follows the same shape as
+Remote Control's decision (§5.5): derived from what the VM holds, never from a switch alone.
+
+`auth.yml`, as `github_projects_user`:
+
+1. **Read gh's state**: `which gh` (a VM built with `dev_tools_install_gh` off gets a message, not a
+   failure), then `auth_status.yml`: `gh auth status --hostname github.com --json hosts`, which exits
+   0 signed in or out and keeps its prose on stderr, and, when signed in, `gh auth token` under
+   `no_log`, and the role's own marker (step 3). `vars/main.yml` turns the JSON into
+   `github_projects_signed_in` and `github_projects_login_kind` - `env` from `tokenSource`, else
+   `pat` (`ghp_`, `github_pat_`) or `oauth` (`gho_`) from the prefix of the token `gh auth token`
+   printed, because the status JSON carries no token without `--show-token`. The kind is for
+   `make github-login`'s report; the logout in step 3 does not rely on it. A non-zero exit from the
+   status command is gh refusing `--json`, which came in gh 2.81.0 (2025-10-01), and fails the host
+   naming the version: read as "signed out" it would print the sign-in command on every run and
+   never configure the helper. `auth_status.yml` is a file because it is included again after a
+   change: a skipped include leaves the registers alone, where a skipped copy of the tasks would
+   overwrite them with a skipped result.
+2. **Sign in from the vault token** when there is one and the stored token differs:
+   `gh auth login --with-token --insecure-storage`, the token on stdin, `no_log`. A headless VM
+   has no credential store and gh would fall back to the plain-text file anyway; asking for it keeps
+   a future gh that finds a store from putting the token where the role cannot read or remove it.
+   A refused token fails the host with gh's own line, which names the cause and never the token.
+3. **Sign out the login the role made when the vault token is cleared**, the other direction of
+   the same rule, as `settings.yml` removes the API key it wrote. gh cannot tell the role's token
+   from one the user pasted by hand, so the role leaves a marker whenever the login is the vault
+   token's - the token's SHA-256 digest in `~/.config/claude-on-proxmox/gh-login`, 0600, rewritten
+   if it goes missing - and signs out, by account (`--user`), only a stored token whose digest the
+   marker holds, removing the marker with it. No marker, a stale one, a device-flow login, a
+   `GH_TOKEN`: each stays whatever the vault says.
+4. **Make gh git's credential helper** with `gh auth setup-git --hostname github.com`, once:
+   gh writes `credential.https://github.com.helper` twice, an empty entry that cuts any inherited
+   helper chain and then `!/usr/bin/gh auth git-credential`, and the role looks for an entry whose
+   command is `gh` the way gh itself does, so a second run changes nothing.
+5. **Say what is missing** on a signed-out VM: the device-flow command, which adds `-s workflow`
+   to gh's default scopes (`repo`, `read:org`) so that a push changing `.github/workflows/` is not
+   refused, and that private repositories are not listed until then.
+
+`clone.yml` lists with `github_projects_listing_token` - the vault token, else whatever gh holds -
+so the run after a device-flow login reaches the private repositories with nothing in the vault.
+`github_repos` also returns the account (`login`, `name`, `id`), from which the git identity is
+derived unless `git_user_name` / `git_user_email` are set: the display name or login, and GitHub's
+noreply address `<id>+<login>@users.noreply.github.com`. Written with `community.general.git_config`
+before the helper, so the two writers of `~/.gitconfig` each check before writing. The filters
+(`exclude`, then `include` if non-empty, never-pushed repositories dropped as `empty`) are vars in
+`vars/main.yml`; a private repository listed while gh is signed out - a vault token with
+`github_auth` off - is skipped and named rather than cloned and failed. The clone runs as the user
+under `sudo -H`, so git reads that user's `~/.gitconfig` and the helper reads that user's
+`hosts.yml`, with `GIT_TERMINAL_PROMPT=0` so a repository the credential cannot reach fails with
+"terminal prompts disabled" and its name instead of git's attempt to prompt. For SSH clones the
+role first fetches GitHub's published host keys from `<api_url>/meta` and seeds them into the
+user's `known_hosts`. `update_existing` defaults to **false** so a re-run never disturbs local work.
+
+`playbooks/github_login.yml` (`make github-login`) runs the role's `login` entry point, which looks
+the user's home up for itself (the marker lives under it, and only `main.yml` had resolved it, which
+the first real run found), decides from the same vars and reports how a VM is signed in - and, for a
+device-flow login that lacks the `workflow` scope, the `gh auth refresh` that adds it. Given exactly
+one VM, it runs the device flow itself (`device_flow.yml`), then the whole role, so the private
+repositories arrive in that run. The flow, as far as GitHub allows it to go: gh is started on the VM
+in the background with no terminal (`async`, stdin closed, both streams to a file under the user's
+config; `async_status` resolves `~/.ansible_async` through the connection's shell rather than the
+task's environment, which on a VM is the same home the wrapper used and in the unit harness is not,
+so the harness sets `ansible_async_dir` per host), which is what makes it print the code and the
+page at once and poll. That file is unlinked, never truncated, before gh starts: a run that failed
+after starting gh leaves gh polling for up to fifteen minutes, and truncating would share the file
+with it, whose expiry line would then end the new wait early, while an unlinked file leaves it its
+own inode to die on. A `wait_for` reads the code out of the file, the run prints it, and on the
+controller the page is opened (`BROWSER`, `open`, `xdg-open`) and the code copied (`pbcopy`,
+`wl-copy`, `xclip`), both best effort and both gated by `github_projects_login_desktop`, which every
+scenario and the unit harness turn off because their `localhost` is the developer's machine, with a
+test that keeps it so. Those controller tasks carry `become: false`: the play's `become` is the VM's
+passwordless sudo, and inherited by a task delegated to the controller it is the developer's, which
+asks for a password and fails the run (the first real run found this; the harness runs with become
+off, so a static test holds it). Then one
+quiet `wait_for` on the file for "Logged in as" or "failed to authenticate", up to the fifteen minutes
+a code lives; the job is collected with `async_status` and removed with its `cleanup` mode; the file
+goes; an unapproved code is a named failure quoting gh's line. The user's part is the one GitHub
+insists on: the code entered on the page. `github_projects_auth_method` picks the credential: `auto`
+takes the token when set and the device flow otherwise, `web` the device flow always with a token
+used for the listing only, `token` the token only with an empty vault a named failure. The device
+flow asks for `github_projects_login_scopes` on top of gh's own and tells gh the clone protocol. One
+VM at a time: `device_flow.yml` refuses a play with more than one host, since the browser step would
+otherwise run for each before any waiting began, so `github_projects_login_prompt`, which runs the
+flow inside configure and deploy, is off by default.
 
 ### 5.7 `vscode_server` — what VS Code's Remote - SSH needs on the host
 
@@ -938,12 +1022,14 @@ Covered by 58 unit tests in `tests/unit/test_filters.py`.
 
 An Ansible module listing a GitHub account's repositories, following `Link`-header pagination. With a
 token belonging to the queried user it uses the authenticated endpoint and includes private repos;
-otherwise it falls back to the public listing. Returns a compact, sorted list carrying `name`,
-`full_name`, `clone_url`, `ssh_url`, `default_branch`, `fork`, `archived`, `private` and `empty`
-(never pushed to, so nothing to clone).
+otherwise it falls back to the public listing, which GitHub documents as public repositories only.
+Returns a compact, sorted list carrying `name`, `full_name`, `clone_url`, `ssh_url`,
+`default_branch`, `fork`, `archived`, `private` and `empty` (never pushed to, so nothing to clone),
+and the account as `user` (`login`, `name`, `id`), from `/user` when the token is the user's own and
+`/users/<login>` otherwise, for the git identity the role derives.
 
 Written against the managed VM's Python — `ruff` targets `py310`, not the controller's 3.12+.
-Covered by 26 unit tests in `tests/unit/test_github_repos.py`.
+Covered by 28 unit tests in `tests/unit/test_github_repos.py`.
 
 ---
 
@@ -1156,7 +1242,11 @@ is never scanned.
 
 **On the VM:** key-only SSH via a validated sshd drop-in, root password login disabled, passwordless
 sudo for the dev user (a deliberate trade-off, recorded in SECURITY.md), and GitHub's host keys
-pre-seeded from the API rather than trusted on first use. `ansible.cfg` uses
+pre-seeded from the API rather than trusted on first use. The GitHub token - the vault's, or the
+one a device-flow login issued to that VM - sits in plain text in `~/.config/gh/hosts.yml` (0600),
+readable by the VM user and so by Claude Code, exactly like the Anthropic key in `settings.json`;
+the device-flow path is the one without a long-lived secret, and every task that holds a token is
+`no_log`. `ansible.cfg` uses
 `StrictHostKeyChecking=accept-new`: trust a freshly provisioned VM on first contact, but still refuse
 if a known host's key changes later. The `vscode_server` drop-in keeps TCP and Unix-socket
 forwarding on, which OpenSSH defaults to anyway; the role then asserts the values sshd runs with,
@@ -1199,9 +1289,12 @@ Three tiers. **No test ever talks to a real Proxmox, a real GitHub, or a real hy
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 290 tests — 58 for the filters, 26 for `github_repos`, 81 for the
+pytest over `tests/unit/`: 401 tests — 58 for the filters, 28 for `github_repos`, 81 for the
 tracked-file guard, 35 that run `claude_login.yml` and `remote_control.yml` against canned logins and
-stand-ins, 2 that `--tags claude_code` still runs discovery and the alias play, 24 that run
+stand-ins, 26 that run the `github_projects` role's `auth.yml` and `clone.yml` and `github_login.yml`
+for real against the stand-in `gh` and the fake GitHub API on a loopback port, one host per sign-in
+state, twice over for idempotence, with `git credential fill` proving that git itself gets the token
+through the config written, and the whole output searched for every canned token, 2 that `--tags claude_code` still runs discovery and the alias play, 24 that run
 `tasks/ssh_config.yml` for real against a temporary home and resolve the result with `ssh -G` (and
 guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, and that no
 playbook sets the task file's inputs as facts, and that the user's own Include and file mode are left alone), and 64 that run
@@ -1330,7 +1423,8 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 | `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log |
 | `fake_qm.sh` | `qm` on the PVE node | stateful, one config file per VMID, logs every invocation |
 | `fake_virt_customize.sh` | `virt-customize` | so `proxmox_template` runs in a container |
-| `fake_github_api.py` | the GitHub REST API | serves local bare repositories |
+| `fake_github_api.py` | the GitHub REST API | serves local bare repositories; `/user` and `/user/repos` answer a token, private repositories included |
+| `fake_gh.sh` | `gh` | the auth commands only; one login per user, in a file under HOME, with every call logged |
 
 `fake_pve_api.py` is deliberately faithful where fidelity has caught bugs:
 
@@ -1440,6 +1534,7 @@ playbooks/
   discover.yml                    find VMs by tag, resolve addresses via the guest agent
   list.yml                        read-only: what exists, and where it is
   claude_login.yml                print the one Remote Control step that needs a browser
+  github_login.yml                print how gh is signed in to GitHub, or the one device-flow step that needs one
   configure.yml                   discover, then common → vscode_server → dev_tools → claude_code → github_projects,
                                   then an SSH alias per configured VM on the controller
   destroy.yml                     confirm, verify ownership, delete in parallel, forget each alias
@@ -1456,7 +1551,8 @@ roles/
   vscode_server/                  sshd forwarding drop-in checked with sshd -T, inotify limit
   dev_tools/                      Node.js, Docker, gh, uv  (files/*.asc are vendored signing keys)
   claude_code/                    native or npm install, settings.json, Remote Control; tasks/login.yml
-  github_projects/                library/github_repos.py + clone loop
+  github_projects/                tasks/auth.yml (gh sign-in, credential helper), clone.yml, login.yml;
+                                  library/github_repos.py
 
 filter_plugins/proxmox.py         net_mac, guest_ipv4, guest_address, guest_addresses, proxmox_access_denied,
                                   ssh_config_blocks, ssh_config_prune
@@ -1469,9 +1565,9 @@ inventory/
 
 tests/
   check_no_local_files.sh         tracked-file guard (also runs in CI)
-  unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the managed
-                                  SSH config, the Claude terminal's script, Makefile guards
-  molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API
+  unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the GitHub
+                                  sign-in, the managed SSH config, the Claude terminal's script, Makefile guards
+  molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh
 molecule/
   provision/                      provision.yml + discover.yml against the fake API
   configure/                      configure.yml end to end in a container

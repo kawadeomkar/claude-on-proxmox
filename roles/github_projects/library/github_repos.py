@@ -16,6 +16,7 @@ description:
   - Handles pagination via the C(Link) header.
   - With a token that belongs to the queried user, private repositories are
     included; otherwise only public ones are visible.
+  - Also returns who the user is, for a git identity derived from the account.
 options:
   username:
     description: GitHub login to list repositories for.
@@ -95,6 +96,20 @@ total:
   description: Number of repositories returned by the API before filtering.
   returned: success
   type: int
+user:
+  description: The account the repositories belong to, as GitHub describes it.
+  returned: success
+  type: dict
+  contains:
+    login:
+      description: The login, in GitHub's own spelling.
+      type: str
+    name:
+      description: Display name, or null when the account has none.
+      type: str
+    id:
+      description: Numeric account ID, as GitHub's noreply address for the account uses it.
+      type: int
 """
 
 import json
@@ -105,6 +120,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.urls import fetch_url
 
 FIELDS = ("name", "full_name", "clone_url", "ssh_url", "default_branch", "fork", "archived", "private")
+USER_FIELDS = ("login", "name", "id")
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
@@ -146,13 +162,17 @@ def get_json(module, url, headers):
         module.fail_json(msg=f"GitHub API request to {url} returned a non-JSON body: {raw[:200]!r}")
 
 
-def resolve_listing_url(module, api_url, username, token, headers, per_page):
-    """Use /user/repos (includes private) when the token belongs to username."""
+def resolve_listing(module, api_url, username, token, headers, per_page):
+    """Return the listing URL and the account: /user/repos (private included) when the token is the user's own."""
     if token:
         me, _info = get_json(module, f"{api_url}/user", headers)
         if str(me.get("login", "")).lower() == username.lower():
-            return f"{api_url}/user/repos?affiliation=owner&per_page={per_page}"
-    return f"{api_url}/users/{quote(username, safe='')}/repos?type=owner&per_page={per_page}"
+            return f"{api_url}/user/repos?affiliation=owner&per_page={per_page}", me
+    # Public, so the account is read the public way too: /users/<login>
+    # answers with or without a token, and names the login as GitHub spells it.
+    login = quote(username, safe="")
+    user, _info = get_json(module, f"{api_url}/users/{login}", headers)
+    return f"{api_url}/users/{login}/repos?type=owner&per_page={per_page}", user
 
 
 def fetch_all_pages(module, url, headers):
@@ -208,11 +228,12 @@ def run_module():
     per_page = max(1, min(100, params["per_page"]))
     headers = build_headers(params["token"])
 
-    url = resolve_listing_url(module, api_url, params["username"], params["token"], headers, per_page)
+    url, account = resolve_listing(module, api_url, params["username"], params["token"], headers, per_page)
     all_repos = fetch_all_pages(module, url, headers)
     repos = filter_repos(all_repos, params["include_forks"], params["include_archived"])
+    user = {field: account.get(field) for field in USER_FIELDS}
 
-    module.exit_json(changed=False, repos=repos, total=len(all_repos))
+    module.exit_json(changed=False, repos=repos, total=len(all_repos), user=user)
 
 
 def main():

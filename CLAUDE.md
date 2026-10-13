@@ -22,6 +22,7 @@ make molecule-scenario SCENARIO=provision      # one playbook scenario
 make test            # everything, including pre-commit — the CI gate
 make deploy          # template (if missing) + provision + configure, all idempotent
 make claude-login    # print the one Remote Control step Ansible cannot do
+make github-login VM_NAME=alpha   # sign gh in to GitHub by the device flow (page opens here, code on the clipboard), then clone private repos
 make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push an API key
 make list            # read-only: the VMs this project created, and their addresses
 make ssh-config      # refresh the SSH alias per VM on this machine; fleet-wide also prunes
@@ -67,9 +68,37 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   unit an earlier run installed. Both directions must converge on a VM that was on the other path:
   `settings.yml` removes a key it no longer manages, and eligibility rejects any `apiKeySource` in
   `claude auth status`. See ARCHITECTURE.md §5.5.
+- **The GitHub sign-in converges both ways, and the listing uses whatever token the VM holds.**
+  `github_projects` signs `gh` in from `github_token` when there is one, otherwise prints the
+  device-flow command and uses the token `gh` stored at that login for the listing
+  (`github_projects_listing_token`), so private repositories arrive on the run after the login with
+  nothing in the vault. A cleared vault token signs out only the login the role itself made, told
+  by the marker `~/.config/claude-on-proxmox/gh-login` on the VM (the token's digest, written
+  whenever the login is the vault token's), by account: a token the user pasted into gh by hand
+  looks the same, so never decide a logout from the token's prefix alone. The status JSON carries
+  no token; the kind of login comes from `gh auth token` under `no_log`, and a gh older than
+  2.81.0, which has no `--json`, is a named failure, never "signed out". gh is made git's
+  credential helper by gh's own test for its entry, so a second run is `ok`.
+  Every task that renders a token is `no_log`; `tests/unit/test_github_auth.py` greps the whole run
+  for every canned token. Do not key any of this off `github_auth` alone: with it off, a vault token
+  still lists, and a private repository it lists is skipped and named, not cloned and failed. See
+  ARCHITECTURE.md §5.6.
+- **Tests never open the developer's browser or touch their clipboard.** The GitHub device flow
+  (`roles/github_projects/tasks/device_flow.yml`, run by `make github-login VM_NAME=<one>`) opens
+  the page and copies the code on `localhost`, which in the unit harness and every playbook scenario
+  is the developer's machine. `github_login_desktop` (role: `github_projects_login_desktop`) gates
+  both steps; every scenario and the harness set it false, and `tests/unit/test_github_auth.py` fails
+  if one stops. Those delegated tasks are `become: false`, because the play's `become` is the VM's
+  passwordless sudo and on the controller it is the developer's, which asks for a password; the
+  harness runs with become off, so the same test holds that statically. gh's output file is unlinked
+  before gh starts, never truncated: a run that failed after starting gh leaves gh polling, and its
+  expiry line in a shared file would end the next run's wait early. The flow takes one VM at a time
+  and refuses a play with more; it is inside configure and deploy only with `github_login_prompt`,
+  off by default, because the run waits for a browser.
 - **Tests never touch a real Proxmox, GitHub or hypervisor.** `tests/molecule/` holds the fakes:
-  a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, and a GitHub API over
-  local bare repos. Extend a fake rather than reaching for the network.
+  a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, a GitHub API over
+  local bare repos (the authenticated endpoints included), and a stand-in `gh` installed ahead of
+  the real one on PATH. Extend a fake rather than reaching for the network.
 - **The project writes exactly two things outside the repo on the controller:** `~/.ssh/known_hosts`
   and the managed SSH config `~/.ssh/claude-on-proxmox.conf`, plus one `Include` line at the top of
   `~/.ssh/config` that is added once and never removed. Nothing else in `~/.ssh` is ever edited.

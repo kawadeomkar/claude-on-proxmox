@@ -3,11 +3,18 @@ github_projects_user: dev
 
 # GitHub account whose repositories are cloned. Required.
 github_projects_username: ""
-# Optional token: raises the API rate limit and, when it belongs to
-# github_projects_username, includes private repositories in the listing.
+# Optional token. It lists private repositories when it belongs to
+# github_projects_username, raises the API rate limit, and with
+# github_projects_auth signs gh in on the VM, so the same token clones them and
+# pushes. Without one, gh is signed in by hand once (make github-login) and the
+# listing uses the token gh stored from then on. The permissions it needs are
+# in the README, "Pushing from the VM".
 github_projects_token: ""
 github_projects_api_url: https://api.github.com
 
+# Home directory of github_projects_user, where gh keeps its login and this
+# role its marker (below). Empty: looked up on the VM.
+github_projects_home: ""
 # Destination; defaults to ~/projects of github_projects_user.
 github_projects_dir: ""
 
@@ -26,3 +33,31 @@ github_projects_clone_protocol: https
 github_projects_update_existing: false
 # Shallow clone depth; leave empty for full history.
 github_projects_depth: ""
+
+# Sign gh in on the VM as github_projects_user and make it git's credential
+# helper for github.com, so private repositories clone, `git push` works, and
+# `gh pr create` works for Claude Code. false leaves gh, ~/.gitconfig and the
+# identity below alone.
+github_projects_auth: true
+# How gh is signed in. auto: with github_projects_token when there is one,
+# else by GitHub's device flow, which `make github-login` runs for one VM at a
+# time (a page opens on the controller, the code is copied there, the user
+# approves). web: the device flow always; a token then only lists. token: the
+# token only, and an empty one is a named failure rather than a fallback.
+github_projects_auth_method: auto
+# Scopes the device flow asks for on top of gh's own (repo, read:org).
+# workflow, so that a push which changes .github/workflows/ is not refused.
+github_projects_login_scopes: [workflow]
+# During the device flow, open the page and copy the code on the controller.
+# Off, the run only prints them. Every test turns this off: the controller is
+# the developer's machine.
+github_projects_login_desktop: true
+# Run the device flow inside the role too, on a signed-out VM, rather than
+# only from `make github-login`. One VM at a time, and the run waits for the
+# browser: off by default so a fleet or an unattended run is never held up.
+github_projects_login_prompt: false
+# The git identity written to ~/.gitconfig of github_projects_user. Empty: the
+# GitHub account's display name (or its login) and GitHub's noreply address for
+# it, so no private email lands in commits by default.
+github_projects_git_user_name: ""
+github_projects_git_user_email: ""

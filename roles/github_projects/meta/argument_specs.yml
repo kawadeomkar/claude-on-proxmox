@@ -15,9 +15,14 @@ argument_specs:
         type: str
         default: ""
         no_log: true
+        description: Lists private repositories and, with github_projects_auth, signs gh in on the VM.
       github_projects_api_url:
         type: str
         default: https://api.github.com
+      github_projects_home:
+        type: path
+        default: ""
+        description: Home directory of github_projects_user. Empty looks it up on the VM.
       github_projects_dir:
         type: path
         description: Destination directory. Defaults to ~/projects.
@@ -46,3 +51,33 @@ argument_specs:
       github_projects_depth:
         type: str
         default: ""
+      github_projects_auth:
+        type: bool
+        default: true
+        description: Sign gh in (from the token, or by a device-flow login the user makes once) and make it git's credential helper.
+      github_projects_auth_method:
+        type: str
+        choices: [auto, web, token]
+        default: auto
+        description: auto takes the token when set, else the device flow; web is the device flow always; token is the token only.
+      github_projects_login_scopes:
+        type: list
+        elements: str
+        default: [workflow]
+        description: Scopes the device flow asks for on top of gh's defaults.
+      github_projects_login_desktop:
+        type: bool
+        default: true
+        description: During the device flow, open the page and copy the code on the controller. Off in every test.
+      github_projects_login_prompt:
+        type: bool
+        default: false
+        description: Run the device flow inside the role on a signed-out VM, one VM at a time, waiting for the browser.
+      github_projects_git_user_name:
+        type: str
+        default: ""
+        description: git user.name for github_projects_user. Empty derives it from the GitHub account.
+      github_projects_git_user_email:
+        type: str
+        default: ""
+        description: git user.email for github_projects_user. Empty uses GitHub's noreply address for the account.

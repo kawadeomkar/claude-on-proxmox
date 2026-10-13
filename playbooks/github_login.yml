@@ -1,0 +1,41 @@
+---
+# Sign gh in to GitHub on one VM, or say how each VM is signed in.
+#
+#   make github-login VM_NAME=alpha     -> signs alpha in, then runs the role
+#   make github-login                   -> reports every VM's state
+#
+# With vault_github_token set, make configure signs gh in by itself. Without
+# one the login is GitHub's device flow, which no run can finish alone: a
+# one-time code has to be entered on a page and authorised. This runs it as
+# far as it goes - gh in the background on the VM, the code read from its
+# output, the page opened and the code copied on this machine
+# (github_login_desktop), the approval waited for - and then runs the whole
+# github_projects role, so the private repositories arrive in the same run.
+# One VM at a time: given several, or none, it reports instead.
+- name: Discover VMs on Proxmox
+  ansible.builtin.import_playbook: discover.yml
+  when: claude_vm_discovery | default(true) | bool
+
+- name: Sign gh in to GitHub, or say how each VM is signed in
+  hosts: claude_vms
+  become: true
+  gather_facts: false
+
+  tasks:
+    # The decision is the github_projects role's, so this and `make configure`
+    # cannot disagree about whether a VM is signed in, or how.
+    # tests/unit/test_github_auth.py runs this playbook against canned logins.
+    - name: Report the login state, and sign the one VM in
+      ansible.builtin.include_role:
+        name: github_projects
+        tasks_from: login
+      vars:
+        github_projects_login_interactive: >-
+          {{ (vm_name | default('', true) | split(',') | map('trim') | select | list | length) == 1 }}
+
+    # The rest of the role, now that gh holds a token: the credential helper,
+    # the listing with that token, the private repositories.
+    - name: Configure the repositories now that gh is signed in
+      ansible.builtin.include_role:
+        name: github_projects
+      when: github_projects_login_done | default(false) | bool

@@ -1,0 +1,137 @@
+---
+# Internal, not meant to be overridden. Vars rather than facts, as in
+# roles/proxmox_vm/vars/main.yml: each follows the register it reads, and the
+# role can run more than once in one play (its own Molecule scenario does).
+
+# Whether gh is on the VM at all. Without it there is nothing to sign in, and
+# the role says so rather than failing a VM built with dev_tools_install_gh off.
+github_projects_gh_found: "{{ github_projects_gh_which.rc | default(1) == 0 }}"
+
+# What `gh auth status --hostname github.com --json hosts` printed, parsed:
+# {"hosts": {}} when signed out, otherwise one entry per account under
+# "github.com". The command exits 0 either way and keeps its human-readable
+# line on stderr. Anything else - gh missing, or too old for --json - reads
+# as signed out.
+github_projects_auth_hosts: >-
+  {{ (github_projects_auth_status.stdout | from_json).hosts | default({})
+     if github_projects_auth_status.rc | default(1) == 0
+        and (github_projects_auth_status.stdout | default('') | trim).startswith('{')
+     else {} }}
+
+# The active github.com account, or {}.
+github_projects_auth_account: >-
+  {{ github_projects_auth_hosts['github.com'] | default([])
+     | selectattr('active', 'defined') | selectattr('active') | list | first | default({}) }}
+
+github_projects_signed_in: "{{ (github_projects_auth_account.state | default('')) == 'success' }}"
+
+# How gh came to be signed in: `env` for a GH_TOKEN or GITHUB_TOKEN in gh's
+# environment (which the reset environment of sudo -H rarely carries), and
+# otherwise from the prefix of the token gh holds, read under no_log below:
+# `pat` for a token like the one this role writes (ghp_ classic, github_pat_
+# fine-grained), `oauth` for the gho_ token of a device-flow login the user
+# made, `none` signed out. Not from the status JSON: its token field is empty
+# without --show-token, and omitted.
+github_projects_login_kind: >-
+  {{ 'none' if not github_projects_signed_in | bool
+     else 'env' if (github_projects_auth_account.tokenSource | default('')) is match('.*_TOKEN$')
+     else 'pat' if github_projects_stored_token is match('(ghp_|github_pat_)')
+     else 'oauth' if github_projects_stored_token is match('gho_')
+     else 'other' }}
+
+# Whether this run manages gh's login and the credential helper at all.
+github_projects_auth_wanted: "{{ github_projects_auth | bool and github_projects_gh_found | bool }}"
+
+# Which credential signs gh in, from github_projects_auth_method: the token
+# path takes the vault token (auto only when there is one), the web path is
+# the device flow (auto only when there is none). With web and a token, the
+# token lists and nothing more.
+github_projects_token_wanted: >-
+  {{ github_projects_auth_method == 'token'
+     or (github_projects_auth_method == 'auto' and github_projects_token | length > 0) }}
+github_projects_web_wanted: >-
+  {{ github_projects_auth_method == 'web'
+     or (github_projects_auth_method == 'auto' and github_projects_token | length == 0) }}
+
+# The device flow as gh runs it with no terminal: it prints the code and the
+# page at once and polls until the code is approved or expires. The git
+# protocol is the clone protocol, so `gh repo clone` matches.
+github_projects_login_args: >-
+  {{ ['gh', 'auth', 'login', '--hostname', 'github.com', '--git-protocol', github_projects_clone_protocol,
+      '--web', '--skip-ssh-key']
+     + (['--scopes', github_projects_login_scopes | join(',')] if github_projects_login_scopes | length > 0 else []) }}
+# Where gh's output lands while it runs: a code that is public by design and
+# expires, never a token. Removed when the flow ends.
+github_projects_login_output: "{{ github_projects_home_dir }}/.config/claude-on-proxmox/gh-login.out"
+# What gh printed there, and the code and the page read out of it.
+github_projects_login_text: >-
+  {{ (github_projects_login_out.content | b64decode) if github_projects_login_out.content is defined else '' }}
+github_projects_login_code: "{{ github_projects_login_text | regex_search('[A-Z0-9]{4}-[A-Z0-9]{4}') or '' }}"
+github_projects_login_page: >-
+  {{ github_projects_login_text | regex_search('https://[^ \n]+') or 'https://github.com/login/device' }}
+
+# The token gh stored, read with `gh auth token` under no_log; '' when signed
+# out. Every task that renders this, or the listing token below, is no_log.
+github_projects_stored_token: >-
+  {{ github_projects_stored_token_raw.stdout | default('') | trim
+     if github_projects_stored_token_raw.rc | default(1) == 0 else '' }}
+
+# Whether the login gh holds is one this role made. The role cannot tell its
+# token from one the user pasted by hand, so it leaves a marker when it signs
+# in - the digest of the token, beside the user's own config - and only a
+# stored token with that digest is ever signed out. No marker, no logout: a
+# login the user made, a token of their own included, stays.
+# Absolute, from the home main.yml resolved: a "~" in a copy task's dest is
+# expanded through the connection's shell, not the module's environment.
+github_projects_home_dir: >-
+  {{ github_projects_home if github_projects_home | length > 0
+     else ansible_facts.getent_passwd[github_projects_user][4] }}
+github_projects_marker_file: "{{ github_projects_home_dir }}/.config/claude-on-proxmox/gh-login"
+github_projects_marker_digest: >-
+  {{ (github_projects_marker_raw.content | b64decode | trim)
+     if github_projects_marker_raw.content is defined else '' }}
+github_projects_login_is_ours: >-
+  {{ github_projects_signed_in | bool
+     and github_projects_stored_token | length > 0
+     and github_projects_marker_digest | length > 0
+     and github_projects_marker_digest == github_projects_stored_token | hash('sha256') }}
+
+# What the listing is made with: the vault token when there is one, else
+# whatever gh holds. A device-flow login therefore lists private repositories
+# from the run after it, with nothing in the vault.
+github_projects_listing_token: >-
+  {{ github_projects_token if github_projects_token | length > 0 else github_projects_stored_token }}
+
+# The repositories after the role's own filters: never-pushed ones out, the
+# exclude list out, the include list in when there is one.
+github_projects_candidates: >-
+  {{ github_projects_listing.repos
+     | rejectattr('empty')
+     | rejectattr('name', 'in', github_projects_exclude)
+     | selectattr('name', 'in', github_projects_include if github_projects_include else
+                                github_projects_listing.repos | map(attribute='name') | list)
+     | list }}
+
+# A private repository can be listed while gh is signed out - a vault token
+# with github_projects_auth off - and would then fail to clone for want of a
+# credential, so it is skipped and named instead.
+github_projects_private_skipped: >-
+  {{ [] if github_projects_signed_in | bool
+     else github_projects_candidates | selectattr('private') | map(attribute='name') | list }}
+github_projects_selected: >-
+  {{ github_projects_candidates | rejectattr('name', 'in', github_projects_private_skipped) | list }}
+
+# The git identity: what was set, else the account as GitHub describes it.
+# The noreply address is the one GitHub itself offers for commits that should
+# not carry a real email.
+github_projects_git_name: >-
+  {{ github_projects_git_user_name if github_projects_git_user_name | length > 0
+     else (github_projects_listing.user.name | default('', true)) or github_projects_listing.user.login }}
+github_projects_git_email: >-
+  {{ github_projects_git_user_email if github_projects_git_user_email | length > 0
+     else github_projects_listing.user.id ~ '+' ~ github_projects_listing.user.login ~ '@users.noreply.github.com' }}
+
+# The command that signs gh in by the device flow, run on the controller: it
+# opens the page there, copies the code, waits for the approval, and then
+# runs this role so the private repositories arrive in the same run.
+github_projects_login_command: make github-login VM_NAME={{ inventory_hostname }}

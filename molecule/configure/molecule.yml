@@ -22,6 +22,7 @@ provisioner:
     ANSIBLE_FILTER_PLUGINS: ${MOLECULE_PROJECT_DIRECTORY}/filter_plugins
   playbooks:
     converge: converge.yml
+    side_effect: side_effect.yml
   inventory:
     # group_vars/all/defaults.yml here is a symlink to the project's committed
     # inventory/group_vars/all/defaults.yml, so the real variable wiring is

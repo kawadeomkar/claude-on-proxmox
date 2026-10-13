@@ -1,0 +1,73 @@
+---
+- name: clone | List repositories of {{ github_projects_username }}
+  github_repos:
+    username: "{{ github_projects_username }}"
+    token: "{{ github_projects_listing_token | default(omit, true) }}"
+    api_url: "{{ github_projects_api_url }}"
+    include_forks: "{{ github_projects_include_forks }}"
+    include_archived: "{{ github_projects_include_archived }}"
+  register: github_projects_listing
+
+- name: clone | Report selection
+  ansible.builtin.debug:
+    msg: >-
+      {{ github_projects_selected | length }} of {{ github_projects_listing.repos | length }}
+      repositories selected for {{ github_projects_target_dir }}
+      (skipped as empty: {{ github_projects_listing.repos | selectattr('empty') | map(attribute='name') | list }}{{
+        '; private, skipped until gh is signed in: ' ~ github_projects_private_skipped
+        if github_projects_private_skipped | length > 0 else '' }}).
+      {{ 'Private repositories are not listed until gh is signed in.'
+         if github_projects_listing_token | length == 0 else '' }}
+
+# Before the helper: both write ~/.gitconfig, and each checks before writing.
+- name: clone | Set the git identity of {{ github_projects_user }}
+  community.general.git_config:
+    scope: global
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+  become: true
+  become_user: "{{ github_projects_user }}"
+  loop: "{{ {'user.name': github_projects_git_name, 'user.email': github_projects_git_email} | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: github_projects_auth | bool
+
+- name: clone | Fetch GitHub's published SSH host keys
+  ansible.builtin.uri:
+    url: "{{ github_projects_api_url }}/meta"
+    return_content: true
+  register: github_projects_github_meta
+  when: github_projects_clone_protocol == 'ssh'
+
+# Pre-seeding the published keys avoids trust-on-first-use for github.com.
+- name: clone | Trust GitHub's SSH host keys
+  ansible.builtin.known_hosts:
+    name: github.com
+    key: "github.com {{ item }}"
+    state: present
+  become: true
+  become_user: "{{ github_projects_user }}"
+  loop: "{{ github_projects_github_meta.json.ssh_keys | default([]) }}"
+  loop_control:
+    label: "{{ item.split(' ')[0] }}"
+  when: github_projects_clone_protocol == 'ssh'
+
+# As github_projects_user, whose ~/.gitconfig names gh as the credential
+# helper for github.com (sudo -H, so HOME is that user's). GIT_TERMINAL_PROMPT
+# off: a repository the credential cannot reach then fails with "terminal
+# prompts disabled" and the repository's name, instead of git's attempt to ask
+# for a password that no terminal can answer.
+- name: clone | Clone repositories
+  ansible.builtin.git:
+    repo: "{{ item.ssh_url if github_projects_clone_protocol == 'ssh' else item.clone_url }}"
+    dest: "{{ github_projects_target_dir }}/{{ item.name }}"
+    version: "{{ item.default_branch }}"
+    update: "{{ github_projects_update_existing }}"
+    depth: "{{ github_projects_depth | default(omit, true) }}"
+  become: true
+  become_user: "{{ github_projects_user }}"
+  environment:
+    GIT_TERMINAL_PROMPT: "0"
+  loop: "{{ github_projects_selected }}"
+  loop_control:
+    label: "{{ item.full_name }}"

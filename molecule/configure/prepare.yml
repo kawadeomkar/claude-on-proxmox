@@ -9,6 +9,9 @@
     prepare_github_repos:
       - alpha
       - beta:fork
+      # Listed only to a token, and there is none in this scenario: it must
+      # stay unlisted and uncloned, while the run says how to sign in.
+      - secret:private
   tasks:
     - name: Create the VM user early so test fixtures can be owned by it
       ansible.builtin.user:

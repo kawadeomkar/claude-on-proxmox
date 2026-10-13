@@ -1,9 +1,11 @@
 ---
-# Included by Molecule prepare playbooks. Creates bare git repositories and a
-# fake GitHub API (systemd unit) that lists them, so github_projects can be
-# exercised offline. Expects `prepare_github_repos` (list of name[:fork][:archived]),
-# `prepare_github_username` and `prepare_github_owner` (the local user that clones;
-# git refuses to serve repositories owned by someone else over file://).
+# Included by Molecule prepare playbooks. Creates bare git repositories, a
+# fake GitHub API (systemd unit) that lists them, and a stand-in gh ahead of
+# the real one on PATH, so github_projects can be exercised offline, sign-in
+# included. Expects `prepare_github_repos` (list of
+# name[:fork][:archived][:empty][:private]), `prepare_github_username` and
+# `prepare_github_owner` (the local user that clones; git refuses to serve
+# repositories owned by someone else over file://).
 - name: molecule | prepare_github | Install git and python
   ansible.builtin.apt:
     name: [git, python3]
@@ -68,3 +70,12 @@
     host: 127.0.0.1
     port: 8000
     timeout: 30
+
+# Ahead of /usr/bin/gh on every PATH, root's and sudo's secure_path alike: the
+# real gh would take the token to api.github.com. The stand-in keeps its login
+# in the calling user's home, as gh does (tests/molecule/fake_gh.sh).
+- name: molecule | prepare_github | Install the stand-in gh ahead of the real one
+  ansible.builtin.copy:
+    src: "{{ prepare_github_helper_dir }}/fake_gh.sh"
+    dest: /usr/local/bin/gh
+    mode: "0755"

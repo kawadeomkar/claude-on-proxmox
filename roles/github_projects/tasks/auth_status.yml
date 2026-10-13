@@ -1,0 +1,37 @@
+---
+# gh's login state and the token it holds, as github_projects_user. A file of
+# its own because auth.yml reads it before and again after a change: an
+# include that is skipped leaves these registers as they were, where a second
+# copy of the tasks, skipped, would overwrite them with a skipped result.
+- name: auth_status | Read gh's login state
+  ansible.builtin.command:
+    argv: [gh, auth, status, --hostname, github.com, --json, hosts]
+  become: true
+  become_user: "{{ github_projects_user }}"
+  register: github_projects_auth_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# no_log: the output is the token.
+- name: auth_status | Read the token gh stored
+  ansible.builtin.command:
+    argv: [gh, auth, token, --hostname, github.com]
+  become: true
+  become_user: "{{ github_projects_user }}"
+  register: github_projects_stored_token_raw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+  when: github_projects_signed_in | bool
+
+# The marker of a login this role made (vars/main.yml). The digest it holds is
+# not the token; slurp's own failure is the "no marker" signal.
+- name: auth_status | Read the marker of a login this role made
+  ansible.builtin.slurp:
+    src: "{{ github_projects_marker_file }}"
+  become: true
+  become_user: "{{ github_projects_user }}"
+  register: github_projects_marker_raw
+  failed_when: false

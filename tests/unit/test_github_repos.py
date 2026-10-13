@@ -11,6 +11,9 @@ from conftest import fail_main, load_module, run_main
 github_repos = load_module("roles/github_projects/library/github_repos.py")
 
 API = "https://api.github.com"
+# What /users/octo answers: the account, for the git identity the role derives.
+OCTO = {"login": "octo", "name": "Octo Cat", "id": 583231, "html_url": "https://github.com/octo"}
+OCTO_USER = {f"{API}/users/octo": (200, OCTO, {})}
 
 
 def repo(name, **overrides):
@@ -118,6 +121,7 @@ def test_lists_public_repos_with_pagination(fake_api, patch_module):
     page2 = f"{API}/users/octo/repos?type=owner&per_page=2&page=2"
     api = fake_api(
         {
+            **OCTO_USER,
             page1: (200, [repo("one"), repo("two", fork=True)], {"link": f'<{page2}>; rel="next"'}),
             page2: (200, [repo("three")], {}),
         }
@@ -128,14 +132,33 @@ def test_lists_public_repos_with_pagination(fake_api, patch_module):
     assert result["changed"] is False
     assert result["total"] == 3
     assert [r["name"] for r in result["repos"]] == ["one", "three"]
-    assert [c[0] for c in api.calls] == [page1, page2]
+    assert [c[0] for c in api.calls] == [f"{API}/users/octo", page1, page2]
     assert "Authorization" not in api.calls[0][1]
+
+
+def test_returns_the_account_without_extra_fields(fake_api, patch_module):
+    fake_api({**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (200, [], {})})
+
+    result = run({"username": "octo"})
+
+    assert result["user"] == {"login": "octo", "name": "Octo Cat", "id": 583231}
+
+
+def test_an_account_without_a_display_name_reports_none(fake_api, patch_module):
+    fake_api(
+        {
+            f"{API}/users/octo": (200, {"login": "octo", "id": 1}, {}),
+            f"{API}/users/octo/repos?type=owner&per_page=100": (200, [], {}),
+        }
+    )
+
+    assert run({"username": "octo"})["user"] == {"login": "octo", "name": None, "id": 1}
 
 
 def test_uses_authenticated_endpoint_when_token_matches_user(fake_api, patch_module):
     api = fake_api(
         {
-            f"{API}/user": (200, {"login": "Octo"}, {}),
+            f"{API}/user": (200, {"login": "Octo", "name": "Octo Cat", "id": 583231, "email": None}, {}),
             f"{API}/user/repos?affiliation=owner&per_page=100": (200, [repo("secret", private=True)], {}),
         }
     )
@@ -145,11 +168,16 @@ def test_uses_authenticated_endpoint_when_token_matches_user(fake_api, patch_mod
     assert [r["name"] for r in result["repos"]] == ["secret"]
     assert result["repos"][0]["private"] is True
     assert api.calls[0][1]["Authorization"] == "Bearer tok"
+    # The account comes from /user, in GitHub's spelling of the login, and
+    # without the fields the role has no use for.
+    assert result["user"] == {"login": "Octo", "name": "Octo Cat", "id": 583231}
+    assert [c[0] for c in api.calls] == [f"{API}/user", f"{API}/user/repos?affiliation=owner&per_page=100"]
 
 
 def test_token_for_other_user_falls_back_to_public_listing(fake_api, patch_module):
     api = fake_api(
         {
+            **OCTO_USER,
             f"{API}/user": (200, {"login": "someone-else"}, {}),
             f"{API}/users/octo/repos?type=owner&per_page=100": (200, [repo("pub")], {}),
         }
@@ -158,11 +186,17 @@ def test_token_for_other_user_falls_back_to_public_listing(fake_api, patch_modul
     result = run({"username": "octo", "token": "tok"})
 
     assert [r["name"] for r in result["repos"]] == ["pub"]
+    assert result["user"]["login"] == "octo"
     assert api.calls[-1][0].startswith(f"{API}/users/octo/repos")
 
 
 def test_custom_api_url_and_trailing_slash(fake_api, patch_module):
-    fake_api({"http://127.0.0.1:8000/users/octo/repos?type=owner&per_page=100": (200, [repo("x")], {})})
+    fake_api(
+        {
+            "http://127.0.0.1:8000/users/octo": (200, OCTO, {}),
+            "http://127.0.0.1:8000/users/octo/repos?type=owner&per_page=100": (200, [repo("x")], {}),
+        }
+    )
 
     result = run({"username": "octo", "api_url": "http://127.0.0.1:8000/"})
 
@@ -170,7 +204,9 @@ def test_custom_api_url_and_trailing_slash(fake_api, patch_module):
 
 
 def test_api_error_is_reported(fake_api, patch_module):
-    fake_api({f"{API}/users/octo/repos?type=owner&per_page=100": (403, {"message": "rate limit exceeded"}, {})})
+    fake_api(
+        {**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (403, {"message": "rate limit exceeded"}, {})}
+    )
     result = fail({"username": "octo"})
 
     assert "HTTP 403" in result["msg"]
@@ -182,32 +218,34 @@ def test_unknown_user_is_reported(fake_api, patch_module):
     result = fail({"username": "nobody"})
 
     assert "HTTP 404" in result["msg"]
+    assert "/users/nobody" in result["msg"]
 
 
 def test_non_list_response_fails(fake_api, patch_module):
-    fake_api({f"{API}/users/octo/repos?type=owner&per_page=100": (200, {"oops": True}, {})})
+    fake_api({**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (200, {"oops": True}, {})})
     result = fail({"username": "octo"})
 
     assert "expected a list" in result["msg"]
 
 
 def test_per_page_is_clamped(fake_api, patch_module):
-    api = fake_api({f"{API}/users/octo/repos?type=owner&per_page=100": (200, [], {})})
+    api = fake_api({**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (200, [], {})})
 
     result = run({"username": "octo", "per_page": 500})
 
     assert result["repos"] == []
-    assert api.calls[0][0].endswith("per_page=100")
+    assert api.calls[-1][0].endswith("per_page=100")
 
 
 def test_include_archived_through_module_entry_point(fake_api, patch_module):
     fake_api(
         {
+            **OCTO_USER,
             f"{API}/users/octo/repos?type=owner&per_page=100": (
                 200,
                 [repo("old", archived=True), repo("live")],
                 {},
-            )
+            ),
         }
     )
 
@@ -217,15 +255,25 @@ def test_include_archived_through_module_entry_point(fake_api, patch_module):
 
 
 def test_username_is_url_escaped(fake_api, patch_module):
-    api = fake_api({f"{API}/users/we%2Fird%3Fx/repos?type=owner&per_page=100": (200, [], {})})
+    api = fake_api(
+        {
+            f"{API}/users/we%2Fird%3Fx": (200, {"login": "we/ird?x", "id": 2}, {}),
+            f"{API}/users/we%2Fird%3Fx/repos?type=owner&per_page=100": (200, [], {}),
+        }
+    )
 
     run({"username": "we/ird?x"})
 
-    assert api.calls[0][0] == f"{API}/users/we%2Fird%3Fx/repos?type=owner&per_page=100"
+    assert [c[0] for c in api.calls] == [
+        f"{API}/users/we%2Fird%3Fx",
+        f"{API}/users/we%2Fird%3Fx/repos?type=owner&per_page=100",
+    ]
 
 
 def test_transport_failure_reports_module_utils_message(fake_api, patch_module):
-    fake_api({f"{API}/users/octo/repos?type=owner&per_page=100": (-1, None, {"msg": "connection refused"})})
+    fake_api(
+        {**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (-1, None, {"msg": "connection refused"})}
+    )
 
     result = fail({"username": "octo"})
 
@@ -234,7 +282,9 @@ def test_transport_failure_reports_module_utils_message(fake_api, patch_module):
 
 
 def test_non_json_success_body_is_reported(fake_api, patch_module):
-    fake_api({f"{API}/users/octo/repos?type=owner&per_page=100": (200, b"<html>captive portal</html>", {})})
+    fake_api(
+        {**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (200, b"<html>captive portal</html>", {})}
+    )
 
     result = fail({"username": "octo"})
 
@@ -242,7 +292,7 @@ def test_non_json_success_body_is_reported(fake_api, patch_module):
 
 
 def test_non_json_error_body_falls_back_to_raw_text(fake_api, patch_module):
-    fake_api({f"{API}/users/octo/repos?type=owner&per_page=100": (502, "Bad Gateway", {})})
+    fake_api({**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (502, "Bad Gateway", {})})
 
     result = fail({"username": "octo"})
 
@@ -261,11 +311,11 @@ def test_bad_token_is_reported_from_user_lookup(fake_api, patch_module):
 
 
 def test_per_page_lower_clamp(fake_api, patch_module):
-    api = fake_api({f"{API}/users/octo/repos?type=owner&per_page=1": (200, [], {})})
+    api = fake_api({**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=1": (200, [], {})})
 
     run({"username": "octo", "per_page": 0})
 
-    assert api.calls[0][0].endswith("per_page=1")
+    assert api.calls[-1][0].endswith("per_page=1")
 
 
 def test_token_over_plain_http_is_refused_except_loopback(fake_api, patch_module):
@@ -275,6 +325,7 @@ def test_token_over_plain_http_is_refused_except_loopback(fake_api, patch_module
     fake_api(
         {
             "http://127.0.0.1:8000/user": (200, {"login": "other"}, {}),
+            "http://127.0.0.1:8000/users/octo": (200, OCTO, {}),
             "http://127.0.0.1:8000/users/octo/repos?type=owner&per_page=100": (200, [], {}),
         }
     )

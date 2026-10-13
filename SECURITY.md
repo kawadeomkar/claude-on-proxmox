@@ -17,7 +17,10 @@ what it stores:
   download, the Ubuntu cloud image verified against its published `SHA256SUMS`, and the Claude Code
   installer fetched over TLS.
 - **Credential handling**: the Proxmox API token, GitHub token and Anthropic API key, which live in an
-  ansible-vault file and are marked `no_log`.
+  ansible-vault file and are marked `no_log`. The GitHub token is also stored on the VM, by `gh`
+  (`~/.config/gh/hosts.yml`, mode 0600), so that `git` and `gh` there can push; a device-flow login
+  made on the VM stores its own token the same way. Either is readable by the VM user, and so by
+  Claude Code, like the Anthropic key in `~/.claude/settings.json`.
 - **What the VM ends up trusting**: the SSH key material, the passwordless sudo rule and the docker group
   membership.
 - **What is written on the controller**: `~/.ssh/known_hosts`, the managed SSH config

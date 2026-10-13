@@ -1,12 +1,13 @@
 """The Claude session `make code` starts in the window it opens, and what it may write.
 
 `playbooks/code.yml` hands VS Code a workspace file whose one task runs
-`bash -lc <claude_code_terminal_script> make-code <not installed> <signed in>`
-when the window opens. The script is run here as it is, against a stand-in
-`claude` that records what it was asked: PATH holds the stand-in alone, and
-the script uses only shell builtins besides it, so nothing on this machine is
-reached. The Molecule provision scenario checks the workspace file and the
-task around it.
+`bash -lc <claude_code_terminal_script> make-code <not installed> <signed in>
+<signed in to GitHub> <git protocol> <scopes> <vm name>` when the window opens.
+The script is run here as it is, against stand-ins for `claude`, `gh` and the
+BROWSER helper that record what they were asked: PATH holds the stand-ins
+alone, and the script uses only shell builtins besides them, so nothing on
+this machine is reached. The Molecule provision scenario
+checks the workspace file and the task around it.
 
 The second half holds every task in `code.yml` to an allowlist, because the
 playbook reads the user's own VS Code settings and must never write them. On
@@ -34,6 +35,15 @@ PROVISION_VERIFY = REPO / "molecule" / "provision" / "verify.yml"
 NOT_INSTALLED = "Claude Code is not installed here yet."
 SIGNED_IN = "Signed in; start Remote Control from your machine."
 SIGNING_IN = "Signing in to Claude first. Your browser opens the sign-in page; if it shows a code, paste it here."
+GITHUB_SIGNED_IN = "Signed in to GitHub; run make configure to clone the private repositories."
+GITHUB_SIGNING_IN = (
+    "Signing in to GitHub next, so that git push and gh work here. "
+    "Your browser opens github.com/login/device; enter the code below there."
+)
+GITHUB_LOGIN = "gh auth login -h github.com -p https -w -s workflow --skip-ssh-key"
+GITHUB_FAILED = "Not signed in to GitHub. From your machine: make github-login VM_NAME=alpha"
+GITHUB_CODE = "FAKE-C0DE"
+GITHUB_EXPIRED = "failed to authenticate via web browser: This 'device_code' has expired. (expired_token)"
 
 STAND_IN = """#!/bin/sh
 echo "claude $*" >> "$CLAUDE_LOG"
@@ -42,6 +52,25 @@ case "$1 $2" in
   "auth login") exit "$LOGIN_RC";;
 esac
 exit 0
+"""
+# The device flow as gh prints it with no terminal: a clipboard warning on
+# stderr, the code and the page on stdout, then the outcome.
+GH_STAND_IN = """#!/bin/sh
+echo "gh $*" >> "$CLAUDE_LOG"
+case "$1 $2" in
+  "auth status") exit "$GH_STATUS_RC";;
+  "auth login")
+    echo "! Failed to copy one-time code to clipboard" >&2
+    echo "! First copy your one-time code: FAKE-C0DE"
+    echo "Open this URL to continue in your web browser: https://github.com/login/device"
+    if [ "$GH_LOGIN_RC" = 0 ]; then echo "Logged in as octo"; exit 0; fi
+    echo "failed to authenticate via web browser: This 'device_code' has expired. (expired_token)"
+    exit 1;;
+esac
+exit 0
+"""
+BROWSER_STAND_IN = """#!/bin/sh
+echo "browser $*" >> "$CLAUDE_LOG"
 """
 
 
@@ -53,21 +82,51 @@ def _script() -> str:
     return _play()["vars"]["claude_code_terminal_script"]
 
 
-def _run(tmp_path: Path, *, installed=True, status_rc=1, login_rc=0, signed_in=SIGNED_IN):
+def _run(
+    tmp_path: Path,
+    *,
+    installed=True,
+    status_rc=1,
+    login_rc=0,
+    signed_in=SIGNED_IN,
+    gh_installed=True,
+    gh_status_rc=0,
+    gh_login_rc=0,
+    github_signed_in=GITHUB_SIGNED_IN,
+):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "claude.log"
-    if installed:
-        stand_in = bin_dir / "claude"
-        stand_in.write_text(STAND_IN)
-        stand_in.chmod(0o755)
+    for name, text, there in (
+        ("claude", STAND_IN, installed),
+        ("gh", GH_STAND_IN, gh_installed),
+        ("browser", BROWSER_STAND_IN, True),
+    ):
+        if there:
+            stand_in = bin_dir / name
+            stand_in.write_text(text)
+            stand_in.chmod(0o755)
     result = subprocess.run(
-        ["/bin/bash", "-c", _script(), "make-code", NOT_INSTALLED, signed_in],
+        [
+            "/bin/bash",
+            "-c",
+            _script(),
+            "make-code",
+            NOT_INSTALLED,
+            signed_in,
+            github_signed_in,
+            "https",
+            "workflow",
+            "alpha",
+        ],
         env={
             "PATH": str(bin_dir),
+            "BROWSER": str(bin_dir / "browser"),
             "CLAUDE_LOG": str(log),
             "STATUS_RC": str(status_rc),
             "LOGIN_RC": str(login_rc),
+            "GH_STATUS_RC": str(gh_status_rc),
+            "GH_LOGIN_RC": str(gh_login_rc),
         },
         capture_output=True,
         text=True,
@@ -84,7 +143,7 @@ def test_the_script_and_its_messages_are_not_templates():
     script = _script()
     for marker in ("{{", "{%", "{#", "${"):
         assert marker not in script
-    for message in ("claude_code_not_installed", "claude_code_signed_in"):
+    for message in ("claude_code_not_installed", "claude_code_signed_in", "claude_code_github_signed_in"):
         assert "${" not in _play()["vars"][message]
 
 
@@ -102,14 +161,14 @@ def test_a_signed_in_vm_picks_the_folder_s_conversation_up(tmp_path):
     # terminal does not survive a window reload, and the task then runs again.
     result, asked = _run(tmp_path, status_rc=0)
     assert result.returncode == 0
-    assert asked == ["claude auth status", "claude --continue"]
+    assert asked == ["claude auth status", "gh auth status", "claude --continue"]
     assert result.stdout == ""
 
 
 def test_a_vm_not_signed_in_signs_in_then_starts_claude(tmp_path):
     result, asked = _run(tmp_path, status_rc=1, login_rc=0)
     assert result.returncode == 0
-    assert asked == ["claude auth status", "claude auth login", "claude --continue"]
+    assert asked == ["claude auth status", "claude auth login", "gh auth status", "claude --continue"]
     assert result.stdout == SIGNING_IN + "\n" + SIGNED_IN + "\n"
 
 
@@ -126,11 +185,70 @@ def test_no_remote_control_hint_when_there_is_none_to_give(tmp_path):
     assert result.stdout == SIGNING_IN + "\n"
 
 
+def test_a_vm_signed_out_of_github_signs_in_there_too_and_becomes_git_s_helper(tmp_path):
+    # Claude first: the session is the point of the window. Then the device
+    # flow with no terminal of its own, the page opened through BROWSER and the
+    # code printed on a line of its own, then setup-git, so a push from this
+    # terminal works at once.
+    result, asked = _run(tmp_path, status_rc=0, gh_status_rc=1)
+    assert result.returncode == 0
+    assert asked == [
+        "claude auth status",
+        "gh auth status",
+        GITHUB_LOGIN,
+        "browser https://github.com/login/device",
+        "gh auth setup-git -h github.com",
+        "claude --continue",
+    ]
+    assert result.stdout == (
+        GITHUB_SIGNING_IN + "\n" + "\n    " + GITHUB_CODE + "\n\n" + "Logged in as octo\n" + GITHUB_SIGNED_IN + "\n"
+    )
+    # gh's clipboard warning is not repeated into the terminal.
+    assert "clipboard" not in result.stdout
+
+
+def test_a_failed_github_sign_in_still_starts_claude(tmp_path):
+    result, asked = _run(tmp_path, status_rc=0, gh_status_rc=1, gh_login_rc=1)
+    assert result.returncode == 0
+    assert asked == [
+        "claude auth status",
+        "gh auth status",
+        GITHUB_LOGIN,
+        "browser https://github.com/login/device",
+        "claude --continue",
+    ]
+    assert result.stdout == (
+        GITHUB_SIGNING_IN + "\n" + "\n    " + GITHUB_CODE + "\n\n" + GITHUB_EXPIRED + "\n" + GITHUB_FAILED + "\n"
+    )
+
+
+def test_without_gh_the_github_step_is_skipped(tmp_path):
+    result, asked = _run(tmp_path, status_rc=0, gh_installed=False)
+    assert result.returncode == 0
+    assert asked == ["claude auth status", "claude --continue"]
+    assert result.stdout == ""
+
+
+def test_github_auth_off_leaves_gh_alone(tmp_path):
+    # An empty third argument is how code.yml says github_auth is off.
+    result, asked = _run(tmp_path, status_rc=0, gh_status_rc=1, github_signed_in="")
+    assert result.returncode == 0
+    assert asked == ["claude auth status", "claude --continue"]
+    assert result.stdout == ""
+
+
 def test_the_task_passes_the_script_and_its_messages_as_arguments():
     task = _play()["vars"]["claude_code_workspace_file"]["tasks"]["tasks"][0]
     assert task["command"] == "/bin/bash"
     assert task["args"][:3] == ["-lc", "{{ claude_code_terminal_script }}", "make-code"]
-    assert task["args"][3:] == ["{{ claude_code_not_installed }}", "{{ claude_code_signed_in }}"]
+    assert task["args"][3:] == [
+        "{{ claude_code_not_installed }}",
+        "{{ claude_code_signed_in }}",
+        "{{ claude_code_github_signed_in }}",
+        "{{ github_projects_clone_protocol | default('https') }}",
+        "{{ github_login_scopes | default(['workflow']) | join(',') }}",
+        "{{ claude_vm_names[0] }}",
+    ]
     assert task["runOptions"] == {"runOn": "folderOpen"}
 
 

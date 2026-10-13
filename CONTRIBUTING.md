@@ -25,7 +25,7 @@ first.
 |---------|--------------|
 | `make lint` | yamllint, ansible-lint (production profile), ruff |
 | `make syntax` | `--syntax-check` on every playbook, against your `inventory/` |
-| `make unit` | pytest: the custom filters (the VS Code settings reader among them), the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the managed SSH config (and that no scenario writes into `~/.ssh`), the Claude terminal's script and `code.yml`'s allowlist, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, `deploy`'s refusal of `TAGS`, `code`'s one name) |
+| `make unit` | pytest: the custom filters (the VS Code settings reader among them), the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the GitHub sign-in (`auth.yml`, `clone.yml` and `github_login.yml` against a stand-in `gh` and the fake GitHub API), the managed SSH config (and that no scenario writes into `~/.ssh`), the Claude terminal's script and `code.yml`'s allowlist, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, `deploy`'s refusal of `TAGS`, `code`'s one name) |
 | `make molecule MOLECULE_ROLES="common dev_tools"` | one or more role scenarios |
 | `make molecule-integration` | `playbooks/configure.yml` end to end in a container |
 | `make molecule-provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
@@ -40,7 +40,7 @@ idempotence stage, which reruns the converge and fails on any changed task.
 
 Tests never talk to a real Proxmox, a real GitHub or a real hypervisor. `tests/molecule/` holds fakes for
 all of them: a stateful Proxmox API (including the guest agent), a stateful `qm`, a `virt-customize`, and
-a GitHub API serving local bare repositories. If
+a GitHub API serving local bare repositories, and a stand-in `gh` for the sign-in. If
 your change needs a new external interaction, extend a fake rather than reaching for the network.
 
 ## Conventions

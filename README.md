@@ -6,7 +6,8 @@ Ansible project that turns a Proxmox VE host into a ready-to-use
 1. **Template** – builds a cloud-init enabled Ubuntu 24.04 template on the Proxmox host (one time).
 2. **Provision** – clones the template into a VM named by you, with your SSH key, and reports the address DHCP gave it.
 3. **Configure** – installs a baseline of packages, developer tooling (Node.js, Docker, GitHub CLI, uv),
-   Claude Code itself, and clones **every repository of your GitHub account** into `~/projects`.
+   Claude Code itself, signs `gh` in to GitHub, and clones **every repository of your GitHub account**,
+   private ones included, into `~/projects`, ready to push from.
 
 Everything environment-specific (Proxmox IP, GitHub username, tokens) lives in git-ignored files, so the
 repository can be shared as-is.
@@ -250,7 +251,7 @@ Given, `VM_NAME` narrows every target to those names. Left out, what it means de
 | Target | Without `VM_NAME` |
 |--------|-------------------|
 | `make deploy`, `make provision`, `make destroy` | `claude-on-proxmox-default` |
-| `make configure`, `make check`, `make list`, `make claude-login`, `make ssh-config` | every VM this project created (tagged `claude-on-proxmox`) |
+| `make configure`, `make check`, `make list`, `make claude-login`, `make github-login`, `make ssh-config` | every VM this project created (tagged `claude-on-proxmox`) |
 | `make code` | refused: it opens one VM, so it needs one name; `PROJECT` optionally narrows it to one project |
 
 So a bare `make deploy` creates and configures `claude-on-proxmox-default` and leaves any other VMs
@@ -383,7 +384,7 @@ and set `proxmox_validate_certs: true` in `local.yml`.
 | `vscode_server` | What VS Code's Remote - SSH extension needs on the host: an sshd drop-in that keeps the port forward the VS Code Server is reached through enabled, plus keepalives, checked against what sshd actually runs with; and a higher inotify limit for the file watcher. Off removes both files | `vscode_remote`, `vscode_server_client_alive_interval`, `vscode_server_inotify_watches` |
 | `dev_tools` | Node.js (NodeSource), Docker Engine, GitHub CLI, uv/uvx (release pinned by version and SHA256), pipx, build tools. Apt signing keys are vendored in `roles/dev_tools/files` | `dev_tools_install_*`, `dev_tools_node_major`, `dev_tools_uv_version`, `dev_tools_npm_global_packages` |
 | `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md`, and optionally a Remote Control server so the session is reachable from claude.ai and the mobile app | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions`, `claude_code_remote_control` |
-| `github_projects` | Lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters) and clones them | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_projects_clone_protocol` |
+| `github_projects` | Signs `gh` in to GitHub - from `github_token`, or by a device-flow login you make once - and makes it git's credential helper; lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters, private ones with a login) and clones them; writes a git identity | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_auth`, `git_user_name`, `git_user_email`, `github_projects_clone_protocol` |
 | `proxmox_vm` | Looks the VM up **by name**, clones the template when it does not exist, applies cloud-init (user, keys, DHCP by default, DNS), resizes the disk, starts it, then waits for the guest agent to report an address. `proxmox_vm_state: absent` deletes it. Either way it refuses an existing VM of that name that is a template or is not tagged `claude-on-proxmox`, rather than provision over it or delete it | `vm_cores`, `vm_memory_mb`, `vm_disk_size`, `vm_nameservers` (fleet-wide, in `local.yml`); `proxmox_vm_ipconfig` for a fixed address, also fleet-wide, so single-VM runs only |
 | `proxmox_template` | Downloads the Ubuntu cloud image (SHA256 verified), creates the VM with `qm`, imports the disk, adds the cloud-init drive, converts to template | `proxmox_template_vmid`, `proxmox_template_image_url`, `proxmox_template_storage` |
 
@@ -409,12 +410,65 @@ owned by `github_username` is cloned; list names to clone only those. Forks and 
 skipped unless `github_projects_include_forks` / `github_projects_include_archived` are true, and
 `github_projects_exclude` always wins.
 
-### Private repositories
+### Private repositories, and pushing from the VM
 
-The GitHub token is used for the API listing only. To clone private repositories set
-`github_projects_clone_protocol: ssh` and put an SSH key on the VM, or run `gh auth login && gh auth setup-git`
-on the VM once and re-run `make configure` (the `gh` CLI is installed). With the ssh protocol the role
-pre-seeds GitHub's published host keys, so there is no trust-on-first-use prompt.
+A private repository takes two credentials: a token to *list* it and one for `git` to *clone* it, and a
+push or a `gh pr create` later needs the second again. `github_projects` covers all of them through `gh`
+on the VM, one of two ways:
+
+- **With `vault_github_token` set**, the token lists your repositories, private ones included, and signs
+  `gh` in on the VM, so one `make deploy` ends with everything cloned and a VM that pushes. As a classic
+  token it needs `repo`, `workflow` and `read:org`; as a fine-grained one, Metadata (read), Contents,
+  Pull requests and Workflows (read and write) on all repositories - a token limited to selected
+  repositories lists and clones only those. The same token serves every VM.
+- **Without one**, the first run clones the public repositories and says which command signs the VM in:
+  `make github-login VM_NAME=alpha`. That runs GitHub's device flow for you, as far as GitHub allows: gh
+  starts on the VM in the background, the page github.com/login/device opens in your browser, the
+  one-time code is on your clipboard and printed, and the run waits up to fifteen minutes while you paste
+  the code and authorise GitHub CLI; then it makes gh git's credential helper, lists with the token gh just
+  stored and clones the private repositories, all in that one run. Nothing is ever in the vault. The
+  paste and the click are the floor: GitHub's device flow never pre-fills the code, and gh has no other
+  browser flow for github.com.
+
+```bash
+make configure VM_NAME=alpha     # public repositories cloned; says gh is not signed in
+make github-login VM_NAME=alpha  # the page opens, the code is on your clipboard: paste, authorise
+                                 # ... then the private repositories are cloned in the same run
+```
+
+  Without a name, `make github-login` only reports each VM's state; given several it reports too, since
+  the browser can take one sign-in at a time. A code left unapproved expires after fifteen minutes and the
+  run fails saying so; run it again for a fresh code. On a controller with no browser or clipboard the run
+  prints the page and the code and waits all the same, and `github_login_desktop: false` makes it never
+  try. The terminal that `make code` opens runs the same flow after the Claude sign-in, with the page
+  opening by itself and the code printed to copy (a Remote-SSH terminal cannot fill your clipboard);
+  the private repositories then take one `make configure`. `github_login_prompt: true` has `make
+  configure` and `make deploy` run the flow on a signed-out VM too, one VM at a time, waiting for you.
+
+`github_auth_method` picks between the two: `auto` (the default) is the token when there is one and the
+device flow otherwise, `web` is the device flow always, with a token used for the listing only, and
+`token` is the token only, where an empty vault fails by name instead of falling back. `github_login_scopes`
+is what the device flow asks for on top of gh's own, `workflow` by default.
+
+Either way `gh` becomes git's credential helper for github.com (`gh auth setup-git`), so the checkouts
+keep their HTTPS remotes and `git push` and `gh pr create` work, in a terminal, in the `make code` window
+and in a Remote Control session alike. The token lives in `~/.config/gh/hosts.yml` on the VM, readable by
+the VM user and so by Claude Code (see [What the VM trusts](#what-the-vm-trusts)). The role marks the login
+it made - a digest of the token, in `~/.config/claude-on-proxmox/` on the VM - and removes only that one
+when you clear `vault_github_token`; a login you made yourself stays, a token of your own pasted into `gh`
+included. `gh auth status --json`, which the role reads, needs gh 2.81 or newer: GitHub's apt repository,
+which `dev_tools` installs from, provides it, and an older gh is a named failure rather than a VM reported
+as signed out on every run. `github_auth: false` in `local.yml` leaves `gh` and `~/.gitconfig` alone: a
+token then only lists, and a private repository it lists is skipped and named rather than failed.
+
+Commits need an identity. `git_user_name` and `git_user_email` (in `local.yml`) are written to
+`~/.gitconfig` on the VM; left empty, the role uses your GitHub display name (or login) and GitHub's
+noreply address for your account, `<id>+<login>@users.noreply.github.com`, so no private email lands in
+commits by default.
+
+`github_projects_clone_protocol: ssh` clones over SSH instead, with a key of your own on the VM; the role
+pre-seeds GitHub's published host keys, so there is no trust-on-first-use prompt. That covers `git` only:
+`gh pr create` still needs the login above.
 
 ### Re-running
 
@@ -468,8 +522,9 @@ This is a development box, and the defaults reflect that:
 
 - The `dev` user has passwordless sudo and is in the `docker` group, so anything running as that user,
   including Claude Code, is effectively root on the VM. The API key written to `~/.claude/settings.json`
-  is therefore readable by any code the agent runs. Set `common_user_passwordless_sudo: false` and
-  `dev_tools_install_docker: false` for a tighter box.
+  is therefore readable by any code the agent runs, and so is the GitHub token `gh` keeps in
+  `~/.config/gh/hosts.yml` - the vault's, or the one a device-flow login issued to that VM. Set
+  `common_user_passwordless_sudo: false` and `dev_tools_install_docker: false` for a tighter box.
 - Downloads are verified where the vendor makes that possible: the uv release by a pinned SHA256, the
   Ubuntu cloud image against Ubuntu's `SHA256SUMS`, apt repositories by vendored signing keys. The Claude
   Code installer script is fetched over TLS from `claude.ai` and itself verifies the binary against a
@@ -646,9 +701,9 @@ address; a lease that moves then never matters.
 
 **Agent forwarding is off**, and should stay off: the VM user has passwordless sudo and runs Claude
 Code, and `ForwardAgent yes` would hand every key in your agent to both for the life of the
-connection. For `git push` from the VM, `gh auth login && gh auth setup-git` there once (the `gh`
-CLI is installed), or clone over SSH with a key that lives on the VM. `claude_ssh_forward_agent: true`
-turns it on if you have decided otherwise.
+connection. Pushes go through `gh`, which `make configure` signs in on the VM itself (see
+[Private repositories, and pushing from the VM](#private-repositories-and-pushing-from-the-vm)).
+`claude_ssh_forward_agent: true` turns it on if you have decided otherwise.
 
 **What the VM gets.** The `vscode_server` role writes `/etc/ssh/sshd_config.d/20-vscode-server.conf`,
 which keeps `AllowTcpForwarding` and `AllowStreamLocalForwarding` on (the server is reached through
@@ -680,7 +735,12 @@ folder and holds one task, so once the window has connected a terminal named **C
 running `claude` in the folder: `make deploy` and then `make code` end in a Claude session in the
 repository. On a VM that has not signed in to Claude yet, the terminal runs `claude auth login`
 first. The sign-in page opens in the browser on your machine - VS Code Server sends every URL a
-terminal opens there - and if the page shows a code, paste it into the terminal.
+terminal opens there - and if the page shows a code, paste it into the terminal. Then GitHub the same
+way, on a VM where `gh` is not signed in yet: the terminal shows a one-time code and opens the page to
+enter it on, and `gh` becomes git's credential helper, so a push from that terminal works at once. The
+private repositories follow on the next `make configure` (see
+[Private repositories, and pushing from the VM](#private-repositories-and-pushing-from-the-vm));
+`github_auth: false` leaves GitHub out of the terminal too.
 
 The first time, VS Code waits for two answers that are yours to give:
 
@@ -793,7 +853,7 @@ before this project tagged its VMs, see
 ```bash
 make lint                 # yamllint + ansible-lint (production profile) + ruff
 make syntax               # --syntax-check of every playbook against your inventory/
-make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the managed SSH config, the Claude terminal, Makefile guards (no network)
+make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the GitHub sign-in and device flow, the managed SSH config, the Claude terminal, Makefile guards (no network)
 make molecule             # Molecule (Docker) test of every role, incl. idempotence
 make molecule-integration # playbooks/configure.yml end to end in a container
 make molecule-provision   # provision.yml + discover.yml against a fake Proxmox API
@@ -828,7 +888,10 @@ so the tests are deterministic:
   `virt-customize`, a fake `/etc/pve/.vmlist` that places a VMID on a second node, and a locally
   served "cloud image" with a real SHA256SUMS file.
 - `github_projects` and the integration scenario talk to a fake GitHub API (`tests/molecule/fake_github_api.py`)
-  that serves paginated responses and points clone URLs at local bare repositories.
+  that serves paginated responses, the authenticated endpoints that list private repositories, and points
+  clone URLs at local bare repositories; a stand-in `gh` (`tests/molecule/fake_gh.sh`) ahead of the real one
+  on PATH keeps the sign-in off the network. The unit tests run the role's sign-in and clone tasks against
+  the same two, so the token, device-flow, cleared-token and signed-out paths are covered without Docker.
 - `claude_code`, `dev_tools`, and the apt steps of every scenario download real packages, so the tests
   need internet access. The integration scenario disables the Docker Engine install (a daemon cannot run
   in the test container); the `dev_tools` scenario installs it but does not start it.
@@ -887,8 +950,8 @@ filter_plugins/             net_mac, guest_ipv4, guest_address and guest_address
 inventory/                  controller.yml, hosts.yml.example, group_vars/all/{defaults.yml,local.yml.example,vault.yml.example}
 roles/                      one role per concern, each with defaults, meta/argument_specs, molecule/
 roles/github_projects/library/github_repos.py   custom module
-tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, the managed SSH
-                            config, the Claude terminal, Makefile guards
+tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, the GitHub
+                            sign-in, the managed SSH config, the Claude terminal, Makefile guards
 tests/molecule/             shared fakes for Molecule scenarios
 molecule/configure/         integration scenario for the full configure playbook
 molecule/provision/         end-to-end scenario for provisioning + discovery

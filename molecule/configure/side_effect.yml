@@ -1,0 +1,27 @@
+---
+# After converge and idempotence, which left gh signed out (no token in this
+# scenario): what make github-login does for one VM, against the container.
+# The stand-in gh prints the code and the page, then approves itself after two
+# seconds, so the device flow runs end to end offline: the role waits on gh's
+# output, collects the job, runs the whole role, and the private repository
+# arrives. github_login_desktop is off in host_vars, so nothing opens on the
+# developer's machine; tests/unit/test_github_auth.py checks that it is.
+- name: Assert the converge left gh signed out
+  hosts: claude_vms
+  become: true
+  tasks:
+    - name: Stat the stand-in gh's login and the private repository
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: [/home/dev/.config/gh/fake-token, /home/dev/projects/secret]
+      register: side_effect_before
+
+    - name: Assert neither exists yet
+      ansible.builtin.assert:
+        that: side_effect_before.results | map(attribute='stat.exists') | list == [false, false]
+        quiet: true
+
+- name: Run the device flow as make github-login does, for this one VM
+  ansible.builtin.import_playbook: ../../playbooks/github_login.yml
+  vars:
+    vm_name: claude-dev
