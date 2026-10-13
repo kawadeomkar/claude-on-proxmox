@@ -6,7 +6,7 @@ argument_specs:
       common_user:
         type: str
         default: dev
-        description: Login user, normally created by cloud-init, that the role gives its shell, groups, sudo rule and keys. Set as vm_user.
+        description: Login user, normally created by cloud-init, that the role gives its shell, groups, sudo rule and keys. Set through vm_user in local.yml.
       common_user_shell:
         type: str
         default: /bin/bash
@@ -24,7 +24,7 @@ argument_specs:
         type: list
         elements: str
         default: []
-        description: Public keys added to common_user's authorized_keys. Keys already there are kept. Set as vm_ssh_public_keys.
+        description: Public keys added to common_user's authorized_keys. Keys already there are kept. Set through vm_ssh_public_keys in local.yml.
       common_timezone:
         type: str
         default: Etc/UTC

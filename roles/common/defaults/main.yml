@@ -21,8 +21,8 @@ common_apt_cache_valid_time: 3600
 # the apt lock rather than failing after the 60 s module default.
 common_apt_lock_timeout: 600
 
-# Virtualisation types under which host-level settings (hostname, services)
-# cannot or should not be managed.
+# Virtualisation types under which the hostname is left alone: a container's
+# belongs to its runtime. (Services are started on a KVM guest only.)
 common_container_virt_types: [docker, container, containerd, podman, lxc]
 
 # Baseline packages every VM gets.

@@ -35,11 +35,11 @@ argument_specs:
       proxmox_template_storage:
         type: str
         default: local-lvm
-        description: Proxmox storage the root disk and the cloud-init drive are created on. Set as proxmox_storage.
+        description: Proxmox storage the root disk and the cloud-init drive are created on. Set through proxmox_storage in local.yml.
       proxmox_template_bridge:
         type: str
         default: vmbr0
-        description: Bridge the template's net0 is attached to, and so every clone's. Set as proxmox_bridge.
+        description: Bridge the template's net0 is attached to, and so every clone's. Set through proxmox_bridge in local.yml.
       proxmox_template_cores:
         type: int
         default: 2

@@ -6,7 +6,7 @@ argument_specs:
       dev_tools_user:
         type: str
         default: dev
-        description: User added to the docker group.
+        description: User added to the docker group. Set through vm_user in local.yml.
       dev_tools_install_node:
         type: bool
         default: true

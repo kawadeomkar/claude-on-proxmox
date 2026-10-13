@@ -12,9 +12,21 @@
 # Proxmox node name as shown in the PVE UI, and the storage for VM disks.
 # proxmox_node: pve
 # proxmox_storage: local-lvm
+# The bridge the template's NIC is attached to, which every clone inherits. Set
+# it before the template is built, and grant the token SDN.Use on it.
+# proxmox_bridge: vmbr0
+# The API user and token the pveum commands in
+# docs/getting-started/proxmox-access.md create, and the API's port.
+# proxmox_api_user: ansible@pve
+# proxmox_api_token_id: ansible
+# proxmox_api_port: 8006
 # Set to true after trusting the PVE CA on the controller
 # (docs/getting-started/proxmox-access.md).
 # proxmox_validate_certs: true
+# The template every VM is cloned from. On a cluster, build one per node with a
+# VMID and a name of its own (docs/getting-started/requirements.md).
+# proxmox_template_vmid: 9000
+# proxmox_template_name: ubuntu-24.04-cloudinit
 # Which NIC of the template carries the LAN address: its MAC is how a VM's own
 # address is told apart from bridges the guest grows later (docker0). Change it
 # only if the template was built with something other than a single net0.
@@ -23,6 +35,11 @@
 # -------------------------------------------------------------------- VMs ---
 # Login user on the VM.
 # vm_user: dev
+# Public keys cloud-init installs for that user. Default: this machine's
+# ~/.ssh/id_ed25519.pub; list your own here if yours is another key.
+# vm_ssh_public_keys: ["ssh-ed25519 AAAA... you@example.com"]
+# The VM a target acts on when VM_NAME is not given.
+# claude_vm_default_name: claude-on-proxmox-default
 
 # VM sizing. These apply to every VM a run creates - VMs are no longer listed
 # in hosts.yml, so there is no per-VM override. Provision fleets that need
@@ -31,6 +48,8 @@
 # vm_memory_mb: 4096
 # vm_disk_size: 32G
 # vm_nameservers: [1.1.1.1, 8.8.8.8]
+# The DNS search domain cloud-init gives the VMs. Empty leaves it out.
+# vm_searchdomain: lan
 
 # Addressing is DHCP by default and the guest agent reports back what it got.
 # To pin an address instead, set the cloud-init ipconfig line directly. This is
@@ -57,6 +76,8 @@
 # github_auth_method: auto
 # make deploy starts the device flow by itself; false asks first, VM by VM.
 # github_login_auto_start: true
+# Scopes the device flow asks for on top of gh's own (repo, read:org, gist);
+# workflow lets a push change .github/workflows/.
 # github_login_scopes: [workflow]
 # The git identity on each VM. Empty: your GitHub display name (or login) and
 # GitHub's noreply address for your account.
@@ -86,10 +107,15 @@
 # Point aliases at <name>.<domain> instead of the address, on a network whose
 # DNS resolves VM names; then a lease that moves no longer matters.
 # claude_ssh_host_domain: lan
+# The key each alias names (IdentityFile). Empty lets ssh pick, which finds the
+# default key vm_ssh_public_keys reads.
 # claude_ssh_identity_file: ~/.ssh/id_ed25519
 # Off on purpose: the VM user is root-equivalent and runs Claude Code, and
 # agent forwarding hands them every key in your agent.
 # claude_ssh_forward_agent: false
+# Extra "Key value" lines written into each alias, as they are.
+# ServerAliveInterval keeps a VS Code connection from going stale behind a NAT
+# or a laptop that slept.
 # claude_ssh_options:
 #   ServerAliveInterval: "30"
 # Where the code lives on the VM: cloned into, opened by Remote Control, and
@@ -180,6 +206,7 @@
 # tailscale_api_auth_method: auto
 # Tailscale SSH on the tailnet address (needs an ssh rule in your tailnet policy).
 # tailscale_ssh: false
+# Use the subnet routes other devices on your tailnet advertise.
 # tailscale_accept_routes: false
 # Let your tailnet's DNS settings change the VM's resolver.
 # tailscale_accept_dns: false

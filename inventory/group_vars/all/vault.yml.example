@@ -15,6 +15,11 @@
 # for the pveum commands that create a VM-scoped user, role and token.
 vault_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
+# -------------------------------------------------------------------- VMs ---
+# Optional: a password for the VM user, for the Proxmox console. SSH stays
+# key-only either way (common_harden_ssh). Empty sets none.
+vm_password: ""
+
 # ----------------------------------------------------------------- GitHub ---
 # GitHub account whose repositories get cloned onto the VM.
 vault_github_username: "your-github-username"
