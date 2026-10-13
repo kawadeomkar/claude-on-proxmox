@@ -84,7 +84,8 @@
       gh auth login on {{ inventory_hostname }} with vault_github_token failed:
       {{ github_projects_token_said or 'no output' }}.
       GitHub refused the token or the VM cannot reach it. Check the token and its permissions
-      (docs/guides/github.md), or clear it to sign in by the device flow
+      (docs/guides/github.md, "Private repositories, and pushing from the VM"), or clear it to sign in
+      by the device flow
       with {{ github_projects_login_command }}
   when:
     - github_projects_login is not skipped

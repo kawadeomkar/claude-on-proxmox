@@ -657,7 +657,7 @@ def test_a_web_login_runs_one_up_reads_the_page_once_and_joins_when_approved_aft
         r"approved-late: sign in to Tailscale at https://login\.tailscale\.com/a/[0-9a-f]{14} This run waits up to"
         r" 30 seconds; Ctrl-C ends the whole run, and the page stays valid for 7 days either way\. Joined this way,"
         r" approved-late is your own device, which your tailnet's policy lets reach the devices your other ones can:"
-        r" docs/guides/tailscale\.md says how to tag it\.",
+        r" \"Keeping an agent VM off your other devices\" in docs/guides/tailscale\.md says how to tag it\.",
         said,
     ), said
     assert _said(report)["approved-late"].startswith("approved-late: joined Tailscale in the tailnet you@example.com ")
