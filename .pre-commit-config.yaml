@@ -1,7 +1,7 @@
 ---
 # Install once with:  make init   (or: .venv/bin/pre-commit install)
 # The linters run from the project virtualenv so their versions are pinned in
-# exactly one place (requirements.txt).
+# exactly one place (pyproject.toml, locked in uv.lock).
 repos:
   # Pinned to commit SHAs, not tags: a tag can be moved to point at different
   # code, and pre-commit executes whatever it resolves to, in CI included.

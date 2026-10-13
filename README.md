@@ -23,7 +23,7 @@ repository can be shared as-is.
 
 | Where | What |
 |-------|------|
-| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core), `make`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `make code` (optional) |
+| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core), [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+, `make`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `make code` (optional) |
 | Proxmox VE 8.x or 9.x | Root SSH access (template build only) and an API token. A fresh install needs the setup below first |
 | Testing (optional) | Docker Engine for Molecule; Vagrant + VirtualBox for a full VM test |
 
@@ -1292,7 +1292,7 @@ pull request, and it is allowed to fail the weekly run: that failure is how you 
 image no longer works before you bump the digest.
 
 No job needs a secret, so the full suite runs on pull requests from forks; keep it that way. Third-party
-actions are pinned to commit SHAs, and Dependabot updates them along with the pip pins every week. The
+actions are pinned to commit SHAs, and Dependabot updates them along with the uv lock every week. The
 setup steps shared by every job live in the composite action at `.github/actions/setup`.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes a GitHub release with notes
@@ -1328,7 +1328,7 @@ molecule/provision/         end-to-end scenario for provisioning + discovery
                             (in both, group_vars/all/defaults.yml is a symlink to the real one; keep it a git checkout)
 .config/molecule/           Molecule settings shared by every scenario
 .github/                    CI and release workflows, the shared setup action, Dependabot
-requirements.txt            pinned Python tooling; requirements.yml: Galaxy collections
+pyproject.toml, uv.lock     Python tooling, pinned and locked; requirements.yml: Galaxy collections
 ```
 
 ## Contributing

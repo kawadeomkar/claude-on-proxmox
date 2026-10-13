@@ -6,7 +6,8 @@ git-ignored file, never in a commit.
 
 ## Setup
 
-You need Python 3.12+ (the pinned ansible-core requires it), `make`, and Docker Engine for the tests.
+You need Python 3.12+ (the pinned ansible-core requires it), [uv](https://docs.astral.sh/uv/getting-started/installation/)
+0.12 or newer (`brew install uv`, or its standalone installer), `make`, and Docker Engine for the tests.
 
 ```bash
 make init     # virtualenv, Galaxy collections, config from the .example files, git hooks
@@ -14,10 +15,15 @@ make test     # lint, syntax, unit tests, every Molecule scenario
 ```
 
 `make init` copies `inventory/hosts.yml.example` and the two `group_vars` examples into place and installs
-the pre-commit hooks. All tooling lives in `.venv` at the versions pinned in `requirements.txt`, so please
+the pre-commit hooks. All tooling lives in `.venv` at the versions locked in `uv.lock`, so please
 run it through `make` rather than from a system-wide install - Molecule in particular resolves
 `ansible-playbook` from `PATH` and will silently use a different ansible-core if the virtualenv is not
 first.
+
+The pins live in `pyproject.toml`: the playbooks' own in `[project]`, the linters' and tests' in the
+`dev` group. After changing one, run `make lock` and commit `uv.lock` with it; `make lint` fails on a
+lock that no longer matches. `uv lock --upgrade-package <name>` moves one locked package without
+touching a pin. Dependabot proposes the weekly updates itself.
 
 ## Testing a change
 

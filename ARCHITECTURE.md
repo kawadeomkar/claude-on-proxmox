@@ -2044,8 +2044,8 @@ install packages inside the container and need working Docker DNS. `proxmox_vm`,
 | `playbooks` | matrix over the `configure` and `provision` scenarios, `needs: lint` |
 | `canary` | schedule/dispatch only, runs `configure` against the **unpinned** Ubuntu image; allowed to fail — that failure is the notification |
 
-`.github/actions/setup` is a composite action installing Python 3.12, restoring the pip and Galaxy
-caches, and running `make deps`. The Galaxy cache key hashes `requirements.yml`, which is only correct
+`.github/actions/setup` is a composite action installing Python 3.12 and uv (at the version
+`uv.lock` pins), restoring the uv and Galaxy caches, and running `make deps`. The Galaxy cache key hashes `requirements.yml`, which is only correct
 because those versions are exact.
 
 **No job uses a secret**, so the full suite runs on pull requests from forks. Keep it that way.
@@ -2057,12 +2057,10 @@ local run cannot reproduce from the git index alone.
 
 ## 13. Toolchain
 
-Everything is pinned in `requirements.txt` and lives in `.venv`. Use `make`, or `.venv/bin/<tool>`.
-
-```
-ansible-core 2.21.3    ansible-lint 26.8.0    molecule 26.8.0    yamllint 1.38.0
-pytest 9.1.1           ruff 0.16.6            pre-commit 4.5.1   proxmoxer 2.3.0
-```
+Everything is pinned in `pyproject.toml`, locked with every package it pulls in (version and hash) in
+`uv.lock`, and lives in `.venv`. Use `make`, or `.venv/bin/<tool>`. `make venv` is `uv sync --locked`,
+which refuses a lock that no longer matches `pyproject.toml`; Dependabot's uv ecosystem moves the pins
+and the lock.
 
 Collections: `community.proxmox 2.0.0`, `community.general 12.4.0`, `community.docker 5.3.0`,
 `ansible.posix 2.1.0`.

@@ -1,10 +1,17 @@
 # Developer entry points. Every target uses the project-local virtualenv so
-# the exact tool versions pinned in requirements.txt are used.
+# the exact tool versions locked in uv.lock are used.
 VENV       ?= .venv
 BIN        := $(VENV)/bin
 ABSBIN     := $(abspath $(BIN))
 VAULT_FILE := inventory/group_vars/all/vault.yml
-PYTHON     ?= python3
+# The Python the virtualenv is made from when it does not exist yet. Empty lets
+# uv find one that meets requires-python; PYTHON=/path/to/python3.x picks one.
+PYTHON     ?=
+# uv installs the virtualenv from uv.lock. Install it yourself, outside the
+# project (https://docs.astral.sh/uv/getting-started/installation/, e.g.
+# `brew install uv`). It never downloads a Python of its own here.
+UV         ?= uv
+UV_RUN      = UV_PROJECT_ENVIRONMENT=$(abspath $(VENV)) UV_PYTHON_DOWNLOADS=never $(UV)
 VAULT_PASS := .vault_pass
 VAULT_ARGS := $(if $(wildcard $(VAULT_PASS)),--vault-password-file $(VAULT_PASS),)
 ANSIBLE_ARGS ?=
@@ -94,13 +101,15 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 # ---------------------------------------------------------------- setup ----
-$(BIN)/activate:
-	$(PYTHON) -m venv $(VENV)
-	$(BIN)/pip install --upgrade pip
-
 .PHONY: venv
-venv: $(BIN)/activate ## Create the virtualenv and install Python tooling
-	$(BIN)/pip install -r requirements.txt
+# uv's sync installs exactly the lock, after checking it still matches
+# pyproject.toml, and removes anything else.
+venv: ## Create the virtualenv and sync it to uv.lock (uv from PATH)
+	$(UV_RUN) sync --locked $(if $(PYTHON),--python $(PYTHON))
+
+.PHONY: lock
+lock: ## Update uv.lock after editing pyproject.toml
+	$(UV_RUN) lock
 
 .PHONY: deps
 deps: venv ## Install Ansible Galaxy collections
@@ -280,7 +289,8 @@ code: vault-check vm-name-check project-name-check log-setup ## Open a VM in VS 
 
 # ------------------------------------------------------------ quality -----
 .PHONY: lint
-lint: ## Run yamllint + ansible-lint + ruff
+lint: ## Check uv.lock against pyproject.toml, then run yamllint + ansible-lint + ruff
+	$(UV_RUN) lock --check
 	$(BIN)/yamllint --strict .
 	$(BIN)/ansible-lint
 	$(BIN)/ruff check .
