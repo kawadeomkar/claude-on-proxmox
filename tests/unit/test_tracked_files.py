@@ -87,6 +87,17 @@ MUST_BLOCK = [
     "roles/common/.logs/20261007-203015-molecule.log",
     "ansible.log",
     "molecule/provision/verify.log",
+    # Working documents beside the wiki name the Proxmox host and the VMs,
+    # whatever they are called, and so does a review's source directory.
+    "docs/plan-github-auth-2026-10-08.md",
+    "docs/review-wiki-2026-10-12.html",
+    "docs/review-wiki-2026-10-12.src/findings.py",
+    "docs/live-smoke-feat-tailscale-2026-10-11.html",
+    "docs/smoke-v5.md",
+    "docs/notes.md",
+    # A secret dropped into a wiki folder is not a page.
+    "docs/guides/vault.yml",
+    "docs/reference/hosts.yml",
 ]
 
 MUST_ALLOW = [
@@ -118,6 +129,12 @@ MUST_ALLOW = [
     "deploy.yml",
     "tox.ini",
     "README.md",
+    # The wiki.
+    "docs/README.md",
+    "docs/guides/vms.md",
+    "docs/reference/roles/common.md",
+    "docs/architecture/roles.md",
+    "docs/stylesheets/extra.css",
 ]
 
 
