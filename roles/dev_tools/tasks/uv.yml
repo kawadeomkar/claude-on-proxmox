@@ -14,7 +14,7 @@
     dev_tools_uv_current.rc != 0
     or ('uv ' ~ dev_tools_uv_version) not in dev_tools_uv_current.stdout
   vars:
-    dev_tools_uv_target: "{{ dev_tools_uv_arch_map[ansible_architecture] }}"
+    dev_tools_uv_target: "{{ dev_tools_uv_arch_map[ansible_facts['architecture']] }}"
     dev_tools_uv_archive: "uv-{{ dev_tools_uv_target }}.tar.gz"
   block:
     - name: uv | Create download directory
@@ -27,7 +27,7 @@
       ansible.builtin.get_url:
         url: "https://github.com/astral-sh/uv/releases/download/{{ dev_tools_uv_version }}/{{ dev_tools_uv_archive }}"
         dest: "{{ dev_tools_uv_tmp.path }}/{{ dev_tools_uv_archive }}"
-        checksum: "sha256:{{ dev_tools_uv_sha256[ansible_architecture] }}"
+        checksum: "sha256:{{ dev_tools_uv_sha256[ansible_facts['architecture']] }}"
         mode: "0644"
 
     - name: uv | Extract binaries

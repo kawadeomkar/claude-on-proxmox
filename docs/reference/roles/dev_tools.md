@@ -24,9 +24,9 @@ How it works: [§5.4](../../architecture/roles.md#54-dev_tools--developer-toolin
 | `dev_tools_docker_packages` | list of `str` | `[docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin]` | Packages installed from Docker's repository. |
 | `dev_tools_container_virt_types` | list of `str` | `["docker", "container", "containerd", "podman", "lxc"]` | Virtualisation types under which Docker is installed but its service neither enabled nor started, since the daemon cannot run there. |
 | `dev_tools_docker_manage_service` | bool | computed | Defaults to true unless running inside a container. |
-| `dev_tools_deb_arch` | str | computed | Derived from ansible_architecture by default. One of `amd64`, `arm64`. |
+| `dev_tools_deb_arch` | str | computed | Derived from the architecture fact by default. One of `amd64`, `arm64`. |
 | `dev_tools_uv_version` | str | `0.9.5` | uv release to install. Changing it needs the new release's digests in dev_tools_uv_sha256. |
-| `dev_tools_uv_arch_map` | dict | `{aarch64: aarch64-unknown-linux-gnu, x86_64: x86_64-unknown-linux-gnu}` | uv's release target for each ansible_architecture, which names the archive downloaded. |
+| `dev_tools_uv_arch_map` | dict | `{aarch64: aarch64-unknown-linux-gnu, x86_64: x86_64-unknown-linux-gnu}` | uv's release target for each value of the architecture fact, which names the archive downloaded. |
 | `dev_tools_uv_sha256` | dict | `{aarch64: 9db0c2f6683099f86bfeea47f4134e915f382512278de95b2a0e625957594ff3, x86_64: 2cf10babba653310606f8b49876cfb679928669e7ddaa1fb41fb00ce73e64f66}` | SHA256 of the uv release archive per architecture key of dev_tools_uv_arch_map. |
 | `dev_tools_uv_install_dir` | path | `/usr/local/bin` | Directory uv and uvx are installed into. |
 

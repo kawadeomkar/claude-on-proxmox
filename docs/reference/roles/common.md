@@ -44,7 +44,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Install baseline packages | `ansible.builtin.apt` |  |
 | Set timezone | `ansible.builtin.file` |  |
 | Record timezone name | `ansible.builtin.copy` |  |
-| Set hostname | `ansible.builtin.hostname` | <code>common_manage_hostname and ansible_virtualization_type not in common_container_virt_types</code> |
+| Set hostname | `ansible.builtin.hostname` | <code>common_manage_hostname and ansible_facts['virtualization_type'] not in common_container_virt_types</code> |
 | Create user {{ common_user }} | `ansible.builtin.user` |  |
 | Grant passwordless sudo | `ansible.builtin.template` | <code>common_user_passwordless_sudo</code> |
 | Revoke passwordless sudo | `ansible.builtin.file` | <code>not common_user_passwordless_sudo</code> |
@@ -53,7 +53,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Harden sshd | `ansible.builtin.template` | <code>common_harden_ssh</code> |
 | Remove sshd hardening | `ansible.builtin.file` | <code>not common_harden_ssh</code> |
 | Put ~/.local/bin on PATH for all users | `ansible.builtin.template` |  |
-| Enable services | `ansible.builtin.service` | <code>ansible_service_mgr == 'systemd'</code> |
+| Enable services | `ansible.builtin.service` | <code>ansible_facts['service_mgr'] == 'systemd'</code> |
 
 ```mermaid
 flowchart TD
@@ -72,7 +72,7 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Upgrade_installed_packages1-->|Task| Install_baseline_packages2[install baseline packages]:::task
   Install_baseline_packages2-->|Task| Set_timezone3[set timezone]:::task
   Set_timezone3-->|Task| Record_timezone_name4[record timezone name]:::task
-  Record_timezone_name4-->|Task| Set_hostname5[set hostname<br>When: **common manage hostname and ansible virtualization<br>type not in common container virt types**]:::task
+  Record_timezone_name4-->|Task| Set_hostname5[set hostname<br>When: **common manage hostname and ansible facts <br>virtualization type   not in common container virt<br>types**]:::task
   Set_hostname5-->|Task| Create_user_common_user6[create user common user]:::task
   Create_user_common_user6-->|Task| Grant_passwordless_sudo7[grant passwordless sudo<br>When: **common user passwordless sudo**]:::task
   Grant_passwordless_sudo7-->|Task| Revoke_passwordless_sudo8[revoke passwordless sudo<br>When: **not common user passwordless sudo**]:::task
@@ -81,7 +81,7 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Ensure_sshd_privilege_separation_directory_exists10-->|Task| Harden_sshd11[harden sshd<br>When: **common harden ssh**]:::task
   Harden_sshd11-->|Task| Remove_sshd_hardening12[remove sshd hardening<br>When: **not common harden ssh**]:::task
   Remove_sshd_hardening12-->|Task| Put____local_bin_on_PATH_for_all_users13[put    local bin on path for all users]:::task
-  Put____local_bin_on_PATH_for_all_users13-->|Task| Enable_services14[enable services<br>When: **ansible service mgr     systemd**]:::task
+  Put____local_bin_on_PATH_for_all_users13-->|Task| Enable_services14[enable services<br>When: **ansible facts  service mgr       systemd**]:::task
   Enable_services14-->End
 ```
 

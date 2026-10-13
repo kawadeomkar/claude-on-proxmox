@@ -31,11 +31,14 @@ to exact versions in `requirements.yml`.
 
 `ansible.cfg` sets the directory inventory, `roles_path`, the local `filter_plugins`, YAML callback
 output, `profile_tasks`, `forks = 20`, pipelining, and `StrictHostKeyChecking=accept-new`. There is
-deliberately no fact cache: only `dev_tools` reads a gathered fact, the one gather per configure run costs
-seconds in a run that takes minutes, and a cached entry keyed by inventory name outlived the VM it
+deliberately no fact cache: the roles read only a few gathered facts, the one gather per configure run
+costs seconds in a run that takes minutes, and a cached entry keyed by inventory name outlived the VM it
 described, so a VM rebuilt under the same name within the hour was configured with the old VM's
-`ansible_distribution_release` and `ansible_architecture`. `forks` is the number of VMs cloned,
-booted or configured at once - every `proxmox_vm` task is a localhost-delegated API call, and
+`distribution_release` and `architecture`. Gathered facts are read only as `ansible_facts['<name>']`:
+`inject_facts_as_vars = false`, set in Molecule's shared config too, stops Ansible copying each to a
+top-level `ansible_architecture`, as ansible-core 2.24 will, so a read of one fails now rather than on
+that upgrade; `tests/unit/test_gathered_facts.py` scans for one on a path no scenario takes. `forks`
+is the number of VMs cloned, booted or configured at once - every `proxmox_vm` task is a localhost-delegated API call, and
 `configure` is SSH to the fleet - so it is set above the default and `ANSIBLE_ARGS="-f N"` raises
 it for a larger fleet. Setting `inventory_ignore_extensions` *replaces* Ansible's
 default ignore list rather than extending it, so the value in `ansible.cfg` re-lists the defaults

@@ -414,6 +414,10 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
 ## Things that have bitten this repo
 
 - **ansible-core 2.21**: a non-boolean conditional is a fatal error, not a warning.
+- **A gathered fact is `ansible_facts['architecture']`, never `ansible_architecture`.** ansible-core 2.24
+  stops injecting facts as top-level variables, and `ansible.cfg` and Molecule's shared config already
+  set `inject_facts_as_vars = false`, so the top-level name is undefined here. The first `make deploy` of a
+  new VM printed a deprecation per read until they moved; `tests/unit/test_gathered_facts.py` scans for one.
 - **`-e key=value` splits extra-vars on whitespace.** `VM_NAME="alpha beta"` silently provisioned
   half the fleet. The Makefile passes JSON (`-e '{"vm_name": "..."}'`) to keep the value whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them

@@ -34,10 +34,10 @@ dev_tools_docker_packages:
   - docker-buildx-plugin
   - docker-compose-plugin
 dev_tools_container_virt_types: [docker, container, containerd, podman, lxc]
-dev_tools_docker_manage_service: "{{ ansible_virtualization_type not in dev_tools_container_virt_types }}"
+dev_tools_docker_manage_service: "{{ ansible_facts['virtualization_type'] not in dev_tools_container_virt_types }}"
 
 # Debian architecture name used by the Docker and GitHub CLI repositories.
-dev_tools_deb_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+dev_tools_deb_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
 
 # uv (Astral) - pinned release installed from GitHub. The digests are pinned
 # here (not fetched alongside the archive) so a compromised release endpoint

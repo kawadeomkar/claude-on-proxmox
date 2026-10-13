@@ -39,7 +39,7 @@
     name: "{{ common_hostname }}"
   when:
     - common_manage_hostname
-    - ansible_virtualization_type not in common_container_virt_types
+    - ansible_facts['virtualization_type'] not in common_container_virt_types
 
 - name: Create user {{ common_user }}
   ansible.builtin.user:
@@ -116,6 +116,6 @@
   ansible.builtin.service:
     name: "{{ item }}"
     enabled: true
-    state: "{{ 'started' if ansible_virtualization_type == 'kvm' else omit }}"
+    state: "{{ 'started' if ansible_facts['virtualization_type'] == 'kvm' else omit }}"
   loop: "{{ common_enabled_services }}"
-  when: ansible_service_mgr == 'systemd'
+  when: ansible_facts['service_mgr'] == 'systemd'
