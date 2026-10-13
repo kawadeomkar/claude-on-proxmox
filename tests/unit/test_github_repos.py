@@ -12,7 +12,7 @@ github_repos = load_module("roles/github_projects/library/github_repos.py")
 
 API = "https://api.github.com"
 # What /users/octo answers: the account, for the git identity the role derives.
-OCTO = {"login": "octo", "name": "Octo Cat", "id": 583231, "html_url": "https://github.com/octo"}
+OCTO = {"login": "octo", "name": "Octo Cat", "id": 583231, "type": "User", "html_url": "https://github.com/octo"}
 OCTO_USER = {f"{API}/users/octo": (200, OCTO, {})}
 
 
@@ -39,9 +39,11 @@ class FakeAPI:
     def __init__(self, routes):
         self.routes = routes
         self.calls = []
+        self.modules = []
 
     def __call__(self, module, url, headers=None, method="GET", timeout=None):
         self.calls.append((url, headers))
+        self.modules.append(module)
         if url not in self.routes:
             return None, {"status": 404, "body": b'{"message": "Not Found"}', "url": url}
         status, body, extra = self.routes[url]
@@ -132,27 +134,65 @@ def test_lists_public_repos_with_pagination(fake_api, patch_module):
     assert result["changed"] is False
     assert result["total"] == 3
     assert [r["name"] for r in result["repos"]] == ["one", "three"]
-    assert [c[0] for c in api.calls] == [f"{API}/users/octo", page1, page2]
+    # The listing alone: the profile is one more unauthenticated request, made
+    # only when the account is asked for.
+    assert [c[0] for c in api.calls] == [page1, page2]
     assert "Authorization" not in api.calls[0][1]
+    assert result["user"] == {}
 
 
-def test_returns_the_account_without_extra_fields(fake_api, patch_module):
-    fake_api({**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (200, [], {})})
+def test_returns_the_account_without_extra_fields_when_asked(fake_api, patch_module):
+    api = fake_api({**OCTO_USER, f"{API}/users/octo/repos?type=owner&per_page=100": (200, [], {})})
+
+    result = run({"username": "octo", "account": True})
+
+    assert result["user"] == {"login": "octo", "name": "Octo Cat", "id": 583231, "type": "User"}
+    assert [c[0] for c in api.calls] == [f"{API}/users/octo", f"{API}/users/octo/repos?type=owner&per_page=100"]
+
+
+def test_the_account_is_not_fetched_unless_asked(fake_api, patch_module):
+    # GitHub allows 60 unauthenticated requests an hour per address: a fleet
+    # behind one NAT halved that with a profile request on every run. A 403
+    # there no longer stops a listing that does not need it.
+    api = fake_api(
+        {
+            f"{API}/users/octo": (403, {"message": "API rate limit exceeded"}, {}),
+            f"{API}/users/octo/repos?type=owner&per_page=100": (200, [repo("pub")], {}),
+        }
+    )
 
     result = run({"username": "octo"})
 
-    assert result["user"] == {"login": "octo", "name": "Octo Cat", "id": 583231}
+    assert [r["name"] for r in result["repos"]] == ["pub"]
+    assert [c[0] for c in api.calls] == [f"{API}/users/octo/repos?type=owner&per_page=100"]
 
 
 def test_an_account_without_a_display_name_reports_none(fake_api, patch_module):
     fake_api(
         {
-            f"{API}/users/octo": (200, {"login": "octo", "id": 1}, {}),
+            f"{API}/users/octo": (200, {"login": "octo", "id": 1, "type": "User"}, {}),
             f"{API}/users/octo/repos?type=owner&per_page=100": (200, [], {}),
         }
     )
 
-    assert run({"username": "octo"})["user"] == {"login": "octo", "name": None, "id": 1}
+    assert run({"username": "octo", "account": True})["user"] == {
+        "login": "octo",
+        "name": None,
+        "id": 1,
+        "type": "User",
+    }
+
+
+def test_an_organization_says_so(fake_api, patch_module):
+    # The role derives no identity from an organisation: nobody commits as one.
+    fake_api(
+        {
+            f"{API}/users/acme": (200, {"login": "acme", "name": "Acme", "id": 9, "type": "Organization"}, {}),
+            f"{API}/users/acme/repos?type=owner&per_page=100": (200, [], {}),
+        }
+    )
+
+    assert run({"username": "acme", "account": True})["user"]["type"] == "Organization"
 
 
 def test_uses_authenticated_endpoint_when_token_matches_user(fake_api, patch_module):
@@ -169,25 +209,46 @@ def test_uses_authenticated_endpoint_when_token_matches_user(fake_api, patch_mod
     assert result["repos"][0]["private"] is True
     assert api.calls[0][1]["Authorization"] == "Bearer tok"
     # The account comes from /user, in GitHub's spelling of the login, and
-    # without the fields the role has no use for.
-    assert result["user"] == {"login": "Octo", "name": "Octo Cat", "id": 583231}
+    # without the fields the role has no use for - asked for or not, since the
+    # token is checked against it anyway.
+    assert result["user"] == {"login": "Octo", "name": "Octo Cat", "id": 583231, "type": None}
     assert [c[0] for c in api.calls] == [f"{API}/user", f"{API}/user/repos?affiliation=owner&per_page=100"]
 
 
-def test_token_for_other_user_falls_back_to_public_listing(fake_api, patch_module):
+@pytest.mark.parametrize("account", [False, True])
+def test_token_for_other_user_falls_back_to_public_listing_and_names_its_own_account(fake_api, patch_module, account):
+    # The identity follows the token, which is who pushes with it - a person's
+    # token beside a github_username that is an organisation, say - and costs
+    # no request of its own.
     api = fake_api(
         {
             **OCTO_USER,
-            f"{API}/user": (200, {"login": "someone-else"}, {}),
+            f"{API}/user": (200, {"login": "someone-else", "id": 7, "type": "User"}, {}),
             f"{API}/users/octo/repos?type=owner&per_page=100": (200, [repo("pub")], {}),
         }
     )
 
-    result = run({"username": "octo", "token": "tok"})
+    result = run({"username": "octo", "token": "tok", "account": account})
 
     assert [r["name"] for r in result["repos"]] == ["pub"]
-    assert result["user"]["login"] == "octo"
-    assert api.calls[-1][0].startswith(f"{API}/users/octo/repos")
+    assert result["user"] == {"login": "someone-else", "name": None, "id": 7, "type": "User"}
+    assert [c[0] for c in api.calls] == [f"{API}/user", f"{API}/users/octo/repos?type=owner&per_page=100"]
+
+
+def test_a_token_with_a_trailing_newline_is_sent_without_it_and_masked(fake_api, patch_module):
+    # A YAML block scalar leaves a newline: http.client refused the header and
+    # named the token in its error, escaped past the no_log masking.
+    api = fake_api(
+        {
+            f"{API}/user": (200, {"login": "octo", "id": 1}, {}),
+            f"{API}/user/repos?affiliation=owner&per_page=100": (200, [], {}),
+        }
+    )
+
+    run({"username": "octo", "token": "ghp_secret0000\n"})
+
+    assert {headers["Authorization"] for _, headers in api.calls} == {"Bearer ghp_secret0000"}
+    assert "ghp_secret0000" in api.modules[0].no_log_values
 
 
 def test_custom_api_url_and_trailing_slash(fake_api, patch_module):
@@ -262,7 +323,7 @@ def test_username_is_url_escaped(fake_api, patch_module):
         }
     )
 
-    run({"username": "we/ird?x"})
+    run({"username": "we/ird?x", "account": True})
 
     assert [c[0] for c in api.calls] == [
         f"{API}/users/we%2Fird%3Fx",

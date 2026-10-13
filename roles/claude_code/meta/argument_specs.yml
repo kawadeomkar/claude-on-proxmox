@@ -48,15 +48,15 @@ argument_specs:
             because nothing can create one non-interactively.
           - Set false to turn it off. Either way off, the service an earlier
             run installed is stopped, disabled and its unit removed.
-      claude_code_remote_control_name:
+      claude_code_remote_control_name: &cc_remote_control_name
         type: str
         description: Session title at claude.ai/code. Defaults to the VM name.
-      claude_code_remote_control_dir:
+      claude_code_remote_control_dir: &cc_remote_control_dir
         type: str
         description:
           - Directory the sessions open in. Empty resolves to ~/projects.
           - Not the home directory - Claude Code never saves workspace trust for one.
-      claude_code_remote_control_permission_mode:
+      claude_code_remote_control_permission_mode: &cc_remote_control_permission_mode
         type: str
         default: default
         description:
@@ -68,23 +68,33 @@ argument_specs:
             validates the mode at startup and prints the ones it accepts, so a
             mode added upstream works without a change to this role - whereas a
             hard-coded list would reject it before Claude Code ever saw it.
-      claude_code_remote_control_spawn:
+      claude_code_remote_control_spawn: &cc_remote_control_spawn
         type: str
         default: same-dir
         choices: [same-dir, worktree, session]
         description: How the server creates sessions.
-      claude_code_remote_control_service:
+      claude_code_remote_control_service: &cc_remote_control_service
         type: str
         default: claude-remote-control
         description: Name of the systemd unit installed for the server.
+      claude_code_sign_in_follows:
+        type: bool
+        default: false
+        description:
+          - Set by make deploy's configure step, whose sign-in comes next in the
+            same run. The message for a VM with no login then says so, rather
+            than naming make claude-login.
 
   # tasks_from: login, which playbooks/claude_login.yml runs on VMs this role
   # has configured.
   login:
-    short_description: Say whether Claude Code is signed in the way Remote Control needs
+    short_description: Say whether Claude Code is signed in the way Remote Control needs, and sign it in when asked
     description:
-      - Runs `claude auth status` as the connecting user and prints either that
-        the VM is ready, or the login command and what else to change.
+      - Runs `claude auth status` as claude_code_user and prints either that the
+        VM is ready, or how to sign it in and what else to change.
+      - With claude_code_login_interactive, signs a VM with no login in by the
+        browser flow. Remote Control then starts from the after_login entry
+        point, which the playbook runs once every VM has had its turn.
       - Decides with the same definitions the main entry point starts Remote
         Control from.
     options:
@@ -92,5 +102,58 @@ argument_specs:
         type: str
         default: dev
         description:
-          - The user the printed command logs in. The check runs as the
-            connecting user, which is the same one on the VMs this project builds.
+          - The user whose login is read and, when asked, made. The commands
+            that read or make it run as this user, through become.
+      claude_code_anthropic_api_key:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - With a key set the browser sign-in is not offered, and the report
+            says Remote Control is off on purpose.
+      claude_code_login_interactive:
+        type: bool
+        default: false
+        description:
+          - Sign a VM with no Claude login and no API key in by the browser flow
+            (browser_login.yml), then start Remote Control. Set by the
+            playbooks; without it this entry point only reports.
+      claude_code_login_desktop:
+        type: bool
+        default: true
+        description: Open the sign-in page in the controller's browser. Off in every test.
+      claude_code_login_args:
+        type: list
+        elements: str
+        default: []
+        description: Extra arguments for `claude auth login`, such as --sso or --email.
+      claude_code_login_timeout:
+        type: int
+        default: 120
+        description: Seconds to wait, once the code is pasted, for claude to accept it.
+      claude_code_login_code:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - The code the sign-in page shows, given instead of the prompt, for
+            tests and scripts. No task logs it; pass it from a vars file
+            (-e @file), never -e key=value, which ps and -vvvv show.
+
+  # tasks_from: after_login, which playbooks/claude_login.yml runs for a VM it
+  # has just signed in: Remote Control's start, validated as main validates it.
+  after_login:
+    short_description: Start Remote Control on a VM that was signed in just now
+    description:
+      - Includes remote_control.yml as root when Remote Control is wanted, as
+        make configure would, now that the login it was waiting for exists.
+    options:
+      claude_code_remote_control:
+        type: bool
+        default: true
+        description: Run a Remote Control server on the VM. See the main entry point.
+      claude_code_remote_control_name: *cc_remote_control_name
+      claude_code_remote_control_dir: *cc_remote_control_dir
+      claude_code_remote_control_permission_mode: *cc_remote_control_permission_mode
+      claude_code_remote_control_spawn: *cc_remote_control_spawn
+      claude_code_remote_control_service: *cc_remote_control_service

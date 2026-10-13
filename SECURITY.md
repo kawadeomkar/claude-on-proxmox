@@ -17,15 +17,34 @@ what it stores:
   download, the Ubuntu cloud image verified against its published `SHA256SUMS`, and the Claude Code
   installer fetched over TLS.
 - **Credential handling**: the Proxmox API token, GitHub token and Anthropic API key, which live in an
-  ansible-vault file and are marked `no_log`. The GitHub token is also stored on the VM, by `gh`
+  ansible-vault file and are marked `no_log`. Every task that hands the GitHub token on is `no_log` too,
+  which also keeps it out of the VM's journal (a module logs the arguments its spec does not mark
+  `no_log`, stdin included), and `tests/unit/test_github_auth.py` holds each to it and greps every run,
+  module arguments included, for every canned token; `github_repos` strips the token and masks the
+  stripped form as well. What `claude`, `gh` and `ssh` print on the VM, which its user controls, is
+  quoted in messages only through the `plain_text` filter, with every escape sequence and control
+  character removed. The GitHub token is also stored on the VM, by `gh`
   (`~/.config/gh/hosts.yml`, mode 0600), so that `git` and `gh` there can push; a device-flow login
   made on the VM stores its own token the same way. Either is readable by the VM user, and so by
-  Claude Code, like the Anthropic key in `~/.claude/settings.json`.
+  Claude Code, like the Anthropic key in `~/.claude/settings.json`. The Claude sign-in's one-time code
+  (`roles/claude_code/tasks/browser_login.yml`) is read at a `pause` under `no_log` and travels to the
+  VM on stdin into a 0600 named pipe only that `claude auth login` reads. With pipelining on, as
+  `ansible.cfg` sets it, it is never written to a file or a command line; with pipelining off - which
+  `ANSIBLE_KEEP_REMOTE_FILES=1`, Ansible's switch for debugging a module, forces - the module that
+  carries it is a file on the VM, and that switch keeps the file. `claude_code_login_code`, the way a
+  script supplies the code, belongs in a vars file passed as `-e @file`: `-e key=value` puts it on this
+  machine's command line for the whole run. `tests/unit/test_claude_login.py` holds both prompts and both
+  writers to `no_log` and greps whole runs for the code. The login it
+  produces is Claude Code's own `~/.claude/.credentials.json`, mode 0600, which the project never reads.
 - **What the VM ends up trusting**: the SSH key material, the passwordless sudo rule and the docker group
   membership.
 - **What is written on the controller**: `~/.ssh/known_hosts`, the managed SSH config
   `~/.ssh/claude-on-proxmox.conf` and the one `Include` line at the top of `~/.ssh/config`
-  (`playbooks/tasks/ssh_config.yml`). A bug there reaches every `ssh` on the user's machine.
+  (`playbooks/tasks/ssh_config.yml`). A bug there reaches every `ssh` on the user's machine. The VM's
+  address in it is what the VM's own guest agent reported, so the VM chooses it: the `guest_ipv4`
+  filter takes only a string that parses as one IPv4 address, and the task file refuses a name or
+  address that is not one plain word, since a newline in either would add a directive (`ProxyCommand`
+  runs on this machine).
   Inside the checkout, `.logs/` holds a copy of every Ansible run: `no_log` output is hidden there
   as on screen, but the files name hosts and addresses, so the directory is git-ignored, blocked by
   `tests/check_no_local_files.sh`, created `0700`, and pruned after `LOG_RETENTION_DAYS`. A secret
@@ -57,7 +76,13 @@ that only restate them are not treated as vulnerabilities:
   `folderOpen` tasks run, as it would without this project.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
-  once - and `make configure` then sends it your SSH keys, GitHub token and Anthropic API key. Keeping
+  once - and `make configure` then sends it your SSH keys, GitHub token and Anthropic API key. The
+  sign-ins hand it more: `make deploy`, `make claude-login` and `make github-login` run `claude auth
+  login` and `gh auth login` there and ask you to authorise what they print, so an impostor that prints
+  a genuine sign-in page or device code of its own receives a claude.ai login, or a GitHub OAuth token
+  with gh's scopes (`repo`, `read:org`, `gist`) and `workflow` that does not expire until revoked - with
+  no GitHub token in the vault as much as with one. Authorise only a page or code for a VM you have just
+  created or know to be yours. Keeping
   the key instead would only trade this for a failure every time a lease is recycled, so the removal is
   deliberate. On a network where you do not trust every device, put the VMs on a bridge that only
   trusted devices can reach (`proxmox_bridge`, set before `make template`, since every clone inherits

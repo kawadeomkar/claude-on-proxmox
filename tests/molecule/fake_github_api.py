@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Tiny stand-in for the GitHub REST API used by Molecule scenarios and unit tests.
 
-Serves the four requests the github_repos module makes, with a Link header
-for pagination exactly like GitHub's, and points clone URLs at local bare
-repositories so the github_projects role can be tested without network access:
+Serves the requests the github_projects role makes, with a Link header for
+pagination exactly like GitHub's, and points clone URLs at local bare
+repositories so the role can be tested without network access:
 
-  /users/<name>          the account (login, id, name)
+  /users/<name>          the account (login, id, name, type)
   /users/<name>/repos    the public repositories, with or without a token
   /user                  the account the token belongs to, 401 without one
   /user/repos            every repository of that account, private included
+  /meta                  GitHub's published SSH host keys (a placeholder key)
+  /users/acme-org        an organisation, which owns no repositories here
 
 A token is a stand-in too: "bad-token" is refused, one starting with "stranger"
 belongs to another account, and anything else is <name>'s own.
@@ -30,6 +32,9 @@ SPECS = sys.argv[4:]
 PAGE_SIZE = 2
 ACCOUNT = {"login": USERNAME, "id": 4242, "name": "Molecule Tester", "email": None, "type": "User"}
 STRANGER = {"login": "stranger", "id": 7, "name": None, "email": None, "type": "User"}
+ORG = {"login": "acme-org", "id": 99, "name": "Acme", "email": None, "type": "Organization"}
+# The shape of GitHub's /meta, with a key that parses but is nobody's.
+META = {"ssh_keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMoleculeTestKeyDoNotUse0000000000000000000"]}
 
 
 def repos(private_too):
@@ -88,6 +93,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, ACCOUNT)
         elif url.path == f"/users/{USERNAME}/repos":
             self._page(repos(private_too=False), url)
+        elif url.path == f"/users/{ORG['login']}":
+            self._send(200, ORG)
+        elif url.path == f"/users/{ORG['login']}/repos":
+            self._page([], url)
+        elif url.path == "/meta":
+            self._send(200, META)
         elif url.path == "/user":
             account = self._account()
             self._send(200, account) if account else self._send(401, {"message": "Bad credentials"})

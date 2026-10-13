@@ -7,15 +7,32 @@
 # Seeding a state: write the token to $HOME/.config/gh/fake-token; a file
 # fake-source beside it is reported as the token's source (GH_TOKEN, say),
 # fake-login as the account's login (default: molecule), and fake-old makes
-# `auth status --json` fail the way a gh older than 2.81.0 does. The device
-# flow (`auth login ... --web`) prints what gh prints and then approves itself
-# after fake-approve-after seconds (default 2), or expires the way gh does when
-# fake-expire exists. Every call is appended to calls.log there.
+# `auth status --json` fail the way a gh older than 2.81.0 does (printing the
+# file's content instead, when it has any). The device flow (`auth login ...
+# --web`) records its pid in fake-pid, prints what gh prints and then approves
+# itself after fake-approve-after seconds (default 2). With fake-expire it
+# instead gives up as gh does once its code has expired, after the number of
+# seconds in that file (default 1) standing in for the code's fifteen minutes;
+# with fake-no-code it prints an error (the file's content, or gh's own when
+# GitHub cannot be reached) and no code; with fake-hang it prints nothing and
+# waits until it is ended; and fake-said is printed in place of its "Logged in
+# as" line. Every call is appended to calls.log there.
 #
 # Faithful where it matters: the status JSON carries no token field (gh
 # empties it without --show-token, and omits it), so the role has to read the
 # token with `auth token`; signed out it exits 0 in JSON mode and 1 in text.
 set -eu
+
+# Waits the way gh does between polls: a TERM ends it at once, as it ends gh,
+# rather than leaving a sleep behind.
+nap() {
+  sleep "$1" &
+  nap_pid=$!
+  trap 'kill "$nap_pid" 2>/dev/null; exit 143' TERM
+  wait "$nap_pid"
+  trap - TERM
+}
+
 state="${HOME:?}/.config/gh"
 token_file="$state/fake-token"
 mkdir -p "$state"
@@ -25,13 +42,13 @@ login=$(cat "$state/fake-login" 2>/dev/null || echo molecule)
 case "$*" in
   "auth status --hostname github.com --json hosts")
     if [ -e "$state/fake-old" ]; then
-      echo "unknown flag: --json" >&2
+      if [ -s "$state/fake-old" ]; then cat "$state/fake-old" >&2; else echo "unknown flag: --json" >&2; fi
       exit 1
     fi
     if [ -s "$token_file" ]; then
       source=$(cat "$state/fake-source" 2>/dev/null || echo "$state/hosts.yml")
       printf '{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"%s",' "$login"
-      printf '"tokenSource":"%s","scopes":"repo, read:org","gitProtocol":"https"}]}}\n' "$source"
+      printf '"tokenSource":"%s","scopes":"gist, read:org, repo","gitProtocol":"https"}]}}\n' "$source"
     else
       printf '{"hosts":{}}\n'
       echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2
@@ -45,22 +62,39 @@ case "$*" in
     token=$(head -n 1)
     [ -n "$token" ] || { echo "error validating token: no token on stdin" >&2; exit 1; }
     [ "$token" != "bad-token" ] || { echo "error validating token: HTTP 401: Bad credentials" >&2; exit 1; }
+    # A classic token with repo alone: gh asks one for read:org as well.
+    case "$token" in ghp_repoonly*) echo "error validating token: missing required scope 'read:org'" >&2; exit 1 ;; esac
     printf '%s\n' "$token" > "$token_file"
     chmod 600 "$token_file" ;;
   "auth login --hostname github.com --git-protocol "*" --web --skip-ssh-key"*)
+    echo "$$" > "$state/fake-pid"
+    if [ -e "$state/fake-no-code" ]; then
+      if [ -s "$state/fake-no-code" ]; then
+        cat "$state/fake-no-code" >&2
+      else
+        printf 'error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com\n' >&2
+      fi
+      exit 1
+    fi
+    if [ -e "$state/fake-hang" ]; then
+      nap 600
+      exit 1
+    fi
     echo "! Failed to copy one-time code to clipboard" >&2
     echo "  No clipboard utilities available. Please install xsel, xclip, wl-clipboard or Termux:API add-on for termux-clipboard-get/set." >&2
     echo "! First copy your one-time code: FAKE-C0DE"
     echo "Open this URL to continue in your web browser: https://github.com/login/device"
     if [ -e "$state/fake-expire" ]; then
-      sleep 1
-      echo "failed to authenticate via web browser: This 'device_code' has expired. (expired_token)"
+      # gh polls until its own deadline, the code's lifetime, and says so.
+      nap "$(grep . "$state/fake-expire" 2>/dev/null || echo 1)"
+      echo "failed to authenticate via web browser: context deadline exceeded" >&2
       exit 1
     fi
-    sleep "$(cat "$state/fake-approve-after" 2>/dev/null || echo 2)"
+    nap "$(cat "$state/fake-approve-after" 2>/dev/null || echo 2)"
     printf '%s\n' "gho_device0000000000" > "$token_file"
     chmod 600 "$token_file"
-    echo "✓ Logged in as $login" ;;
+    # gh's last word, which a later gh may put otherwise (fake-said).
+    if [ -e "$state/fake-said" ]; then cat "$state/fake-said" >&2; else echo "✓ Logged in as $login" >&2; fi ;;
   "auth logout --hostname github.com"|"auth logout --hostname github.com --user "*)
     rm -f "$token_file" "$state/fake-source" ;;
   "auth setup-git --hostname github.com")

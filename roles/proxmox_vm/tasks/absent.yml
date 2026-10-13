@@ -41,19 +41,19 @@
 
 # Leaving a stale key behind is not harmless: the address goes back in the
 # DHCP pool, and the next VM to get it fails with HOST KEY VERIFICATION FAILED
-# and no hint as to why.
+# and no hint as to why. The same goes for <name>.<domain>, which a VM created
+# again under the name answers to with a new key.
 - name: absent | Forget the VM's SSH host key
   ansible.builtin.known_hosts:
-    name: "{{ proxmox_vm_forget_address }}"
+    name: "{{ item }}"
     state: absent
+  loop: "{{ proxmox_vm_forget_names }}"
   delegate_to: localhost
   # destroy.yml deletes VMs in parallel, and every one of them rewrites the
   # same known_hosts file: two at once can each write back the key the other
   # just removed.
   throttle: 1
-  when:
-    - proxmox_vm_exists
-    - proxmox_vm_forget_address | length > 0
+  when: proxmox_vm_exists
 
 - name: absent | Warn when the address could not be determined
   ansible.builtin.debug:

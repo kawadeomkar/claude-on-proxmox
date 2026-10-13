@@ -14,7 +14,8 @@ ANSIBLE_ARGS ?=
 #   deploy, provision, destroy            -> claude-on-proxmox-default
 #                                            (claude_vm_default_name, in
 #                                            inventory/group_vars/all/defaults.yml)
-#   configure, check, list, claude-login  -> every VM tagged claude-on-proxmox
+#   configure, check, list, ssh-config,
+#   claude-login, github-login            -> every VM tagged claude-on-proxmox
 # `make deploy` configures only what it provisioned, never the rest of the fleet.
 # There is deliberately no LIMIT: --limit is applied before the plays run, and
 # these VMs only enter the inventory once discovery has found them, so it could
@@ -26,6 +27,11 @@ VM_NAME    ?=
 # name check in the proxmox_vm role, which explains the problem. vm-name-check
 # has already rejected anything that could break out of this quoting.
 VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
+# A run with no terminal on stdin cannot be answered: its sign-in prompts
+# return at once with nothing. Then no sign-in page opens and nothing reaches
+# the clipboard either, since nobody is there to use them. A login_desktop given
+# in ANSIBLE_ARGS still wins: it comes later on the command line.
+NO_TTY_ARGS = $$([ -t 0 ] || printf '%s' '-e {"login_desktop":false}')
 # One project to open with `make code`, rather than the whole projects
 # directory: the name of a folder in it, which is the repository's name when
 # github_projects cloned it. Only `make code` reads it. Passed as JSON for the
@@ -210,29 +216,32 @@ configure: vault-check vm-name-check log-setup ## Configure the VM(s): packages,
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: deploy
-deploy: vault-check vm-name-check log-setup ## Everything: template (if missing) + provision + configure, for VM_NAME only (default: claude-on-proxmox-default)
+deploy: vault-check vm-name-check log-setup ## Everything, for VM_NAME only: template (if missing), provision, configure, sign in to Claude and GitHub, open VS Code (default: claude-on-proxmox-default)
 	@test -z "$(TAGS)" || { echo "error: deploy takes no TAGS. To re-run one role: make configure VM_NAME=<name> TAGS=$(TAGS)"; exit 1; }
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) deploy.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) deploy.yml
 
 .PHONY: destroy
 destroy: vault-check vm-name-check log-setup ## Stop and delete the VM(s) on Proxmox (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 
 # Remote Control needs a claude.ai login on the VM, and Anthropic supports no
-# non-interactive way to create one, so this prints the command rather than
-# pretending to do it.
+# non-interactive way to create one. Given VM names, this runs the browser
+# sign-in as far as it goes - the page opens here, and the code it shows is
+# pasted at a prompt - one VM after another, and starts Remote Control. Without
+# a name it reports every VM's state. make deploy runs it for its VMs.
 .PHONY: claude-login
-claude-login: vault-check vm-name-check log-setup ## Show how to sign Claude Code in on the VM(s), for Remote Control (every tagged VM, unless VM_NAME)
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
+claude-login: vault-check vm-name-check log-setup ## Sign Claude Code in on the VM(s) in VM_NAME, one after another, and start Remote Control; without VM_NAME, report every VM
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
 
 # Without a token in the vault, gh is signed in to GitHub by its device flow,
-# which ends with the user entering a code on a page; given one VM_NAME this
-# runs it as far as it goes - the page opens here, the code is on the
-# clipboard - waits for the approval, and clones the private repositories.
-# Without a name it reports every VM's state.
+# which ends with the user entering a code on a page; given VM names this runs
+# it as far as it goes - the page opens here, the code is on the clipboard -
+# one VM after another, waits for each approval, and clones the private
+# repositories. Without a name it reports every VM's state. make deploy runs it
+# for its VMs once its Claude sign-in has been answered.
 .PHONY: github-login
-github-login: vault-check vm-name-check log-setup ## Sign gh in to GitHub on one VM (VM_NAME) by the device flow, then clone its private repositories; without VM_NAME, report every VM
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/github_login.yml
+github-login: vault-check vm-name-check log-setup ## Sign gh in to GitHub on the VM(s) in VM_NAME by the device flow, one after another, then clone private repositories; without VM_NAME, report every VM
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) playbooks/github_login.yml
 
 .PHONY: check
 check: vault-check vm-name-check log-setup ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
@@ -272,7 +281,7 @@ syntax: ## ansible-playbook --syntax-check on every playbook
 	done
 
 .PHONY: unit
-unit: ## pytest over tests/unit/: filters, github_repos module, tracked-file guard, configure tags, Remote Control, Makefile guards
+unit: ## pytest over tests/unit/: filters, github_repos module, tracked-file guard, configure tags, Remote Control, both sign-ins, the SSH config, the Claude terminal, Makefile guards
 	$(BIN)/pytest
 
 # Molecule resolves ansible-playbook from PATH (and only appends the venv), so

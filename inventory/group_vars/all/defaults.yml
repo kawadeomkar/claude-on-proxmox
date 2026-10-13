@@ -69,7 +69,8 @@ proxmox_template_name: ubuntu-24.04-cloudinit
 # claude_vm_names falls back to this default name when vm_name is not given,
 # which is what provision.yml, deploy.yml and destroy.yml act on. discover.yml
 # and list.yml test `vm_name is defined` instead and, without it, cover every
-# tagged VM - so configure, check, list and claude-login are fleet-wide.
+# tagged VM - so configure, check, list, ssh-config, claude-login and
+# github-login are fleet-wide.
 claude_vm_default_name: claude-on-proxmox-default
 # Applied to every VM this project creates, and how they are found again.
 claude_vm_tag: claude-on-proxmox
@@ -128,16 +129,18 @@ vm_ssh_public_keys: >-
      | select('string') | select | list }}
 
 # --------------------------------------------------------------- GitHub -----
-github_username: "{{ vault_github_username | default('') }}"
+# default('', true) on each vault value: one left empty in the vault is None,
+# which has no length.
+github_username: "{{ vault_github_username | default('', true) }}"
 # Optional. With it, private repositories are listed and cloned, and gh on
 # each VM is signed in with it, so `git push` and `gh pr create` work there
-# (README, "Pushing from the VM", for the permissions it needs). Without it,
-# gh is signed in once per VM by GitHub's device flow - `make github-login
-# VM_NAME=<name>` runs it and then clones the private repositories, and the
-# terminal `make code` opens runs it too - and every later `make configure`
-# lists with the token gh stored. Either way the same token serves the
-# listing, the clones and the pushes.
-github_token: "{{ vault_github_token | default('') }}"
+# (README, "Private repositories, and pushing from the VM", for the
+# permissions it needs). Without it, gh is signed in once per VM by GitHub's
+# device flow - `make github-login VM_NAME=<name>` runs it and then clones the
+# private repositories, and the terminal `make code` opens runs it too - and
+# every later `make configure` lists with the token gh stored. Either way the
+# same token serves the listing, the clones and the pushes.
+github_token: "{{ vault_github_token | default('', true) }}"
 # Repository names to clone. Empty list = every repository of github_username
 # (forks and archived repos excluded unless enabled below).
 github_projects: []
@@ -148,21 +151,13 @@ github_auth: true
 # How: auto signs in with github_token when there is one and by GitHub's
 # device flow otherwise; web is the device flow always, and a token then only
 # lists; token is the token only, and an empty one fails by name. The device
-# flow is `make github-login VM_NAME=<name>`: a page opens in your browser,
-# the code is on your clipboard, you paste it and approve, and the run then
-# clones the private repositories too. Scopes it asks for on top of gh's own:
-# workflow, so that pushes which change .github/workflows/ are not refused.
+# flow runs in `make deploy` and in `make github-login VM_NAME=<name>`: a page
+# opens in your browser, the code is on your clipboard, you paste it and
+# approve, and the run then clones the private repositories too. Scopes it
+# asks for on top of gh's own: workflow, so that pushes which change
+# .github/workflows/ are not refused.
 github_auth_method: auto
 github_login_scopes: [workflow]
-# The browser and clipboard steps of the device flow happen on this machine.
-# Off, the run only prints the page and the code (a headless controller).
-# Every test turns this off; tests/unit/test_github_auth.py checks they do.
-github_login_desktop: true
-# Run the device flow inside make configure and make deploy too, on a
-# signed-out VM. One VM at a time, and the run waits up to fifteen minutes for
-# your approval, so it is off by default: a fleet or an unattended run would be
-# held up. make github-login does it without this.
-github_login_prompt: false
 # The git identity written on each VM. Empty: the GitHub account's display
 # name (or its login) and GitHub's noreply address for it, so no private email
 # lands in commits by default.
@@ -171,10 +166,11 @@ git_user_email: ""
 
 # ------------------------------------------------------------ Anthropic -----
 # Optional API key, for billing Claude Code to Anthropic API credits. If empty,
-# run `claude` on the VM once and log in interactively with your Claude account.
+# the VM signs in with your Claude account instead: make deploy and make
+# claude-login run that sign-in for you.
 #
 # Note this is not the credential Remote Control uses - see below.
-anthropic_api_key: "{{ vault_anthropic_api_key | default('') }}"
+anthropic_api_key: "{{ vault_anthropic_api_key | default('', true) }}"
 
 # Run a Remote Control server on each VM, so its Claude Code session shows up
 # at claude.ai/code and in the Claude mobile app while running on the VM.
@@ -188,11 +184,38 @@ anthropic_api_key: "{{ vault_anthropic_api_key | default('') }}"
 #   no key, not logged in  -> prepared but not started; run make claude-login
 #   no key, logged in      -> started, and reachable from the app
 #
-# So activating it is: clear the API key (the next run removes it from the VM),
-# run `make claude-login VM_NAME=<name>` once, and re-run `make configure`.
+# So activating it is: leave the API key empty, and sign in once - `make
+# deploy` asks for that itself, and `make claude-login VM_NAME=<name>` does it
+# for a VM that exists. Either starts Remote Control in the same run, and a
+# sign-in made any other way starts it by itself.
 # Set this false to opt out. Off - by this switch or by a key - stops, disables
 # and removes a server an earlier run installed.
 claude_remote_control: true
+# Extra arguments for the sign-in's `claude auth login`, such as [--sso], and
+# how many seconds it may take to accept the code you paste.
+claude_login_args: []
+claude_login_timeout: 120
+
+# -------------------------------------------------------------- Sign-in -----
+# make deploy ends with the VM signed in to Claude and to GitHub and open in
+# VS Code. The sign-ins are the two steps only you can take: each opens a page
+# in your browser, and the run waits for you there, one VM at a time.
+#   Claude: authorise, then paste the code the page shows at the prompt.
+#   GitHub: paste the code that is already on your clipboard, and authorise.
+# GitHub's is asked first, VM by VM: Enter signs in a VM whose Claude code you
+# entered (n leaves it), "y" one that needed no Claude sign-in; none runs when
+# vault_github_token signs gh in. Enter at a VM's Claude prompt skips both for
+# it, and a run with no terminal skips them all; make claude-login and make
+# github-login do them later. false leaves the sign-ins to those two commands.
+deploy_sign_in: true
+# Open the VM in VS Code at the end of make deploy, as make code does, when the
+# run was for one VM; a deploy for several ends with each VM's make code line.
+deploy_code: true
+# The browser and clipboard steps of both sign-ins happen on this machine.
+# Off, the run only prints the page and the code (a headless controller).
+# Every test turns this off; tests/unit/test_github_auth.py and
+# test_claude_login.py check they do.
+login_desktop: true
 
 # ------------------------------------------------------------- VS Code -----
 # Make each VM ready for VS Code's Remote - SSH extension: an sshd drop-in that
@@ -278,6 +301,7 @@ proxmox_vm_nic: "{{ proxmox_nic }}"
 proxmox_vm_user: "{{ vm_user }}"
 proxmox_vm_ssh_public_keys: "{{ vm_ssh_public_keys }}"
 proxmox_vm_tags: ["{{ claude_vm_tag }}"]
+proxmox_vm_known_hosts_domain: "{{ claude_ssh_host_domain }}"
 
 proxmox_template_bridge: "{{ proxmox_bridge }}"
 proxmox_template_storage: "{{ proxmox_storage }}"
@@ -294,6 +318,9 @@ claude_code_user: "{{ vm_user }}"
 claude_code_anthropic_api_key: "{{ anthropic_api_key }}"
 claude_code_remote_control: "{{ claude_remote_control }}"
 claude_code_remote_control_dir: "{{ vm_projects_dir }}"
+claude_code_login_desktop: "{{ login_desktop }}"
+claude_code_login_args: "{{ claude_login_args }}"
+claude_code_login_timeout: "{{ claude_login_timeout }}"
 
 github_projects_user: "{{ vm_user }}"
 github_projects_username: "{{ github_username }}"
@@ -303,7 +330,6 @@ github_projects_dir: "{{ vm_projects_dir }}"
 github_projects_auth: "{{ github_auth }}"
 github_projects_auth_method: "{{ github_auth_method }}"
 github_projects_login_scopes: "{{ github_login_scopes }}"
-github_projects_login_desktop: "{{ github_login_desktop }}"
-github_projects_login_prompt: "{{ github_login_prompt }}"
+github_projects_login_desktop: "{{ login_desktop }}"
 github_projects_git_user_name: "{{ git_user_name }}"
 github_projects_git_user_email: "{{ git_user_email }}"

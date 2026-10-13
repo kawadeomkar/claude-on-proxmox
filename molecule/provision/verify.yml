@@ -607,11 +607,18 @@
     # matches no host: each run is quick, needs no SSH, and exits 0. There is
     # no proxmox host in this inventory, so the template play itself has
     # nothing to run on either way; what it would do is read from the report.
+    # The sign-ins match no host either, and the window is left for later
+    # rather than failing the deploy, with the step that does everything: this
+    # deploy left beta stopped, so make code alone would open a VM it never
+    # configured or signed in. Never the developer's VS Code settings, though
+    # nothing reads them before that end.
     - name: Run deploy.yml with the template present, and with a name that matches none
       ansible.builtin.command:
         argv: >-
           {{ verify_playbook_cmd
-             + ['--extra-vars', {'vm_name': 'beta', 'proxmox_template_name': verify_template} | to_json,
+             + ['--extra-vars', {'vm_name': 'beta', 'proxmox_template_name': verify_template,
+                                 'vscode_user_settings_file': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                              ~ '/vscode/settings.json'} | to_json,
                 playbook_dir ~ '/../../deploy.yml'] }}
       environment: "{{ verify_playbook_env }}"
       register: verify_deploy_runs
@@ -627,10 +634,92 @@
           - verify_deploy_runs.results | map(attribute='rc') | list == [0, 0]
           - verify_deploy_runs.results[0].stdout is search('is already built, so this run needs no SSH')
           - verify_deploy_runs.results[1].stdout is search('does not exist yet; building it first')
+          # The window, left for later rather than failing a finished deploy
+          - >-
+            verify_deploy_runs.results | map(attribute='stdout')
+            | select('search', 'beta is stopped, and this deploy left it so: it was not configured, signed in or opened in VS Code\.'
+                               ~ ' To start it and finish the deploy: make deploy VM_NAME=beta ANSIBLE_ARGS=\\W+-e proxmox_vm_start_existing=true')
+            | list | length == 2
+          - >-
+            verify_deploy_runs.results | map(attribute='stdout') | select('search', 'make code VM_NAME=beta') | list | length == 0
         fail_msg: >-
           deploy.yml exited {{ verify_deploy_runs.results | map(attribute='rc') | list }}, reporting
           {{ verify_deploy_runs.results | map(attribute='stdout') | map('regex_findall', 'Template \S+ (?:is already built|does not exist yet)') | list }}
           {{ verify_deploy_runs.results | map(attribute='stderr') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+        quiet: true
+
+    # Two more ends of deploy's window step, on stopped VMs so that nothing is
+    # configured. For two VMs it opens none, and ends at its first task with
+    # each VM's make code line; solo is shut down for that run and started
+    # again after it. With claude_ssh_config off, it says why there is no
+    # window, with the make code line, and the deploy still exits 0.
+    - name: Shut solo down for a deploy of two stopped VMs
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api }}/9013/status/shutdown"
+        method: POST
+        headers: "{{ verify_headers }}"
+
+    - name: Run deploy.yml for two stopped VMs, then for one with the SSH alias switched off
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', verify_deploy_case
+                                | combine({'vscode_user_settings_file': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                                        ~ '/vscode/settings.json'}) | to_json,
+                playbook_dir ~ '/../../deploy.yml'] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_deploy_windows
+      changed_when: false
+      failed_when: false
+      loop:
+        - {vm_name: "beta,solo"}
+        - {vm_name: beta, claude_ssh_config: false}
+      loop_control:
+        loop_var: verify_deploy_case
+
+    - name: Start solo again
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api }}/9013/status/start"
+        method: POST
+        headers: "{{ verify_headers }}"
+
+    # The later plays reach solo by its address, as they did before the
+    # shutdown; the fake counts the polls it refuses per VM, not per boot,
+    # so this answers at once, but is waited for all the same.
+    - name: Wait until solo's guest agent answers again
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_api }}/9013/agent/network-get-interfaces"
+        headers: "{{ verify_headers }}"
+        status_code: [200, 500]
+      register: verify_solo_agent
+      until: verify_solo_agent.status == 200
+      retries: 5
+      delay: 1
+
+    - name: Assert a deploy for two VMs opened neither, and one without the alias said why
+      vars:
+        verify_fleet: "{{ verify_deploy_windows.results[0] }}"
+        verify_no_alias: "{{ verify_deploy_windows.results[1] }}"
+      ansible.builtin.assert:
+        that:
+          - verify_deploy_windows.results | map(attribute='rc') | list == [0, 0]
+          - verify_fleet.stdout is search('VS Code opens one VM at a time, so this deploy for 2 VMs opened none\. To open one')
+          - verify_fleet.stdout is search('"make code VM_NAME=beta"')
+          - verify_fleet.stdout is search('"make code VM_NAME=solo"')
+          # Ended at its first task: not even the one-VM check ran.
+          - verify_fleet.stdout is not search('TASK \\[Refuse anything but one VM\\]')
+          - >-
+            verify_no_alias.stdout is search('claude_ssh_config is false, so this project keeps no SSH alias for the VM')
+          - >-
+            verify_no_alias.stdout is search('VS Code was not opened; to open it later: make code VM_NAME=beta"')
+        fail_msg: >-
+          deploy.yml exited {{ verify_deploy_windows.results | map(attribute='rc') | list }}, reporting
+          {{ verify_deploy_windows.results | map(attribute='stdout')
+             | map('regex_findall', '(?:VS Code opens one VM[^\n]*|make code VM_NAME=[^\n]*|claude_ssh_config is false[^\n]*)') | list }}
+          {{ verify_deploy_windows.results | map(attribute='stderr') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
         quiet: true
 
     # Proxmox stores tags lowercased. A claude_vm_tag typed in mixed case is
@@ -1255,7 +1344,7 @@
       vars:
         verify_ws: "{{ verify_ssh_dir }}/projects"
         verify_task: "{{ verify_ws_project.tasks.tasks[0] }}"
-        verify_code_script: "{{ (lookup('ansible.builtin.file', verify_code_playbook) | from_yaml)[0].vars.claude_code_terminal_script }}"
+        verify_code_script: "{{ (lookup('ansible.builtin.file', verify_code_playbook) | from_yaml)[0].vars.code_terminal_script }}"
       ansible.builtin.assert:
         that:
           - verify_ws_whole | dict2items | map(attribute='key') | sort == ['folders', 'settings', 'tasks']
@@ -1275,11 +1364,14 @@
           - verify_task.type == 'process'
           - verify_task.command == '/bin/bash'
           - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4],
-                                 verify_task.args[5], 'https', 'workflow', 'alpha']
+                                 verify_task.args[5], '/etc/systemd/system/claude-remote-control.path', verify_task.args[7],
+                                 'https', 'workflow', 'alpha']
           - verify_task.args[3] is search('make configure VM_NAME=alpha,')
-          - verify_task.args[4] is search('make configure VM_NAME=alpha TAGS=claude_code$')
+          # What a sign-in there says: Remote Control started by the path unit that watches for the login, or not.
+          - verify_task.args[4] is search('starts by itself.* make configure VM_NAME=alpha TAGS=claude_code$')
+          - verify_task.args[5] is search('start Remote Control from your machine. make configure VM_NAME=alpha TAGS=claude_code$')
           # The GitHub sign-in message, empty when github_auth is off.
-          - verify_task.args[5] is search('make configure VM_NAME=alpha TAGS=github_projects$')
+          - verify_task.args[7] is search('make configure VM_NAME=alpha TAGS=github_projects$')
           - verify_task.options.cwd == verify_ws ~ '/discord-music-bot'
           - "verify_task.runOptions == {'runOn': 'folderOpen'}"
           - "verify_task.presentation == {'reveal': 'always', 'focus': true, 'panel': 'dedicated', 'clear': true, 'showReuseMessage': true}"

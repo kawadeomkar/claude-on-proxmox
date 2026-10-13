@@ -34,6 +34,29 @@
       - claude_ssh_state | default('present') in ['present', 'absent']
     quiet: true
 
+# Each name and address becomes one word on a line of an ssh config, so a
+# space or a newline in one would add options of its own - and ProxyCommand
+# runs on this machine. The address comes from the VM's guest agent, which the
+# guest_ipv4 filter already holds to one IPv4 address; this refuses anything
+# else that reaches here by another road. Without an address the name stands in
+# for it only when a domain is set, as the write below does.
+- name: ssh_config | Refuse a name or address that is not one plain word
+  vars:
+    claude_ssh_word: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+    claude_ssh_unsafe: >-
+      {{ (claude_ssh_vms | rejectattr('name', 'match', claude_ssh_word) | map(attribute='name') | list
+          + (claude_ssh_vms | rejectattr('address', 'match', claude_ssh_word) | map(attribute='name') | list
+             if claude_ssh_host_domain | default('') | length == 0 else []))
+         | unique | list }}
+  ansible.builtin.assert:
+    that: claude_ssh_unsafe | length == 0
+    fail_msg: >-
+      Not writing an alias for {{ claude_ssh_unsafe | map('to_json') | join(', ') }}: its name or address is not
+      one plain word, and ssh would read the rest as options of its own. The address is what the VM's guest agent
+      reported.
+    quiet: true
+  when: claude_ssh_state | default('present') == 'present'
+
 - name: ssh_config | Stat the managed file
   ansible.builtin.stat:
     path: "{{ claude_ssh_config_file }}"
@@ -150,8 +173,10 @@
 # for a file in ~/.ssh, the bare name ssh resolves against it - that ssh
 # itself, asked above, reads. Then the user's line is left exactly as it is,
 # not rewritten into this one. A spelling ssh does not read ($HOME/..., or
-# ${HOME}/... on an older ssh) includes nothing, and this line is added. The
-# mode is set only on a file this task creates: the user's own keeps its own.
+# ${HOME}/... on an older ssh) includes nothing, and this line is added. A
+# file this task creates is 0600; the user's own keeps its mode, given back
+# explicitly: when the file's group is one the user is not in, Ansible's
+# atomic move cannot copy the old file's attributes and leaves it 0600.
 - name: ssh_config | Include the managed file from the user's ssh config
   vars:
     claude_ssh_home: "{{ lookup('ansible.builtin.env', 'HOME') }}"
@@ -175,7 +200,7 @@
   ansible.builtin.lineinfile:
     path: "{{ claude_ssh_user_config }}"
     create: true
-    mode: "{{ omit if claude_ssh_user.stat.exists | default(false) else '0600' }}"
+    mode: "{{ claude_ssh_user.stat.mode if claude_ssh_user.stat.exists | default(false) else '0600' }}"
     line: "Include {{ claude_ssh_config_file }}"
     insertbefore: BOF
   when:

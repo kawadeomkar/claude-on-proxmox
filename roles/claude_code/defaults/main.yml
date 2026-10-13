@@ -34,10 +34,12 @@ claude_code_global_instructions: ""
 # are not supported, and neither is the long-lived token from
 # `claude setup-token`.
 #
-# So the role derives what to do from the credentials it finds, and a re-run is
-# what activates it:
+# So the role derives what to do from the credentials it finds:
 #   an API key is set      -> off, because a key outranks the login
-#   no key, no login yet   -> everything installed, service left stopped, told what to run
+#   no key, no login yet   -> everything installed and the service left stopped,
+#                             with a path unit that starts it the moment a login
+#                             lands; make claude-login and make deploy sign in
+#                             and start it in the same run
 #   no key, logged in      -> the session is started and appears in the app
 # Set false to turn it off. "Off" is enforced, not just skipped: a server an
 # earlier run installed is stopped, disabled and its unit removed.
@@ -61,3 +63,23 @@ claude_code_remote_control_permission_mode: default
 # session: serve exactly one session and reject further connections.
 claude_code_remote_control_spawn: same-dir
 claude_code_remote_control_service: claude-remote-control
+
+# ------------------------------------------------------------- Sign-in -----
+# The browser sign-in (tasks/browser_login.yml) that `make claude-login` and
+# `make deploy` run on a VM with no Claude login and no API key: claude auth
+# login starts on the VM with no terminal, the sign-in page it prints opens in
+# the browser on this machine, and the code that page shows once you authorise
+# is pasted at a prompt in the terminal running make. Set by the playbooks.
+claude_code_login_interactive: false
+# Open the sign-in page in this machine's browser. Off in every test.
+claude_code_login_desktop: true
+# Extra arguments for `claude auth login`, such as [--sso] or [--email, you@example.com].
+claude_code_login_args: []
+# Seconds to wait, once the code is pasted, for claude to accept it.
+claude_code_login_timeout: 120
+# The code, given instead of the prompt: for tests and scripts. Pass it from a
+# vars file (-e @file), never -e key=value, which ps and -vvvv show.
+claude_code_login_code: ""
+# Set by make deploy's configure step: the sign-in comes next in the same run,
+# so the role says so rather than naming make claude-login.
+claude_code_sign_in_follows: false

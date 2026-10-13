@@ -16,14 +16,16 @@ description:
   - Handles pagination via the C(Link) header.
   - With a token that belongs to the queried user, private repositories are
     included; otherwise only public ones are visible.
-  - Also returns who the user is, for a git identity derived from the account.
+  - Can also return the account a git identity is derived from (O(account)).
 options:
   username:
     description: GitHub login to list repositories for.
     type: str
     required: true
   token:
-    description: Optional personal access token.
+    description:
+      - Optional personal access token. Whitespace around it, such as the
+        newline a YAML block scalar leaves, is dropped.
     type: str
   api_url:
     description: Base URL of the GitHub REST API (override for GitHub Enterprise or tests).
@@ -41,6 +43,14 @@ options:
     description: Page size for API requests (max 100).
     type: int
     default: 100
+  account:
+    description:
+      - Also return the account a git identity is derived from. With a token,
+        that is the token's own account, which the token is checked against
+        anyway; without one, it is the user's public profile, one more request
+        against an unauthenticated rate limit, so it is made only when asked for.
+    type: bool
+    default: false
 author:
   - claude-on-proxmox contributors
 """
@@ -97,7 +107,10 @@ total:
   returned: success
   type: int
 user:
-  description: The account the repositories belong to, as GitHub describes it.
+  description:
+    - The account a git identity is derived from, as GitHub describes it - the
+      token's own when a token is given, else the user's when O(account) is
+      true - or an empty dict when neither applies.
   returned: success
   type: dict
   contains:
@@ -110,6 +123,9 @@ user:
     id:
       description: Numeric account ID, as GitHub's noreply address for the account uses it.
       type: int
+    type:
+      description: C(User), or C(Organization) for an account no person commits as.
+      type: str
 """
 
 import json
@@ -120,7 +136,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.urls import fetch_url
 
 FIELDS = ("name", "full_name", "clone_url", "ssh_url", "default_branch", "fork", "archived", "private")
-USER_FIELDS = ("login", "name", "id")
+USER_FIELDS = ("login", "name", "id", "type")
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
@@ -162,17 +178,26 @@ def get_json(module, url, headers):
         module.fail_json(msg=f"GitHub API request to {url} returned a non-JSON body: {raw[:200]!r}")
 
 
-def resolve_listing(module, api_url, username, token, headers, per_page):
-    """Return the listing URL and the account: /user/repos (private included) when the token is the user's own."""
+def resolve_listing(module, api_url, username, token, headers, per_page, account):
+    """Return the listing URL and the account a git identity is derived from, or {} when none was read.
+
+    /user/repos (private included) when the token is the user's own. A token is
+    checked against /user anyway, so its own account - the one that pushes with
+    it - comes free. Without a token the account is the user's public profile,
+    one more request against the unauthenticated rate limit: made only when
+    asked for.
+    """
+    login = quote(username, safe="")
+    public = f"{api_url}/users/{login}/repos?type=owner&per_page={per_page}"
     if token:
         me, _info = get_json(module, f"{api_url}/user", headers)
         if str(me.get("login", "")).lower() == username.lower():
             return f"{api_url}/user/repos?affiliation=owner&per_page={per_page}", me
-    # Public, so the account is read the public way too: /users/<login>
-    # answers with or without a token, and names the login as GitHub spells it.
-    login = quote(username, safe="")
-    user, _info = get_json(module, f"{api_url}/users/{login}", headers)
-    return f"{api_url}/users/{login}/repos?type=owner&per_page={per_page}", user
+        return public, me
+    if account:
+        user, _info = get_json(module, f"{api_url}/users/{login}", headers)
+        return public, user
+    return public, {}
 
 
 def fetch_all_pages(module, url, headers):
@@ -219,19 +244,27 @@ def run_module():
             include_forks=dict(type="bool", default=False),
             include_archived=dict(type="bool", default=False),
             per_page=dict(type="int", default=100),
+            account=dict(type="bool", default=False),
         ),
         supports_check_mode=True,
     )
     params = module.params
+    # A trailing newline (a YAML block scalar) makes http.client refuse the
+    # header with the token in its message, escaped, so that the no_log
+    # masking misses it. Stripped, it is a string the masking was not given:
+    # added, so that any message holding it is masked too.
+    token = (params["token"] or "").strip()
+    if token:
+        module.no_log_values.add(token)
     api_url = params["api_url"].rstrip("/")
-    check_api_url(module, api_url, params["token"])
+    check_api_url(module, api_url, token)
     per_page = max(1, min(100, params["per_page"]))
-    headers = build_headers(params["token"])
+    headers = build_headers(token)
 
-    url, account = resolve_listing(module, api_url, params["username"], params["token"], headers, per_page)
+    url, account = resolve_listing(module, api_url, params["username"], token, headers, per_page, params["account"])
     all_repos = fetch_all_pages(module, url, headers)
     repos = filter_repos(all_repos, params["include_forks"], params["include_archived"])
-    user = {field: account.get(field) for field in USER_FIELDS}
+    user = {field: account.get(field) for field in USER_FIELDS} if account else {}
 
     module.exit_json(changed=False, repos=repos, total=len(all_repos), user=user)
 

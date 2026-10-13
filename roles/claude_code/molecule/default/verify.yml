@@ -37,6 +37,13 @@
         path: /etc/systemd/system/claude-remote-control.service
       register: claude_code_verify_rc_unit
 
+    # Nor the path unit that waits for a login, which an earlier run on the
+    # login path leaves on a VM with none.
+    - name: Stat the path unit that must not exist either
+      ansible.builtin.stat:
+        path: /etc/systemd/system/claude-remote-control.path
+      register: claude_code_verify_rc_path
+
     - name: Assert installation and configuration
       vars:
         claude_code_verify_settings: "{{ claude_code_verify_settings_raw.content | b64decode | from_json }}"
@@ -51,8 +58,10 @@
           - claude_code_verify_settings_stat.stat.mode == '0600'
           - "'Keep answers short.' in (claude_code_verify_claude_md.content | b64decode)"
           - not claude_code_verify_rc_unit.stat.exists
+          - not claude_code_verify_rc_path.stat.exists
         fail_msg: >-
           {{ 'Remote Control was set up despite an API key being configured; the
              two credentials are mutually exclusive.'
-             if claude_code_verify_rc_unit.stat.exists else 'see the failed assertion' }}
+             if claude_code_verify_rc_unit.stat.exists or claude_code_verify_rc_path.stat.exists
+             else 'see the failed assertion' }}
         quiet: true

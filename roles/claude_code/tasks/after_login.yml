@@ -1,0 +1,14 @@
+---
+# Entry point for playbooks/claude_login.yml, for a VM this run signed in:
+# start Remote Control as make configure would, now that the login it was
+# waiting for exists. Its own play, after every VM has had its turn at the
+# prompt, so the next VM's sign-in page does not wait on this one's
+# twenty-second stay-up check, and so a failure here is told apart from a
+# failed sign-in. As root, which installs and starts the unit; the tasks that
+# read the login say become_user themselves.
+- name: after_login | Start Remote Control now that the login exists
+  ansible.builtin.include_tasks:
+    file: remote_control.yml
+    apply:
+      become: true
+  when: claude_code_remote_control_wanted | bool

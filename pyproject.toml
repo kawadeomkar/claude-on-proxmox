@@ -1,5 +1,7 @@
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
+# The test modules share tests/unit/harness.py, imported by name in any import mode.
+pythonpath = ["tests/unit"]
 addopts = "-ra -q"
 
 [tool.ruff]

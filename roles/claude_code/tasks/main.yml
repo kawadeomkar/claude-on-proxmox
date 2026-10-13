@@ -9,6 +9,9 @@
     claude_code_home: "{{ ansible_facts.getent_passwd[claude_code_user][4] }}"
     claude_code_bin: "{{ ansible_facts.getent_passwd[claude_code_user][4] }}/.local/bin/claude"
 
+# Everything under the user's home is made as the user, never as root: the
+# user controls those paths, and root following a symlink planted there would
+# change or overwrite a file the user cannot.
 - name: Ensure ~/.claude exists
   ansible.builtin.file:
     path: "{{ claude_code_home }}/.claude"
@@ -16,6 +19,8 @@
     owner: "{{ claude_code_user }}"
     group: "{{ claude_code_user }}"
     mode: "0700"
+  become: true
+  become_user: "{{ claude_code_user }}"
 
 - name: Install with the native installer
   ansible.builtin.include_tasks: install_native.yml
@@ -35,6 +40,8 @@
     owner: "{{ claude_code_user }}"
     group: "{{ claude_code_user }}"
     mode: "0644"
+  become: true
+  become_user: "{{ claude_code_user }}"
   when: claude_code_global_instructions | length > 0
 
 - name: Verify claude runs
@@ -73,6 +80,20 @@
     path: /etc/systemd/system/{{ claude_code_remote_control_service }}.service
   register: claude_code_remote_control_leftover
   when: not (claude_code_remote_control_wanted | bool)
+
+# And the path unit that would start it when a login lands, which only exists
+# while a VM waits for its first login.
+- name: Look for the path unit an earlier run installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/{{ claude_code_remote_control_service }}.path
+  register: claude_code_remote_control_bridge_leftover
+  when: not (claude_code_remote_control_wanted | bool)
+
+- name: Remove the path unit that would start Remote Control
+  ansible.builtin.include_tasks: path_unit_absent.yml
+  when:
+    - not (claude_code_remote_control_wanted | bool)
+    - claude_code_remote_control_bridge_leftover.stat.exists
 
 - name: Remove Remote Control
   when:

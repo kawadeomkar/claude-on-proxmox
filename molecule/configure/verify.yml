@@ -55,6 +55,7 @@
         - /home/dev/.config/claude-on-proxmox/gh-login.out
         - /home/dev/.config/claude-on-proxmox/gh-login
         - /home/dev/.ansible_async
+        - /home/dev/.config/claude-on-proxmox/gh-login.pid
       register: verify_gh_leftovers
 
     - name: Read settings.json
@@ -67,6 +68,8 @@
         verify_settings: "{{ verify_settings_raw.content | b64decode | from_json }}"
       ansible.builtin.assert:
         that:
+          # The stand-in's version by now: side_effect.yml checks the
+          # installed claude before it swaps the stand-in in.
           - verify_cmds.results[0].stdout is search('[0-9]+\.[0-9]+\.[0-9]+')
           - not verify_cloned.results[0].stat.exists
           - verify_cloned.results[1].stat.exists
@@ -75,10 +78,11 @@
           - verify_git_config.results[2].stdout_lines == ['', '!/usr/local/bin/gh auth git-credential']
           - verify_git_config.results[3].stdout == 'gho_device0000000000'
           - verify_git_config.results[4].stdout == '1'
-          # The output file and the marker: neither; the async directory may
-          # exist but holds no job of ours.
+          # The output file, the marker and gh's pidfile: none; the async
+          # directory may exist but holds no job of ours.
           - not verify_gh_leftovers.results[0].stat.exists
           - not verify_gh_leftovers.results[1].stat.exists
+          - not verify_gh_leftovers.results[3].stat.exists
           # No API key in this scenario: it is mutually exclusive with Remote
           # Control, and an env block would have overridden the login. The
           # one prepare.yml left behind must be gone, and nothing else with it.
@@ -87,10 +91,43 @@
           - verify_settings.permissions.defaultMode == 'acceptEdits'
         quiet: true
 
-    # Remote Control cannot start in a container - no claude.ai login exists and
-    # none can be created without a browser. What must still happen is that the
-    # unit is written, the prompts that would stall it are pre-answered, and the
-    # service is left stopped rather than crash-looping.
+    # The converge left Remote Control prepared and stopped, waiting for a login
+    # (side_effect.yml asserts that before signing in); the side effect signed
+    # in through claude_login.yml with the stand-in claude, whose role started
+    # the service and retired the path unit. The unit, the pre-answered prompts
+    # and the restart policy are the converge's, and the running server and its
+    # enablement for boot are the sign-in's.
+    - name: Stat what the sign-in leaves behind, and what it must not
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /home/dev/.claude/.credentials.json
+        - /etc/systemd/system/claude-remote-control.path
+        - /home/dev/.config/claude-on-proxmox/claude-login.out
+        - /home/dev/.config/claude-on-proxmox/claude-login.in
+        - /home/dev/.config/claude-on-proxmox/claude-login.pid
+      register: verify_sign_in
+
+    # Gone means unloaded, not only a missing file: a unit deleted without
+    # being stopped keeps watching until systemd is told.
+    - name: Read what systemd makes of the path unit
+      ansible.builtin.command:
+        argv: [systemctl, show, claude-remote-control.path, -p, LoadState, -p, ActiveState]
+      register: verify_path_unit
+      changed_when: false
+
+    # Each sign-in collects and cleans up its own background job, as dev.
+    - name: Find any background job left in dev's async directory
+      ansible.builtin.find:
+        paths: /home/dev/.ansible_async
+        file_type: any
+      register: verify_async_jobs
+
+    - name: Read what the stand-in claude was asked
+      ansible.builtin.slurp:
+        src: /home/dev/.claude/fake/calls.log
+      register: verify_claude_calls
+
     - name: Read the installed Remote Control unit
       ansible.builtin.slurp:
         src: /etc/systemd/system/claude-remote-control.service
@@ -122,12 +159,23 @@
         name: claude-remote-control
       register: verify_rc_service
 
-    - name: Assert Remote Control is prepared but correctly not started
+    - name: Assert Remote Control runs after the sign-in, and nothing of the sign-in is left
       vars:
         verify_rc_text: "{{ verify_rc_unit.content | b64decode }}"
         verify_rc_json: "{{ verify_rc_cfg.content | b64decode | from_json }}"
+        verify_calls: "{{ (verify_claude_calls.content | b64decode).splitlines() }}"
       ansible.builtin.assert:
         that:
+          # Signed in, by the code the side effect gave, with nothing to end
+          - verify_sign_in.results[0].stat.exists
+          - "'accepted' in verify_calls"
+          - "'TERM' not in verify_calls"
+          # The path unit was only for the wait, and the sign-in's files went
+          - not verify_sign_in.results[1].stat.exists
+          - "'LoadState=not-found' in verify_path_unit.stdout_lines"
+          - "'ActiveState=inactive' in verify_path_unit.stdout_lines"
+          - verify_async_jobs.matched == 0
+          - verify_sign_in.results[2:] | map(attribute='stat.exists') | select | list | length == 0
           # Runs as the VM user, from the projects directory, not as root
           - "'User=dev' in verify_rc_text"
           - "'WorkingDirectory=/home/dev/projects' in verify_rc_text"
@@ -146,9 +194,9 @@
           - verify_rc_json.hasCompletedOnboarding
           - verify_rc_json.remoteDialogSeen | default(false)
           - verify_rc_json.projects['/home/dev/projects'].hasTrustDialogAccepted
-          # Not logged in, so it must be left alone rather than crash-looping
-          - verify_rc_active.stdout | trim != 'active'
-          - verify_rc_enabled.stdout | trim != 'enabled'
+          # Signed in, so started, and enabled for boot
+          - verify_rc_active.stdout | trim == 'active'
+          - verify_rc_enabled.stdout | trim == 'enabled'
           # Restarted whatever the exit status, so server mode giving up on the
           # network comes back too; backing off to five minutes rather than
           # hitting a start limit that would leave it failed for good
@@ -158,7 +206,9 @@
           - verify_rc_service.status.RestartMaxDelayUSec == '5min'
           - verify_rc_service.status.StartLimitIntervalUSec == '0'
         fail_msg: >-
-          Remote Control preparation is wrong. active={{ verify_rc_active.stdout | trim }}
+          Remote Control after the sign-in is wrong. active={{ verify_rc_active.stdout | trim }}
+          sign-in files={{ verify_sign_in.results | map(attribute='stat.exists') | list }}
+          calls={{ (verify_claude_calls.content | b64decode).splitlines() }}
           enabled={{ verify_rc_enabled.stdout | trim }}
           Restart={{ verify_rc_service.status.Restart | default('?') }}
           RestartUSec={{ verify_rc_service.status.RestartUSec | default('?') }}

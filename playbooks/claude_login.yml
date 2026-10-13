@@ -1,29 +1,149 @@
 ---
-# Print the one command Remote Control cannot automate.
+# Sign Claude Code in on the VMs, or say how each one is signed in.
 #
-#   make claude-login VM_NAME=alpha
+#   make claude-login VM_NAME=alpha         -> signs alpha in, then starts Remote Control
+#   make claude-login VM_NAME=alpha,beta    -> the same, one VM after the other
+#   make claude-login                       -> reports every VM's state
 #
 # Remote Control needs a claude.ai subscription login on the VM itself, and
 # Anthropic supports no non-interactive way to create one: API keys are not
 # accepted, and the long-lived token from `claude setup-token` can make model
-# requests but explicitly cannot establish a Remote Control session. So the
-# login is a browser flow, done once per VM. Over SSH the browser cannot reach
-# Claude Code's local callback server, so it shows a code to paste back into
-# the terminal - which is the supported path, not a workaround.
+# requests but cannot establish a Remote Control session. So the login is a
+# browser flow, once per VM, and this runs it as far as it goes (the claude_code
+# role's browser_login.yml): claude auth login on the VM, the sign-in page
+# opened on this machine, the code the page shows pasted at a prompt here, and
+# Remote Control started in the same run. make deploy imports this playbook for
+# the VMs it configured.
 - name: Discover VMs on Proxmox
   ansible.builtin.import_playbook: discover.yml
   when: claude_vm_discovery | default(true) | bool
 
-- name: Show how to log Claude Code in on each VM
+# Every VM at once, before any prompt: rescue never sees an unreachable host,
+# and under serial an unreachable VM is a whole batch failed, which ends the
+# run. One that does not answer is said, skipped below, and failed at the end.
+- name: Reach each VM before its sign-in
   hosts: claude_vms
   gather_facts: false
 
   tasks:
-    # The decision is the claude_code role's, so this and `make configure`
-    # cannot disagree about whether a VM is signed in the way Remote Control
-    # needs. tests/unit/test_remote_control_playbooks.py runs this playbook
-    # against canned logins.
-    - name: Report the login state and what to do about it
-      ansible.builtin.include_role:
-        name: claude_code
-        tasks_from: login
+    - name: Reach the VM
+      ansible.builtin.ping:
+      ignore_unreachable: true
+      register: claude_vm_reach
+
+    - name: Remember that the VM could not be reached
+      ansible.builtin.set_fact:
+        claude_vm_claude_login_failure: >-
+          {{ inventory_hostname }} could not be reached, so it was not signed in:
+          {{ claude_vm_reach.msg | default('no answer') | trim }}
+      when: claude_vm_reach is unreachable
+
+    - name: Say which VM could not be reached
+      ansible.builtin.debug:
+        msg: "{{ claude_vm_claude_login_failure }}"
+      when: claude_vm_reach is unreachable
+
+# One VM at a time when a sign-in can prompt, since the prompt reads one
+# terminal; a report prompts for nothing and reads the fleet at once. Under
+# serial a VM whose sign-in fails is a whole batch failed, which would end the
+# run, so a failure is caught here, said, and raised by the last play once
+# every VM has had its turn - unless it is the person aborting at the prompt.
+- name: Sign Claude Code in, or say how each VM is signed in
+  hosts: claude_vms
+  gather_facts: false
+  vars:
+    # Names given (any number), or make deploy: sign in. Bare: report.
+    claude_vm_login_prompts: >-
+      {{ claude_vm_login_interactive
+         | default((vm_name | default('', true) | split(',') | map('trim') | select | list | length) > 0) }}
+  serial: "{{ 1 if claude_vm_login_prompts | bool else '100%' }}"
+
+  tasks:
+    - name: Sign this VM in
+      block:
+        # The decision is the claude_code role's, so this and `make configure`
+        # cannot disagree about whether a VM is signed in the way Remote
+        # Control needs. tests/unit/test_remote_control_playbooks.py and
+        # tests/unit/test_claude_login.py run this playbook against stand-ins.
+        - name: Report the login state, and sign the VM in when asked to
+          ansible.builtin.include_role:
+            name: claude_code
+            tasks_from: login
+          vars:
+            claude_code_login_interactive: "{{ claude_vm_login_prompts }}"
+          # On the task, not the block: a block's condition is its rescue's
+          # too, read again for each task, and the rescue sets this fact, so
+          # the message after it was skipped.
+          when: claude_vm_claude_login_failure is not defined
+      rescue:
+        # Ctrl-C then A at the prompt is pause's abort: end the run, as asked,
+        # rather than go on to the next VM's sign-in page.
+        - name: Stop the run when the person aborted at the prompt
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_result.msg }}"
+          when: ansible_failed_result.msg | default('') is search('user requested abort')
+
+        - name: Remember why this VM's sign-in failed
+          ansible.builtin.set_fact:
+            claude_vm_claude_login_failure: "{{ ansible_failed_result.msg | default('the sign-in failed', true) }}"
+
+        - name: Say why, and go on with the next VM
+          ansible.builtin.debug:
+            msg: "{{ claude_vm_claude_login_failure }}"
+
+# What a sign-in leads to, for every VM signed in just now, after the last
+# prompt: Remote Control's start and its stay-up check. A failure here is not
+# a failed sign-in - the login is made - and is raised even under make deploy,
+# at its end, naming the command that retries it.
+- name: Start Remote Control on each VM signed in just now
+  hosts: claude_vms
+  gather_facts: false
+
+  tasks:
+    - name: Start Remote Control as make configure would
+      when:
+        - claude_vm_claude_login_failure is not defined
+        - claude_code_login_done | default(false) | bool
+      block:
+        - name: Start Remote Control now that the login exists
+          ansible.builtin.include_role:
+            name: claude_code
+            tasks_from: after_login
+      rescue:
+        - name: Remember that the work after the sign-in failed
+          vars:
+            claude_vm_failed_why: "{{ ansible_failed_result.msg | default('no message', true) | trim }}"
+          ansible.builtin.set_fact:
+            claude_vm_configure_failures: >-
+              {{ claude_vm_configure_failures | default([])
+                 + [inventory_hostname ~ ' is signed in to Claude, but starting Remote Control failed at "'
+                    ~ (ansible_failed_task.name | default('a task')) ~ '": ' ~ claude_vm_failed_why
+                    ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.')
+                    ~ ' Retry it with: make configure VM_NAME=' ~ inventory_hostname ~ ' TAGS=claude_code'] }}
+
+        - name: Say why
+          ansible.builtin.debug:
+            msg: "{{ claude_vm_configure_failures | last }}"
+
+# make deploy carries on past a sign-in that failed - its VMs exist and are
+# configured, and the message above says what is left - and raises the work
+# after a sign-in at its own end; make claude-login exists to sign in, so here
+# the run fails, VM by VM.
+- name: Fail each VM whose sign-in, or the work after it, failed
+  hosts: claude_vms
+  gather_facts: false
+
+  tasks:
+    - name: Fail where the sign-in failed
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_claude_login_failure }}"
+      when:
+        - claude_vm_claude_login_failure is defined
+        - not (claude_vm_login_in_deploy | default(false) | bool)
+
+    - name: Fail where the work after the sign-in failed
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_configure_failures | join(' ') }}"
+      when:
+        - claude_vm_configure_failures | default([]) | length > 0
+        - not (claude_vm_login_in_deploy | default(false) | bool)

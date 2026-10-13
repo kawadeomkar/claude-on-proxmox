@@ -4,6 +4,7 @@
 # different inputs:
 #
 #   1. the key is cleared              -> it leaves settings.json; Remote Control is prepared
+#  1b. a login lands, nothing else run -> the path unit starts the server by itself
 #   2. Remote Control is switched off  -> the prepared unit is removed again,
 #                                         and a dry run with no login does not fail
 #   3. a login whose server exits      -> a dry run first does not fail either;
@@ -75,6 +76,68 @@
           claude_code_side_effect_prepared.status.ActiveState | default('?') }}.
         quiet: true
 
+    # ------------------------ 1b. a login lands while the path unit waits --
+    # What the path unit is for: a login made any other way - in the Claude
+    # terminal of make code - starts the server with no run of the role. A
+    # stand-in plays a server that stays up; the real claude is put back after,
+    # and the service stopped, so step 2 meets the path unit still watching.
+    - name: Move the real claude aside for the login that lands
+      ansible.builtin.command:
+        argv: [mv, "{{ claude_code_side_effect_bin }}", "{{ claude_code_side_effect_bin }}.real"]
+        creates: "{{ claude_code_side_effect_bin }}.real"
+
+    - name: Stand in a server that stays up
+      ansible.builtin.copy:
+        content: "{{ claude_code_side_effect_stand_in | replace('SERVER', 'exec sleep 600') }}"
+        dest: "{{ claude_code_side_effect_bin }}"
+        owner: dev
+        group: dev
+        mode: "0755"
+
+    - name: Land a login, as claude does, with nothing else run
+      ansible.builtin.copy:
+        content: "{}\n"
+        dest: /home/dev/.claude/.credentials.json
+        owner: dev
+        group: dev
+        mode: "0600"
+
+    - name: Wait for the path unit to start the server
+      ansible.builtin.command:
+        argv: [systemctl, is-active, claude-remote-control]
+      register: claude_code_side_effect_landed
+      until: claude_code_side_effect_landed.stdout == 'active'
+      retries: 15
+      delay: 1
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the login alone started Remote Control
+      ansible.builtin.assert:
+        that: claude_code_side_effect_landed.stdout == 'active'
+        fail_msg: >-
+          A login landing while the path unit waited did not start the service
+          (is-active: {{ claude_code_side_effect_landed.stdout | default('?') }}): check PathChanged= in
+          templates/claude-remote-control.path.j2 against where claude writes the login.
+        quiet: true
+
+    - name: Put the real claude back
+      ansible.builtin.command:
+        argv: [mv, -f, "{{ claude_code_side_effect_bin }}.real", "{{ claude_code_side_effect_bin }}"]
+        removes: "{{ claude_code_side_effect_bin }}.real"
+
+    - name: Take the login away again
+      ansible.builtin.file:
+        path: /home/dev/.claude/.credentials.json
+        state: absent
+
+    # After the removal, which the path unit also reacts to: stopped, a service
+    # is not restarted.
+    - name: Stop the server the login started
+      ansible.builtin.systemd_service:
+        name: claude-remote-control
+        state: stopped
+
     # ------------------------------------- 2. Remote Control switched off --
     - name: Switch Remote Control off and re-run the role
       ansible.builtin.include_role:
@@ -93,12 +156,21 @@
         name: claude-remote-control
       register: claude_code_side_effect_off
 
+    # Unloaded and inactive, not only its file gone: deleted without a stop, a
+    # path unit goes on watching, and would start a service nobody wants.
+    - name: Read the path unit after Remote Control was switched off
+      ansible.builtin.systemd_service:
+        name: claude-remote-control.path
+      register: claude_code_side_effect_off_path
+
     - name: Assert switching Remote Control off removed the unit
       ansible.builtin.assert:
         that:
           - not claude_code_side_effect_off_unit.stat.exists
           # Reloaded, so systemd no longer knows the unit either
           - claude_code_side_effect_off.status.LoadState == 'not-found'
+          - claude_code_side_effect_off_path.status.LoadState == 'not-found'
+          - claude_code_side_effect_off_path.status.ActiveState == 'inactive'
         fail_msg: >-
           claude_code_remote_control: false left the Remote Control unit behind
           (file exists: {{ claude_code_side_effect_off_unit.stat.exists }},

@@ -23,20 +23,46 @@
   ansible.builtin.include_tasks: auth_status.yml
   when: github_projects_gh_found | bool
 
-# The device flow, for the one VM make github-login was given: nothing to run
-# by hand. playbooks/github_login.yml sets github_projects_login_interactive
-# only when exactly one VM was named.
-- name: login | Sign gh in by the device flow
-  ansible.builtin.include_tasks: device_flow.yml
+# make deploy, for every VM but one whose Claude prompt got Enter: the flow
+# waits up to fifteen minutes for a browser, so it can always be left for
+# later. Where a Claude code was entered someone is here, and Enter goes; a
+# VM that showed no Claude prompt (signed in already, or an API key) goes on
+# a "y". With no terminal pause returns at once with nothing
+# (vars/main.yml, github_projects_login_go).
+- name: login | Ask whether to sign gh in to GitHub now for {{ inventory_hostname }}
+  vars:
+    github_projects_login_question: >-
+      {{ inventory_hostname }}: gh is not signed in to GitHub.
+      {{ 'Enter signs it in now (a page opens, and this run waits up to fifteen minutes for the approval); type n and Enter to skip it'
+         if github_projects_login_interactive | bool
+         else 'Type y and Enter to sign it in now (a page opens, and this run waits up to fifteen minutes for the approval), or Enter alone to skip' }}
+  ansible.builtin.pause:
+    prompt: "{{ github_projects_login_question }}"
+  register: github_projects_login_asked
   when:
-    - github_projects_login_interactive | default(false) | bool
+    - github_projects_login_ask | bool
     - github_projects_auth_wanted | bool
     - github_projects_web_wanted | bool
     - github_projects_auth_status.rc | default(1) == 0
     - not github_projects_signed_in | bool
 
-# The login command ends its line, with no full stop after it: one after it
-# is pasted along with it.
+# The device flow, for the VMs make github-login was given, and make deploy's
+# by the answer above: nothing to run by hand. playbooks/github_login.yml sets
+# the switches, and runs its play one VM at a time.
+- name: login | Sign gh in by the device flow
+  ansible.builtin.include_tasks: device_flow.yml
+  when:
+    - github_projects_login_go | bool
+    - github_projects_auth_wanted | bool
+    - github_projects_web_wanted | bool
+    - github_projects_auth_status.rc | default(1) == 0
+    - not github_projects_signed_in | bool
+
+# Advice only for what can run: the device flow when it would (web), the
+# token sign-in when a vault token waits for it - which the whole role does
+# next in this run under make github-login VM_NAME=x - and nothing with
+# github_auth: false, which leaves gh alone. A command that ends the line has
+# no full stop after it: one would be pasted along with it.
 - name: login | Report the login state and what to do about it
   vars:
     github_projects_login_how:
@@ -46,27 +72,41 @@
       oauth: through a device-flow login
       env: through a GH_TOKEN or GITHUB_TOKEN in its environment, which this role leaves alone
       other: in a way this role does not manage
-    github_projects_login_scopes: "{{ github_projects_auth_account.scopes | default('') }}"
+    github_projects_account_scopes: "{{ github_projects_auth_account.scopes | default('') }}"
+    github_projects_login_unreadable: >-
+      {{ 'gh could not report its login state (' ~ (github_projects_status_said or 'no output')
+         ~ '); `gh auth status --json` needs gh 2.81.0 or newer.'
+         ~ (' Install gh from GitHub\'s apt repository (dev_tools_install_gh: true), or set github_auth: false to leave gh alone.'
+            if github_projects_auth | bool else ' This project leaves gh alone there (github_auth: false).') }}
+    github_projects_login_signed_in: >-
+      {{ ('signed in' if github_projects_login_done | default(false) | bool else 'already signed in')
+         ~ ' to GitHub as ' ~ (github_projects_auth_account.login | default('?', true))
+         ~ ' ' ~ github_projects_login_how[github_projects_login_kind] ~ '.'
+         ~ (' Its token lacks the workflow scope, so a push that changes .github/workflows/ is'
+            ~ ' refused; add it with: ssh -t ' ~ github_projects_user ~ '@'
+            ~ ansible_host | default(inventory_hostname) ~ ' gh auth refresh -h github.com -s workflow'
+            if github_projects_login_kind == 'oauth' and 'workflow' not in github_projects_account_scopes
+            else '') }}
+    github_projects_login_signed_out: >-
+      {{ 'not signed in to GitHub, and this project leaves gh alone there (github_auth: false).'
+         if not github_projects_auth | bool
+         else 'not signed in to GitHub, so only public repositories are cloned and git push fails there.'
+              ~ (' vault_github_token is set, and the role signs gh in with it next, in this run.'
+                 if github_projects_login_role_follows | bool
+                 else ' vault_github_token is set, so configuration signs gh in with it, or says what stops it: '
+                      ~ github_projects_configure_command)
+         if github_projects_token_wanted | bool and github_projects_token_set | bool
+         else 'not signed in to GitHub, so only public repositories are cloned and git push fails there.'
+              ~ ' github_auth_method is token, so set vault_github_token, then run ' ~ github_projects_configure_command
+         if github_projects_auth_method == 'token'
+         else 'not signed in to GitHub, so only public repositories are cloned and git push fails there.'
+              ~ ' Run ' ~ github_projects_login_command ~ ' to sign in by the device flow;'
+              ~ ' that run clones the private repositories too.' }}
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}:
       {{ 'gh is not installed (dev_tools_install_gh), so there is nothing to sign in.'
          if not github_projects_gh_found | bool
-         else 'gh could not report its login state ('
-              ~ (github_projects_auth_status.stderr | default('') | trim or 'no output')
-              ~ '); `gh auth status --json` needs gh 2.81.0 or newer. Install gh from GitHub\'s apt'
-              ~ ' repository (dev_tools_install_gh: true), or set github_auth: false to leave gh alone.'
-         if github_projects_auth_status.rc | default(0) != 0
-         else 'already signed in to GitHub as ' ~ (github_projects_auth_account.login | default('?', true))
-              ~ ' ' ~ github_projects_login_how[github_projects_login_kind] ~ '.'
-              ~ (' Its token lacks the workflow scope, so a push that changes .github/workflows/ is'
-                 ~ ' refused; add it with: ssh -t ' ~ github_projects_user ~ '@'
-                 ~ ansible_host | default(inventory_hostname) ~ ' gh auth refresh -h github.com -s workflow'
-                 if github_projects_login_kind == 'oauth' and 'workflow' not in github_projects_login_scopes
-                 else '')
-         if github_projects_signed_in | bool
-         else 'not signed in to GitHub, so only public repositories are cloned and git push fails there.'
-              ~ (' github_auth_method is token, so set vault_github_token and run make configure.'
-                 if github_projects_auth_method == 'token'
-                 else ' Run ' ~ github_projects_login_command ~ ' to sign in by the device flow: one VM at a time,'
-                      ~ ' and that run clones the private repositories too.') }}
+         else github_projects_login_unreadable if github_projects_auth_status.rc | default(0) != 0
+         else github_projects_login_signed_in if github_projects_signed_in | bool
+         else github_projects_login_signed_out }}

@@ -6,8 +6,13 @@ Ansible project that turns a Proxmox VE host into a ready-to-use
 1. **Template** – builds a cloud-init enabled Ubuntu 24.04 template on the Proxmox host (one time).
 2. **Provision** – clones the template into a VM named by you, with your SSH key, and reports the address DHCP gave it.
 3. **Configure** – installs a baseline of packages, developer tooling (Node.js, Docker, GitHub CLI, uv),
-   Claude Code itself, signs `gh` in to GitHub, and clones **every repository of your GitHub account**,
-   private ones included, into `~/projects`, ready to push from.
+   Claude Code itself, and clones **every repository of your GitHub account** into `~/projects`: the
+   private ones too once `gh` is signed in, by a token in the vault or the sign-in below.
+4. **Sign in** – signs each VM in to Claude, which starts Remote Control, and `gh` in to GitHub, ready to
+   push from: each by a page in your browser and a code, the one step either vendor leaves to you.
+5. **Open** – opens the VM in VS Code, where a terminal starts a Claude session.
+
+`make deploy` does all five in one run.
 
 Everything environment-specific (Proxmox IP, GitHub username, tokens) lives in git-ignored files, so the
 repository can be shared as-is.
@@ -167,27 +172,50 @@ Edit the three git-ignored files `make init` created:
 | `inventory/group_vars/all/local.yml` | Proxmox node/storage names, package choices, which repos to skip |
 | `inventory/group_vars/all/vault.yml` | Proxmox API token, GitHub username/token, optional Anthropic API key |
 
-Encrypt the secrets, then run the three stages. The `make` targets refuse to run while `vault.yml`
-is still plaintext.
+Encrypt the secrets, then deploy. The `make` targets refuse to run while `vault.yml` is still
+plaintext.
 
 ```bash
 (umask 077; openssl rand -base64 32 > .vault_pass)
 make vault-encrypt
 
-make deploy VM_NAME=alpha          # template (if missing) + provision + configure
+make deploy VM_NAME=alpha
 ```
 
-`make deploy` is the whole thing in one command, and every stage is idempotent, so it is also what
-you re-run after changing a variable. (VM hardware — cores, memory, disk — is applied only when the
-VM is created; changing it for a VM that already exists needs `proxmox_vm_force_update`, see
-[Re-running](#re-running).) It works on the VMs named in `VM_NAME` and nothing else: it
-configures exactly what it has just provisioned, never the rest of your VMs. The three stages are
-available separately when you want them:
+`make deploy` is the whole thing in one command. It builds the template if it is missing, creates
+and configures the VM, signs it in to Claude and to GitHub, and opens it in VS Code, where a terminal
+of the window starts a Claude session. Two steps in it are yours, because neither vendor lets anything
+else take them: each opens a page in your browser, and the run waits for you there.
+
+1. **Claude.** Authorise Claude Code on the page, then paste the code the page shows at the run's
+   `Code:` prompt. Remote Control starts in the same run, so the session is on your phone too.
+2. **GitHub**, when there is no `vault_github_token` in the vault. The run asks first: Enter signs the
+   VM in now, `n` leaves it for later. The code is then on your clipboard: paste it on the page and
+   authorise, and the private repositories are cloned in the same run. The run waits until the code is
+   approved or expires, after fifteen minutes, and Ctrl-C there ends the whole deploy, its VS Code
+   window included. A VM that needed no Claude sign-in - signed in already, or on an API key - is asked
+   too, and signs in on `y`; Enter leaves it.
+
+Pressing Enter at a VM's `Code:` prompt skips both for that VM, and a run with no terminal skips them
+all; either way the deploy finishes, `make claude-login VM_NAME=alpha` and `make github-login
+VM_NAME=alpha` do them later, and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the command that
+retries it, and the rest of the deploy goes on.
+
+Every stage is idempotent, so `make deploy` is also what you re-run after changing a variable: a VM
+already signed in is only reported, and VS Code brings its window to the front. (VM hardware — cores,
+memory, disk — is applied only when the VM is created; changing it for a VM that already exists needs
+`proxmox_vm_force_update`, see [Re-running](#re-running).) It works on the VMs named in `VM_NAME` and
+nothing else: it configures exactly what it has just provisioned, never the rest of your VMs, and
+signs them in one after another. For more than one VM it opens no window, and ends with each VM's
+`make code` line. The stages are available separately when you want them:
 
 ```bash
 make template                      # once per Proxmox host   (over SSH, as root)
 make provision VM_NAME=alpha       # create + start a VM     (via the API)
 make configure VM_NAME=alpha       # set it up               (over SSH, as the VM user)
+make claude-login VM_NAME=alpha    # sign Claude in, start Remote Control
+make github-login VM_NAME=alpha    # sign gh in, clone the private repositories
+make code VM_NAME=alpha            # open it in VS Code
 ```
 
 A second `make deploy` rebuilds nothing. It checks through the API whether the template exists and
@@ -230,10 +258,8 @@ No address for gamma: the guest agent has not reported one.
 Those VMs may be stopped, still booting, built without the agent, or on a node that is down.
 ```
 
-Then `ssh dev@192.0.2.51` and run `claude`. If you did not set `vault_anthropic_api_key`, log in
-interactively the first time. Or open the VM in VS Code on your own machine: the run has already
-written an SSH alias named after the VM, so `ssh alpha` works too, and `make code VM_NAME=alpha`
-opens its `~/projects` in the editor (see [Using VS Code on the VM](#using-vs-code-on-the-vm)).
+Later, `make code VM_NAME=alpha` opens the VM in VS Code again, and the alias the run wrote, named
+after the VM, makes `ssh alpha` work too (see [Using VS Code on the VM](#using-vs-code-on-the-vm)).
 
 ### Naming and multiple VMs
 
@@ -293,6 +319,32 @@ ISO images; they are safe to delete from there once the template is built.
 Existing VMs keep working; they are configured over SSH and are not re-cloned.
 Your API token also needs the guest-agent privilege added - see
 [Creating the Proxmox API token](#creating-the-proxmox-api-token).
+
+#### A vault GitHub token from an earlier version
+
+Earlier versions asked for a token with `repo` alone, used only to list your repositories. This
+version also signs `gh` in with it, and gh refuses a classic token without `read:org`. Such a token
+keeps listing as before: the run says gh stayed signed out and which scopes to add (`read:org`, and
+`workflow` for pushes that change `.github/workflows/`), and the next `make configure` signs gh in once
+they are there. `github_auth_method: web` signs gh in by the device flow instead, the token listing only.
+
+#### A gh login or git identity you set up by hand
+
+Earlier versions asked you to sign `gh` in on the VM yourself for pushes, beside a vault token used only
+to list. This version signs gh in with `vault_github_token` only where gh is signed out or signed in by
+this project, so such a login stays, and each run says the token only lists there; set
+`github_auth_method: token` to have the token take over. A `user.name` or `user.email` you set on the VM
+stays too: only a missing one is derived from your GitHub account, while `git_user_name` and
+`git_user_email`, when set, are always written.
+
+#### Remote Control on a VM configured by an earlier version
+
+A VM waiting for its first Claude login now gets a path unit that starts Remote Control the moment a
+login lands, so a sign-in made in the Claude terminal of `make code` starts it by itself. A VM last
+configured by an earlier version has no such unit: run `make configure VM_NAME=alpha TAGS=claude_code`
+once (or `make deploy VM_NAME=alpha`), or sign it in with `make claude-login VM_NAME=alpha`, which
+starts Remote Control itself. The Claude terminal of `make code` tells the two apart, and on such a VM
+names that `make configure` line.
 
 #### Adopting VMs created before tagging
 
@@ -384,7 +436,7 @@ and set `proxmox_validate_certs: true` in `local.yml`.
 | `vscode_server` | What VS Code's Remote - SSH extension needs on the host: an sshd drop-in that keeps the port forward the VS Code Server is reached through enabled, plus keepalives, checked against what sshd actually runs with; and a higher inotify limit for the file watcher. Off removes both files | `vscode_remote`, `vscode_server_client_alive_interval`, `vscode_server_inotify_watches` |
 | `dev_tools` | Node.js (NodeSource), Docker Engine, GitHub CLI, uv/uvx (release pinned by version and SHA256), pipx, build tools. Apt signing keys are vendored in `roles/dev_tools/files` | `dev_tools_install_*`, `dev_tools_node_major`, `dev_tools_uv_version`, `dev_tools_npm_global_packages` |
 | `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md`, and optionally a Remote Control server so the session is reachable from claude.ai and the mobile app | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions`, `claude_code_remote_control` |
-| `github_projects` | Signs `gh` in to GitHub - from `github_token`, or by a device-flow login you make once - and makes it git's credential helper; lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters, private ones with a login) and clones them; writes a git identity | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_auth`, `git_user_name`, `git_user_email`, `github_projects_clone_protocol` |
+| `github_projects` | Signs `gh` in to GitHub - from `github_token`, or by a device-flow login you make once - and makes it git's credential helper; lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters, private ones with a login) and clones them; writes a git identity where none is set | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_auth`, `git_user_name`, `git_user_email`, `github_projects_clone_protocol` |
 | `proxmox_vm` | Looks the VM up **by name**, clones the template when it does not exist, applies cloud-init (user, keys, DHCP by default, DNS), resizes the disk, starts it, then waits for the guest agent to report an address. `proxmox_vm_state: absent` deletes it. Either way it refuses an existing VM of that name that is a template or is not tagged `claude-on-proxmox`, rather than provision over it or delete it | `vm_cores`, `vm_memory_mb`, `vm_disk_size`, `vm_nameservers` (fleet-wide, in `local.yml`); `proxmox_vm_ipconfig` for a fixed address, also fleet-wide, so single-VM runs only |
 | `proxmox_template` | Downloads the Ubuntu cloud image (SHA256 verified), creates the VM with `qm`, imports the disk, adds the cloud-init drive, converts to template | `proxmox_template_vmid`, `proxmox_template_image_url`, `proxmox_template_storage` |
 
@@ -417,12 +469,17 @@ push or a `gh pr create` later needs the second again. `github_projects` covers 
 on the VM, one of two ways:
 
 - **With `vault_github_token` set**, the token lists your repositories, private ones included, and signs
-  `gh` in on the VM, so one `make deploy` ends with everything cloned and a VM that pushes. As a classic
-  token it needs `repo`, `workflow` and `read:org`; as a fine-grained one, Metadata (read), Contents,
+  `gh` in on the VM where gh is signed out or signed in by this project, so one `make deploy` ends with
+  everything cloned and a VM that pushes. A login you made on the VM yourself stays, and the token only
+  lists there; each run says so, and `github_auth_method: token` puts the token over it. As a classic
+  token it needs `repo`, `workflow` and `read:org` (with `repo` alone it only lists, and the run says which
+  scopes to add); as a fine-grained one, Metadata (read), Contents,
   Pull requests and Workflows (read and write) on all repositories - a token limited to selected
   repositories lists and clones only those. The same token serves every VM.
-- **Without one**, the first run clones the public repositories and says which command signs the VM in:
-  `make github-login VM_NAME=alpha`. That runs GitHub's device flow for you, as far as GitHub allows: gh
+- **Without one**, `make deploy` signs the VM in itself once you answer its question: Enter for a VM
+  whose Claude code you just pasted, `y` for one that needed no Claude sign-in (`make github-login
+  VM_NAME=alpha` does the same for a VM that exists). It runs GitHub's device flow for
+  you, as far as GitHub allows: gh
   starts on the VM in the background, the page github.com/login/device opens in your browser, the
   one-time code is on your clipboard and printed, and the run waits up to fifteen minutes while you paste
   the code and authorise GitHub CLI; then it makes gh git's credential helper, lists with the token gh just
@@ -431,19 +488,25 @@ on the VM, one of two ways:
   browser flow for github.com.
 
 ```bash
-make configure VM_NAME=alpha     # public repositories cloned; says gh is not signed in
-make github-login VM_NAME=alpha  # the page opens, the code is on your clipboard: paste, authorise
-                                 # ... then the private repositories are cloned in the same run
+make deploy VM_NAME=alpha        # ... the GitHub page opens, the code is on your clipboard: paste,
+                                 # authorise, and the private repositories are cloned in the same run
+make github-login VM_NAME=alpha  # the same, later, for a VM make configure left signed out
 ```
 
-  Without a name, `make github-login` only reports each VM's state; given several it reports too, since
-  the browser can take one sign-in at a time. A code left unapproved expires after fifteen minutes and the
-  run fails saying so; run it again for a fresh code. On a controller with no browser or clipboard the run
-  prints the page and the code and waits all the same, and `github_login_desktop: false` makes it never
-  try. The terminal that `make code` opens runs the same flow after the Claude sign-in, with the page
-  opening by itself and the code printed to copy (a Remote-SSH terminal cannot fill your clipboard);
-  the private repositories then take one `make configure`. `github_login_prompt: true` has `make
-  configure` and `make deploy` run the flow on a signed-out VM too, one VM at a time, waiting for you.
+  Without a name, `make github-login` only reports each VM's state; given several, it signs them in one
+  after another, since the browser takes one sign-in at a time. A code left unapproved expires after
+  fifteen minutes and that VM's sign-in fails saying so, after the others have had their turn; run it
+  again for a fresh code. `make deploy` asks VM by VM, because the flow waits for a browser and nothing
+  else tells an attended run from an unattended one: for a VM whose Claude code you pasted, Enter signs
+  it in and `n` leaves it; a VM that showed no Claude prompt signs in on `y`; one whose `Code:` prompt
+  got Enter is not asked (with no terminal a question answers itself with nothing). Once the code is
+  shown the run waits until it is approved or expires, and Ctrl-C there ends the whole run, so answer
+  `n` to leave a VM for later. `make configure` never runs it. On a controller with no browser or clipboard the run prints the page and the
+  code and waits all the same, and `login_desktop: false` makes it never try. The terminal that `make
+  code` opens runs the same flow after the Claude sign-in, with the page opening by itself and the code
+  printed to copy (a Remote-SSH terminal cannot fill your clipboard); Ctrl-C there skips it and starts
+  Claude. The private repositories then take one `make configure`, or `make github-login VM_NAME=alpha`,
+  which on a VM already signed in runs the clone straight away.
 
 `github_auth_method` picks between the two: `auto` (the default) is the token when there is one and the
 device flow otherwise, `web` is the device flow always, with a token used for the listing only, and
@@ -455,16 +518,20 @@ keep their HTTPS remotes and `git push` and `gh pr create` work, in a terminal, 
 and in a Remote Control session alike. The token lives in `~/.config/gh/hosts.yml` on the VM, readable by
 the VM user and so by Claude Code (see [What the VM trusts](#what-the-vm-trusts)). The role marks the login
 it made - a digest of the token, in `~/.config/claude-on-proxmox/` on the VM - and removes only that one
-when you clear `vault_github_token`; a login you made yourself stays, a token of your own pasted into `gh`
-included. `gh auth status --json`, which the role reads, needs gh 2.81 or newer: GitHub's apt repository,
+when you clear `vault_github_token`; a login you made yourself is never replaced by the vault token nor
+removed, a token of your own pasted into `gh` included. `gh auth status --json`, which the role reads, needs gh 2.81 or newer: GitHub's apt repository,
 which `dev_tools` installs from, provides it, and an older gh is a named failure rather than a VM reported
 as signed out on every run. `github_auth: false` in `local.yml` leaves `gh` and `~/.gitconfig` alone: a
-token then only lists, and a private repository it lists is skipped and named rather than failed.
+token then only lists. A private repository is cloned over HTTPS only where git can ask gh for it - gh
+signed in and made git's credential helper, by this role or by you (`gh auth setup-git`) - and is
+otherwise skipped and named rather than failed; over SSH your key clones it either way.
 
 Commits need an identity. `git_user_name` and `git_user_email` (in `local.yml`) are written to
-`~/.gitconfig` on the VM; left empty, the role uses your GitHub display name (or login) and GitHub's
-noreply address for your account, `<id>+<login>@users.noreply.github.com`, so no private email lands in
-commits by default.
+`~/.gitconfig` on the VM when set; left empty, each is derived only where `~/.gitconfig` has none, so an
+identity you set on the VM stays: the display name (or login) and GitHub's noreply address,
+`<id>+<login>@users.noreply.github.com`, of the account the token belongs to, or of `github_username`
+without one, so no private email lands in commits by default. An organisation gives none, which the run
+says: set the two, or sign gh in as yourself.
 
 `github_projects_clone_protocol: ssh` clones over SSH instead, with a key of your own on the VM; the role
 pre-seeds GitHub's published host keys, so there is no trust-on-first-use prompt. That covers `git` only:
@@ -503,7 +570,8 @@ make configure VM_NAME=alpha TAGS=claude_code     # writes ~/.claude/settings.js
 ```
 
 That makes `claude` on the VM authenticate against the Anthropic API. It does not start anything: Claude
-Code is a terminal program, so you still `ssh dev@<address>` and run `claude`.
+Code is a terminal program, so open it with `make code VM_NAME=alpha`, whose terminal starts `claude`, or
+`ssh alpha` and run `claude` there.
 
 Note this also **turns Remote Control off** for that VM, and the run says so. The two credentials are
 mutually exclusive: an API key outranks the claude.ai login, and only that login can establish a
@@ -514,7 +582,8 @@ instead.
 
 **Going back** works the same way: clear `vault_anthropic_api_key` and re-run. The role removes the
 `ANTHROPIC_API_KEY` it wrote from `~/.claude/settings.json` and leaves the rest of the file alone. A
-key set through `claude_code_settings.env` is yours, and stays.
+key set through `claude_code_settings.env` is yours, and stays. The VM then needs its claude.ai login:
+`make claude-login VM_NAME=alpha` signs it in and starts Remote Control (`make deploy` does both too).
 
 ### What the VM trusts
 
@@ -549,26 +618,48 @@ So `make configure` derives what to do from the credentials it finds on the VM:
 | On the VM | What happens |
 |---|---|
 | `vault_anthropic_api_key` is set | Off, and it says so. A key outranks the login, so the server would refuse to start. A server an earlier run installed is stopped and removed |
-| No key, no login yet | Everything installed, service left stopped, and you are told the one command to run |
+| No key, no login yet | Everything installed, service left stopped with a path unit waiting to start it when you sign in, and you are told how |
 | No key, signed in | The session starts and shows up in the app |
 | No key configured, but Claude Code on the VM still uses one | Service left stopped, and you are told where that key comes from (`claude auth status` reports it as `apiKeySource`) |
 | No key, signed in, but `~/.claude/settings.json` switches the feature off | Service left stopped, and the keys are named. A telemetry opt-out (`DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK`), an `apiKeyHelper`, a token or provider in `env`, or an `ANTHROPIC_BASE_URL` pointing anywhere but `api.anthropic.com` each disable Remote Control. Remove it, or keep it and set `claude_remote_control: false` |
 
-Activating it is therefore: leave the API key empty, log in once, re-run configure.
+Activating it is therefore: leave the API key empty and sign in once. `make deploy` asks for that
+itself, after configuring the VM; for a VM that exists, `make claude-login` does the same:
 
 ```bash
-make configure VM_NAME=alpha     # prepares everything, then says what is missing
-make claude-login VM_NAME=alpha  # prints the one command to run
-#   ssh -t dev@<address> "bash -lc 'claude auth login'"
-#   approve in the browser, paste the code back
-make configure VM_NAME=alpha     # the service starts; the session appears on your phone
+make claude-login VM_NAME=alpha  # the sign-in page opens in your browser: authorise,
+                                 # paste the code the page shows at the Code: prompt
+                                 # ... and Remote Control starts; the session appears on your phone
 ```
 
-It goes through `bash -lc` because only a login shell puts `~/.local/bin`, where the native installer
-puts `claude`, on `PATH`; a command given to `ssh` runs without one, so a bare `claude auth login` is
-`command not found`. `make claude-login` decides from the same `claude auth status` fields as
-`make configure`, so a VM signed in another way — a Console account, a `claude setup-token` token, an
-API key — is told by both what is in the way.
+The run starts `claude auth login` on the VM with no terminal, which makes it print the sign-in page and
+wait for a code; it opens that page here and asks you for the code the page shows once you authorise,
+and hands it to claude through a pipe. Once every VM named has had its turn, it starts the service on
+each one signed in, in the same run. The code is read with the run log's no_log, so it never lands in
+`.logs/`. Given several names it signs them in one after another; given none it only reports each VM's
+state. Enter alone at the prompt skips a VM, and a code claude refuses fails that VM by name once the
+others have had their turn; a code copied only up to its `#` (a double-click stops there) is asked for
+again, and Ctrl-C then `A` at the prompt ends the run. A sign-in page lasts `claude_login_timeout` plus
+half an hour: a code pasted later is said to be too late at once, with the command for a fresh page.
+Nothing else can take the step: Anthropic's page pre-fills nothing and shows its code only to you.
+
+Two variables tune it: `claude_login_args` passes extra arguments to `claude auth login` (`[--sso]`
+for a single sign-on login, say), and `claude_login_timeout` (120) is how many seconds claude may take
+to answer the code you paste. A VM whose Remote Control is off on purpose - `vault_anthropic_api_key`
+set, or `claude_remote_control: false` - is reported as such, with nothing to fix.
+
+A sign-in made any other way starts the service by itself too. While a VM waits for its first login,
+`make configure` leaves a systemd path unit, `claude-remote-control.path`, watching for the login file;
+the moment one lands - from `make claude-login`, the Claude terminal of `make code`, or by hand with
+`ssh -t dev@<address> "bash -lc 'claude auth login'"` - it starts the server. The next `make configure`
+enables the server for boot, runs the stay-up check below, and removes the path unit, so a server you
+stop later stays stopped. By hand, it goes through `bash -lc` because only a login shell puts
+`~/.local/bin`, where the native installer puts `claude`, on `PATH`; a command given to `ssh` runs
+without one, so a bare `claude auth login` is `command not found`.
+
+`make claude-login` decides from the same `claude auth status` fields as `make configure`, so a VM
+signed in another way — a Console account, a `claude setup-token` token, an API key — is told by both
+what is in the way, and never signed in over it.
 
 Set `claude_remote_control: false` in `local.yml` to turn it off. Like adding a key, that stops,
 disables and removes a server an earlier run installed. It is also the right answer when a privacy
@@ -591,7 +682,10 @@ On a signed-in VM, `make configure` then waits 20 seconds and fails, with the `j
 read why, unless the server process it started is still the one running. That is there to catch a
 server refused at startup, for its login, plan or organisation settings, during the run rather than
 when you reach for your phone. A re-run that changes nothing leaves a running server alone and skips
-the wait; a changed unit (a new permission mode, say) restarts it, once, and waits again.
+the wait; a changed unit (a new permission mode, say) restarts it, once, and waits again. After a
+sign-in, `make claude-login` and `make deploy` run the same check; a server that does not stay up
+fails the run at its end - after VS Code has opened, in a deploy - with
+`make configure VM_NAME=alpha TAGS=claude_code` to retry it, while the login itself is kept.
 
 #### How much of the VM a remote session can reach
 
@@ -629,11 +723,20 @@ logged into. The one thing it needs that `ssh dev@<address>` does not have is a 
 address DHCP gave the VM, and that is what this project keeps for you.
 
 ```bash
-make deploy VM_NAME=alpha          # as before; the run ends with
+make deploy VM_NAME=alpha          # ends by opening alpha in VS Code; configuration printed
 #   alpha: ssh alpha   |   make code VM_NAME=alpha   (opens /home/dev/projects)
 make code VM_NAME=alpha            # later: refresh the alias from Proxmox, then open the VM in VS Code
 make code VM_NAME=alpha PROJECT=discord-music-bot   # just that project, in a window of its own
 ```
+
+`make deploy` runs `make code` itself as its last step, for a run for one VM - the one `VM_NAME`
+names, or the default VM of a bare `make deploy`, whatever other VMs exist (`deploy_code: false`
+leaves it out). There, whatever keeps the window from opening - no alias, no `code` command, an SSH
+connection refused, a Remote - SSH extension that would not install - is said with the `make code`
+line instead of failing a deploy that is otherwise done; a VM the deploy found stopped, and so did not
+configure or sign in, is said with
+`make deploy VM_NAME=alpha ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"`. A deploy for several VMs
+opens no window and ends with each VM's `make code` line.
 
 `make code` looks the VM up on Proxmox, rewrites its alias in case the lease moved, checks over SSH
 that the folder it is about to open is there, installs the Remote - SSH extension if VS Code does
@@ -701,7 +804,8 @@ address; a lease that moves then never matters.
 
 **Agent forwarding is off**, and should stay off: the VM user has passwordless sudo and runs Claude
 Code, and `ForwardAgent yes` would hand every key in your agent to both for the life of the
-connection. Pushes go through `gh`, which `make configure` signs in on the VM itself (see
+connection. Pushes go through `gh`, signed in on the VM itself - by `make configure` from a vault
+token, or by `make deploy` and `make github-login` through GitHub's device flow (see
 [Private repositories, and pushing from the VM](#private-repositories-and-pushing-from-the-vm)).
 `claude_ssh_forward_agent: true` turns it on if you have decided otherwise.
 
@@ -732,15 +836,20 @@ Windows.
 
 `make code` does not stop at the window. VS Code is handed a small workspace file that names the
 folder and holds one task, so once the window has connected a terminal named **Claude** opens in it
-running `claude` in the folder: `make deploy` and then `make code` end in a Claude session in the
-repository. On a VM that has not signed in to Claude yet, the terminal runs `claude auth login`
-first. The sign-in page opens in the browser on your machine - VS Code Server sends every URL a
-terminal opens there - and if the page shows a code, paste it into the terminal. Then GitHub the same
+running `claude` in the folder: `make deploy` ends in a Claude session in the repository, and so does
+`make code` later. `make deploy` has signed the VM in already; on a VM that has not signed in to Claude
+yet, the terminal runs `claude auth login` first. The sign-in page opens in the browser on your
+machine - VS Code Server sends every URL a terminal opens there - and if the page shows a code, paste
+it into the terminal. Remote Control then starts by itself where the `claude_code` role left a unit
+waiting for the login; on a VM configured before that unit existed, or whose settings block Remote
+Control, the terminal names `make configure VM_NAME=alpha TAGS=claude_code` instead. A sign-in that
+fails says how to try again: *Tasks: Run Task*, *Claude*, or a window reload. Then GitHub the same
 way, on a VM where `gh` is not signed in yet: the terminal shows a one-time code and opens the page to
-enter it on, and `gh` becomes git's credential helper, so a push from that terminal works at once. The
+enter it on, and `gh` becomes git's credential helper, so a push from that terminal works at once;
+Ctrl-C skips GitHub, and Claude starts. The
 private repositories follow on the next `make configure` (see
 [Private repositories, and pushing from the VM](#private-repositories-and-pushing-from-the-vm));
-`github_auth: false` leaves GitHub out of the terminal too.
+`github_auth: false`, or `github_auth_method: token`, leaves GitHub out of the terminal too.
 
 The first time, VS Code waits for two answers that are yours to give:
 
@@ -778,9 +887,9 @@ repository named `.claude-on-proxmox` would land on the same path; `make code` r
 name, and `github_projects` would clone it there, so leave it out of `github_projects`.
 
 **After the first sign-in.** Remote Control ([Reaching a VM from your phone](#reaching-a-vm-from-your-phone))
-waits for exactly that login, and the terminal says so:
-`make configure VM_NAME=alpha TAGS=claude_code` starts it. A VM configured with an API key is
-already signed in, and goes straight to `claude`.
+waits for exactly that login. The terminal says it starts by itself, and `make configure VM_NAME=alpha
+TAGS=claude_code` keeps it on across reboots; where nothing waits for the login, it says that same
+command starts it. A VM configured with an API key is already signed in, and goes straight to `claude`.
 
 **Every window picks the folder's conversation up.** The terminal runs `claude --continue`: the
 folder's most recent conversation, or a new one when there is none. A window reload (*Developer:
@@ -853,7 +962,7 @@ before this project tagged its VMs, see
 ```bash
 make lint                 # yamllint + ansible-lint (production profile) + ruff
 make syntax               # --syntax-check of every playbook against your inventory/
-make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the GitHub sign-in and device flow, the managed SSH config, the Claude terminal, Makefile guards (no network)
+make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, both sign-ins and deploy's sign-in steps, the managed SSH config, the Claude terminal, Makefile guards (no network)
 make molecule             # Molecule (Docker) test of every role, incl. idempotence
 make molecule-integration # playbooks/configure.yml end to end in a container
 make molecule-provision   # provision.yml + discover.yml against a fake Proxmox API
@@ -892,6 +1001,13 @@ so the tests are deterministic:
   clone URLs at local bare repositories; a stand-in `gh` (`tests/molecule/fake_gh.sh`) ahead of the real one
   on PATH keeps the sign-in off the network. The unit tests run the role's sign-in and clone tasks against
   the same two, so the token, device-flow, cleared-token and signed-out paths are covered without Docker.
+- The Claude sign-in runs against a stand-in `claude` (`tests/molecule/fake_claude.sh`) that prints the
+  page and answers a pasted code as Claude Code does: in `tests/unit/test_claude_login.py`, once at a
+  pseudo-terminal of the test's own, and in the integration scenario's side effect, whose real role then
+  starts Remote Control under systemd. `tests/unit/test_sign_in_plays.py` runs both login playbooks, and
+  `make deploy`'s sign-in steps as `deploy.yml` has them, with a VM that cannot be reached among them.
+  Every scenario and both harnesses turn `login_desktop` off, so no test opens this machine's browser or
+  touches its clipboard.
 - `claude_code`, `dev_tools`, and the apt steps of every scenario download real packages, so the tests
   need internet access. The integration scenario disables the Docker Engine install (a daemon cannot run
   in the test container); the `dev_tools` scenario installs it but does not start it.
@@ -937,21 +1053,25 @@ generated from the commits since the previous tag.
 ```
 ansible.cfg                 project-wide Ansible settings (accept-new host keys, forks, yaml output)
 .logs/                      one log per make run that used Ansible (git-ignored, pruned after 14 days)
-deploy.yml                  template (if missing) + provision + configure
-playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, list.yml, claude_login.yml, destroy.yml,
-                            ssh_config.yml (the SSH aliases, fleet-wide), code.yml (one VM in VS Code)
+deploy.yml                  template (if missing) + provision + configure + both sign-ins + VS Code
+playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, list.yml, claude_login.yml and
+                            github_login.yml (the two sign-ins), destroy.yml, ssh_config.yml (the SSH aliases,
+                            fleet-wide), code.yml (one VM in VS Code)
 playbooks/tasks/            cluster_vms.yml (the shared cluster listing), vm_addresses.yml (each VM's config and
                             agent reply) and ssh_config.yml (one alias per VM in ~/.ssh/claude-on-proxmox.conf),
                             imported by the playbooks above
 filter_plugins/             net_mac, guest_ipv4, guest_address and guest_addresses, for reading guest agent
                             output; proxmox_access_denied, for telling a refused token from a slow boot;
                             ssh_config_blocks and ssh_config_prune, for the managed SSH config (proxmox.py);
-                            vscode_setting, for reading VS Code's settings without writing them (vscode.py)
+                            vscode_setting, for reading VS Code's settings without writing them (vscode.py);
+                            page_opener, for opening a sign-in page in your browser (desktop.py);
+                            plain_text, for quoting what a VM printed without its escape sequences (text.py)
 inventory/                  controller.yml, hosts.yml.example, group_vars/all/{defaults.yml,local.yml.example,vault.yml.example}
 roles/                      one role per concern, each with defaults, meta/argument_specs, molecule/
 roles/github_projects/library/github_repos.py   custom module
-tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, the GitHub
-                            sign-in, the managed SSH config, the Claude terminal, Makefile guards
+tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, both
+                            sign-ins and deploy's sign-in steps, the managed SSH config, the Claude terminal, Makefile
+                            guards
 tests/molecule/             shared fakes for Molecule scenarios
 molecule/configure/         integration scenario for the full configure playbook
 molecule/provision/         end-to-end scenario for provisioning + discovery

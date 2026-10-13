@@ -18,5 +18,8 @@ provisioner:
   env:
     # Resolve roles from this repository's roles/ directory (not Galaxy).
     ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/..
+    # The sign-in quotes what claude printed through the repository's
+    # plain_text filter and opens its page through page_opener.
+    ANSIBLE_FILTER_PLUGINS: ${MOLECULE_PROJECT_DIRECTORY}/../../filter_plugins
   playbooks:
     side_effect: side_effect.yml
