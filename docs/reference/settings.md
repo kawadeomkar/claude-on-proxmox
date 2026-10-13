@@ -279,11 +279,11 @@ make deploy starts the web login by itself; false asks first, VM by VM.
 |---|---|---|
 | `tailscale_login_auto_start` | `true` | a variable of [`tailscale`](roles/tailscale.md) |
 
-Delete a VM's device from your tailnet when make destroy deletes the VM, or Tailscale is turned off on it: none only logs it out; token uses vault_tailscale_api_token; oauth uses vault_tailscale_oauth_client_id and vault_tailscale_oauth_client_secret (devices:core).
+Delete a VM's device from your tailnet when make destroy deletes the VM, or Tailscale is turned off on it. auto uses whichever credential the vault holds - vault_tailscale_api_token first, else vault_tailscale_oauth_client_id and vault_tailscale_oauth_client_secret (devices:core) - and only logs the VM out with neither; none only logs it out; token and oauth use that one only.
 
 | Setting | Default | Notes |
 |---|---|---|
-| `tailscale_api_auth_method` | `none` | a variable of [`tailscale`](roles/tailscale.md) |
+| `tailscale_api_auth_method` | `auto` | a variable of [`tailscale`](roles/tailscale.md) |
 
 Tailscale SSH on the tailnet address (needs an ssh rule in your tailnet policy).
 
@@ -373,7 +373,7 @@ Optional: a Tailscale auth key, so each new VM joins your tailnet during configu
 |---|---|
 | `vault_tailscale_auth_key` | sets `tailscale_auth_key` ([`tailscale`](roles/tailscale.md)) |
 
-Optional: what deletes a VM's device from your tailnet when make destroy deletes the VM (tailscale_api_auth_method in local.yml). Used only on this machine, never sent to a VM. token: an API access token (Settings, Keys; tskey-api-..., at most 90 days). oauth: an OAuth client with the devices:core scope (Settings, OAuth clients), which does not expire. "Removing devices for you" in [docs/guides/tailscale.md](../guides/tailscale.md).
+Optional: what deletes a VM's device from your tailnet when make destroy deletes the VM - set either and it is used, the token when both are (tailscale_api_auth_method in local.yml can say otherwise). Used only on this machine, never sent to a VM. token: an API access token (Settings, Keys; tskey-api-..., at most 90 days). oauth: an OAuth client with the devices:core scope (Settings, OAuth clients), which does not expire. "Removing devices for you" in [docs/guides/tailscale.md](../guides/tailscale.md).
 
 | Secret, in `vault.yml` | Notes |
 |---|---|

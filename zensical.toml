@@ -1,0 +1,125 @@
+# The wiki in docs/, built into a site by Zensical (the successor to MkDocs and
+# Material for MkDocs, from the same team). The pages are plain Markdown and read
+# the same on GitHub; this file only adds the navigation, search and theme.
+#
+#   make docs-serve   preview at http://127.0.0.1:8000, rebuilt on every save
+#   make docs-build   the site in site/, strict: a broken link or anchor fails it
+#
+# docs/development/docs.md says how the wiki is organised and generated.
+
+[project]
+site_name = "claude-on-proxmox"
+site_description = "Ansible that turns a Proxmox VE host into Claude Code development VMs"
+repo_url = "https://github.com/kawadeomkar/claude-on-proxmox"
+repo_name = "kawadeomkar/claude-on-proxmox"
+edit_uri = "edit/main/docs/"
+extra_css = ["stylesheets/extra.css"]
+docs_dir = "docs"
+site_dir = "site"
+# Working documents that stay local to their author (see .gitignore).
+exclude_docs = """
+plan-*
+review-*
+live-smoke-*
+*.src
+*.html
+"""
+
+nav = [
+  { "Home" = "README.md" },
+  { "Getting started" = [
+    { "Requirements" = "getting-started/requirements.md" },
+    { "Proxmox access" = "getting-started/proxmox-access.md" },
+    { "Your first deploy" = "getting-started/first-deploy.md" },
+    { "Upgrading" = "getting-started/upgrading.md" },
+  ] },
+  { "Guides" = [
+    { "VMs and fleets" = "guides/vms.md" },
+    { "GitHub" = "guides/github.md" },
+    { "Remote Control" = "guides/remote-control.md" },
+    { "Tailscale" = "guides/tailscale.md" },
+    { "VS Code" = "guides/vscode.md" },
+    { "During a run" = "guides/runs.md" },
+    { "Tearing down" = "guides/destroy.md" },
+    { "What the VM trusts" = "guides/what-the-vm-trusts.md" },
+  ] },
+  { "Reference" = [
+    { "Make targets" = "reference/make-targets.md" },
+    { "Settings" = "reference/settings.md" },
+    { "Roles" = [
+      "reference/roles/README.md",
+      { "common" = "reference/roles/common.md" },
+      { "vscode_server" = "reference/roles/vscode_server.md" },
+      { "dev_tools" = "reference/roles/dev_tools.md" },
+      { "claude_code" = "reference/roles/claude_code.md" },
+      { "github_projects" = "reference/roles/github_projects.md" },
+      { "tailscale" = "reference/roles/tailscale.md" },
+      { "proxmox_vm" = "reference/roles/proxmox_vm.md" },
+      { "proxmox_template" = "reference/roles/proxmox_template.md" },
+    ] },
+    { "Repository layout" = "reference/layout.md" },
+  ] },
+  { "Architecture" = [
+    "architecture/README.md",
+    { "4. Lifecycle" = "architecture/lifecycle.md" },
+    { "5. Roles" = "architecture/roles.md" },
+    { "6. Variables" = "architecture/variables.md" },
+    { "7. Custom code" = "architecture/custom-code.md" },
+    { "8. Convergence" = "architecture/convergence.md" },
+    { "9. Failure modes" = "architecture/failure-modes.md" },
+    { "10. Security model" = "architecture/security-model.md" },
+    { "11. Testing" = "architecture/testing.md" },
+    { "12. CI" = "architecture/ci.md" },
+    { "13. Toolchain" = "architecture/toolchain.md" },
+    { "14. File map" = "architecture/file-map.md" },
+    { "15. Open questions" = "architecture/open-questions.md" },
+  ] },
+  { "Development" = [
+    { "Testing" = "development/testing.md" },
+    { "This wiki" = "development/docs.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.action.edit",
+  "content.code.copy",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+md_in_html = {}
+tables = {}
+# Heading anchors as GitHub makes them, so a link to one works on both.
+toc.permalink = true
+toc.slugify = { object = "pymdownx.slugs.slugify", kwds = { case = "lower" } }
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences = {}

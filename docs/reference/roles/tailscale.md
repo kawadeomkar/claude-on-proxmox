@@ -18,10 +18,10 @@ Installs Tailscale from its apt repository, joins the tailnet with tailscale_aut
 | `tailscale_enabled` | bool | `true` | Install and join; false logs out and removes what this role installed. |
 | `tailscale_auth_key` | str | `""` | A key for the first join only (tskey-auth-..., or a tskey-client-... OAuth secret, which needs tailscale_advertise_tags). Empty leaves the VM for the web login. A secret: never logged. |
 | `tailscale_auth_method` | str | `auto` | auto joins with tailscale_auth_key when there is one and leaves the VM for the web login otherwise; key joins with the key only, and an empty one fails by name; web leaves every VM for the web login. One of `auto`, `key`, `web`. |
-| `tailscale_api_auth_method` | str | `none` | How the device is deleted from the tailnet through Tailscale's API, on this machine. none leaves it there, logged out, and names it; token uses tailscale_api_token; oauth exchanges tailscale_oauth_client_id and tailscale_oauth_client_secret, a client with the devices:core scope, for an access token. One of `none`, `token`, `oauth`. |
-| `tailscale_api_token` | str | `""` | An API access token (tskey-api-...), for tailscale_api_auth_method token. A secret: never logged. |
-| `tailscale_oauth_client_id` | str | `""` | An OAuth client's ID, for tailscale_api_auth_method oauth. |
-| `tailscale_oauth_client_secret` | str | `""` | That client's secret (tskey-client-...), for tailscale_api_auth_method oauth. A secret: never logged. |
+| `tailscale_api_auth_method` | str | `auto` | How the device is deleted from the tailnet through Tailscale's API, on this machine. auto uses whichever credential is set, tailscale_api_token first, and is none when neither is; none leaves the device there, logged out, and names it; token uses tailscale_api_token; oauth exchanges tailscale_oauth_client_id and tailscale_oauth_client_secret, a client with the devices:core scope, for an access token. One of `auto`, `none`, `token`, `oauth`. |
+| `tailscale_api_token` | str | `""` | An API access token (tskey-api-...), used under tailscale_api_auth_method auto or token. A secret: never logged. |
+| `tailscale_oauth_client_id` | str | `""` | An OAuth client's ID, used under tailscale_api_auth_method auto or oauth. |
+| `tailscale_oauth_client_secret` | str | `""` | That client's secret (tskey-client-...), used under tailscale_api_auth_method auto or oauth. A secret: never logged. |
 | `tailscale_api_url` | str | `https://api.tailscale.com` | Tailscale's API. Tests point it at a stand-in. |
 | `tailscale_hostname` | str |  | The machine name asked for. One DNS label - letters, digits and hyphens, at most 63, not starting or ending with a hyphen - which Tailscale requires. Defaults to the VM's name made one. |
 | `tailscale_ssh` | bool | `false` | Tailscale SSH on the tailnet address, in place of sshd there. |
@@ -65,10 +65,10 @@ Logs the node out, which expires its key at once, and with an API credential del
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `tailscale_api_auth_method` | str | `none` | How the device is deleted from the tailnet through Tailscale's API, on this machine. none leaves it there, logged out, and names it; token uses tailscale_api_token; oauth exchanges tailscale_oauth_client_id and tailscale_oauth_client_secret, a client with the devices:core scope, for an access token. One of `none`, `token`, `oauth`. |
-| `tailscale_api_token` | str | `""` | An API access token (tskey-api-...), for tailscale_api_auth_method token. A secret: never logged. |
-| `tailscale_oauth_client_id` | str | `""` | An OAuth client's ID, for tailscale_api_auth_method oauth. |
-| `tailscale_oauth_client_secret` | str | `""` | That client's secret (tskey-client-...), for tailscale_api_auth_method oauth. A secret: never logged. |
+| `tailscale_api_auth_method` | str | `auto` | How the device is deleted from the tailnet through Tailscale's API, on this machine. auto uses whichever credential is set, tailscale_api_token first, and is none when neither is; none leaves the device there, logged out, and names it; token uses tailscale_api_token; oauth exchanges tailscale_oauth_client_id and tailscale_oauth_client_secret, a client with the devices:core scope, for an access token. One of `auto`, `none`, `token`, `oauth`. |
+| `tailscale_api_token` | str | `""` | An API access token (tskey-api-...), used under tailscale_api_auth_method auto or token. A secret: never logged. |
+| `tailscale_oauth_client_id` | str | `""` | An OAuth client's ID, used under tailscale_api_auth_method auto or oauth. |
+| `tailscale_oauth_client_secret` | str | `""` | That client's secret (tskey-client-...), used under tailscale_api_auth_method auto or oauth. A secret: never logged. |
 | `tailscale_api_url` | str | `https://api.tailscale.com` | Tailscale's API. Tests point it at a stand-in. |
 | `tailscale_login_server` | str | `""` | Another control server, such as Headscale. Empty is Tailscale's. |
 

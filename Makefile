@@ -228,7 +228,7 @@ configure: vault-check vm-name-check log-setup ## Configure the VM(s): packages,
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: deploy
-deploy: vault-check vm-name-check log-setup ## Everything, for VM_NAME only: template (if missing), provision, configure, sign in to Claude and GitHub, open VS Code (default: claude-on-proxmox-default)
+deploy: vault-check vm-name-check log-setup ## Everything, for VM_NAME only: template (if missing), provision, configure, sign in to Claude, GitHub and Tailscale, open VS Code (default: claude-on-proxmox-default)
 	@test -z "$(TAGS)" || { echo "error: deploy takes no TAGS. To re-run one role: make configure VM_NAME=<name> TAGS=$(TAGS)"; exit 1; }
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) deploy.yml
 
@@ -287,6 +287,22 @@ code: vault-check vm-name-check project-name-check log-setup ## Open a VM in VS 
 	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(PROJECT_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
 
+# --------------------------------------------------------------- docs -----
+# The wiki in docs/ (docs/development/docs.md). Its reference pages are
+# generated from the files they describe, and tests/unit/test_docs.py, part of
+# make unit, fails when one is out of date or a link is broken.
+.PHONY: docs
+docs: ## Regenerate the wiki's reference pages (targets, settings, roles) from the files they describe
+	$(BIN)/python tools/docs.py
+
+.PHONY: docs-serve
+docs-serve: ## Serve the wiki as a site at http://127.0.0.1:8000, rebuilt as you save
+	$(BIN)/zensical serve
+
+.PHONY: docs-build
+docs-build: ## Build the wiki as a site in site/, failing on a broken link or anchor
+	$(BIN)/zensical build --strict --clean
+
 # ------------------------------------------------------------ quality -----
 .PHONY: lint
 lint: ## Check uv.lock against pyproject.toml, then run yamllint + ansible-lint + ruff
@@ -304,7 +320,7 @@ syntax: ## ansible-playbook --syntax-check on every playbook
 	done
 
 .PHONY: unit
-unit: ## pytest over tests/unit/: filters, github_repos module, tracked-file guard, configure tags, Remote Control, both sign-ins, the SSH config, the Claude terminal, Makefile guards
+unit: ## pytest over tests/unit/: the filters, the github_repos module, the playbooks against stand-ins, the guards and the wiki (no network)
 	$(BIN)/pytest
 
 # Molecule resolves ansible-playbook from PATH (and only appends the venv), so
@@ -363,5 +379,5 @@ pre-commit: ## Run all pre-commit hooks against the whole tree
 
 .PHONY: clean
 clean: logs-clean ## Remove caches, the virtualenv and the run logs
-	rm -rf $(VENV) .cache .pytest_cache .ruff_cache .ansible .molecule collections
+	rm -rf $(VENV) .cache .pytest_cache .ruff_cache .ansible .molecule collections site
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

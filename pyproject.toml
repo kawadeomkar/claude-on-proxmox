@@ -34,10 +34,19 @@ dev = [
     # bumps it with everything else.
     "uv==0.13.0",
 ]
+# The wiki in docs/: aar-doc renders each role's reference page from its meta/argument_specs.yml
+# (make docs), and Zensical builds the pages into a site (make docs-serve; the docs tests build it
+# strictly, failing on a broken link).
+docs = [
+    "aar-doc==2.4.0",
+    "zensical==0.0.70",
+]
 
 [tool.uv]
 # Not a Python package: uv installs the dependencies and never builds this project.
 package = false
+# make venv installs the docs group too: make docs and the unit tests use it.
+default-groups = ["dev", "docs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]

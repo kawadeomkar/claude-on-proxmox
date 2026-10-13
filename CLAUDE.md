@@ -35,7 +35,17 @@ make list            # read-only: the VMs this project created, and their addres
 make ssh-config      # refresh the SSH alias per VM on this machine; fleet-wide also prunes
 make code VM_NAME=alpha [PROJECT=repo]   # refresh one alias, check the folder over SSH, open it in VS Code with a Claude terminal
 make logs            # the run logs, newest first: read these instead of asking for terminal output
+make docs            # regenerate the wiki's reference pages; make docs-serve previews the site
 ```
+
+**A change to behaviour changes the wiki in the same commit.** The page for it is in `docs/`
+(`docs/README.md` maps them; `docs/architecture/` for the design, cited by section number). The
+reference pages are generated from `argument_specs.yml`, `local.yml.example`, `vault.yml.example` and
+the Makefile's `## ` text: edit those and run `make docs`, never the generated section.
+`tests/unit/test_docs.py` fails on a stale page, a broken link or anchor, or a cited `docs/` page or
+`§` section that does not exist. Name repository files in backticks there, never by a relative link
+out of `docs/`, which breaks on the site. A `</` in a code span (`</dev/tty`) drops the rest of the
+page on the site, so write it `< /dev/tty`.
 
 Every target that runs Ansible, Molecule included, writes its whole run to
 `.logs/<YYYYMMDD-HHMMSS>-<target>.log` through `ANSIBLE_LOG_PATH`. When a user says they ran
