@@ -30,7 +30,8 @@
   no_log: true
   when:
     - tailscale_api_go | bool
-    - tailscale_api_auth_method == 'oauth'
+    - tailscale_api_credential == 'oauth'
+    - tailscale_api_oauth_whole | bool
 
 - name: api_delete | Look the device up
   ansible.builtin.uri:

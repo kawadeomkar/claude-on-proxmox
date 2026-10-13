@@ -356,8 +356,8 @@ GitHub's `POST /credentials/revoke`, ended every GitHub CLI sign-in of the accou
 included - seen live - so the report says where to revoke it and what that does; the digest that flow
 writes, `~/.config/claude-on-proxmox/gh-device-login`, tells its token from the vault token, whatever the
 marker says, and from one pasted by hand) and
-`tailscale` (start a stopped `tailscaled`, read `Self.ID`, `tailscale logout`, then with
-`tailscale_api_auth_method` look the device up and delete it from the controller, only when its name is
+`tailscale` (start a stopped `tailscaled`, read `Self.ID`, `tailscale logout`, then with the API
+credential the vault holds look the device up and delete it from the controller, only when its name is
 `tailscale_hostname` or `<it>-<n>`, since the VM reports the ID). Each runs in a block whose rescue
 records the failure: a release never stops a deletion. Each leaves one clause in a `*_release_said` fact,
 set on every run of its file.
@@ -1249,9 +1249,13 @@ network - and recorded with their sources in the plan's research record.
   name, the web login is never offered or started (`tailscale_login_possible`), and an expired node is told
   to be logged out by hand, since the key is never sent to a node that had a login; `web` leaves the key
   unused (`tailscale_key_wanted`).
-- **Deleting the device** (`api_delete.yml`), from the controller with `tailscale_api_auth_method`:
-  `token` (an API access token) or `oauth` (an OAuth client, exchanged at `/api/v2/oauth/token` for a
-  one-hour token; it needs `devices:core`). `GET /api/v2/device/<Self.ID>` first, then `DELETE` only when
+- **Deleting the device** (`api_delete.yml`), from the controller with `tailscale_api_credential`, which
+  `tailscale_api_auth_method` decides: `auto`, the default, takes whatever the vault holds - a credential
+  there is the opt-in, as the auth key is for the join - so `token` when there is an API access token (it
+  reaches every device; an OAuth client only its tags'), else `oauth` when either half of an OAuth client
+  is set (half of one is said by name and never sent), else `none`; `none`, `token` and `oauth` name one.
+  `token` is an API access token, `oauth` an OAuth client, exchanged at `/api/v2/oauth/token` for a
+  one-hour token (it needs `devices:core`). `GET /api/v2/device/<Self.ID>` first, then `DELETE` only when
   the device's MagicDNS name's first label is `tailscale_hostname` or `<it>-<n>`: the VM reports the ID,
   and the credential can delete any device. A 404 is a device already gone. Every call is `no_log` and
   `delegate_to: localhost`; the file is always included and its tasks carry the condition, so no register

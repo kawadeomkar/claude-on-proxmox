@@ -41,7 +41,8 @@ vault_anthropic_api_key: ""
 vault_tailscale_auth_key: ""
 
 # Optional: what deletes a VM's device from your tailnet when make destroy
-# deletes the VM (tailscale_api_auth_method in local.yml). Used only on this
+# deletes the VM - set either and it is used, the token when both are
+# (tailscale_api_auth_method in local.yml can say otherwise). Used only on this
 # machine, never sent to a VM. token: an API access token (Settings, Keys;
 # tskey-api-..., at most 90 days). oauth: an OAuth client with the devices:core
 # scope (Settings, OAuth clients), which does not expire. README, "Removing

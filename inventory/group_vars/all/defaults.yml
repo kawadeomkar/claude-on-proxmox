@@ -256,15 +256,17 @@ tailscale_auth_method: auto
 tailscale_login_auto_start: true
 # How a VM's device is deleted from your tailnet when make destroy deletes the
 # VM, or tailscale_enabled: false takes Tailscale off it - so it leaves the
-# admin console and its name is free for a VM built again. none: the VM is only
-# logged out, and the run names the device to delete in the admin console.
-# token: an API access token in vault_tailscale_api_token (Settings, Keys;
-# tskey-api-..., which lasts at most 90 days). oauth: an OAuth client with the
-# devices:core scope, in vault_tailscale_oauth_client_id and
-# vault_tailscale_oauth_client_secret (Settings, OAuth clients; it does not
+# admin console and its name is free for a VM built again. auto deletes it with
+# whichever credential below is in the vault, the API access token first, and
+# with none there acts as none. none: the VM is only logged out, and the run
+# names the device to delete in the admin console - a credential in the vault
+# then stays unused. token: an API access token in vault_tailscale_api_token
+# (Settings, Keys; tskey-api-..., which lasts at most 90 days). oauth: an
+# OAuth client with the devices:core scope, in vault_tailscale_oauth_client_id
+# and vault_tailscale_oauth_client_secret (Settings, OAuth clients; it does not
 # expire, but Tailscale scopes it to the tags you give it, which may keep it
 # from deleting a device without them, such as one joined by the web login).
-tailscale_api_auth_method: none
+tailscale_api_auth_method: auto
 tailscale_api_token: "{{ vault_tailscale_api_token | default('', true) }}"
 tailscale_oauth_client_id: "{{ vault_tailscale_oauth_client_id | default('', true) }}"
 tailscale_oauth_client_secret: "{{ vault_tailscale_oauth_client_secret | default('', true) }}"

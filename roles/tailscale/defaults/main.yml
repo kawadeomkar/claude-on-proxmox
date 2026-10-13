@@ -24,12 +24,14 @@ tailscale_auth_method: auto
 # Deleting a VM's device from the tailnet through Tailscale's API, when the VM
 # is destroyed (the release entry point) or Tailscale is turned off on it, so
 # the device leaves the admin console and its name is free for a VM built
-# again. none: the node is only logged out, and the run names the device to
-# delete by hand. token: an API access token (tailscale_api_token, tskey-api-,
-# which lasts at most 90 days). oauth: an OAuth client with the devices:core
-# scope (tailscale_oauth_client_id and _secret, which do not expire). Every
-# call runs on this machine: the credential never reaches a VM.
-tailscale_api_auth_method: none
+# again. auto: with whichever credential is set, the API access token first;
+# with none set, as none. none: the node is only logged out, and the run names
+# the device to delete by hand. token: an API access token
+# (tailscale_api_token, tskey-api-, which lasts at most 90 days). oauth: an
+# OAuth client with the devices:core scope (tailscale_oauth_client_id and
+# _secret, which do not expire). Every call runs on this machine: the
+# credential never reaches a VM.
+tailscale_api_auth_method: auto
 tailscale_api_token: ""
 tailscale_oauth_client_id: ""
 tailscale_oauth_client_secret: ""

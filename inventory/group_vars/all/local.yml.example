@@ -161,10 +161,11 @@
 # make deploy starts the web login by itself; false asks first, VM by VM.
 # tailscale_login_auto_start: true
 # Delete a VM's device from your tailnet when make destroy deletes the VM, or
-# Tailscale is turned off on it: none only logs it out; token uses
-# vault_tailscale_api_token; oauth uses vault_tailscale_oauth_client_id and
-# vault_tailscale_oauth_client_secret (devices:core).
-# tailscale_api_auth_method: none
+# Tailscale is turned off on it. auto uses whichever credential the vault
+# holds - vault_tailscale_api_token first, else vault_tailscale_oauth_client_id
+# and vault_tailscale_oauth_client_secret (devices:core) - and only logs the VM
+# out with neither; none only logs it out; token and oauth use that one only.
+# tailscale_api_auth_method: auto
 # Tailscale SSH on the tailnet address (needs an ssh rule in your tailnet policy).
 # tailscale_ssh: false
 # tailscale_accept_routes: false

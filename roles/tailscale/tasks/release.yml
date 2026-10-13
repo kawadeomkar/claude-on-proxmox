@@ -1,7 +1,7 @@
 ---
 # Entry point for playbooks/destroy.yml: before the VM is deleted, its node
 # leaves the tailnet. Logged out, which expires its key at once; then, with an
-# API credential (tailscale_api_auth_method), its device is deleted, so it
+# API credential (tailscale_api_credential), its device is deleted, so it
 # leaves the admin console and its name is free for a VM built again. Whatever
 # Tailscale the VM has, however it got there: the VM itself is going. A daemon
 # stopped by hand is started for the logout, as off does (absent.yml).
@@ -42,7 +42,7 @@
   vars:
     tailscale_api_node: "{{ tailscale_release_node }}"
     tailscale_api_go: >-
-      {{ tailscale_api_auth_method != 'none' and tailscale_release_node | length > 0
+      {{ tailscale_api_credential != 'none' and tailscale_release_node | length > 0
          and (tailscale_release_logout.rc | default(1)) == 0 }}
 
 # What became of the node, for destroy's last play to say per VM: a fact,

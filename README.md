@@ -843,14 +843,18 @@ reach - is said and the rest removed anyway; its login then stays valid until yo
 **Removing devices for you.** A logged-out device stays in the admin console until it is deleted, and
 holds its name: a VM built again as `alpha` joins as `alpha-1`, for good. With an API credential the
 project deletes the device itself, when `make destroy` deletes the VM and when `tailscale_enabled: false`
-takes Tailscale off it. `tailscale_api_auth_method` picks the credential, and every call is made from this
-machine, so it never reaches a VM:
+takes Tailscale off it. Put either credential below in the vault and that is all: it is used as soon as it
+is there, and every call is made from this machine, so it never reaches a VM.
 
-| `tailscale_api_auth_method` | In the vault | Made in the admin console |
+| Credential | In the vault | Made in the admin console |
 |---|---|---|
-| `none` (the default) | nothing: the device is only logged out, and the run names it to delete by hand | |
-| `token` | `vault_tailscale_api_token` | Settings, Keys, *Generate access token*: a `tskey-api-` token, which lasts at most 90 days and can delete any device you can |
-| `oauth` | `vault_tailscale_oauth_client_id`, `vault_tailscale_oauth_client_secret` | Settings, OAuth clients, with the `devices:core` scope: it never expires, but Tailscale scopes it to the tags you give it, which may keep it from deleting a device without them, such as one joined by the web login |
+| An API access token | `vault_tailscale_api_token` | Settings, Keys, *Generate access token*: a `tskey-api-` token, which lasts at most 90 days and can delete any device you can |
+| An OAuth client | `vault_tailscale_oauth_client_id`, `vault_tailscale_oauth_client_secret` | Settings, OAuth clients, with the `devices:core` scope: it never expires, but Tailscale scopes it to the tags you give it, which may keep it from deleting a device without them, such as one joined by the web login |
+
+With neither, the device is only logged out, and the run names it to delete by hand. With both, the API
+access token is used, since it can delete every device this project makes. `tailscale_api_auth_method` in
+`local.yml` overrides that choice: `token` or `oauth` uses that credential only, and `none` leaves the
+credentials in the vault unused. Its default, `auto`, is what this section describes.
 
 A deletion Tailscale refuses is said, with the device to delete by hand, and the rest of the run goes on.
 
@@ -869,7 +873,7 @@ so otherwise - or the new VM joins as `alpha-1`; a configure that finds the name
 | `tailscale_upload_logs` | `true` | Tailscale's log upload |
 | `tailscale_auth_method` | `auto` | how a VM joins: `auto`, `key` or `web` |
 | `tailscale_login_auto_start` | `true` | `make deploy` starts the web login without asking first |
-| `tailscale_api_auth_method` | `none` | how a device is deleted from the tailnet: `none`, `token` or `oauth` |
+| `tailscale_api_auth_method` | `auto` | how a device is deleted from the tailnet: `auto` (whichever credential the vault holds), `none`, `token` or `oauth` |
 | `tailscale_login_timeout` | `300` | seconds the web login waits for your approval |
 | `tailscale_hostname` | the VM name | the machine name asked for, made one DNS label |
 
@@ -1187,7 +1191,7 @@ as they are deleted:
 |---|---|---|
 | Claude | stops Remote Control and the unit that starts it, then `claude auth logout` | the session stays in the Claude app's list, offline: Anthropic has no way to revoke a Claude Code login from outside |
 | GitHub | `gh auth logout` | the token, valid until you revoke it. Revoking the one this project's sign-in made means revoking GitHub CLI under [Settings → Applications](https://github.com/settings/applications), which signs out every `gh` you have, this machine's included, so `make destroy` does not do it. `vault_github_token`, which every VM shares, is never revoked |
-| Tailscale | logs the node out, then deletes its device with `tailscale_api_auth_method` (see [Removing devices for you](#reaching-a-vm-over-tailscale)) | nothing with a credential; without one, the device, logged out, until you delete it |
+| Tailscale | logs the node out, then deletes its device with the API credential in the vault (see [Removing devices for you](#reaching-a-vm-over-tailscale)) | nothing with a credential; without one, the device, logged out, until you delete it |
 
 Each step is best effort: one that fails is said, and the VM is deleted anyway, as you asked. The run ends
 with one line per VM saying what it was released from and what is left of it - and for a VM that could not

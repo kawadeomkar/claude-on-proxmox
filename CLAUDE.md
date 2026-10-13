@@ -296,8 +296,9 @@ revoking the one this project's device flow made, through `POST /credentials/rev
 GitHub CLI sign-in of the account, the developer's own included, so the report says where to revoke it
 and what that does (the digest in `~/.config/claude-on-proxmox/gh-device-login` tells that token from
 the vault's and from one pasted by hand). Tailscale's device
-is deleted with `tailscale_api_auth_method` (`token` or `oauth`, `devices:core`) from the controller, by
-the node's `Self.ID`, read before the logout. Another play then runs the role with
+is deleted with the API credential the vault holds (`tailscale_api_auth_method` `auto`: the token, else an
+OAuth client with `devices:core`; a credential's presence is the opt-in, so no flag must be set beside it)
+from the controller, by the node's `Self.ID`, read before the logout. Another play then runs the role with
 `proxmox_vm_state: absent` across them, so VMs are stopped and deleted in parallel. It used to loop `include_role` on
 localhost: against the fake, 20 VMs took 168 s that way and take 41 s now. The pre-check honours
 `proxmox_vm_allow_untagged_delete` but never admits a template. Deleting in parallel is why
