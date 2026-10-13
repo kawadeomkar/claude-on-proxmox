@@ -211,11 +211,14 @@ def _extra(**more) -> str:
     return json.dumps({"claude_vm_discovery": False, "ansible_become": False, **more})
 
 
-SIGN_INS = ("playbooks/claude_login.yml", "playbooks/github_login.yml")
+SIGN_INS = ("playbooks/claude_login.yml", "playbooks/github_login.yml", "playbooks/tailscale_login.yml")
 
 
 def _deploy_sign_ins(root: Path) -> Path:
-    """deploy.yml from its sign-ins on, as it stands: both imports with their vars and conditions, then its own plays.
+    """deploy.yml from its sign-ins on, as it stands: the three imports, their vars and conditions, then its own plays.
+
+    The stand-in VMs here have no Tailscale (no dpkg-query answers for it), so
+    its step only reports them: what that step decides is test_tailscale.py's.
 
     The template, provision, configure and code stages are left out: the
     stand-in VMs are configured already, and nothing here opens VS Code.
@@ -228,8 +231,8 @@ def _deploy_sign_ins(root: Path) -> Path:
         elif entries and "hosts" in entry:
             entries.append(entry)
     imported = [entry.get("ansible.builtin.import_playbook") for entry in entries]
-    assert imported[:2] == [str(REPO / target) for target in SIGN_INS], imported
-    assert len(entries) > 2, "deploy.yml has no play of its own after the sign-ins"
+    assert imported[:3] == [str(REPO / target) for target in SIGN_INS], imported
+    assert len(entries) > 3, "deploy.yml has no play of its own after the sign-ins"
     playbook = root / "deploy_sign_ins.yml"
     playbook.write_text(yaml.safe_dump(entries, sort_keys=False))
     return playbook
@@ -433,14 +436,15 @@ def deployed(tmp_path_factory):
     return root, _deploy(root, _hosts(root, cases))
 
 
-def test_make_deploy_names_a_vm_it_cannot_reach_in_both_sign_ins_and_goes_on(deployed):
+def test_make_deploy_names_a_vm_it_cannot_reach_in_every_sign_in_and_goes_on(deployed):
     root, report = deployed
     assert report["rc"] == 0, _failed(report)
     assert _failed(report) == {}
     said = _said(report, "Say which VM could not be reached", "b-down")
-    assert len(said) == 2, said
+    assert len(said) == 3, said
     assert "b-down could not be reached, so it was not signed in" in said[0]
     assert "b-down could not be reached, so gh was not signed in there" in said[1]
+    assert "b-down could not be reached, so it was not signed in to Tailscale" in said[2]
     # The VM after it still had its turn.
     assert "accepted" in _claude_calls(root, "c-accepted")
     assert _signed_in(root, "c-accepted")

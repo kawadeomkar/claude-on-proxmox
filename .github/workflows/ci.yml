@@ -30,7 +30,9 @@ jobs:
   lint:
     name: Lint and unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The unit suite runs real playbooks: about 12 minutes on a laptop, and
+    # past 15 on a hosted runner once the Tailscale tests came in.
+    timeout-minutes: 30
     env:
       # v8.30.0, the same release .pre-commit-config.yaml pins.
       GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
@@ -140,7 +142,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        role: [common, vscode_server, dev_tools, claude_code, github_projects, proxmox_template, proxmox_vm]
+        role: [common, vscode_server, dev_tools, claude_code, github_projects, tailscale, proxmox_template, proxmox_vm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup

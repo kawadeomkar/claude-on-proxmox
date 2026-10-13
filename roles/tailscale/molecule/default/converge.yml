@@ -1,0 +1,16 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  roles:
+    # A canned key that the stand-in accepts: the first join happens here, and
+    # the idempotence run that follows must neither join nor set anything again.
+    # Logs off from the daemon's first start; userspace networking, so the real
+    # tailscaled needs no TUN device, which Docker Desktop and CI's runners need
+    # not provide alike - it carries no traffic here anyway.
+    - role: tailscale
+      vars:
+        tailscale_auth_key: tskey-auth-kGood0CNTRL-TestOnly000000000000000000000
+        tailscale_upload_logs: false
+        tailscale_daemon_flags: [--tun=userspace-networking]
+        tailscale_login_desktop: false

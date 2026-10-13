@@ -1,0 +1,164 @@
+---
+# Runs where tailscale_ours: a VM without Tailscale, or with the one this role
+# installed.
+
+# First, so that no run - one that fails at the package included - can leave a
+# repository or a drop-in this role does not know to be its own: with the
+# marker in place, the next run finishes the install, or tailscale_enabled:
+# false removes whatever is there.
+- name: install | Make the directory for this project's markers
+  ansible.builtin.file:
+    path: "{{ tailscale_marker_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: install | Mark Tailscale on this VM as this project's
+  ansible.builtin.copy:
+    content: "Installed by claude-on-proxmox's tailscale role, which maintains it and removes it when switched off.\n"
+    dest: "{{ tailscale_installed_marker_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+# Before the package, whose postinst reloads systemd and then starts tailscaled:
+# a drop-in written now applies from the daemon's very first start, and log
+# upload begins with that start. Never /etc/default/tailscaled: created before
+# the package, dpkg would keep it as the conffile - without PORT - and the
+# unit's --port=${PORT} would start tailscaled with --port= and fail.
+- name: install | Make the drop-in directory for tailscaled
+  ansible.builtin.file:
+    path: "{{ tailscale_dropin_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: not (tailscale_upload_logs | bool)
+
+- name: install | Keep tailscaled from uploading its logs, from its first start
+  ansible.builtin.copy:
+    content: |
+      # claude-on-proxmox, tailscale_upload_logs: false. Also ends Tailscale's
+      # technical support for this node.
+      [Service]
+      Environment=TS_NO_LOGS_NO_SUPPORT=true
+    dest: "{{ tailscale_dropin_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: tailscale_dropin_on
+  when: not (tailscale_upload_logs | bool)
+
+- name: install | Leave tailscaled's log upload as Tailscale ships it
+  ansible.builtin.file:
+    path: "{{ tailscale_dropin_path }}"
+    state: absent
+  register: tailscale_dropin_off
+  when: tailscale_upload_logs | bool
+
+# Tailscale's install script and instructions write this file. Beside the
+# deb822 source with another keyring, it breaks every apt update ("Conflicting
+# values set for option Signed-By").
+- name: install | Remove the source list Tailscale's own instructions write
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/tailscale.list
+    state: absent
+
+# deb822_repository needs python3-debian on the VM. The common role installs
+# it on every VM before this one runs; named here too, so the role stands on
+# its own.
+- name: install | Install what managing an apt repository needs
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+
+- name: install | Install Tailscale from its repository
+  block:
+    - name: install | Add Tailscale's apt repository
+      ansible.builtin.deb822_repository:
+        name: tailscale
+        types: deb
+        uris: https://pkgs.tailscale.com/stable/ubuntu
+        suites: "{{ ansible_facts.distribution_release }}"
+        components: main
+        architectures: "{{ tailscale_deb_arch }}"
+        # Vendored (roles/tailscale/files/tailscale.asc), so a swapped download
+        # cannot supply its own key. Fingerprint
+        # 2596 A99E AAB3 3821 893C  0A79 458C A832 957F 5868.
+        signed_by: "{{ lookup('ansible.builtin.file', 'tailscale.asc') }}"
+        state: present
+      register: tailscale_repo
+
+    # Not in check mode on a VM without the package: no source is written in
+    # check mode and apt's cache is never refreshed there, so apt would fail with
+    # "No package matching 'tailscale' is available". state present, not latest:
+    # an upgrade restarts tailscaled, which a configure run should not do on its
+    # own; common_apt_upgrade and unattended upgrades upgrade it like any package.
+    - name: install | Install Tailscale
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: "{{ tailscale_repo is changed }}"
+      when: not (tailscale_check_without_package | bool)
+  rescue:
+    # A source whose host cannot be reached fails every apt cache refresh on the
+    # VM - common's, which opens every configure, first - so a failed install
+    # takes its repository back out. The next run adds it and tries again.
+    - name: install | Ask dpkg whether the install got as far as the package
+      ansible.builtin.command:
+        argv: [dpkg-query, --show, "--showformat=${db:Status-Status}", tailscale]
+      register: tailscale_dpkg_after
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: install | Take the repository back out while there is no package
+      ansible.builtin.deb822_repository:
+        name: tailscale
+        state: absent
+      when: tailscale_dpkg_after.stdout | default('') != 'installed'
+
+    # Named as the task that failed: configure.yml's report names
+    # ansible_failed_task, which after a rescue is the task that failed again.
+    # apt's own message for an unreachable source gives no reason ("Failed to
+    # update apt cache after 5 retries: "), so the likely one is named.
+    - name: install | Install Tailscale
+      vars:
+        tailscale_install_said: >-
+          {{ ansible_failed_result.msg | default('the install failed', true) | regex_replace('[:\s]+$', '') }}
+      ansible.builtin.fail:
+        msg: >-
+          {{ tailscale_install_said
+             ~ (" (an apt source could not be fetched - Tailscale's, https://pkgs.tailscale.com, was just added)"
+                if tailscale_install_said is search('apt cache') else '') }}
+
+# Only once the package has put /etc/default/tailscaled in place.
+- name: install | Hand tailscaled its extra flags
+  ansible.builtin.lineinfile:
+    path: /etc/default/tailscaled
+    regexp: "^FLAGS="
+    line: "FLAGS=\"{{ tailscale_daemon_flags | join(' ') }}\""
+  register: tailscale_flags_file
+  when: not (tailscale_check_without_package | bool)
+
+# Tasks, never handlers (main.yml). The drop-in is reloaded and the daemon
+# restarted only where the daemon was already running before this run: a fresh
+# install started it with the drop-in in place. New flags always need a restart.
+- name: install | Reload systemd for the changed drop-in
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: tailscale_dropin_on is changed or tailscale_dropin_off is changed
+
+# Skipped in check mode on a VM without the package: systemd_service fails on
+# a unit that does not exist, check mode or not.
+- name: install | Start tailscaled, and keep it enabled
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    enabled: true
+    state: >-
+      {{ 'restarted'
+         if tailscale_flags_file is changed
+            or ((tailscale_dropin_on is changed or tailscale_dropin_off is changed) and tailscale_package_present | bool)
+         else 'started' }}
+  when: not (tailscale_check_without_package | bool)

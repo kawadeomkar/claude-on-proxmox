@@ -46,6 +46,11 @@ Vagrant.configure("2") do |config|
       github_projects_token: "{{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}",
       github_projects_include: ENV.key?("GITHUB_USERNAME") ? [] : ["Hello-World"],
       claude_code_anthropic_api_key: "{{ lookup('ansible.builtin.env', 'ANTHROPIC_API_KEY') }}",
+      # The real tailscaled is installed here, and a test never reaches
+      # Tailscale: logs off from its first start, and no key, so the VM is
+      # never joined - configure reports it not signed in.
+      tailscale_upload_logs: false,
+      tailscale_auth_key: "",
     }
   end
 end

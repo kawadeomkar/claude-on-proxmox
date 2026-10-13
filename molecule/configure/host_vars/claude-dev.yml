@@ -26,3 +26,11 @@ dev_tools_install_docker: false
 claude_code_settings:
   permissions:
     defaultMode: acceptEdits
+# Tailscale: the real package and daemon, which contacts nothing - log upload
+# off from its first start, and every `tailscale` the role runs is the stand-in
+# prepare.yml installs. The key goes through the vault variable, as a user's
+# would, so the wiring in defaults.yml is what reaches the role; the stand-in
+# accepts it. Userspace networking: no TUN device needed in the container.
+tailscale_upload_logs: false
+vault_tailscale_auth_key: tskey-auth-kGood0CNTRL-TestOnly0000000000000000000000
+tailscale_daemon_flags: [--tun=userspace-networking]

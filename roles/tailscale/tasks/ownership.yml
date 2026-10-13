@@ -1,0 +1,38 @@
+---
+# What is on the VM, and who put it there.
+#
+# dpkg-query rather than package_facts: package_facts needs python3-apt, which
+# the developer's Mac - where the unit tests run these files - does not have.
+# ${db:Status-Status} is "installed" for an installed package and
+# "config-files" after a remove; dpkg-query exits 1 for one it never had.
+- name: ownership | Ask dpkg whether Tailscale is installed
+  ansible.builtin.command:
+    argv: [dpkg-query, --show, "--showformat=${db:Status-Status}", tailscale]
+  register: tailscale_dpkg
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# A Tailscale that dpkg does not know - Tailscale's static binaries, or the snap
+# - is someone else's too: the package installed beside it would start a second
+# tailscaled.
+- name: ownership | Look for a Tailscale installed outside dpkg
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ tailscale_foreign_paths }}"
+  register: tailscale_foreign
+
+# Written by install.yml before it adds the repository: a Tailscale with no
+# marker was installed some other way, and is left alone.
+- name: ownership | Look for the marker this role leaves when it installs Tailscale
+  ansible.builtin.stat:
+    path: "{{ tailscale_installed_marker_path }}"
+  register: tailscale_installed_marker
+
+# The node key of the login this role's own join produced (connect.yml): a
+# login made by hand has another, and keeps its own settings.
+- name: ownership | Read the node key of the login this role made
+  ansible.builtin.slurp:
+    src: "{{ tailscale_joined_marker_path }}"
+  register: tailscale_joined_marker
+  failed_when: false

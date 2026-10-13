@@ -6,10 +6,12 @@ Ansible project that turns a Proxmox VE host into a ready-to-use
 1. **Template** – builds a cloud-init enabled Ubuntu 24.04 template on the Proxmox host (one time).
 2. **Provision** – clones the template into a VM named by you, with your SSH key, and reports the address DHCP gave it.
 3. **Configure** – installs a baseline of packages, developer tooling (Node.js, Docker, GitHub CLI, uv),
-   Claude Code itself, and clones **every repository of your GitHub account** into `~/projects`: the
-   private ones too once `gh` is signed in, by a token in the vault or the sign-in below.
-4. **Sign in** – signs each VM in to Claude, which starts Remote Control, and `gh` in to GitHub, ready to
-   push from: each by a page in your browser and a code, the one step either vendor leaves to you.
+   Claude Code itself and Tailscale, and clones **every repository of your GitHub account** into
+   `~/projects`: the private ones too once `gh` is signed in, by a token in the vault or the sign-in below.
+4. **Sign in** – signs each VM in to Claude, which starts Remote Control, `gh` in to GitHub, ready to
+   push from, and the VM in to your Tailscale network, so you can reach it from anywhere: each by a page in
+   your browser, the one step each vendor leaves to you. A token or an auth key in the vault does GitHub's
+   and Tailscale's without one.
 5. **Open** – opens the VM in VS Code, where a terminal starts a Claude session.
 
 `make deploy` does all five in one run.
@@ -170,7 +172,7 @@ Edit the three git-ignored files `make init` created:
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host. VMs are **not** listed here |
 | `inventory/group_vars/all/local.yml` | Proxmox node/storage names, package choices, which repos to skip |
-| `inventory/group_vars/all/vault.yml` | Proxmox API token, GitHub username/token, optional Anthropic API key |
+| `inventory/group_vars/all/vault.yml` | Proxmox API token, GitHub username/token, optional Anthropic API key and Tailscale auth key |
 
 Encrypt the secrets, then deploy. The `make` targets refuse to run while `vault.yml` is still
 plaintext.
@@ -183,23 +185,33 @@ make deploy VM_NAME=alpha
 ```
 
 `make deploy` is the whole thing in one command. It builds the template if it is missing, creates
-and configures the VM, signs it in to Claude and to GitHub, and opens it in VS Code, where a terminal
-of the window starts a Claude session. Two steps in it are yours, because neither vendor lets anything
+and configures the VM, signs it in to Claude, GitHub and Tailscale, and opens it in VS Code, where a
+terminal of the window starts a Claude session. The sign-ins are yours, because no vendor lets anything
 else take them: each opens a page in your browser, and the run waits for you there.
 
-1. **Claude.** Authorise Claude Code on the page, then paste the code the page shows at the run's
-   `Code:` prompt. Remote Control starts in the same run, so the session is on your phone too.
-2. **GitHub**, when there is no `vault_github_token` in the vault. The run asks first: Enter signs the
-   VM in now, `n` leaves it for later. The code is then on your clipboard: paste it on the page and
-   authorise, and the private repositories are cloned in the same run. The run waits until the code is
-   approved or expires, after fifteen minutes, and Ctrl-C there ends the whole deploy, its VS Code
-   window included. A VM that needed no Claude sign-in - signed in already, or on an API key - is asked
-   too, and signs in on `y`; Enter leaves it.
+1. **Claude.** Authorise Claude Code on the page. Your browser then comes back to the VM by itself, with
+   nothing to paste: the run forwards Claude's sign-in port from this machine to the VM over SSH for the
+   length of the sign-in, and waits up to five minutes (`claude_login_approval_timeout`). Where that port
+   is taken here, no browser can open on this machine, or you run `make` over SSH from another one, the
+   page shows a code instead, which you paste at the run's `Code:` prompt. Remote Control starts in the same run, so the session is on your phone
+   too.
+2. **GitHub**, when there is no `vault_github_token` in the vault. It starts by itself: the page opens,
+   the code is on your clipboard, you paste it on the page and authorise, and the private repositories
+   are cloned in the same run. The run waits until the code is approved or expires, after fifteen
+   minutes, and Ctrl-C there ends the whole deploy, its VS Code window included.
+3. **Tailscale**, when there is no `vault_tailscale_auth_key` (with one, configuration joined the VM
+   already). It starts by itself too: the page opens, you sign in and connect the VM, and the run waits up
+   to five minutes (`tailscale_login_timeout`). A VM you approve later joins by itself. See
+   [Reaching a VM over Tailscale](#reaching-a-vm-over-tailscale).
 
-Pressing Enter at a VM's `Code:` prompt skips both for that VM, and a run with no terminal skips them
-all; either way the deploy finishes, `make claude-login VM_NAME=alpha` and `make github-login
-VM_NAME=alpha` do them later, and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the command that
-retries it, and the rest of the deploy goes on.
+With `github_login_auto_start: false` or `tailscale_login_auto_start: false` the run asks first, VM by VM,
+so a VM can be left for later: Enter signs in a VM whose Claude sign-in you just answered, `y` one that
+needed none (signed in already, or on an API key), and `n` leaves it. A VM whose Claude sign-in nobody
+answered - Enter at its `Code:` prompt, or a browser that never came back - is left out of the other two,
+and a run with no terminal skips all three; either way the deploy finishes, `make claude-login
+VM_NAME=alpha`, `make github-login VM_NAME=alpha` and `make tailscale-login VM_NAME=alpha` do them later,
+and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the command
+that retries it, and the rest of the deploy goes on.
 
 Every stage is idempotent, so `make deploy` is also what you re-run after changing a variable: a VM
 already signed in is only reported, and VS Code brings its window to the front. (VM hardware — cores,
@@ -215,6 +227,7 @@ make provision VM_NAME=alpha       # create + start a VM     (via the API)
 make configure VM_NAME=alpha       # set it up               (over SSH, as the VM user)
 make claude-login VM_NAME=alpha    # sign Claude in, start Remote Control
 make github-login VM_NAME=alpha    # sign gh in, clone the private repositories
+make tailscale-login VM_NAME=alpha # join your Tailscale network by its web login
 make code VM_NAME=alpha            # open it in VS Code
 ```
 
@@ -346,6 +359,13 @@ once (or `make deploy VM_NAME=alpha`), or sign it in with `make claude-login VM_
 starts Remote Control itself. The Claude terminal of `make code` tells the two apart, and on such a VM
 names that `make configure` line.
 
+#### Tailscale on VMs configured by an earlier version
+
+Tailscale is on by default, so the next `make configure` installs it on every VM and reports each one
+not signed in - or joins it, with `vault_tailscale_auth_key` set. Set `tailscale_enabled: false` in
+`local.yml` first to keep your VMs as they are, and `make check` beforehand says what would be installed.
+A VM where you installed Tailscale yourself is left exactly as it is either way.
+
 #### Adopting VMs created before tagging
 
 This project now recognises its VMs by one Proxmox tag, `claude-on-proxmox`, and
@@ -437,6 +457,7 @@ and set `proxmox_validate_certs: true` in `local.yml`.
 | `dev_tools` | Node.js (NodeSource), Docker Engine, GitHub CLI, uv/uvx (release pinned by version and SHA256), pipx, build tools. Apt signing keys are vendored in `roles/dev_tools/files` | `dev_tools_install_*`, `dev_tools_node_major`, `dev_tools_uv_version`, `dev_tools_npm_global_packages` |
 | `claude_code` | Claude Code via the official installer (or npm), `~/.claude/settings.json` merged with your settings and API key, optional global `CLAUDE.md`, and optionally a Remote Control server so the session is reachable from claude.ai and the mobile app | `claude_code_version`, `claude_code_install_method`, `claude_code_settings`, `claude_code_global_instructions`, `claude_code_remote_control` |
 | `github_projects` | Signs `gh` in to GitHub - from `github_token`, or by a device-flow login you make once - and makes it git's credential helper; lists your repositories with a custom `github_repos` module (pagination, fork/archive/empty-repo filters, private ones with a login) and clones them; writes a git identity where none is set | `github_projects` (names; empty = all), `github_projects_include_forks`, `github_projects_exclude`, `github_auth`, `git_user_name`, `git_user_email`, `github_projects_clone_protocol` |
+| `tailscale` | Tailscale from its apt repository (signing key vendored in `roles/tailscale/files`); joins the tailnet with `vault_tailscale_auth_key` on a VM's first join, or by the web login `make tailscale-login` drives; keeps the hostname, Tailscale SSH, routes and DNS settings of its own login as configured with `tailscale set`; reports the VM's tailnet, name and address. Off logs out and removes what it installed; a Tailscale installed by hand is only reported | `tailscale_enabled`, `vault_tailscale_auth_key`, `tailscale_ssh`, `tailscale_advertise_tags`, `tailscale_accept_dns`, `tailscale_upload_logs` |
 | `proxmox_vm` | Looks the VM up **by name**, clones the template when it does not exist, applies cloud-init (user, keys, DHCP by default, DNS), resizes the disk, starts it, then waits for the guest agent to report an address. `proxmox_vm_state: absent` deletes it. Either way it refuses an existing VM of that name that is a template or is not tagged `claude-on-proxmox`, rather than provision over it or delete it | `vm_cores`, `vm_memory_mb`, `vm_disk_size`, `vm_nameservers` (fleet-wide, in `local.yml`); `proxmox_vm_ipconfig` for a fixed address, also fleet-wide, so single-VM runs only |
 | `proxmox_template` | Downloads the Ubuntu cloud image (SHA256 verified), creates the VM with `qm`, imports the disk, adds the cloud-init drive, converts to template | `proxmox_template_vmid`, `proxmox_template_image_url`, `proxmox_template_storage` |
 
@@ -476,9 +497,8 @@ on the VM, one of two ways:
   scopes to add); as a fine-grained one, Metadata (read), Contents,
   Pull requests and Workflows (read and write) on all repositories - a token limited to selected
   repositories lists and clones only those. The same token serves every VM.
-- **Without one**, `make deploy` signs the VM in itself once you answer its question: Enter for a VM
-  whose Claude code you just pasted, `y` for one that needed no Claude sign-in (`make github-login
-  VM_NAME=alpha` does the same for a VM that exists). It runs GitHub's device flow for
+- **Without one**, `make deploy` signs the VM in itself, with no question first (`github_login_auto_start`;
+  `make github-login VM_NAME=alpha` does the same for a VM that exists). It runs GitHub's device flow for
   you, as far as GitHub allows: gh
   starts on the VM in the background, the page github.com/login/device opens in your browser, the
   one-time code is on your clipboard and printed, and the run waits up to fifteen minutes while you paste
@@ -496,12 +516,11 @@ make github-login VM_NAME=alpha  # the same, later, for a VM make configure left
   Without a name, `make github-login` only reports each VM's state; given several, it signs them in one
   after another, since the browser takes one sign-in at a time. A code left unapproved expires after
   fifteen minutes and that VM's sign-in fails saying so, after the others have had their turn; run it
-  again for a fresh code. `make deploy` asks VM by VM, because the flow waits for a browser and nothing
-  else tells an attended run from an unattended one: for a VM whose Claude code you pasted, Enter signs
-  it in and `n` leaves it; a VM that showed no Claude prompt signs in on `y`; one whose `Code:` prompt
-  got Enter is not asked (with no terminal a question answers itself with nothing). Once the code is
-  shown the run waits until it is approved or expires, and Ctrl-C there ends the whole run, so answer
-  `n` to leave a VM for later. `make configure` never runs it. On a controller with no browser or clipboard the run prints the page and the
+  again for a fresh code. `make deploy` starts it for every VM but one whose Claude sign-in nobody
+  answered, and a run with no terminal skips it, as nobody is there to approve it. Once the code is shown
+  the run waits until it is approved or expires, and Ctrl-C there ends the whole run; with
+  `github_login_auto_start: false` it asks first, and `n` leaves a VM for later. `make configure` never
+  runs it. On a controller with no browser or clipboard the run prints the page and the
   code and waits all the same, and `login_desktop: false` makes it never try. The terminal that `make
   code` opens runs the same flow after the Claude sign-in, with the page opening by itself and the code
   printed to copy (a Remote-SSH terminal cannot fill your clipboard); Ctrl-C there skips it and starts
@@ -553,7 +572,7 @@ show up as changes) and the Claude Code binary, which updates itself on the `sta
 #### Re-running one part of it
 
 `TAGS` narrows a run to one role, which is much faster than the whole thing when you have changed a single
-variable. The tags are `common`, `vscode_server`, `dev_tools`, `claude_code` and `github_projects`; discovery
+variable. The tags are `common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects` and `tailscale`; discovery
 always runs, so the VMs are still found, and so does the step at the end that refreshes each VM's SSH alias. `TAGS` works with `make configure` and `make check`; `make deploy` refuses it,
 because building the template and creating VMs carry no tags and a tagged deploy would do nothing.
 
@@ -628,24 +647,35 @@ itself, after configuring the VM; for a VM that exists, `make claude-login` does
 
 ```bash
 make claude-login VM_NAME=alpha  # the sign-in page opens in your browser: authorise,
-                                 # paste the code the page shows at the Code: prompt
+                                 # and the browser comes back to the VM by itself
                                  # ... and Remote Control starts; the session appears on your phone
 ```
 
-The run starts `claude auth login` on the VM with no terminal, which makes it print the sign-in page and
-wait for a code; it opens that page here and asks you for the code the page shows once you authorise,
-and hands it to claude through a pipe. Once every VM named has had its turn, it starts the service on
-each one signed in, in the same run. The code is read with the run log's no_log, so it never lands in
-`.logs/`. Given several names it signs them in one after another; given none it only reports each VM's
-state. Enter alone at the prompt skips a VM, and a code claude refuses fails that VM by name once the
-others have had their turn; a code copied only up to its `#` (a double-click stops there) is asked for
-again, and Ctrl-C then `A` at the prompt ends the run. A sign-in page lasts `claude_login_timeout` plus
-half an hour: a code pasted later is said to be too late at once, with the command for a fresh page.
-Nothing else can take the step: Anthropic's page pre-fills nothing and shows its code only to you.
+The run starts `claude auth login` on the VM with no terminal. On a machine with a browser, Claude signs
+in by sending the browser back to a port it listens on, on its own `127.0.0.1`; the VM has no browser,
+so the run hands claude a stand-in that records that page, forwards that one port from this machine to
+the VM over SSH (`ssh -L`, bound to this machine's loopback, closed when the sign-in ends), and opens the
+page here. You authorise, the browser comes back to claude through the forward, and the run carries on
+by itself, waiting up to `claude_login_approval_timeout` (300 seconds). The page opens only when it is
+Claude's own sign-in page.
 
-Two variables tune it: `claude_login_args` passes extra arguments to `claude auth login` (`[--sso]`
-for a single sign-on login, say), and `claude_login_timeout` (120) is how many seconds claude may take
-to answer the code you paste. A VM whose Remote Control is off on purpose - `vault_anthropic_api_key`
+Where the browser could not come back - the port is already taken on this machine, `login_desktop:
+false`, nothing here to open a browser with, or `make` run over SSH, where the browser is on another machine
+and the page would send it to that machine's own localhost - claude's other page opens instead, which shows a code once you authorise:
+paste it at the `Code:` prompt and the run hands it to claude through a pipe. The code is read with the
+run log's no_log, so it never lands in `.logs/`. Enter alone at the prompt skips a VM, and a code claude
+refuses fails that VM by name once the others have had their turn; a code copied only up to its `#` (a
+double-click stops there) is asked for again, and Ctrl-C then `A` at the prompt ends the run. A sign-in
+page lasts `claude_login_timeout` plus half an hour: a code pasted later is said to be too late at once,
+with the command for a fresh page.
+
+Once every VM named has had its turn, the run starts the service on each one signed in, in the same run.
+Given several names it signs them in one after another; given none it only reports each VM's state.
+
+Three variables tune it: `claude_login_args` passes extra arguments to `claude auth login` (`[--sso]`
+for a single sign-on login, say), `claude_login_approval_timeout` (300) is how long the run waits for
+your browser to come back, and `claude_login_timeout` (120) is how many seconds claude may take to answer
+a code you paste. A VM whose Remote Control is off on purpose - `vault_anthropic_api_key`
 set, or `claude_remote_control: false` - is reported as such, with nothing to fix.
 
 A sign-in made any other way starts the service by itself too. While a VM waits for its first login,
@@ -713,6 +743,135 @@ SSH. Once a session is open, the app can switch it between Manual, Accept edits 
 Bypass permissions cannot be selected there. The value is passed to Claude Code unvalidated, so any
 mode it accepts works; one it does not stops the server at startup, and on a signed-in VM
 `make configure` then fails with the command that shows why.
+
+### Reaching a VM over Tailscale
+
+[Tailscale](https://tailscale.com) puts each VM on your tailnet - the private network your other devices
+are on - so `ssh`, VS Code's Remote - SSH and a dev server on any port reach the VM from anywhere, not only
+from the LAN Proxmox sits on. It is on by default; `tailscale_enabled: false` in `local.yml` turns it off.
+
+There are two ways in. `tailscale_auth_method` picks: `auto` (the default) is the key when the vault holds
+one and the web login otherwise, `key` is the key only (an empty one fails by name, and no VM is ever sent
+to a browser), and `web` is the web login only, with a key in the vault left unused.
+
+- **An auth key** (`vault_tailscale_auth_key`). `make configure` - and so `make deploy` - joins each new VM
+  by itself, with nothing to click. Make the key in Tailscale's admin console (Settings, Keys):
+  **reusable** for a fleet, or one-off for one VM; **pre-approved** if your tailnet has device approval
+  on; and **tagged** (`tag:claude-vm`, below). Never ephemeral: Tailscale removes an ephemeral node within
+  the hour of it going offline, and a VM left stopped would be. The key is only used for a VM's first
+  join - a VM that has joined keeps working after the key expires - and it reaches the VM on standard
+  input, never on a command line or in a file. An OAuth client secret (`tskey-client-...`) works too, with
+  `tailscale_advertise_tags` set and `?ephemeral=false` on the secret.
+- **The web login**, with no secret at all. `make tailscale-login VM_NAME=alpha` - and `make deploy`'s
+  step, which starts by itself (`tailscale_login_auto_start`; `false` asks first) - opens Tailscale's
+  sign-in page here and waits up to five minutes (`tailscale_login_timeout`) for you to sign in and
+  approve the VM. A VM you approve later joins by itself: the page stays valid for 7 days.
+
+Each run says each VM's name and address on the tailnet, and the tailnet itself - so a VM that someone
+else's approval put in their tailnet shows:
+
+```
+alpha: on Tailscale in the tailnet you@example.com as alpha.tail1234.ts.net (100.101.102.103).
+```
+
+**Connecting.** From any device on the tailnet: `ssh dev@alpha.tail1234.ts.net` (or its `100.x` address),
+VS Code's Remote - SSH to the same host, `http://alpha.tail1234.ts.net:3000` for a dev server. It is the
+same sshd and the same keys as on the LAN (`vm_ssh_public_keys`). With `claude_ssh_host_domain:
+tail1234.ts.net`, the aliases this project writes and `make code` use `<VM name>.tail1234.ts.net` in place
+of the LAN address; the machine running Ansible must be on the tailnet then, and Ansible itself keeps
+using the LAN. That is the VM's tailnet name only when the VM joined under its own name: a VM name that is
+not one DNS label joins under a cleaned-up one (`alpha.lab` as `alpha-lab`), and a name already taken gets
+a suffix (`alpha-1`). The report shows the name each VM has.
+
+**Keeping an agent VM off your other devices.** A new tailnet's policy lets every device reach every other
+- its one rule has `"src": ["*"]`, and `*` matches tagged devices too - and these VMs run an AI agent with
+passwordless sudo. With a tagged key, one edit to the policy (Access controls in the admin console) keeps
+your devices reaching the VMs while a VM can open no connection at all. **Merge** it into your policy;
+never paste it over the whole file, and never as `"acls": []`, which cuts off every other device you have:
+
+```jsonc
+{
+  // The VMs' tag. An admin owns it, and so can also apply it at a web login.
+  "tagOwners": { "tag:claude-vm": ["autogroup:admin"] },
+  // The default rule, its source narrowed from "*" to your own devices: they still reach
+  // everything, the VMs and every port on them included; a tagged VM is no source, so it reaches nothing.
+  "acls": [ { "action": "accept", "src": ["autogroup:member"], "dst": ["*:*"] } ],
+  // Run on every save: an edit that lets a VM reach your devices, or another VM, is refused.
+  "tests": [ { "src": "tag:claude-vm", "deny": ["you@example.com:22", "tag:claude-vm:22"] } ]
+}
+```
+
+Put your own address in the test. Any other rule whose source is `*`, or names the tag, undoes the edit,
+and the test makes the console refuse such a change when you save it. A policy that already narrowed the
+default rule needs only the tag owner and the test. A VM joined by the web login is your own device and
+reaches what your other devices reach; to isolate one, set `tailscale_advertise_tags: [tag:claude-vm]`
+before signing it in - as an admin, you can apply the tag at the login. On the VM itself, sudo can always
+log it out or read its node keys: only the tag and the policy bound what it can reach.
+
+**Tailscale SSH** (`tailscale_ssh: true`) answers port 22 on the tailnet address instead of sshd,
+authorised by your policy, which then needs an `ssh` rule:
+`{"action": "accept", "src": ["autogroup:member"], "dst": ["tag:claude-vm"], "users": ["dev"]}`. Every
+configure holds each VM to the value you set, both ways.
+
+**DNS.** The VM keeps the resolver DHCP gave it (`tailscale_accept_dns: false`), and your devices still
+reach it by its tailnet name. With `true` it takes your tailnet's DNS settings - and a tailnet that
+overrides local DNS then answers every lookup on the VM, from nameservers that, if they are on the tailnet,
+a VM the policy above isolates cannot reach.
+
+**What the role touches.** Only the Tailscale it installed. A Tailscale you installed on a VM yourself -
+the package, the snap or Tailscale's static binaries - is reported and left exactly as it is,
+`tailscale_enabled: false` included. To hand one to this project, run `sudo tailscale logout` on the VM
+and remove it the way you installed it; for the package that is `sudo apt purge tailscale` - purge, so the
+next install does not start under the old login. A login you made by hand on a Tailscale this project
+installed keeps its own settings, and when its key expires `make tailscale-login` and `make deploy` leave it
+for you to sign in again the way you made it, rather than put this project's settings over it. A sign-in
+this project started is its own, however late it ends - a page you approve after the run, or a join with
+the key that ran out of time - and so is a login made by hand while that page still waits, which cannot be
+told from it; a join with the key that Tailscale refused is over, and leaves nothing waiting. Log upload to Tailscale is on, as Tailscale ships it; `tailscale_upload_logs: false` turns
+it off from the daemon's first start, which also ends Tailscale's technical support for the VMs. If
+installing Tailscale fails - its package site out of reach, say - the VM is configured otherwise and keeps
+its alias, `make deploy` still signs it in and opens it, and the run fails at its end with `make configure
+VM_NAME=alpha TAGS=tailscale`; Tailscale's repository is taken back out, so `apt` on the VM works as
+before.
+
+**Turning it off.** `tailscale_enabled: false`, then `make configure`: each VM is logged out - a
+`tailscaled` you stopped is started for that - and `tailscaled`, the package and its repository are
+removed. The device stays in your tailnet, expired, until you delete it in the admin console (Machines),
+unless the project can delete it for you (below). A logout that fails - Tailscale's servers out of the VM's
+reach - is said and the rest removed anyway; its login then stays valid until you delete the device.
+
+**Removing devices for you.** A logged-out device stays in the admin console until it is deleted, and
+holds its name: a VM built again as `alpha` joins as `alpha-1`, for good. With an API credential the
+project deletes the device itself, when `make destroy` deletes the VM and when `tailscale_enabled: false`
+takes Tailscale off it. `tailscale_api_auth_method` picks the credential, and every call is made from this
+machine, so it never reaches a VM:
+
+| `tailscale_api_auth_method` | In the vault | Made in the admin console |
+|---|---|---|
+| `none` (the default) | nothing: the device is only logged out, and the run names it to delete by hand | |
+| `token` | `vault_tailscale_api_token` | Settings, Keys, *Generate access token*: a `tskey-api-` token, which lasts at most 90 days and can delete any device you can |
+| `oauth` | `vault_tailscale_oauth_client_id`, `vault_tailscale_oauth_client_secret` | Settings, OAuth clients, with the `devices:core` scope: it never expires, but Tailscale scopes it to the tags you give it, which may keep it from deleting a device without them, such as one joined by the web login |
+
+A deletion Tailscale refuses is said, with the device to delete by hand, and the rest of the run goes on.
+
+**Rebuilding a VM.** Delete the old device first - `make destroy` does with a credential above, and says
+so otherwise - or the new VM joins as `alpha-1`; a configure that finds the name taken says so.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `tailscale_enabled` | `true` | the feature |
+| `vault_tailscale_auth_key` | `""` | join without a browser; empty is the web login |
+| `tailscale_ssh` | `false` | Tailscale SSH on the tailnet address |
+| `tailscale_accept_routes` | `false` | use the subnet routes other devices advertise |
+| `tailscale_accept_dns` | `false` | take the tailnet's DNS settings |
+| `tailscale_advertise_tags` | `[]` | tags asked for at a join |
+| `tailscale_login_server` | `""` | another control server, such as Headscale |
+| `tailscale_upload_logs` | `true` | Tailscale's log upload |
+| `tailscale_auth_method` | `auto` | how a VM joins: `auto`, `key` or `web` |
+| `tailscale_login_auto_start` | `true` | `make deploy` starts the web login without asking first |
+| `tailscale_api_auth_method` | `none` | how a device is deleted from the tailnet: `none`, `token` or `oauth` |
+| `tailscale_login_timeout` | `300` | seconds the web login waits for your approval |
+| `tailscale_hostname` | the VM name | the machine name asked for, made one DNS label |
 
 ### Using VS Code on the VM
 
@@ -949,20 +1108,36 @@ make destroy                      # claude-on-proxmox-default
 make destroy VM_NAME=alpha,beta   # several at once; they are deleted in parallel
 ```
 
-It prompts for confirmation, then stops each VM and deletes it with its disks, a disk that still
-carries its VMID but that its configuration no longer lists included. Without a terminal to
-prompt on the answer is "no", so nothing is deleted. Every name must be a VM this project created:
-a name that does not exist, or a VM without the `claude-on-proxmox` tag, is refused before anything
-is deleted, and the error lists the VMs it did create. A template is never deleted. For a VM created
-before this project tagged its VMs, see
+It prompts for confirmation, then releases each VM from what it signed in to, then stops it and deletes it
+with its disks, a disk that still carries its VMID but that its configuration no longer lists included.
+Without a terminal to prompt on the answer is "no", so nothing is deleted. Every name must be a VM this
+project created: a name that does not exist, or a VM without the `claude-on-proxmox` tag, is refused
+before anything is deleted, and the error lists the VMs it did create. So is a name two VMs share, which
+Proxmox allows: rename or remove one first. A template is never deleted. For a VM created before this
+project tagged its VMs, see
 [Adopting VMs created before tagging](#adopting-vms-created-before-tagging).
+
+**Releasing a VM** happens on the VM, over SSH, since what it signed in with is on its disk; a stopped VM is
+started for it (and stopped again should the run then fail to delete it), and the VMs are released at once,
+as they are deleted:
+
+| Service | What `make destroy` does first | What is left |
+|---|---|---|
+| Claude | stops Remote Control and the unit that starts it, then `claude auth logout` | the session stays in the Claude app's list, offline: Anthropic has no way to revoke a Claude Code login from outside |
+| GitHub | `gh auth logout` | the token, valid until you revoke it. Revoking the one this project's sign-in made means revoking GitHub CLI under [Settings → Applications](https://github.com/settings/applications), which signs out every `gh` you have, this machine's included, so `make destroy` does not do it. `vault_github_token`, which every VM shares, is never revoked |
+| Tailscale | logs the node out, then deletes its device with `tailscale_api_auth_method` (see [Removing devices for you](#reaching-a-vm-over-tailscale)) | nothing with a credential; without one, the device, logged out, until you delete it |
+
+Each step is best effort: one that fails is said, and the VM is deleted anyway, as you asked. The run ends
+with one line per VM saying what it was released from and what is left of it - and for a VM that could not
+be reached (stopped and not starting, or not answering over SSH), what to remove by hand and where.
+`destroy_release: false` deletes the VMs as they are, and says the same.
 
 ## Testing
 
 ```bash
 make lint                 # yamllint + ansible-lint (production profile) + ruff
 make syntax               # --syntax-check of every playbook against your inventory/
-make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, both sign-ins and deploy's sign-in steps, the managed SSH config, the Claude terminal, Makefile guards (no network)
+make unit                 # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the three sign-ins and deploy's sign-in steps, Tailscale, the managed SSH config, the Claude terminal, Makefile guards (no network)
 make molecule             # Molecule (Docker) test of every role, incl. idempotence
 make molecule-integration # playbooks/configure.yml end to end in a container
 make molecule-provision   # provision.yml + discover.yml against a fake Proxmox API
@@ -1002,12 +1177,25 @@ so the tests are deterministic:
   on PATH keeps the sign-in off the network. The unit tests run the role's sign-in and clone tasks against
   the same two, so the token, device-flow, cleared-token and signed-out paths are covered without Docker.
 - The Claude sign-in runs against a stand-in `claude` (`tests/molecule/fake_claude.sh`) that prints the
-  page and answers a pasted code as Claude Code does: in `tests/unit/test_claude_login.py`, once at a
+  page, hands its browser the page that comes back to its own callback, and answers a code - pasted, or
+  brought back through that callback - as Claude Code does; a stand-in `ssh` records the forward the run
+  asks for, and the test plays the browser. In `tests/unit/test_claude_login.py`, once at a
   pseudo-terminal of the test's own, and in the integration scenario's side effect, whose real role then
   starts Remote Control under systemd. `tests/unit/test_sign_in_plays.py` runs both login playbooks, and
   `make deploy`'s sign-in steps as `deploy.yml` has them, with a VM that cannot be reached among them.
   Every scenario and both harnesses turn `login_desktop` off, so no test opens this machine's browser or
   touches its clipboard.
+- Tailscale runs against a stand-in `tailscale` (`tests/molecule/fake_tailscale.sh`) whose output is
+  Tailscale's own, as the research and a Headscale run recorded it: a join with a key on standard input, the
+  web login's page and approval, an expired or refused key, logout. `tests/unit/test_tailscale.py` runs the
+  role and `make tailscale-login` against it; the `tailscale` role scenario and the integration scenario
+  install the real package and daemon - log upload off from its first start - with the stand-in in front of
+  it, so no test reaches a Tailscale service. The unit harness puts a failing `tailscale` first on every
+  run's PATH, since your machine may have the real one, signed in to your own tailnet.
+- `make destroy`'s release runs in `tests/unit/test_release.py` against the stand-in `claude`, `gh` and
+  `tailscale`, a fake Tailscale API (`tests/molecule/fake_tailscale_api.py`: an OAuth client's exchange and
+  a device's deletion) and the fake GitHub API's credential revocation, with every canned token searched
+  for in the output.
 - `claude_code`, `dev_tools`, and the apt steps of every scenario download real packages, so the tests
   need internet access. The integration scenario disables the Docker Engine install (a daemon cannot run
   in the test container); the `dev_tools` scenario installs it but does not start it.
@@ -1053,15 +1241,15 @@ generated from the commits since the previous tag.
 ```
 ansible.cfg                 project-wide Ansible settings (accept-new host keys, forks, yaml output)
 .logs/                      one log per make run that used Ansible (git-ignored, pruned after 14 days)
-deploy.yml                  template (if missing) + provision + configure + both sign-ins + VS Code
-playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, list.yml, claude_login.yml and
-                            github_login.yml (the two sign-ins), destroy.yml, ssh_config.yml (the SSH aliases,
-                            fleet-wide), code.yml (one VM in VS Code)
+deploy.yml                  template (if missing) + provision + configure + the three sign-ins + VS Code
+playbooks/                  template.yml, provision.yml, discover.yml, configure.yml, list.yml, claude_login.yml,
+                            github_login.yml and tailscale_login.yml (the three sign-ins), destroy.yml,
+                            ssh_config.yml (the SSH aliases, fleet-wide), code.yml (one VM in VS Code)
 playbooks/tasks/            cluster_vms.yml (the shared cluster listing), vm_addresses.yml (each VM's config and
                             agent reply) and ssh_config.yml (one alias per VM in ~/.ssh/claude-on-proxmox.conf),
                             imported by the playbooks above
 filter_plugins/             net_mac, guest_ipv4, guest_address and guest_addresses, for reading guest agent
-                            output; proxmox_access_denied, for telling a refused token from a slow boot;
+                            output; tailnet_ipv4, for a VM's tailnet address; proxmox_access_denied, for telling a refused token from a slow boot;
                             ssh_config_blocks and ssh_config_prune, for the managed SSH config (proxmox.py);
                             vscode_setting, for reading VS Code's settings without writing them (vscode.py);
                             page_opener, for opening a sign-in page in your browser (desktop.py);
@@ -1069,9 +1257,9 @@ filter_plugins/             net_mac, guest_ipv4, guest_address and guest_address
 inventory/                  controller.yml, hosts.yml.example, group_vars/all/{defaults.yml,local.yml.example,vault.yml.example}
 roles/                      one role per concern, each with defaults, meta/argument_specs, molecule/
 roles/github_projects/library/github_repos.py   custom module
-tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, both
-                            sign-ins and deploy's sign-in steps, the managed SSH config, the Claude terminal, Makefile
-                            guards
+tests/unit/                 pytest: filters, github_repos, tracked-file guard, configure tags, Remote Control, the
+                            three sign-ins and deploy's sign-in steps, Tailscale, destroy's release, the managed SSH
+                            config, the Claude terminal, Makefile guards
 tests/molecule/             shared fakes for Molecule scenarios
 molecule/configure/         integration scenario for the full configure playbook
 molecule/provision/         end-to-end scenario for provisioning + discovery

@@ -1,0 +1,49 @@
+---
+# Entry point for playbooks/destroy.yml: before the VM is deleted, Remote
+# Control stops - its session goes offline in the Claude app, rather than drop
+# mid-turn - and claude signs out on the VM. Anthropic has no way to revoke a
+# Claude Code login from outside, nor a list of them to clean up: the session
+# stays in the app's list, offline, and destroy's report says so.
+- name: release | Look for Remote Control's units
+  ansible.builtin.stat:
+    path: /etc/systemd/system/{{ claude_code_remote_control_service }}.{{ item }}
+  loop: [path, service]
+  register: claude_code_release_units
+
+# The path unit first: it starts the service when a login lands, and the
+# logout below changes the login.
+- name: release | Stop Remote Control, and what starts it
+  ansible.builtin.systemd_service:
+    name: "{{ claude_code_remote_control_service }}.{{ item.item }}"
+    state: stopped
+  loop: "{{ claude_code_release_units.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ claude_code_remote_control_service }}.{{ item.item }}"
+  register: claude_code_release_stopped
+  failed_when: false
+
+- name: release | Read the login
+  ansible.builtin.command:
+    argv: [bash, -lc, claude auth status]
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_release_status
+  changed_when: false
+  failed_when: false
+
+- name: release | Sign claude out
+  ansible.builtin.command:
+    argv: [bash, -lc, claude auth logout]
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_release_logout
+  changed_when: true
+  failed_when: false
+  when: claude_code_release_signed_in | bool
+
+# What became of the login, for destroy's last play to say per VM: a fact,
+# since that play reads it through hostvars, and set on every run of this file
+# so it can never be an earlier run's.
+- name: release | Record what became of the login
+  ansible.builtin.set_fact:
+    claude_code_release_said: "{{ claude_code_release_summary }}"

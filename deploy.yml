@@ -15,14 +15,17 @@
 # project created are left alone; `make configure` with no VM_NAME is the
 # command that reaches the whole fleet.
 #
-# The sign-ins are the two steps only the person can take, each a page in the
-# browser and a code: they run one VM at a time, after configuration, and the
-# run waits for them. Enter at a VM's Claude prompt skips both for that VM;
-# every other VM is asked before its GitHub sign-in starts; a run with no
-# terminal skips them all (deploy_sign_in: false skips them on purpose).
-# Either way the VM is deployed: make claude-login and make github-login
-# finish the job later. What a sign-in leads to - Remote Control's start, the
-# private repositories - failing is raised at the end, after VS Code.
+# The sign-ins are the steps only the person can take, each a page in the
+# browser: they run one VM at a time, after configuration, and the run waits
+# for them - Claude, then GitHub, then Tailscale where no auth key joined the
+# VM already - with no question in between (github_login_auto_start,
+# tailscale_login_auto_start). A VM whose Claude sign-in nobody answered is
+# left out of the other two; a run with no terminal skips them all, as the
+# Makefile then passes deploy_sign_in: false, which also skips them on purpose.
+# Either way the VM is deployed: make claude-login, make github-login and make
+# tailscale-login finish the job later. What a sign-in leads to - Remote Control's start, the
+# private repositories - failing is raised at the end, after VS Code, and so is
+# a Tailscale failure during configuration.
 #
 # Every stage is idempotent, so this is also the command to re-run after
 # changing a variable - not only the one to run first. A second run rebuilds
@@ -95,9 +98,17 @@
              if claude_template_exists | bool
              else 'Template "' ~ proxmox_template_name ~ '" does not exist yet; building it first, over SSH as root@'
                   ~ (groups['proxmox'][0] | default('the proxmox host')) ~ '.' }}
+        # Tailscale's sign-in is a page in the browser only where no auth key joins
+        # the VM during configuration (tailscale_auth_method).
+        claude_deploy_tailscale_web: >-
+          {{ tailscale_enabled | default(true) | bool
+             and (tailscale_auth_method | default('auto') == 'web'
+                  or tailscale_auth_method | default('auto') == 'auto'
+                     and (tailscale_auth_key | default('', true) | length) == 0) }}
         claude_deploy_sign_ins: >-
-          {{ ', then signing in to Claude and GitHub: the run stops for you at a prompt here and a page in your'
-             ~ ' browser (Enter at the prompt skips a VM)' if deploy_sign_in | bool else '' }}
+          {{ (', then signing in to Claude, GitHub' ~ (' and Tailscale' if claude_deploy_tailscale_web | bool else '')
+              ~ ': each opens a page in your browser and the run waits for you there')
+             if deploy_sign_in | bool else '' }}
         claude_deploy_window: "{{ ', and opening VS Code on it' if deploy_code | bool and claude_vm_names | length == 1 else '' }}"
       ansible.builtin.debug:
         msg: >-
@@ -125,6 +136,10 @@
     # name make claude-login and make github-login.
     claude_code_sign_in_follows: "{{ deploy_sign_in }}"
     github_projects_sign_in_follows: "{{ deploy_sign_in }}"
+    tailscale_sign_in_follows: "{{ deploy_sign_in }}"
+    # A Tailscale failure is raised by this playbook's last play, after the
+    # sign-ins and VS Code, rather than by configure's own.
+    claude_vm_configure_in_deploy: true
 
 # The VMs configuration reached, as for configure: a VM left stopped or whose
 # configuration failed is not in the group. A sign-in that fails is said and
@@ -137,21 +152,42 @@
     claude_vm_login_in_deploy: true
   when: deploy_sign_in | bool
 
-# VM by VM, since this flow waits up to fifteen minutes for a browser and
-# nothing else tells an attended run from an unattended one. Every VM but one
-# whose Claude prompt got Enter is asked first, so GitHub can always be left
-# for later: where a Claude code was entered someone is here, and Enter signs
-# it in; a VM that showed no Claude prompt (signed in already, or an API key)
-# signs in on a "y". With no terminal the question returns at once with
-# nothing. A token in the vault signed gh in during configuration already.
+# VM by VM, since this flow waits up to fifteen minutes for a browser. With
+# github_login_auto_start, the default, it starts by itself for every VM but
+# one whose Claude sign-in was skipped, which nobody was there to answer. Off,
+# every VM but that one is asked first, as GitHub can then be left for later:
+# Enter signs in one whose Claude sign-in was answered, and "y" any other (a VM
+# already signed in to Claude, or on an API key). A run with no terminal gets
+# here with deploy_sign_in false: the Makefile passes it, as nobody can approve
+# a page then. A token in the vault signed gh in during configuration already.
 - name: Sign gh in on each VM, and clone its private repositories
   ansible.builtin.import_playbook: playbooks/github_login.yml
   vars:
     claude_vm_discovery: false
-    claude_vm_login_interactive: "{{ claude_code_login_answered | default(false) }}"
-    claude_vm_login_ask: "{{ not (claude_code_login_skipped | default(false)) }}"
+    claude_vm_login_interactive: >-
+      {{ not (claude_code_login_skipped | default(false)) if github_login_auto_start | default(true) | bool
+         else claude_code_login_answered | default(false) }}
+    claude_vm_login_ask: >-
+      {{ not (github_login_auto_start | default(true) | bool) and not (claude_code_login_skipped | default(false)) }}
     claude_vm_login_in_deploy: true
   when: deploy_sign_in | bool
+
+# VM by VM, after GitHub's: Tailscale's web login waits up to
+# tailscale_login_timeout for a browser, and starts by itself or is asked about
+# as GitHub's sign-in is, by tailscale_login_auto_start. Where an auth key
+# joined the VM during configuration, this only reports. Off with
+# tailscale_enabled: false.
+- name: Sign each VM in to Tailscale
+  ansible.builtin.import_playbook: playbooks/tailscale_login.yml
+  vars:
+    claude_vm_discovery: false
+    claude_vm_login_interactive: >-
+      {{ not (claude_code_login_skipped | default(false)) if tailscale_login_auto_start | default(true) | bool
+         else claude_code_login_answered | default(false) }}
+    claude_vm_login_ask: >-
+      {{ not (tailscale_login_auto_start | default(true) | bool) and not (claude_code_login_skipped | default(false)) }}
+    claude_vm_login_in_deploy: true
+  when: deploy_sign_in | bool and tailscale_enabled | default(true) | bool
 
 # make code, for the one VM this run was for: an alias that follows the VM,
 # then a VS Code window whose terminal starts claude. A fleet is not opened
@@ -165,7 +201,8 @@
 # What a sign-in leads to - Remote Control's start, the private repositories'
 # clones - is not a sign-in: when it failed, the deploy is not done, and says
 # so here, at its end, after VS Code has opened, with the command that retries
-# it. A sign-in that failed or was skipped was said where it happened.
+# it. Tailscale, configured last and optional, fails the same way. A sign-in
+# that failed or was skipped was said where it happened.
 - name: Fail each VM whose work after a sign-in failed
   hosts: claude_vms
   gather_facts: false

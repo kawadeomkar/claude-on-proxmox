@@ -888,6 +888,10 @@
           vars: {vm_name: ubuntu-24.04-cloudinit, confirm_destroy: "yes", proxmox_vm_allow_untagged_delete: true}
         - expect: 'No VM named ours-container was created by this project'
           vars: {vm_name: ours-container, confirm_destroy: "yes", proxmox_vm_allow_untagged_delete: true}
+        # Two VMs of one name, both stopped: refused before either is started
+        # for its release, since by name the release could reach either.
+        - expect: 'More than one VM is named twin \(VMIDs 9006, 9007\), so\s+it is not clear which one to delete'
+          vars: {vm_name: twin, confirm_destroy: "yes"}
       loop_control:
         loop_var: verify_case
         label: "{{ verify_case.vars }}"
@@ -914,24 +918,31 @@
              | zip(verify_refused_destroys.results | map(attribute='stderr')) | map('join', '\n') | list }}
       ansible.builtin.assert:
         that:
-          - verify_refused_destroys.results | map(attribute='rc') | reject('equalto', 0) | list | length == 4
+          - verify_refused_destroys.results | map(attribute='rc') | reject('equalto', 0) | list | length == 5
           - verify_aliases_after_refusals == ['commas', 'parked', 'legacy', 'alpha', 'guarded']
           - verify_outputs[0] is search(verify_refused_destroys.results[0].verify_case.expect)
           - verify_outputs[1] is search(verify_refused_destroys.results[1].verify_case.expect)
           - verify_outputs[2] is search(verify_refused_destroys.results[2].verify_case.expect)
           - verify_outputs[3] is search(verify_refused_destroys.results[3].verify_case.expect)
+          - verify_outputs[4] is search(verify_refused_destroys.results[4].verify_case.expect)
           - verify_after_refusals.json.data | map(attribute='name', default='')
             | intersect(['commas', 'legacy', 'ubuntu-24.04-cloudinit', 'ours-container']) | length == 4
+          # Both twins are still there, and neither was started.
+          - >-
+            verify_after_refusals.json.data | selectattr('name', 'defined') | selectattr('name', 'equalto', 'twin')
+            | map(attribute='status') | list == ['stopped', 'stopped']
         fail_msg: >-
           destroy.yml exited {{ verify_refused_destroys.results | map(attribute='rc') | list }}, leaving
           {{ verify_after_refusals.json.data | map(attribute='name', default='') | sort }}:
           {{ verify_outputs | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
         quiet: true
 
-    # Three tagged VMs in one run - one with comma-joined tags, one stopped,
-    # one protected - so every VM that can be deleted is, not only the first,
+    # commas, with comma-joined tags and running, alone; then two tagged VMs in
+    # one run - one stopped, one protected - so the one that can be deleted is
     # and the one Proxmox refuses fails on its own; then legacy, through the
-    # escape hatch.
+    # escape hatch; then the protected one alone, so that every deletion of the
+    # run fails - which once ended the run before the VM it started was stopped
+    # again.
     - name: Run destroy.yml where it must delete
       ansible.builtin.command:
         argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_case | to_json, playbook_dir ~ '/../../playbooks/destroy.yml'] }}"
@@ -939,9 +950,13 @@
       register: verify_destroys
       changed_when: false
       failed_when: false
+      # commas alone first: a running VM, so the run starts nothing - the run
+      # in which a skipped listing once failed destroy before it began.
       loop:
-        - {vm_name: "commas,parked,guarded", confirm_destroy: "yes"}
+        - {vm_name: commas, confirm_destroy: "yes"}
+        - {vm_name: "parked,guarded", confirm_destroy: "yes"}
         - {vm_name: legacy, confirm_destroy: "yes", proxmox_vm_allow_untagged_delete: true}
+        - {vm_name: guarded, confirm_destroy: "yes"}
       loop_control:
         loop_var: verify_case
         label: "{{ verify_case }}"
@@ -971,12 +986,34 @@
         verify_left: "{{ verify_after_destroys.json.data | map(attribute='name', default='') | list }}"
       ansible.builtin.assert:
         that:
-          - verify_destroys.results | map(attribute='rc') | list == [2, 0]
-          - (verify_destroys.results[0].stdout ~ verify_destroys.results[0].stderr) is search('protection mode enabled')
-          - (verify_destroys.results[0].stdout ~ verify_destroys.results[0].stderr) is search('Kept the SSH alias of guarded')
+          - verify_destroys.results | map(attribute='rc') | list == [0, 2, 0, 2]
+          # commas started nothing; the fake's VMs answer no SSH, so each is
+          # deleted as it was, with what is left of it said.
+          - >-
+            (verify_destroys.results[0].stdout ~ verify_destroys.results[0].stderr)
+            is search('commas: could not be reached, so it was not released')
+          - (verify_destroys.results[1].stdout ~ verify_destroys.results[1].stderr) is search('protection mode enabled')
+          - (verify_destroys.results[1].stdout ~ verify_destroys.results[1].stderr) is search('Kept the SSH alias of guarded')
+          # parked, stopped, was started to be released.
+          - >-
+            (verify_destroys.results[1].stdout ~ verify_destroys.results[1].stderr)
+            is search('parked: could not be reached, so it was not released')
           # The VM that is still there keeps its alias; the deleted ones lose theirs.
           - verify_aliases_after_destroys == ['alpha', 'guarded']
           - "'guarded' in verify_left"
+          # Stopped when destroy came, started by it to be released, then
+          # refused: stopped again, as it was found.
+          - >-
+            (verify_after_destroys.json.data | selectattr('name', 'defined') | selectattr('name', 'equalto', 'guarded')
+             | first).status == 'stopped'
+          - (verify_destroys.results[1].stdout ~ verify_destroys.results[1].stderr) is search('Stopped guarded again')
+          # Alone, its deletion the run's only one and failed: still stopped
+          # again, and the failure raised at the end with its reason.
+          - (verify_destroys.results[3].stdout ~ verify_destroys.results[3].stderr) is search('Stopped guarded again')
+          - >-
+            (verify_destroys.results[3].stdout ~ verify_destroys.results[3].stderr)
+            is search('guarded was not deleted \\(.*protection mode enabled')
+          - (verify_destroys.results[3].stdout ~ verify_destroys.results[3].stderr) is search('Kept the SSH alias of guarded')
           - not verify_user_ssh_config.stat.exists
           - verify_left | intersect(['commas', 'parked', 'legacy']) | length == 0
           - verify_left | intersect(['alpha', 'beta', 'solo', 'nonic', 'netone', 'stranger', 'bystander', 'ubuntu-24.04-cloudinit',

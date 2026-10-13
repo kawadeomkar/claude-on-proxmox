@@ -67,12 +67,22 @@ claude_code_remote_control_service: claude-remote-control
 # ------------------------------------------------------------- Sign-in -----
 # The browser sign-in (tasks/browser_login.yml) that `make claude-login` and
 # `make deploy` run on a VM with no Claude login and no API key: claude auth
-# login starts on the VM with no terminal, the sign-in page it prints opens in
-# the browser on this machine, and the code that page shows once you authorise
-# is pasted at a prompt in the terminal running make. Set by the playbooks.
+# login starts on the VM with no terminal, its sign-in page opens in the browser
+# on this machine, and once you authorise, the browser comes back to claude on
+# the VM by itself - or, where it cannot, the page shows a code to paste at a
+# prompt in the terminal running make. Set by the playbooks.
 claude_code_login_interactive: false
 # Open the sign-in page in this machine's browser. Off in every test.
 claude_code_login_desktop: true
+# Bring the browser back to the VM by itself once you authorise, as a browser on
+# the VM would, with nothing to paste: claude's callback port is forwarded from
+# this machine over SSH for the length of the sign-in. Only a browser on this
+# machine reaches that forward, so it follows claude_code_login_desktop; where
+# the port cannot be forwarded, the page shows a code to paste instead.
+claude_code_login_redirect: "{{ claude_code_login_desktop }}"
+# Seconds the run waits for you to authorise in the browser, when the browser
+# comes back by itself. Ctrl-C ends the run sooner.
+claude_code_login_approval_timeout: 300
 # Extra arguments for `claude auth login`, such as [--sso] or [--email, you@example.com].
 claude_code_login_args: []
 # Seconds to wait, once the code is pasted, for claude to accept it.

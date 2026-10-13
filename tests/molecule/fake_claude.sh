@@ -21,6 +21,14 @@
 #                                   place, then exit 1
 #                     fake-gone     an attempt that ended: exit 1 right after
 #                                   the prompt, reading nothing
+#                   With BROWSER set, it does what Claude Code does there too:
+#                   listens on 127.0.0.1 for its callback, runs BROWSER with the
+#                   page that redirects to http://localhost:<port>/callback, and
+#                   takes the code from that callback as from a pasted line,
+#                   logging "callback". fake-foreign-page hands BROWSER a page
+#                   that is not Claude's. The listener is Python: the unit
+#                   harness's ($STAND_IN/python) or python3.
+#   auth logout     removes .credentials.json, as claude's own does
 #   remote-control  stays up, as the server does
 #   --version       a version
 state="$HOME/.claude/fake"
@@ -44,6 +52,52 @@ case "$1 $2" in
       exit 1
     fi
     echo "Opening browser to sign in…"
+    if [ -n "${BROWSER:-}" ]; then
+      # The callback: one request to /callback, whose code and state go into
+      # claude's own stdin as a pasted line would - the pipe the sign-in opened
+      # read-write, handed over on fd 3, since a background command's stdin is
+      # /dev/null. Ends with that request, or when claude has gone.
+      rm -f "$state/callback-port"
+      exec 3<&0
+      python=python3
+      [ -n "${STAND_IN:-}" ] && [ -x "$STAND_IN/python" ] && python="$STAND_IN/python"
+      "$python" -c '
+import http.server, os, sys, time, urllib.parse
+state, parent = sys.argv[1], os.getppid()
+class Callback(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        url = urllib.parse.urlsplit(self.path)
+        if url.path != "/callback":
+            self.send_error(404)
+            return
+        query = urllib.parse.parse_qs(url.query)
+        self.send_response(302)
+        self.send_header("Location", "https://platform.claude.com/oauth/code/success?app=claude-code")
+        self.end_headers()
+        with open(os.path.join(state, "calls.log"), "a") as log:
+            log.write("callback\n")
+        line = query.get("code", [""])[0] + "#" + query.get("state", [""])[0] + "\n"
+        os.write(0, line.encode())
+        self.server.answered = True
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", 0), Callback)
+server.answered, server.timeout = False, 1
+with open(os.path.join(state, "callback-port.tmp"), "w") as out:
+    out.write(str(server.server_address[1]))
+os.rename(os.path.join(state, "callback-port.tmp"), os.path.join(state, "callback-port"))
+deadline = time.time() + 1800
+while not server.answered and time.time() < deadline and os.getppid() == parent:
+    server.handle_request()
+' "$state" <&3 &
+      exec 3<&-
+      i=0
+      while [ ! -s "$state/callback-port" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+      port=$(cat "$state/callback-port" 2>/dev/null)
+      page="https://claude.com/cai/oauth/authorize?code=true&client_id=fake&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A${port}%2Fcallback&state=fake-state"
+      [ -e "$state/fake-foreign-page" ] && page="https://evil.example/cai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A${port}%2Fcallback&state=fake-state"
+      "$BROWSER" "$page" >/dev/null 2>&1 || true
+    fi
     echo "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=fake-state"
     printf 'Paste code here if prompted > '
     if [ -e "$state/fake-gone" ]; then
@@ -68,6 +122,7 @@ case "$1 $2" in
         cat "$state/fake-refusal" >&2
         exit 1
       fi
+      mkdir -p "$(dirname "$credentials")"
       (umask 077 && echo '{"claudeAiOauth": {"accessToken": "fake-access-token-0000"}}' > "$credentials")
       echo "accepted" >> "$state/calls.log"
       echo "Login successful."
@@ -75,6 +130,14 @@ case "$1 $2" in
     done
     echo "eof" >> "$state/calls.log"
     exit 1
+    ;;
+esac
+
+case "$1 $2" in
+  "auth logout")
+    rm -f "$credentials"
+    echo "Successfully logged out from your Anthropic account."
+    exit 0
     ;;
 esac
 

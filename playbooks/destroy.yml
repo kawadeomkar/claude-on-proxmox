@@ -18,6 +18,13 @@
 - name: Confirm and check what to destroy
   hosts: localhost
   gather_facts: false
+  vars:
+    # The VMs asked for, as the cluster lists them now: read again once the
+    # stopped ones have been started below.
+    claude_vm_release_query: >-
+      {{ claude_vm_all.json.data | selectattr('type', 'equalto', 'qemu') | selectattr('name', 'defined')
+         | selectattr('name', 'in', claude_vm_names) | list }}
+    claude_vm_releasing: "{{ destroy_release | default(true) | bool }}"
 
   vars_prompt:
     - name: confirm_destroy
@@ -82,18 +89,239 @@
           {{ claude_vm_hints | join(' ') }}
         quiet: true
 
-    - name: Add each VM as a host to delete
-      ansible.builtin.add_host:
-        name: "{{ claude_vm_name_item }}"
-        groups: claude_vm_doomed
-        # Every task in the proxmox_vm role is delegated to the controller and
-        # talks to the Proxmox API, so nothing ever connects to this host.
-        ansible_connection: local
-      changed_when: false
-      loop: "{{ claude_vm_names }}"
+    # Proxmox permits two VMs of one name, tagged or not, and the role refuses
+    # to delete either, since it cannot tell which is meant. Refused here, for
+    # the whole run, before anything is started or released: the release
+    # finds each VM by its name, which could then be a VM that is not this
+    # project's - started, and reached over SSH.
+    - name: Refuse a name that more than one VM carries
+      vars:
+        claude_vm_duplicated: >-
+          {{ claude_vm_all.json.data | selectattr('type', 'equalto', 'qemu') | map(attribute='name', default='') | select
+             | community.general.counter | dict2items | selectattr('value', 'gt', 1) | map(attribute='key')
+             | select('in', claude_vm_names) | sort | list }}
+        claude_vm_duplicate_ids: >-
+          {{ claude_vm_all.json.data | selectattr('type', 'equalto', 'qemu') | selectattr('name', 'defined')
+             | selectattr('name', 'in', claude_vm_duplicated) | map(attribute='vmid') | sort | join(', ') }}
+      ansible.builtin.assert:
+        that: claude_vm_duplicated | length == 0
+        fail_msg: >-
+          More than one VM is named {{ claude_vm_duplicated | join(', ') }} (VMIDs {{ claude_vm_duplicate_ids }}), so
+          it is not clear which one to delete, and nothing was. Rename or remove the duplicates, then run this again.
+        quiet: true
+
+    # Releasing a VM - signing it out of Claude and GitHub, taking it off the
+    # tailnet - happens on the VM, over SSH, since what it signed in with is on
+    # its disk: a stopped VM is started for it. One that does not start is
+    # deleted anyway, and the run says what is left of it to remove by hand.
+    - name: Start each stopped VM, to release it before it goes
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_url }}/nodes/{{ claude_vm_item.node }}/qemu/{{ claude_vm_item.vmid }}/status/start"
+        method: POST
+        headers: "{{ proxmox_api_headers }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+      register: claude_vm_release_starts
+      changed_when: true
+      failed_when: false
+      no_log: true
+      loop: "{{ claude_vm_release_query | selectattr('status', 'equalto', 'stopped') | list }}"
       loop_control:
-        loop_var: claude_vm_name_item
-        label: "{{ claude_vm_name_item }}"
+        loop_var: claude_vm_item
+        label: "{{ claude_vm_item.name }}"
+      when: claude_vm_releasing | bool
+
+    # Read by the rescue below and by the last play: a VM started here is
+    # stopped again whenever the run then fails to delete it, so a failed
+    # destroy leaves it as it found it. Straight after the start, before
+    # anything that could fail.
+    - name: Remember which VMs this run started
+      ansible.builtin.set_fact:
+        claude_vm_release_started: >-
+          {{ claude_vm_release_starts.results | default([]) | selectattr('status', 'defined')
+             | selectattr('status', 'equalto', 200) | map(attribute='claude_vm_item') | list }}
+
+    # Everything from here to the hosts it adds can still fail the run - the
+    # listing, a token refused the guest agent - and a run that fails here has
+    # deleted nothing, so each VM it started above is stopped again first, as it
+    # was found. The failure is raised again after that.
+    - name: Read where each VM is now, and add each as a host
+      block:
+        # The MAC of each started VM's own NIC (proxmox_nic), so that the wait
+        # below is for that NIC's address, which vm_addresses.yml pairs by it:
+        # a bridge the guest grows - docker0, tailscale0 - can report one first,
+        # and a wait that ended on it left the VM no address, and unreleased.
+        - name: Read the configuration of each VM started
+          ansible.builtin.uri:
+            url: "{{ proxmox_api_url }}/nodes/{{ claude_vm_item.node }}/qemu/{{ claude_vm_item.vmid }}/config"
+            headers: "{{ proxmox_api_headers }}"
+            validate_certs: "{{ proxmox_validate_certs }}"
+            ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+          register: claude_vm_release_configs
+          failed_when: false
+          no_log: true
+          loop: "{{ claude_vm_release_started }}"
+          loop_control:
+            loop_var: claude_vm_item
+            label: "{{ claude_vm_item.name }}"
+
+        # Until its agent reports an address on that NIC: the agent answers
+        # before DHCP has. A VM without the NIC is not waited for; it has no
+        # address to release it at.
+        - name: Wait for each started VM's guest agent and its NIC's address
+          vars:
+            claude_vm_release_mac: >-
+              {{ ((claude_vm_config.json | default({}, true)).data | default({}, true)).get(proxmox_nic, '')
+                 | net_mac('') }}
+          ansible.builtin.uri:
+            url: >-
+              {{ proxmox_api_url }}/nodes/{{ claude_vm_config.claude_vm_item.node }}/qemu/{{
+              claude_vm_config.claude_vm_item.vmid }}/agent/network-get-interfaces
+            headers: "{{ proxmox_api_headers }}"
+            validate_certs: "{{ proxmox_validate_certs }}"
+            ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+          register: claude_vm_release_agent
+          until: >-
+            (claude_vm_release_agent.status | default(0)) == 200
+            and ((claude_vm_release_agent.json.data.result | default([], true)) | guest_ipv4(claude_vm_release_mac)
+                 | default('', true)) | length > 0
+          retries: 36
+          delay: 5
+          failed_when: false
+          no_log: true
+          loop: "{{ claude_vm_release_configs.results | default([]) | selectattr('status', 'defined') | selectattr('status', 'equalto', 200) | list }}"
+          loop_control:
+            loop_var: claude_vm_config
+            label: "{{ claude_vm_config.claude_vm_item.name }}"
+          when: claude_vm_release_mac | length > 0
+
+        # Always, with no condition: a skipped task still overwrites its
+        # register, and claude_vm_all skipped - nothing started, or
+        # destroy_release off - failed every read of the listing after it. One
+        # more call to the API.
+        - name: List the VMs again, with the ones just started
+          ansible.builtin.import_tasks: tasks/cluster_vms.yml
+
+        # The listing above still shows a VM started seconds ago as stopped -
+        # Proxmox polls a VM's status every ten seconds or so - so the VMs this
+        # run started are named, and asked whatever it says.
+        - name: Read the address of each VM to release
+          ansible.builtin.import_tasks: tasks/vm_addresses.yml
+          vars:
+            claude_vm_query: "{{ claude_vm_release_query }}"
+            claude_vm_just_started: "{{ claude_vm_release_started | map(attribute='vmid') | list }}"
+          when: claude_vm_releasing | bool
+
+        # How the release play below reaches the VM: host variables, never
+        # play variables. A play's vars apply to its delegated tasks too, so SSH
+        # settings set there sent the release's calls to Tailscale's API - and
+        # their credential - to the VM instead of running them here. The delete
+        # play forces a local connection, since it only talks to Proxmox's API.
+        - name: Add each VM as a host to delete
+          vars:
+            claude_vm_release_found: >-
+              {{ claude_vm_addressed | default([]) | selectattr('name', 'equalto', claude_vm_name_item)
+                 | map(attribute='address') | first | default('', true) }}
+            claude_vm_release_here: "{{ (claude_vm_release_found or '') if claude_vm_releasing | bool else '' }}"
+          ansible.builtin.add_host:
+            name: "{{ claude_vm_name_item }}"
+            groups: claude_vm_doomed
+            ansible_connection: "{{ 'ssh' if claude_vm_release_here | length > 0 else 'local' }}"
+            ansible_host: "{{ claude_vm_release_here or claude_vm_name_item }}"
+            ansible_user: "{{ vm_user }}"
+            claude_vm_release_address: "{{ claude_vm_release_here }}"
+          changed_when: false
+          loop: "{{ claude_vm_names }}"
+          loop_control:
+            loop_var: claude_vm_name_item
+            label: "{{ claude_vm_name_item }}"
+      rescue:
+        - name: Stop again each VM this run started, since it deletes nothing
+          ansible.builtin.import_tasks: tasks/vm_stop.yml
+          vars:
+            claude_vm_stop_query: "{{ claude_vm_release_started }}"
+            claude_vm_stop_why: the run then failed before it deleted anything
+
+        - name: Fail with what went wrong, having deleted nothing
+          ansible.builtin.fail:
+            msg: >-
+              destroy failed at "{{ ansible_failed_task.name | default('a task') }}" and deleted nothing:
+              {{ (ansible_failed_result.msg | default('no message', true)) | plain_text }}
+
+# Each VM is released before it goes, on the VM, over SSH as configure reaches
+# it, and across the VMs at once, as the deletion below is. Every step is best
+# effort: a failure is said, and the VM is deleted anyway, as the run was asked;
+# the last play says what each VM was released from and what is left of it.
+- name: Release each VM from what it signed in to
+  hosts: claude_vm_doomed
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Leave a VM with no address as it is
+      ansible.builtin.meta: end_host
+      when: claude_vm_release_address | default('', true) | length == 0
+
+    # A VM that answers but fails - no Python, a sudo that asks for a password
+    # - is left as one that does not answer is: failed here, it would leave
+    # the run, and a run whose every VM fails a play ends there, with no
+    # deletion and no report.
+    - name: Reach the VM
+      ansible.builtin.ping:
+      register: claude_vm_release_reached
+      ignore_unreachable: true
+      failed_when: false
+
+    - name: Leave a VM that did not answer as it is
+      ansible.builtin.meta: end_host
+      when: >-
+        claude_vm_release_reached.unreachable | default(false) | bool
+        or claude_vm_release_reached.ping | default('') != 'pong'
+
+    # Claude first: Remote Control's session goes offline in the app before
+    # anything else of the VM's goes.
+    - name: Sign Claude Code out, and stop Remote Control
+      block:
+        - name: Run claude_code's release
+          ansible.builtin.include_role:
+            name: claude_code
+            tasks_from: release
+      rescue:
+        - name: Remember that Claude Code was not released
+          ansible.builtin.set_fact:
+            claude_vm_release_failures: >-
+              {{ claude_vm_release_failures | default([])
+                 + ['Claude Code: ' ~ (ansible_failed_result.msg | default('failed', true) | plain_text)] }}
+
+    - name: Sign gh out
+      block:
+        - name: Run github_projects' release
+          ansible.builtin.include_role:
+            name: github_projects
+            tasks_from: release
+      rescue:
+        - name: Remember that GitHub was not released
+          ansible.builtin.set_fact:
+            claude_vm_release_failures: >-
+              {{ claude_vm_release_failures | default([])
+                 + ['GitHub: ' ~ (ansible_failed_result.msg | default('failed', true) | plain_text)] }}
+
+    - name: Take the VM off the tailnet
+      block:
+        - name: Run tailscale's release
+          ansible.builtin.include_role:
+            name: tailscale
+            tasks_from: release
+      rescue:
+        - name: Remember that Tailscale was not released
+          ansible.builtin.set_fact:
+            claude_vm_release_failures: >-
+              {{ claude_vm_release_failures | default([])
+                 + ['Tailscale: ' ~ (ansible_failed_result.msg | default('failed', true) | plain_text)] }}
+
+    - name: Record that the VM was released
+      ansible.builtin.set_fact:
+        claude_vm_released: true
 
 # The role checks ownership again for each VM, against the VM it looks up by
 # name at that moment, and refuses a template or an untagged VM without the
@@ -101,29 +329,64 @@
 - name: Delete the VMs on Proxmox
   hosts: claude_vm_doomed
   gather_facts: false
-  roles:
-    - role: proxmox_vm
-      proxmox_vm_state: absent
+  # Here, with this machine's Python - the one with the Proxmox modules'
+  # libraries: the role talks only to Proxmox's API, never to the VM, whose
+  # host variables say how the release play above reached it over SSH. Both
+  # equal localhost's own, so its delegated tasks are unaffected.
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
-  # A host that failed in the role - a stop that timed out, a VM with
-  # protection on, an API error - leaves the play and never gets here, so
-  # this fact marks exactly the VMs that are gone. The play below reads it.
-  post_tasks:
-    - name: Record that the VM was deleted
-      ansible.builtin.set_fact:
-        claude_vm_deleted: true
+  # A deletion that fails - a stop that timed out, a VM with protection on, an
+  # API error - is recorded and raised at the end of the run, not here: a play
+  # in which every VM fails ends the run, and the play below would never stop
+  # again a VM this run started, nor say what is left of the rest.
+  tasks:
+    - name: Delete the VM, or remember why not
+      block:
+        - name: Run proxmox_vm with the VM absent
+          ansible.builtin.import_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_state: absent
+
+        # Only after the role, so this fact marks exactly the VMs that are
+        # gone. The play below reads it.
+        - name: Record that the VM was deleted
+          ansible.builtin.set_fact:
+            claude_vm_deleted: true
+      rescue:
+        - name: Remember why the VM was not deleted, for the end of the run
+          ansible.builtin.set_fact:
+            claude_vm_delete_failure: >-
+              {{ inventory_hostname }} was not deleted ({{ ansible_failed_task.name | default('a task') }}:
+              {{ (ansible_failed_result.msg | default('no message', true)) | plain_text | regex_replace('\s+', ' ')
+                 | trim | regex_replace('[.]$', '') }}).
 
 # The alias this project keeps for each VM on this machine goes with the VM,
 # as its host key does (README, "Using VS Code on the VM"), and only with a
 # VM that is actually gone: one whose deletion failed above keeps its alias,
 # since it is still there to connect to. A run refused before anything was
 # deleted never reaches this play; removing a block that is not there is a
-# no-op.
+# no-op. It also stops again what the run started and did not delete, says
+# what each VM was released from, and fails the run for each deletion that
+# failed - here, at the end, so that one VM's failure stops none of that.
 - name: Forget the SSH alias of each deleted VM
   hosts: localhost
   gather_facts: false
 
   tasks:
+    # First, before anything here that could fail: a VM this run started for
+    # its release and then could not delete is stopped again, as it was found.
+    - name: Stop again each VM this run started but could not delete
+      ansible.builtin.import_tasks: tasks/vm_stop.yml
+      vars:
+        claude_vm_gone: >-
+          {{ groups['claude_vm_doomed'] | default([]) | map('extract', hostvars)
+             | selectattr('claude_vm_deleted', 'defined') | map(attribute='inventory_hostname') | list }}
+        claude_vm_stop_query: "{{ claude_vm_release_started | default([]) | rejectattr('name', 'in', claude_vm_gone) | list }}"
+        claude_vm_stop_why: its deletion then failed
+
     - name: Remove the aliases
       ansible.builtin.import_tasks: tasks/ssh_config.yml
       vars:
@@ -135,6 +398,44 @@
              | map(attribute='inventory_hostname')
              | map('community.general.dict_kv', 'name') | list }}
       when: claude_ssh_config | default(true) | bool
+
+    # One line per deleted VM: what it was released from, or - for one that was
+    # not, being stopped and not starting, or not answering, or destroy_release
+    # off - what is left of it to remove by hand. A device left on the tailnet
+    # holds its name: a VM built again under it would join as <name>-1.
+    - name: Say what each deleted VM was released from, and what is left of it
+      vars:
+        claude_release_vm: "{{ hostvars[claude_release_name] }}"
+        claude_release_where: >-
+          {{ 'on your control server' if tailscale_login_server | default('', true) | length > 0
+             else 'at https://login.tailscale.com/admin/machines' }}
+        claude_release_claude: "{{ claude_release_vm.claude_code_release_said | default('') }}"
+        claude_release_github: "{{ claude_release_vm.github_projects_release_said | default('') }}"
+        claude_release_tailscale: "{{ claude_release_vm.tailscale_release_said | default('') }}"
+        claude_release_parts: >-
+          {{ (['Claude Code: ' ~ claude_release_claude] if claude_release_claude | length > 0 else [])
+             + (['GitHub: ' ~ claude_release_github] if claude_release_github | length > 0 else [])
+             + (['Tailscale: ' ~ claude_release_tailscale] if claude_release_tailscale | length > 0 else [])
+             + claude_release_vm.claude_vm_release_failures | default([]) }}
+        claude_release_left: >-
+          {{ 'its Tailscale device, if it was on your tailnet, stays until you delete it ' ~ claude_release_where
+             ~ ' (or a VM built again under its name joins as <name>-1); a GitHub token its sign-in made stays valid until'
+             ~ ' revoked at https://github.com/settings/applications, under GitHub CLI (which signs out every gh); and'
+             ~ ' Anthropic has no way to revoke its Claude Code login from outside.' }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ claude_release_name }}:
+          {{ ('released - ' ~ (claude_release_parts | join('; ')) ~ '.') if claude_release_vm.claude_vm_released | default(false) | bool
+                                                                       and claude_release_parts | length > 0
+             else 'released - it had nothing signed in to end.' if claude_release_vm.claude_vm_released | default(false) | bool
+             else ('deleted as it was (destroy_release: false): ' ~ claude_release_left)
+             if not (destroy_release | default(true) | bool)
+             else ('could not be reached, so it was not released: ' ~ claude_release_left) }}
+      loop: >-
+        {{ groups['claude_vm_doomed'] | default([]) | map('extract', hostvars)
+           | selectattr('claude_vm_deleted', 'defined') | map(attribute='inventory_hostname') | list }}
+      loop_control:
+        loop_var: claude_release_name
 
     - name: Say which aliases were kept, and why
       vars:
@@ -152,3 +453,14 @@
       when:
         - claude_ssh_config | default(true) | bool
         - claude_ssh_kept | length > 0
+
+    # Last: the delete play records a deletion that failed rather than raising
+    # it, since a play in which every VM fails ends the run before this one.
+    - name: Fail for each VM that was not deleted
+      vars:
+        claude_vm_not_deleted: >-
+          {{ groups['claude_vm_doomed'] | default([]) | map('extract', hostvars)
+             | selectattr('claude_vm_delete_failure', 'defined') | map(attribute='claude_vm_delete_failure') | list }}
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_not_deleted | join(' ') }}"
+      when: claude_vm_not_deleted | length > 0

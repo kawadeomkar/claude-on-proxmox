@@ -1,0 +1,115 @@
+---
+# The first join with the vault key, from a settled NeedsLogin with no node key
+# only (main.yml). Sent again to a node that is signed in, a key Tailscale no
+# longer accepts - expired, spent, revoked - logs the node out
+# (tailscale#19501), so a node that has joined is never handed it again.
+#
+# The key goes in on standard input, read by tailscale's own file: handling
+# (os.ReadFile of /dev/stdin): nothing on argv, where every local user could
+# read it while `up` runs, and no file - copy would stage one in the
+# connecting user's ~/.ansible/tmp first. With pipelining, as ansible.cfg sets
+# it, a module's arguments travel over the SSH pipe and never reach the VM's
+# disk. A refusal is a report, not a failure (report.yml): the key is shared by
+# every VM, and Tailscale is optional.
+
+# A sign-in of this role's that ended after its run had - a page approved
+# later, a join that landed late: the login is the role's, recorded now by its
+# node key, so that its settings are held from this run on.
+- name: connect | Record the login a pending sign-in of this role's ended in
+  ansible.builtin.copy:
+    content: "{{ tailscale_node_key }}\n"
+    dest: "{{ tailscale_joined_marker_path }}"
+    mode: "0644"
+  register: tailscale_adopted
+  when:
+    - tailscale_login_pending | bool
+    - tailscale_signed_in | bool
+
+- name: connect | Read what this role has made, now that it has recorded the login
+  ansible.builtin.include_tasks: ownership.yml
+  when: tailscale_adopted is not skipped
+
+# What tailscaled said before this join. A login error stays in its Health
+# until an attempt after it ends, so the one an earlier refused key left is
+# still there when this join runs out of time, and is no refusal of this key's
+# (tailscale_refused_why). A fact, read only where the join below ran: it is
+# set under the same conditions, just before it.
+- name: connect | Remember what tailscaled said before the join
+  ansible.builtin.set_fact:
+    tailscale_health_before_join: "{{ tailscale_state.Health | default([], true) | map('plain_text') | list }}"
+  when:
+    - not ansible_check_mode
+    - tailscale_ours | bool
+    - tailscale_key_wanted | bool
+    - tailscale_first_join | bool
+    - not (tailscale_key_refused_locally | bool)
+
+- name: connect | Join the tailnet with the key
+  ansible.builtin.command:
+    argv: "{{ ['tailscale', 'up', '--auth-key=file:/dev/stdin', '--timeout=' ~ tailscale_join_timeout ~ 's'] + tailscale_up_flags }}"
+    stdin: "{{ tailscale_auth_key }}"
+  register: tailscale_join
+  changed_when: tailscale_join.rc == 0
+  failed_when: false
+  # Keeps the module's arguments, stdin included, out of the output, the run
+  # log and the VM's journal.
+  no_log: true
+  # Not in check mode, where nothing is sent and the report says the key would
+  # be used. tailscale refuses an OAuth client secret without tags itself,
+  # locally; the report says so in the same words.
+  when:
+    - not ansible_check_mode
+    - tailscale_ours | bool
+    - tailscale_key_wanted | bool
+    - tailscale_first_join | bool
+    - not (tailscale_key_refused_locally | bool)
+
+- name: connect | Read the state after the join
+  ansible.builtin.include_tasks: status.yml
+  when: tailscale_join is not skipped
+
+# The node key this join produced marks the login as this role's: settings.yml
+# changes the settings of that login only. A login made by hand later has a key
+# of its own, and keeps its own settings.
+- name: connect | Remember that this login is this role's
+  ansible.builtin.copy:
+    content: "{{ tailscale_node_key }}\n"
+    dest: "{{ tailscale_joined_marker_path }}"
+    mode: "0644"
+  when:
+    - tailscale_join is not skipped
+    - tailscale_signed_in | bool
+
+# A join that ran out of time is not over: tailscaled goes on with it, and the
+# login it may still end in is this role's (above, on a later run). Only that
+# one: a marker left pending by any other failure would make the next login
+# made by hand the role's, and its settings the role's to change.
+- name: connect | Mark a join still under way as this role's
+  ansible.builtin.copy:
+    content: "pending\n"
+    dest: "{{ tailscale_joined_marker_path }}"
+    mode: "0644"
+  when:
+    - tailscale_join is not skipped
+    - not (tailscale_signed_in | bool)
+    - tailscale_join_under_way | bool
+
+# A join that failed - a refused key, tags it may not apply, anything but time
+# running out - ends the sign-in, and the page of any web login before it: no
+# login is to come, so none can be taken as the role's.
+- name: connect | Forget the sign-in a failed join ended
+  ansible.builtin.file:
+    path: "{{ tailscale_joined_marker_path }}"
+    state: absent
+  when:
+    - tailscale_join is not skipped
+    - not (tailscale_signed_in | bool)
+    - not (tailscale_join_under_way | bool)
+
+# The reading taken before the join has no marker: read it again, so the rest of
+# this run knows the login is this role's.
+- name: connect | Read what this role has made, now that it has joined
+  ansible.builtin.include_tasks: ownership.yml
+  when:
+    - tailscale_join is not skipped
+    - tailscale_signed_in | bool

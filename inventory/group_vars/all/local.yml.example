@@ -48,6 +48,8 @@
 # the device flow; web is the device flow always; token is the token only.
 # github_auth: true
 # github_auth_method: auto
+# make deploy starts the device flow by itself; false asks first, VM by VM.
+# github_login_auto_start: true
 # github_login_scopes: [workflow]
 # The git identity on each VM. Empty: your GitHub display name (or login) and
 # GitHub's noreply address for your account.
@@ -113,9 +115,11 @@
 # so the role leaves the service stopped and says so until one or the other goes.
 # claude_remote_control: true
 # Extra arguments for the Claude sign-in's `claude auth login`, such as [--sso],
-# and how long it may take to accept the code you paste.
+# how long it may take to accept a code you paste, and how long the run waits
+# for your browser to come back to the VM by itself once you authorise.
 # claude_login_args: []
 # claude_login_timeout: 120
+# claude_login_approval_timeout: 300
 # Session title in the list at claude.ai/code; defaults to the VM name.
 # claude_code_remote_control_name: "{{ inventory_hostname }}"
 # Where sessions open. Empty means ~/projects of the VM user, where
@@ -129,12 +133,49 @@
 # session and reject further connections.
 # claude_code_remote_control_spawn: same-dir
 
-# make deploy ends with the VM signed in to Claude and GitHub and open in VS
-# Code; the two sign-ins each open a page and wait for you, one VM at a time.
-# false leaves them to make claude-login and make github-login.
+# make deploy ends with the VM signed in to Claude, GitHub and Tailscale and
+# open in VS Code; the sign-ins each open a page and wait for you, one VM at a
+# time. false leaves them to make claude-login, github-login and tailscale-login.
 # deploy_sign_in: true
 # Open the VM in VS Code at the end of a one-VM make deploy.
 # deploy_code: true
+# Before make destroy deletes a VM, sign it out of Claude and of gh, and take it
+# off your tailnet. A stopped VM is started for it. false deletes the VMs as
+# they are.
+# destroy_release: true
 # Open the sign-in pages (and copy GitHub's code) on this machine. Off, the run
 # only prints them, for a controller with no desktop.
 # login_desktop: true
+
+# Tailscale: each VM joins your tailnet (README, "Reaching a VM over
+# Tailscale"). On by default; false turns it off again where this project
+# installed it, and leaves a Tailscale installed by hand alone.
+# tailscale_enabled: true
+# How a VM joins: auto is vault_tailscale_auth_key when set, else the web login;
+# key is the key only; web is the web login only.
+# tailscale_auth_method: auto
+# make deploy starts the web login by itself; false asks first, VM by VM.
+# tailscale_login_auto_start: true
+# Delete a VM's device from your tailnet when make destroy deletes the VM, or
+# Tailscale is turned off on it: none only logs it out; token uses
+# vault_tailscale_api_token; oauth uses vault_tailscale_oauth_client_id and
+# vault_tailscale_oauth_client_secret (devices:core).
+# tailscale_api_auth_method: none
+# Tailscale SSH on the tailnet address (needs an ssh rule in your tailnet policy).
+# tailscale_ssh: false
+# tailscale_accept_routes: false
+# Let your tailnet's DNS settings change the VM's resolver.
+# tailscale_accept_dns: false
+# Tags asked for at the join; leave empty with a tagged key.
+# tailscale_advertise_tags: [tag:claude-vm]
+# A control server of your own, such as Headscale.
+# tailscale_login_server: https://headscale.example.com
+# Keep tailscaled from uploading its logs to Tailscale.
+# tailscale_upload_logs: false
+# Seconds the web login waits for your approval.
+# tailscale_login_timeout: 300
+# The machine name, when the VM's own name is not the one you want there.
+# tailscale_hostname: alpha
+# More flags for a join, and for tailscaled itself.
+# tailscale_up_args: []
+# tailscale_daemon_flags: []

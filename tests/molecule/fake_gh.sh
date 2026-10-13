@@ -16,7 +16,9 @@
 # with fake-no-code it prints an error (the file's content, or gh's own when
 # GitHub cannot be reached) and no code; with fake-hang it prints nothing and
 # waits until it is ended; and fake-said is printed in place of its "Logged in
-# as" line. Every call is appended to calls.log there.
+# as" line. With fake-two-accounts, `auth logout` without --user fails as gh
+# does with two accounts on github.com and no terminal to ask which. Every call
+# is appended to calls.log there.
 #
 # Faithful where it matters: the status JSON carries no token field (gh
 # empties it without --show-token, and omits it), so the role has to read the
@@ -96,6 +98,10 @@ case "$*" in
     # gh's last word, which a later gh may put otherwise (fake-said).
     if [ -e "$state/fake-said" ]; then cat "$state/fake-said" >&2; else echo "✓ Logged in as $login" >&2; fi ;;
   "auth logout --hostname github.com"|"auth logout --hostname github.com --user "*)
+    if [ -e "$state/fake-two-accounts" ] && [ "$*" = "auth logout --hostname github.com" ]; then
+      echo 'unable to determine which account to log out of, please specify `--hostname` and `--user`' >&2
+      exit 1
+    fi
     rm -f "$token_file" "$state/fake-source" ;;
   "auth setup-git --hostname github.com")
     [ -s "$token_file" ] || { echo "You are not logged into any GitHub hosts." >&2; exit 1; }

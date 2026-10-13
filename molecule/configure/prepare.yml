@@ -38,3 +38,13 @@
 
     - name: Set up fake GitHub
       ansible.builtin.include_tasks: "{{ prepare_github_helper_dir }}/prepare_github.yml"
+
+    # Before converge, unlike the stand-in claude the side effect swaps in:
+    # converge itself joins Tailscale with the canned key, and the real CLI
+    # would send it to Tailscale's control server. Ahead of the package's
+    # /usr/bin/tailscale on every PATH, sudo's secure_path included.
+    - name: Install the stand-in tailscale ahead of the real one
+      ansible.builtin.copy:
+        src: "{{ prepare_github_helper_dir }}/fake_tailscale.sh"
+        dest: /usr/local/bin/tailscale
+        mode: "0755"

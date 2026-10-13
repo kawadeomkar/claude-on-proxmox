@@ -1,0 +1,63 @@
+---
+# Tailscale on the VM: installed, joined and kept as configured, or - with
+# tailscale_enabled false - removed again, wherever this role installed it.
+# What the role made is all it touches (ownership.yml): a Tailscale installed
+# or signed in by hand is reported and left as it is.
+#
+# playbooks/configure.yml runs this role last, in a block whose rescue records
+# a failure and raises it at the end of the run, so a Tailscale problem never
+# costs a VM its SSH alias, its sign-ins or VS Code. Nothing here may rely on a
+# handler: one would run after that block, out of its rescue's reach.
+
+- name: Fail when tailscale_hostname is not one DNS label
+  ansible.builtin.assert:
+    that: tailscale_hostname is match('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$')
+    fail_msg: >-
+      tailscale_hostname is {{ tailscale_hostname | to_json }}, which Tailscale refuses as a machine name: it must be
+      one DNS label - letters, digits and hyphens, at most 63, not starting or ending with a hyphen.
+    quiet: true
+  when: tailscale_enabled | bool
+
+- name: Fail when tailscale_auth_method is key and there is no key
+  ansible.builtin.assert:
+    that: tailscale_auth_key_set | bool
+    fail_msg: >-
+      tailscale_auth_method is key, but vault_tailscale_auth_key is empty, so {{ inventory_hostname }} has nothing to
+      join with. Put a key in the vault, or set tailscale_auth_method to auto or web for the web login.
+    quiet: true
+  when:
+    - tailscale_enabled | bool
+    - tailscale_auth_method == 'key'
+
+- name: Read what is installed, and who installed it
+  ansible.builtin.include_tasks: ownership.yml
+
+- name: Install Tailscale where this role installed it, or nothing has
+  ansible.builtin.include_tasks: install.yml
+  when:
+    - tailscale_enabled | bool
+    - tailscale_ours | bool
+
+# The files below are included whenever the role is on, and carry their own
+# conditions on their tasks: a register in a file that is not included keeps
+# the value of an earlier run of the role in the same play, where a skipped
+# task overwrites it.
+- name: Read Tailscale's state
+  ansible.builtin.include_tasks: status.yml
+  when: tailscale_enabled | bool
+
+- name: Join the tailnet with the vault key, the first time
+  ansible.builtin.include_tasks: connect.yml
+  when: tailscale_enabled | bool
+
+- name: Keep the settings of a login this role made
+  ansible.builtin.include_tasks: settings.yml
+  when: tailscale_enabled | bool
+
+- name: Report how the VM is on Tailscale
+  ansible.builtin.include_tasks: report.yml
+  when: tailscale_enabled | bool
+
+- name: Turn Tailscale off where this role turned it on
+  ansible.builtin.include_tasks: absent.yml
+  when: not (tailscale_enabled | bool)

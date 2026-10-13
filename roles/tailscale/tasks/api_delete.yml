@@ -1,0 +1,66 @@
+---
+# The node's device deleted from the tailnet through Tailscale's API, so it
+# leaves the admin console and its name is free for a VM built again. From this
+# machine, never the VM: the credential stays here. tailscale_api_node, passed
+# by the include, is the node's stable ID - Self.ID in `tailscale status
+# --json`, which the API calls nodeId and takes as the device ID; and
+# tailscale_api_go whether to delete it at all. Included always, the condition
+# on each task, so that no register can be an earlier run's.
+#
+# The ID is what the VM reported, so the VM chooses it, and the credential can
+# delete any device in the tailnet: the device is looked up first, and deleted
+# only when its name is the one this project asked the VM to join as
+# (tailscale_hostname, or <it>-<n> when that name was taken) - decided here,
+# not by the VM. A 404 is a device already gone, or one in another tailnet.
+# Every call carries a secret, so none is logged; what they answered is read
+# from their status and the device's name alone.
+- name: api_delete | Exchange the OAuth client for an access token
+  ansible.builtin.uri:
+    url: "{{ tailscale_api_url }}/api/v2/oauth/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      client_id: "{{ tailscale_oauth_client_id }}"
+      client_secret: "{{ tailscale_oauth_client_secret }}"
+    return_content: true
+  delegate_to: localhost
+  become: false
+  register: tailscale_api_oauth
+  failed_when: false
+  no_log: true
+  when:
+    - tailscale_api_go | bool
+    - tailscale_api_auth_method == 'oauth'
+
+- name: api_delete | Look the device up
+  ansible.builtin.uri:
+    url: "{{ tailscale_api_url }}/api/v2/device/{{ tailscale_api_node | urlencode }}"
+    headers:
+      Authorization: "Bearer {{ tailscale_api_bearer }}"
+    return_content: true
+    status_code: [200, 404]
+  delegate_to: localhost
+  become: false
+  register: tailscale_api_lookup
+  failed_when: false
+  no_log: true
+  when:
+    - tailscale_api_go | bool
+    - tailscale_api_bearer | length > 0
+
+- name: api_delete | Delete the device from the tailnet
+  ansible.builtin.uri:
+    url: "{{ tailscale_api_url }}/api/v2/device/{{ tailscale_api_node | urlencode }}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ tailscale_api_bearer }}"
+    status_code: [200, 204, 404]
+  delegate_to: localhost
+  become: false
+  register: tailscale_api_delete
+  failed_when: false
+  no_log: true
+  when:
+    - tailscale_api_go | bool
+    - tailscale_api_bearer | length > 0
+    - tailscale_api_device_ours | bool

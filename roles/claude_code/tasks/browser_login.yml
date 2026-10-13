@@ -1,17 +1,28 @@
 ---
 # Claude Code's browser sign-in, driven by Ansible the way github_projects'
 # device_flow.yml drives gh: `claude auth login` runs on the VM in the
-# background with no terminal, which makes it print the sign-in page and wait
-# for a code; the page is read out of its output, shown, and opened on this
-# machine; the code that page shows once you authorise is pasted at a prompt in
-# the terminal running make; it reaches claude through a named pipe; and the run
-# waits for claude's answer. Anthropic's page pre-fills nothing and has no
-# device code to show here, so authorising and pasting the code back are the
-# person's part, and the only part.
+# background with no terminal. It prints a sign-in page whose code you would
+# paste back, and hands its browser another page, which redirects back to its
+# own callback on the VM's 127.0.0.1 - the way it signs in where a browser runs
+# beside it. Both are the same attempt. The VM has no browser, so a stand-in
+# records that page; claude's callback port is forwarded from this machine
+# over SSH (claude_code_login_redirect) and the page opens here, so once you
+# authorise, the browser comes back to claude by itself and the run waits for
+# that, with nothing to paste. Where the browser could not come back - no
+# browser on this machine to open the page, make itself run over SSH (a page
+# opened on another machine redirects to that machine's localhost), a port
+# taken here - the printed page opens instead, the code it shows is pasted at a
+# prompt in the terminal running make, and it reaches claude through a named
+# pipe. Authorising is the person's part, and the only part.
 #
 # What it rests on, probed against Claude Code 2.1.296 (ARCHITECTURE §5.5):
 # - With no terminal, claude prints the page as a plain URL and reads the code
 #   as one line from stdin, "<code>#<state>". A pipe is enough.
+# - Given BROWSER, it runs it with the page that redirects to
+#   http://localhost:<port>/callback, listens on 127.0.0.1:<port>, and takes a
+#   code from there or from stdin, whichever comes first: the two pages share
+#   their state and challenge. A code through the callback ends it as a pasted
+#   one does: exit 0 signed in, exit 1 refused.
 # - A wrong code makes it print "Login failed: ..." and exit 1; a right one, write
 #   ~/.claude/.credentials.json, print "Login successful." and exit 0. A line
 #   without its "#" makes it print "Invalid code. ..." and wait for another, so
@@ -93,6 +104,24 @@
     - "{{ claude_code_login_output }}"
     - "{{ claude_code_login_pipe }}"
     - "{{ claude_code_login_pidfile }}"
+    - "{{ claude_code_login_page_file }}"
+    - "{{ claude_code_login_forward_pidfile }}"
+  become: true
+  become_user: "{{ claude_code_user }}"
+  changed_when: false
+
+# The browser claude opens its page with, on a VM that has none: it only
+# records the page, which opens on this machine instead. Fixed text: the page
+# reaches it as an argument, never as part of a command.
+- name: browser_login | Give claude a browser that hands its page over
+  ansible.builtin.copy:
+    dest: "{{ claude_code_login_browser }}"
+    mode: "0700"
+    content: |
+      #!/bin/sh
+      # The browser claude opens its sign-in page with on this VM: it records
+      # the page, which make claude-login opens on your machine instead.
+      printf '%s\n' "$*" > {{ claude_code_login_page_file | quote }}
   become: true
   become_user: "{{ claude_code_user }}"
   changed_when: false
@@ -112,6 +141,7 @@
     cmd: >-
       umask 077 && exec 0<>{{ claude_code_login_pipe | quote }}
       && echo $$ >{{ claude_code_login_pidfile | quote }}
+      && export BROWSER={{ claude_code_login_browser | quote }}
       && exec {{ ([claude_code_login_which.stdout | trim, 'auth', 'login'] + claude_code_login_args) | map('quote') | join(' ') }}
       >{{ claude_code_login_output | quote }} 2>&1
   become: true
@@ -154,20 +184,30 @@
           Run {{ claude_code_login_command }} again.
       when: claude_code_login_url | length == 0
 
-    # One line of Jinja per line of text: a more-indented line in a folded
-    # scalar keeps its line break.
-    - name: browser_login | Say the page and what happens next
-      vars:
-        claude_code_login_opens: >-
-          {{ '(the page opens in your browser, if this machine allows it). ' if claude_code_login_desktop | bool else '' }}
-      ansible.builtin.debug:
-        msg: >-
-          {{ inventory_hostname }}: sign Claude Code in at {{ claude_code_login_url }}
-          {{ claude_code_login_opens }}Authorise there, then paste the code the page shows at the prompt
-          below. Enter alone skips this VM.
+    # The page claude handed its browser: recorded by the stand-in before
+    # claude printed its own, or within moments of it.
+    - name: browser_login | Wait for the page claude handed its browser
+      ansible.builtin.wait_for:
+        path: "{{ claude_code_login_page_file }}"
+        timeout: 5
+      become: true
+      become_user: "{{ claude_code_user }}"
+      failed_when: false
+      when: claude_code_login_redirect | bool
 
-    # The two steps on the controller, both best effort, as in device_flow.yml.
-    # Never in a test (claude_code_login_desktop).
+    - name: browser_login | Read the page claude handed its browser
+      ansible.builtin.slurp:
+        src: "{{ claude_code_login_page_file }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_page_read
+      failed_when: false
+      when: claude_code_login_redirect | bool
+
+    # Before the forward: the browser comes back by itself only where a
+    # browser on this machine opens the page (claude_code_login_redirect_ready).
+    # Best effort, as in device_flow.yml, and never in a test
+    # (claude_code_login_desktop).
     - name: browser_login | Look for a browser opener on this machine
       ansible.builtin.command:
         argv: [which, open, xdg-open]
@@ -178,13 +218,54 @@
       failed_when: false
       when: claude_code_login_desktop | bool
 
-    # The opener is the page_opener filter's (filter_plugins/desktop.py),
-    # shared with device_flow.yml: the first command BROWSER names, split as a
-    # shell would, else open, else xdg-open.
+    # claude's callback listens on the VM's own 127.0.0.1, and the page sends
+    # your browser to localhost: that one port is forwarded from this machine
+    # for the length of the sign-in, by ssh on a connection of its own, bound
+    # to this machine's loopback. ExitOnForwardFailure fails it when the port
+    # is taken here, and the code is then pasted instead; -f returns once it is
+    # up. Its far end is a sleep whose pid the VM records, so the forward ends
+    # with the sign-in, or by itself a minute after the wait.
+    - name: browser_login | Forward the sign-in's callback from this machine to the VM
+      ansible.builtin.command:
+        argv: "{{ claude_code_login_forward_argv }}"
+      delegate_to: localhost
+      become: false
+      register: claude_code_login_forward
+      changed_when: false
+      failed_when: false
+      when: claude_code_login_redirect_ready | bool
+
+    # One line of Jinja per line of text: a more-indented line in a folded
+    # scalar keeps its line break. The page is what the VM's claude printed or
+    # handed its browser, so the VM chooses it: it opens here only when it is
+    # Claude's own sign-in page, and is said otherwise with a warning.
+    - name: browser_login | Say the page and what happens next
+      vars:
+        claude_code_login_shown: "{{ claude_code_login_auto_url if claude_code_login_redirecting | bool else claude_code_login_url }}"
+        claude_code_login_opens: >-
+          {{ ('(the page opens in your browser, if this machine allows it). ' if claude_code_login_desktop | bool else '')
+             if claude_code_login_redirecting | bool or claude_code_login_page_trusted | bool
+             else "- not Claude's sign-in page, so it is not opened here: check where it leads before you follow it. " }}
+        claude_code_login_next: >-
+          {{ ('Authorise there, and this run carries on by itself once your browser comes back, waiting up to '
+              ~ ((claude_code_login_approval_timeout | int // 60) ~ ' minutes'
+                 if claude_code_login_approval_timeout | int >= 120 else claude_code_login_approval_timeout ~ ' seconds')
+              ~ '; Ctrl-C ends the whole run.')
+             if claude_code_login_redirecting | bool
+             else 'Authorise there, then paste the code the page shows at the prompt below. Enter alone skips this VM.' }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: sign Claude Code in at {{ claude_code_login_shown | plain_text }}
+          {{ claude_code_login_opens }}{{ claude_code_login_next }}
+
+    # Best effort, and never in a test (claude_code_login_desktop). The opener
+    # is the page_opener filter's (filter_plugins/desktop.py), shared with
+    # device_flow.yml: the first command BROWSER names, split as a shell would,
+    # else open, else xdg-open.
     - name: browser_login | Open the sign-in page in your browser
       vars:
         claude_code_login_opener: >-
-          {{ claude_code_login_url
+          {{ (claude_code_login_auto_url if claude_code_login_redirecting | bool else claude_code_login_url)
              | page_opener(lookup('ansible.builtin.env', 'BROWSER'), claude_code_login_tools.stdout_lines | default([])) }}
       ansible.builtin.command:
         argv: "{{ claude_code_login_opener }}"
@@ -194,6 +275,7 @@
       failed_when: false
       when:
         - claude_code_login_desktop | bool
+        - claude_code_login_redirecting | bool or claude_code_login_page_trusted | bool
         - claude_code_login_opener | length > 0
 
     # The one place the run waits for the person. pause reads this terminal
@@ -205,17 +287,35 @@
         prompt: Code
       register: claude_code_login_prompt
       no_log: true
-      when: claude_code_login_code | length == 0
+      when:
+        - claude_code_login_code | length == 0
+        - not (claude_code_login_redirecting | bool)
 
-    # For make deploy's GitHub step, VM by VM: a code entered here says
-    # someone is at this terminal for this VM, and Enter - or no terminal to
-    # ask at - skips it there too, as the line above promises. A VM that never
-    # shows this prompt (signed in already, or on an API key) has neither fact,
-    # and GitHub's step asks about it on its own.
-    - name: browser_login | Remember whether a code was entered for this VM
+    # No prompt here: the person's part is in the browser, and claude ends the
+    # attempt itself once the callback brings the code - status 0 signed in,
+    # 1 refused. Every few seconds, so a minute's wait is not sixty round
+    # trips to the VM.
+    - name: browser_login | Wait for your browser to come back
+      ansible.builtin.async_status:
+        jid: "{{ claude_code_login_job.ansible_job_id }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      register: claude_code_login_landed
+      until: claude_code_login_landed.finished | default(0) | int == 1
+      retries: "{{ ((claude_code_login_approval_timeout | int) / 3) | round(0, 'ceil') | int }}"
+      delay: 3
+      failed_when: false
+      when: claude_code_login_redirecting | bool
+
+    # For make deploy's GitHub and Tailscale steps, VM by VM: a code entered,
+    # or the browser come back, says someone is here for this VM; Enter, a
+    # browser that never came back, or no terminal to ask at, skips it there
+    # too. A VM that never needs this sign-in (signed in already, or on an API
+    # key) has neither fact.
+    - name: browser_login | Remember whether someone answered for this VM
       ansible.builtin.set_fact:
-        claude_code_login_answered: "{{ claude_code_login_entered | length > 0 }}"
-        claude_code_login_skipped: "{{ claude_code_login_entered | length == 0 }}"
+        claude_code_login_answered: "{{ claude_code_login_responded | bool }}"
+        claude_code_login_skipped: "{{ not (claude_code_login_responded | bool) }}"
 
     - name: browser_login | Say that no code was entered
       ansible.builtin.debug:
@@ -223,7 +323,18 @@
           {{ inventory_hostname }}: no code was entered (Enter, or no terminal to ask at), so Claude Code is left
           signed out there.
           {{ claude_code_login_command }} signs it in later.
-      when: claude_code_login_entered | length == 0
+      when:
+        - not (claude_code_login_redirecting | bool)
+        - claude_code_login_entered | length == 0
+
+    - name: browser_login | Say that the browser did not come back
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: the browser did not come back within {{ claude_code_login_approval_timeout }} seconds,
+          so Claude Code is left signed out there. {{ claude_code_login_command }} signs it in later.
+      when:
+        - claude_code_login_redirecting | bool
+        - not (claude_code_login_responded | bool)
 
     # An attempt lasts claude_code_login_attempt_seconds on top of the wait
     # below; past it Ansible's async limit has ended claude, and a code handed
@@ -344,7 +455,8 @@
       failed_when: false
       when: claude_code_login_entered | length > 0
 
-    # Only while the job still runs is the recorded pid claude's own.
+    # Only while the job still runs is the recorded pid claude's own: one the
+    # browser's answer ended already is never killed.
     - name: browser_login | End the sign-in if claude still waits
       ansible.builtin.command:
         argv:
@@ -357,7 +469,27 @@
       become_user: "{{ claude_code_user }}"
       changed_when: false
       failed_when: false
-      when: claude_code_login_finished.finished | default(0) | int != 1
+      when:
+        - claude_code_login_finished.finished | default(0) | int != 1
+        - claude_code_login_landed.finished | default(0) | int != 1
+
+    # The far end of the forward is the sleep whose pid the VM recorded; its
+    # end closes the ssh on this machine. Only a sleep is ended: the pid may be
+    # another process's by now. Without a pid yet, the forward ends by itself
+    # a minute after the wait.
+    - name: browser_login | Close the forward
+      ansible.builtin.command:
+        argv:
+          - sh
+          - -c
+          - 'pid=$(cat "$1" 2>/dev/null) && ps -o comm= -p "$pid" 2>/dev/null | grep -qx sleep && kill "$pid"; exit 0'
+          - sh
+          - "{{ claude_code_login_forward_pidfile }}"
+      become: true
+      become_user: "{{ claude_code_user }}"
+      changed_when: false
+      failed_when: false
+      when: (claude_code_login_forward.rc | default(1)) == 0
 
     - name: browser_login | Collect claude's result
       ansible.builtin.async_status:
@@ -396,6 +528,9 @@
         - "{{ claude_code_login_output }}"
         - "{{ claude_code_login_pipe }}"
         - "{{ claude_code_login_pidfile }}"
+        - "{{ claude_code_login_page_file }}"
+        - "{{ claude_code_login_forward_pidfile }}"
+        - "{{ claude_code_login_browser }}"
       become: true
       become_user: "{{ claude_code_user }}"
       changed_when: false
@@ -421,10 +556,10 @@
       {{ claude_code_login_why ~ ('' if claude_code_login_why is search('[.!?]$') else '.') }}
       Run {{ claude_code_login_command }} again for a fresh sign-in page.
   when:
-    - claude_code_login_entered | length > 0
+    - claude_code_login_responded | bool
     - not (claude_code_remote_control_status.loggedIn | default(false)) | bool
 
 - name: browser_login | Record that this run signed the VM in
   ansible.builtin.set_fact:
     claude_code_login_done: true
-  when: claude_code_login_entered | length > 0
+  when: claude_code_login_responded | bool

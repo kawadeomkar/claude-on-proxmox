@@ -25,7 +25,7 @@ first.
 |---------|--------------|
 | `make lint` | yamllint, ansible-lint (production profile), ruff |
 | `make syntax` | `--syntax-check` on every playbook, against your `inventory/` |
-| `make unit` | pytest: the custom filters (the VS Code settings reader, the sign-ins' page opener and `plain_text` among them), the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the Claude sign-in (`claude_login.yml` against a stand-in `claude`, and at a pseudo-terminal: the prompt, a partly copied code, an expired attempt, Ctrl-C then A), both sign-in playbooks and deploy's sign-in steps end to end, an unreachable VM among them, the GitHub sign-in (`auth.yml`, `clone.yml` and `github_login.yml` against a stand-in `gh` and the fake GitHub API), the managed SSH config (and that no scenario writes into `~/.ssh`), the Claude terminal's script (once at a pseudo-terminal), `code.yml`'s window step in `make deploy` and out of it, and its allowlist, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, `deploy`'s refusal of `TAGS`, `code`'s one name) |
+| `make unit` | pytest: the custom filters (the VS Code settings reader, the sign-ins' page opener and `plain_text` among them), the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the Claude sign-in (`claude_login.yml` against a stand-in `claude`, and at a pseudo-terminal: the prompt, a partly copied code, an expired attempt, Ctrl-C then A), the three sign-in playbooks and deploy's sign-in steps end to end, an unreachable VM among them, Tailscale (the role's files, `tailscale_login.yml` and deploy's Tailscale step against a stand-in `tailscale`, check mode, `configure.yml`'s rescue, and the guards that keep every test setup off Tailscale), the GitHub sign-in (`auth.yml`, `clone.yml` and `github_login.yml` against a stand-in `gh` and the fake GitHub API), the managed SSH config (and that no scenario writes into `~/.ssh`), the Claude terminal's script (once at a pseudo-terminal), `code.yml`'s window step in `make deploy` and out of it, and its allowlist, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, `deploy`'s refusal of `TAGS`, `code`'s one name) |
 | `make molecule MOLECULE_ROLES="common dev_tools"` | one or more role scenarios |
 | `make molecule-integration` | `playbooks/configure.yml` end to end in a container |
 | `make molecule-provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
@@ -40,19 +40,25 @@ idempotence stage, which reruns the converge and fails on any changed task.
 
 The unit tests that run a playbook share `tests/unit/harness.py`: `_run`, or `_run_at_a_terminal` to type
 at a prompt. Use it rather than a `subprocess` call of your own: a run inherits only the variables it
-names, never reads your terminal, and fails its test if it calls a browser opener or a clipboard.
+names, never reads your terminal, and fails its test if it calls a browser opener, a clipboard or this
+machine's `tailscale`.
 
-Tests never talk to a real Proxmox, a real GitHub or a real hypervisor. `tests/molecule/` holds fakes for
+Tests never talk to a real Proxmox, a real GitHub, a real Tailscale or a real hypervisor. `tests/molecule/` holds fakes for
 all of them: a stateful Proxmox API (including the guest agent), a stateful `qm`, a `virt-customize`, and
 a GitHub API serving local bare repositories, a stand-in `gh` for the GitHub sign-in, and a stand-in
-`claude` (`fake_claude.sh`) that answers the Claude sign-in the way Claude Code was probed to. If
+`claude` (`fake_claude.sh`) that answers the Claude sign-in the way Claude Code was probed to, and a
+stand-in `tailscale` (`fake_tailscale.sh`) for the join and the web login, and a fake Tailscale API
+(`fake_tailscale_api.py`) for deleting a device when a VM is destroyed. If
 your change needs a new external interaction, extend a fake rather than reaching for the network.
 
 Secrets in tests are canned and searched for. `tests/unit/test_github_auth.py` holds every task that
 renders a GitHub token to `no_log` (`test_every_task_that_renders_a_token_is_no_log`) and greps every
 run's output, module arguments injected, for every canned token (`test_no_token_ever_reaches_the_output`);
 `tests/unit/test_claude_login.py` does the same for the Claude sign-in's code
-(`test_the_code_is_never_logged`, and the runs at a pseudo-terminal, at `-vvv` with module arguments injected). A task that handles a new
+(`test_the_code_is_never_logged`, and the runs at a pseudo-terminal, at `-vvv` with module arguments injected);
+`tests/unit/test_tailscale.py` holds the Tailscale join to be the only task that renders the auth key, and
+searches every run and every file for every canned key; `tests/unit/test_release.py` searches destroy's
+release for every canned GitHub token and Tailscale API credential. A task that handles a new
 secret gets a canned value and a place in those searches.
 
 ## Conventions

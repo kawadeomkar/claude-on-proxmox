@@ -1,7 +1,7 @@
 ---
-# Configure the VMs: OS baseline, developer tooling, Claude Code and a checkout
-# of every GitHub project. Finds them by tag, so it works on its own and not
-# only straight after provisioning.
+# Configure the VMs: OS baseline, developer tooling, Claude Code, a checkout
+# of every GitHub project and, last, Tailscale. Finds them by tag, so it works
+# on its own and not only straight after provisioning.
 #
 #   make configure                    -> every VM tagged claude-on-proxmox
 #   make configure VM_NAME=alpha,beta
@@ -27,15 +27,57 @@
         timeout: 300
       tags: [always]
 
+    # Exit code 2 means "done with recoverable errors", which is fine for us;
+    # 1 means the VM's first boot failed, which is said below with what failed.
     - name: Wait for cloud-init to finish
       ansible.builtin.command:
         cmd: cloud-init status --wait
       register: configure_cloud_init
       changed_when: false
       check_mode: false
-      # Exit code 2 means "done with recoverable errors", which is fine for us.
-      failed_when: configure_cloud_init.rc not in [0, 2]
+      failed_when: false
       when: configure_wait_for_cloud_init | default(true) | bool
+      tags: [always]
+
+    - name: Read what cloud-init reported
+      ansible.builtin.command:
+        cmd: cloud-init status --long
+      register: configure_cloud_init_long
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      when:
+        - configure_wait_for_cloud_init | default(true) | bool
+        - configure_cloud_init.rc | default(0) not in [0, 2]
+      tags: [always]
+
+    # The VM chooses what cloud-init prints, so only the names of the modules
+    # that failed are quoted, through plain_text. A first boot that failed has
+    # left the VM half set up - a package upgrade cut short, say - and building
+    # it again is the sure way past one that will not happen twice: a mirror,
+    # a download corrupted on its way to the disk.
+    - name: Fail with what cloud-init reported
+      vars:
+        configure_cloud_init_failed: >-
+          {{ (configure_cloud_init_long.stdout | default('') | plain_text)
+             | regex_findall("\('([A-Za-z0-9_]+)',") | unique | list }}
+        # One line of Jinja per line of text: a more-indented line in a folded
+        # scalar keeps its line break.
+        configure_cloud_init_where: >-
+          {{ ('in ' ~ (configure_cloud_init_failed | join(', '))) if configure_cloud_init_failed | length > 0
+             else (configure_cloud_init.stdout | default('') | plain_text | regex_replace('^[.\s]+', '') | trim
+                   or 'no status') }}
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: cloud-init's first boot ended in an error
+          ({{ configure_cloud_init_where }}), so the VM may be half set up. /var/log/cloud-init-output.log on it says why.
+          Building it again is the sure way past a failure that will not repeat - a mirror, a corrupted download:
+          make destroy VM_NAME={{ inventory_hostname }}, then make deploy VM_NAME={{ inventory_hostname }}. Or
+          repair it by hand, then make configure VM_NAME={{ inventory_hostname }}
+          ANSIBLE_ARGS="-e configure_wait_for_cloud_init=false".
+      when:
+        - configure_wait_for_cloud_init | default(true) | bool
+        - configure_cloud_init.rc | default(0) not in [0, 2]
       tags: [always]
 
   roles:
@@ -51,6 +93,36 @@
       tags: [claude_code]
     - role: github_projects
       tags: [github_projects]
+
+  # Tailscale last, and never the VM's undoing: it is optional, so a failure in
+  # it is recorded here and raised at the end of the run - by the last play
+  # below, or under make deploy by deploy's own, after VS Code - while the VM
+  # still gets its alias. From tasks:, which run after roles: and before
+  # post_tasks:. import_role, not include_role: a static import takes the
+  # block's tag, so make configure TAGS=tailscale runs every task of the role,
+  # where an include's tag would reach only the include.
+  tasks:
+    - name: Install Tailscale and keep it joined
+      tags: [tailscale]
+      block:
+        - name: Run the tailscale role
+          ansible.builtin.import_role:
+            name: tailscale
+      rescue:
+        - name: Remember that Tailscale failed, for the end of the run
+          vars:
+            claude_vm_tailscale_why: >-
+              {{ (ansible_failed_result.msg | default('no message', true)) | plain_text | regex_replace('\s+', ' ') | trim }}
+          ansible.builtin.set_fact:
+            claude_vm_configure_failures: >-
+              {{ claude_vm_configure_failures | default([])
+                 + [inventory_hostname ~ ': Tailscale failed at "' ~ (ansible_failed_task.name | default('a task'))
+                    ~ '": ' ~ claude_vm_tailscale_why ~ ('' if claude_vm_tailscale_why is search('[.!?]$') else '.')
+                    ~ ' Retry it with: make configure VM_NAME=' ~ inventory_hostname ~ ' TAGS=tailscale'] }}
+
+        - name: Say why, and go on
+          ansible.builtin.debug:
+            msg: "{{ claude_vm_configure_failures | last }}"
 
   # Where VS Code is pointed: vm_projects_dir, or ~/projects of the VM user,
   # resolved here on the VM where the home directory is known rather than
@@ -111,3 +183,20 @@
       when:
         - claude_ssh_config | default(true) | bool
         - claude_ssh_configured | default([]) | length > 0
+
+# What failed in a configured VM - Tailscale's role, which configure carries on
+# past - fails it here, at the end, after its alias is written. make deploy
+# imports this playbook with claude_vm_configure_in_deploy and raises the same
+# list in its own last play, after the sign-ins and VS Code.
+- name: Fail each VM whose configuration failed past a rescue
+  hosts: claude_vms
+  gather_facts: false
+  tags: [always]
+
+  tasks:
+    - name: Fail where Tailscale failed
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_configure_failures | join(' ') }}"
+      when:
+        - claude_vm_configure_failures | default([]) | length > 0
+        - not (claude_vm_configure_in_deploy | default(false) | bool)

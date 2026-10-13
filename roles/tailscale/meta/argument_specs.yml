@@ -1,0 +1,187 @@
+---
+argument_specs:
+  main:
+    short_description: Install Tailscale, join the tailnet and keep the VM as configured
+    description:
+      - Installs Tailscale from its apt repository, joins the tailnet with tailscale_auth_key on a first join, keeps
+        the managed settings with tailscale set on a login this role made, and reports the VM's tailnet name and
+        address. With tailscale_enabled false it removes what it installed. A Tailscale installed or signed in by hand
+        is reported and left alone.
+    options:
+      tailscale_enabled:
+        type: bool
+        default: true
+        description: Install and join; false logs out and removes what this role installed.
+      tailscale_auth_key:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - A key for the first join only (tskey-auth-..., or a tskey-client-... OAuth secret, which needs
+            tailscale_advertise_tags). Empty leaves the VM for the web login.
+      tailscale_auth_method:
+        type: str
+        default: auto
+        choices: [auto, key, web]
+        description:
+          - auto joins with tailscale_auth_key when there is one and leaves the VM for the web login otherwise; key
+            joins with the key only, and an empty one fails by name; web leaves every VM for the web login.
+      tailscale_api_auth_method:
+        type: str
+        default: none
+        choices: [none, token, oauth]
+        description:
+          - How the device is deleted from the tailnet through Tailscale's API, on this machine. none leaves it there,
+            logged out, and names it; token uses tailscale_api_token; oauth exchanges tailscale_oauth_client_id and
+            tailscale_oauth_client_secret, a client with the devices:core scope, for an access token.
+      tailscale_api_token:
+        type: str
+        default: ""
+        no_log: true
+        description: An API access token (tskey-api-...), for tailscale_api_auth_method token.
+      tailscale_oauth_client_id:
+        type: str
+        default: ""
+        description: An OAuth client's ID, for tailscale_api_auth_method oauth.
+      tailscale_oauth_client_secret:
+        type: str
+        default: ""
+        no_log: true
+        description: That client's secret (tskey-client-...), for tailscale_api_auth_method oauth.
+      tailscale_api_url:
+        type: str
+        default: https://api.tailscale.com
+        description: Tailscale's API. Tests point it at a stand-in.
+      tailscale_hostname:
+        type: str
+        description:
+          - The machine name asked for. One DNS label - letters, digits and hyphens, at most 63, not starting or ending
+            with a hyphen - which Tailscale requires. Defaults to the VM's name made one.
+      tailscale_ssh:
+        type: bool
+        default: false
+        description: Tailscale SSH on the tailnet address, in place of sshd there.
+      tailscale_accept_routes:
+        type: bool
+        default: false
+      tailscale_accept_dns:
+        type: bool
+        default: false
+        description: Let the tailnet's DNS settings change the VM's resolver.
+      tailscale_advertise_tags:
+        type: list
+        elements: str
+        default: []
+        description: Tags asked for at the join. Compared with the node's tags and reported, never changed.
+      tailscale_login_server:
+        type: str
+        default: ""
+        description: Another control server, such as Headscale. Empty is Tailscale's.
+      tailscale_upload_logs:
+        type: bool
+        default: true
+        description: false keeps tailscaled from uploading its logs, from its first start.
+      tailscale_up_args:
+        type: list
+        elements: str
+        default: []
+      tailscale_daemon_flags:
+        type: list
+        elements: str
+        default: []
+        description: More tailscaled flags, in /etc/default/tailscaled's FLAGS.
+      tailscale_login_timeout:
+        type: int
+        default: 300
+        description: Seconds the web login waits for the approval.
+      tailscale_marker_dir:
+        type: path
+        default: /var/lib/claude-on-proxmox
+        description: Where the markers saying what this role installed and which login it made are kept.
+      tailscale_login_desktop:
+        type: bool
+        default: true
+        description: Open the sign-in page in a browser on the machine running Ansible.
+      tailscale_sign_in_follows:
+        type: bool
+        default: false
+        description: make deploy signs the VM in next, in the same run, and the report says so.
+  login:
+    short_description: Say how the VM is on Tailscale, and sign it in by the web login when asked to
+    description:
+      - Reads the VM's Tailscale state and prints it, with the one command that does the next thing.
+      - With tailscale_login_interactive, or the answer to the question tailscale_login_ask puts, signs a VM that is
+        not signed in by Tailscale's web login - one `tailscale up`, the page opened on this machine, the approval
+        waited for - for a Tailscale this role installed. Run by playbooks/tailscale_login.yml.
+    options:
+      tailscale_enabled:
+        type: bool
+        default: true
+      tailscale_login_interactive:
+        type: bool
+        default: false
+        description: Sign in; the question below, when asked, takes Enter as yes.
+      tailscale_login_ask:
+        type: bool
+        default: false
+        description: Ask first, at a prompt here. With no terminal it returns at once with no answer.
+      tailscale_auth_method:
+        type: str
+        default: auto
+        choices: [auto, key, web]
+        description: Under key, a VM is joined by make configure with the key, never by the web login.
+      tailscale_login_timeout:
+        type: int
+        default: 300
+      tailscale_login_desktop:
+        type: bool
+        default: true
+      tailscale_login_server:
+        type: str
+        default: ""
+      tailscale_advertise_tags:
+        type: list
+        elements: str
+        default: []
+      tailscale_marker_dir:
+        type: path
+        default: /var/lib/claude-on-proxmox
+
+  # tasks_from: release, which playbooks/destroy.yml runs on each VM before it
+  # is deleted.
+  release:
+    short_description: Take the VM off the tailnet before it is destroyed
+    description:
+      - Logs the node out, which expires its key at once, and with an API credential deletes its device from the
+        tailnet, so it leaves the admin console and its name is free for a VM built again. Whatever Tailscale the VM
+        has. Records what became of it in tailscale_release_said, for destroy's report.
+    options:
+      tailscale_api_auth_method:
+        type: str
+        default: none
+        choices: [none, token, oauth]
+        description:
+          - How the device is deleted from the tailnet through Tailscale's API, on this machine. none leaves it there,
+            logged out, and names it; token uses tailscale_api_token; oauth exchanges tailscale_oauth_client_id and
+            tailscale_oauth_client_secret, a client with the devices:core scope, for an access token.
+      tailscale_api_token:
+        type: str
+        default: ""
+        no_log: true
+        description: An API access token (tskey-api-...), for tailscale_api_auth_method token.
+      tailscale_oauth_client_id:
+        type: str
+        default: ""
+        description: An OAuth client's ID, for tailscale_api_auth_method oauth.
+      tailscale_oauth_client_secret:
+        type: str
+        default: ""
+        no_log: true
+        description: That client's secret (tskey-client-...), for tailscale_api_auth_method oauth.
+      tailscale_api_url:
+        type: str
+        default: https://api.tailscale.com
+        description: Tailscale's API. Tests point it at a stand-in.
+      tailscale_login_server:
+        type: str
+        default: ""

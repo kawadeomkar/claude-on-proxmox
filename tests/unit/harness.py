@@ -19,6 +19,12 @@ should one run anyway, every run's PATH starts with stand-ins for open,
 xdg-open, pbcopy, wl-copy and xclip, and BROWSER names one of them. They record
 their arguments and fail, and a run that called any of them fails its test.
 
+Nor this machine's tailscale: the developer's Mac may have the real CLI (at
+/usr/local/bin/tailscale, say), signed in to their own tailnet, and an `up` or a
+`logout` that reached it would act on it. A failing stand-in for it is first on
+every run's PATH too; tests/unit/test_tailscale.py puts
+tests/molecule/fake_tailscale.sh ahead of it, in a host's bin/.
+
 stdin is /dev/null for every run but those at a pseudo-terminal of the
 harness's own, and each run has a process group of its own: with no terminal a
 pause returns at once, where under `pytest -s` at a terminal it would wait on
@@ -82,6 +88,7 @@ exec "{sys.executable}" "$@"
 echo "$*" >> "$STAND_IN/bash.log"
 case "$*" in
   "-lc claude auth status") exec claude auth status ;;
+  "-lc claude auth logout") exec claude auth logout ;;
   "-lc command -v claude") command -v claude ;;
   *) echo "stand-in bash: unexpected arguments: $*" >&2; exit 127 ;;
 esac
@@ -121,8 +128,10 @@ PASSED_ON = frozenset(
 )
 
 # What opens a page or fills a clipboard on this machine, as the sign-ins look
-# for them: each stand-in records its call beside itself and fails.
+# for them, and this machine's tailscale: each stand-in records its call beside
+# itself and fails.
 DESKTOP_TOOLS = ("open", "xdg-open", "pbcopy", "wl-copy", "xclip")
+GUARDED_TOOLS = ("tailscale",)
 DESKTOP_STAND_IN = """#!/bin/sh
 printf '%s %s\\n' "${0##*/}" "$*" >> "$(dirname "$0")/calls.log"
 exit 1
@@ -165,7 +174,7 @@ def _desktop(root: Path) -> Path:
     """The directory of desktop stand-ins for runs under root, made on first use."""
     desktop = root / ".desktop"
     desktop.mkdir(exist_ok=True)
-    for tool in DESKTOP_TOOLS:
+    for tool in (*DESKTOP_TOOLS, *GUARDED_TOOLS):
         (desktop / tool).write_text(DESKTOP_STAND_IN)
         (desktop / tool).chmod(0o755)
     return desktop
@@ -180,7 +189,10 @@ def _desktop_calls(root: Path) -> str:
 def _fail_if_the_desktop_was_reached(root: Path) -> None:
     calls = _desktop_calls(root)
     if calls:
-        pytest.fail(f"a run under {root} called this machine's browser or clipboard (a stand-in caught it):\n{calls}")
+        pytest.fail(
+            f"a run under {root} called this machine's browser or clipboard, or its tailscale"
+            f" (a stand-in caught it):\n{calls}"
+        )
 
 
 def _env(root: Path, **settings: str) -> dict:
@@ -219,19 +231,26 @@ def _end(process: subprocess.Popen) -> None:
 
 
 def _run(
-    root: Path, playbook: Path, hosts: dict, *args: str, ordered: bool = False, timeout: float | None = None
+    root: Path,
+    playbook: Path,
+    hosts: dict,
+    *args: str,
+    ordered: bool = False,
+    timeout: float | None = None,
+    env: dict | None = None,
 ) -> dict:
     """Run a playbook against hosts, without the project's config or inventory; return the json callback's report.
 
     The report gains the run's rc and stderr. ordered keeps the hosts in the
     order given, where the inventory otherwise lists them by name; a run that
-    takes longer than timeout seconds fails the test.
+    takes longer than timeout seconds fails the test. env sets variables of
+    this machine's own on top of the harness's - a run over SSH, no BROWSER.
     """
     inventory = _inventory(root, hosts, ordered)
     process = subprocess.Popen(
         [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, str(playbook)],
         cwd=root,
-        env=_env(root, ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json"),
+        env=_env(root, ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json", **(env or {})),
         # Never the developer's terminal: a pause would wait on it. With no
         # terminal the sign-in's prompt returns at once, as in an unattended run.
         stdin=subprocess.DEVNULL,

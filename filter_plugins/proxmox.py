@@ -92,6 +92,24 @@ def _ipv4(text):
         return None
 
 
+_TAILNET_V4 = ipaddress.IPv4Network("100.64.0.0/10")
+
+
+def tailnet_ipv4(addresses):
+    """Return a node's tailnet IPv4 address from `tailscale status --json`'s Self.TailscaleIPs, or "".
+
+    Tailscale gives each node one IPv4 address in 100.64.0.0/10 (beside an IPv6
+    one). The list is what tailscaled on the VM reports, so the VM chooses it, as
+    with guest_ipv4: only a string ``ipaddress`` parses as one IPv4 address in
+    that range is taken, and anything else is no address.
+    """
+    for text in addresses if isinstance(addresses, list) else []:
+        ip = _ipv4(text)
+        if ip is not None and ip in _TAILNET_V4:
+            return str(ip)
+    return ""
+
+
 def guest_address(vm_info, nic="net0"):
     """Return the address a VM's guest agent reports on one of its NICs, or "".
 
@@ -227,6 +245,7 @@ class FilterModule:
             "ssh_config_prune": ssh_config_prune,
             "net_mac": net_mac,
             "guest_ipv4": guest_ipv4,
+            "tailnet_ipv4": tailnet_ipv4,
             "guest_address": guest_address,
             "guest_addresses": guest_addresses,
             "proxmox_access_denied": proxmox_access_denied,

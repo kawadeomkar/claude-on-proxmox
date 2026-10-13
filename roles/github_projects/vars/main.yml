@@ -161,6 +161,12 @@ github_projects_home_dir: >-
   {{ github_projects_home if github_projects_home | length > 0
      else ansible_facts.getent_passwd[github_projects_user][4] }}
 github_projects_marker_file: "{{ github_projects_home_dir }}/.config/claude-on-proxmox/gh-login"
+# The same, for a login this role's device flow made: the digest of the token
+# it left gh, apart from the marker above, whose logout rules are the vault
+# token's. make destroy's report tells a token with this digest - GitHub CLI's,
+# from this role's sign-in - from one pasted by hand, and from the vault's,
+# which every VM shares. None is revoked (release.yml).
+github_projects_device_marker_file: "{{ github_projects_home_dir }}/.config/claude-on-proxmox/gh-device-login"
 github_projects_marker_digest: >-
   {{ (github_projects_marker_raw.content | b64decode | trim)
      if github_projects_marker_raw.content is defined else '' }}
@@ -257,3 +263,40 @@ github_projects_login_command: make github-login VM_NAME={{ inventory_hostname }
 # The command that runs this role alone: the token sign-in, the listing and the
 # clones, with nothing else of make configure.
 github_projects_configure_command: make configure VM_NAME={{ inventory_hostname }} TAGS=github_projects
+
+# --- releasing the VM before it is destroyed (release.yml) ---
+# The token gh held, read under no_log; '' when it held none. Every task that
+# renders it is no_log.
+github_projects_release_token: >-
+  {{ github_projects_release_token_raw.stdout | default('') | trim
+     if (github_projects_release_token_raw.rc | default(1)) == 0 else '' }}
+github_projects_device_marker_digest: >-
+  {{ (github_projects_device_marker_raw.content | b64decode | trim)
+     if github_projects_device_marker_raw.content is defined else '' }}
+# Whether that token is the one this role's device flow made for the VM. The
+# VM writes the marker, so the vault token, every VM's, is never taken for it
+# whatever the marker says.
+github_projects_release_ours: >-
+  {{ github_projects_release_token | length > 0 and github_projects_device_marker_digest | length > 0
+     and github_projects_device_marker_digest == github_projects_release_token | hash('sha256')
+     and github_projects_release_token != github_projects_token }}
+# Whether `gh auth logout` ended the login, said as the summary below says it:
+# a logout gh refused - two accounts, say, where it asks which - is named.
+github_projects_release_signed_out: >-
+  {{ 'gh signed out' if (github_projects_release_logout.rc | default(1)) == 0
+     else ('gh could not sign out ('
+           ~ ((github_projects_release_logout.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim)
+              or 'no reason given') ~ ')') }}
+# One clause for destroy's report on the VM; empty where gh held no login.
+github_projects_release_summary: >-
+  {{ '' if github_projects_release_token | length == 0
+     else (github_projects_release_signed_out ~ '; the token this project signed it in with stays valid until revoked at'
+           ~ ' https://github.com/settings/applications, under GitHub CLI - which signs out every gh you have, so'
+           ~ ' destroy does not')
+     if github_projects_release_ours | bool
+     else (github_projects_release_signed_out ~ " (vault_github_token is every VM's, so it is not revoked)")
+     if github_projects_token | length > 0 and github_projects_release_token == github_projects_token
+     else (github_projects_release_signed_out ~ '; its token is not one this project recorded making (a sign-in by'
+           ~ ' hand, or one before this version), and stays valid until revoked - at https://github.com/settings/tokens'
+           ~ ' if it is a personal access token, or under GitHub CLI at https://github.com/settings/applications,'
+           ~ ' which signs out every gh you have') }}

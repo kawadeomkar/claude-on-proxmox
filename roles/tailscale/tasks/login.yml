@@ -1,0 +1,66 @@
+---
+# Entry point for playbooks/tailscale_login.yml (make tailscale-login, and make
+# deploy's step): say how the VM is on Tailscale, and sign it in by Tailscale's
+# web login when asked to. In the role, so that it decides from the same
+# vars/main.yml definitions configuration does, and the two cannot disagree.
+- name: login | Read what is installed, and who installed it
+  ansible.builtin.include_tasks: ownership.yml
+
+# Only where there is a daemon of this role's to ask. A VM with Tailscale off,
+# not installed, or installed by hand gets one line below and nothing else:
+# no question, no `up`.
+- name: login | Read Tailscale's state
+  ansible.builtin.include_tasks: status.yml
+  when:
+    - tailscale_enabled | bool
+    - tailscale_installed | bool
+
+- name: login | Say why there is nothing to sign in
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ 'Tailscale is off (tailscale_enabled: false), so there is nothing to sign in.'
+         if not (tailscale_enabled | bool)
+         else 'Tailscale is not installed; ' ~ tailscale_configure_command ~ ' installs it, and '
+              ~ tailscale_login_command ~ ' then signs it in.' }}
+  when: not (tailscale_enabled | bool) or not (tailscale_installed | bool)
+
+# make deploy, for every VM but one whose Claude prompt got Enter: the web
+# login waits up to tailscale_login_timeout for a browser, so it can always be
+# left for later. Where a Claude code was entered someone is here, and Enter
+# goes; elsewhere only "y" does. With no terminal pause returns at once with
+# nothing (vars/main.yml, tailscale_login_go).
+- name: login | Ask whether to sign this VM in to Tailscale now
+  vars:
+    tailscale_login_question: >-
+      {{ inventory_hostname }}: Tailscale is not signed in.
+      {{ ('Enter signs it in now (a page opens, and this run waits up to ' ~ tailscale_login_wait_said
+          ~ ' for the approval); type n and Enter to skip it')
+         if tailscale_login_interactive | bool
+         else ('Type y and Enter to sign it in now (a page opens, and this run waits up to ' ~ tailscale_login_wait_said
+               ~ ' for the approval), or Enter alone to skip') }}
+  ansible.builtin.pause:
+    prompt: "{{ tailscale_login_question }}"
+  register: tailscale_login_asked
+  when:
+    - tailscale_login_ask | bool
+    - tailscale_login_possible | bool
+
+- name: login | Sign in by Tailscale's web login
+  ansible.builtin.include_tasks: web_login.yml
+  when:
+    - tailscale_login_go | bool
+    - tailscale_login_possible | bool
+
+# The report configuration gives - which, for a page still waiting for its
+# approval, says so: the node's state holds the page.
+- name: login | Report how the VM is on Tailscale
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    # This play neither joins with the key nor changes a setting. In make
+    # deploy the configure play earlier in the run may have, and said so: its
+    # registers are still there, and are not this play's to say again.
+    tailscale_report_from_login: true
+  when:
+    - tailscale_enabled | bool
+    - tailscale_installed | bool

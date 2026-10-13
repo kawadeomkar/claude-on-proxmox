@@ -1,0 +1,62 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  tasks:
+    # As the common role leaves every VM before this one runs: a fresh apt
+    # cache, and python3-debian, which deb822_repository needs.
+    - name: Install python3-debian, as common does on every VM
+      ansible.builtin.apt:
+        name: python3-debian
+        update_cache: true
+
+    # Ahead of /usr/bin/tailscale on every PATH, root's and sudo's secure_path
+    # alike: the real CLI would send the canned key to Tailscale.
+    - name: Install the stand-in tailscale ahead of the real one
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../../tests/molecule/fake_tailscale.sh"
+        dest: /usr/local/bin/tailscale
+        mode: "0755"
+
+- name: Install and sign in Tailscale by hand on one VM, as its user might
+  hosts: claude-on-proxmox-tailscale-byhand
+  become: true
+  tasks:
+    - name: Add Tailscale's repository the way its instructions do
+      ansible.builtin.deb822_repository:
+        name: tailscale-byhand
+        types: deb
+        uris: https://pkgs.tailscale.com/stable/ubuntu
+        suites: "{{ ansible_facts.distribution_release }}"
+        components: main
+        signed_by: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../files/tailscale.asc') }}"
+
+    # The container's policy-rc.d keeps the package from starting tailscaled,
+    # and nothing here starts it: this VM's daemon never runs, so nothing on it
+    # can reach Tailscale.
+    - name: Install Tailscale by hand
+      ansible.builtin.apt:
+        name: tailscale
+        update_cache: true
+
+    - name: Make the stand-in's state directory
+      ansible.builtin.file:
+        path: /root/.tailscale-fake
+        state: directory
+        mode: "0755"
+
+    # A login made by hand, with Tailscale SSH on - which the role, had it
+    # taken the VM over, would turn off.
+    - name: Sign the stand-in in by hand, Tailscale SSH on
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: /root/.tailscale-fake/{{ item.name }}
+        mode: "0644"
+      loop:
+        - { name: joined, content: "" }
+        - { name: prefs-hostname, content: byhand }
+        - { name: prefs-ssh, content: "true" }
+        - { name: prefs-wantrunning, content: "true" }
+        - { name: prefs-loggedout, content: "false" }
+      loop_control:
+        label: "{{ item.name }}"

@@ -1,0 +1,133 @@
+---
+# tailscale_enabled false: Tailscale removed again, where this role installed it
+# or began to (the installed marker). Each step only where its object exists: a
+# run that failed halfway leaves the marker, and perhaps the repository and the
+# drop-in, and nothing else. A Tailscale installed any other way is left as it
+# is, and said to be.
+- name: absent | Leave a Tailscale installed outside this project alone
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: Tailscale was installed outside this project, so it is left as it is, though
+      tailscale_enabled is false.
+  when:
+    - tailscale_installed | bool
+    - not tailscale_installed_marker.stat.exists
+
+- name: absent | Remove what this role installed
+  when: tailscale_installed_marker.stat.exists
+  block:
+    - name: absent | Look for tailscaled's unit
+      ansible.builtin.stat:
+        path: "{{ tailscale_unit_path }}"
+      register: tailscale_unit
+
+    # Logging out takes the daemon: one stopped by hand would leave the node's key
+    # valid in the tailnet. Started for the logout and stopped again below; one
+    # that will not start is said, not failed on.
+    - name: absent | Start tailscaled, so that its login can be ended
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        state: started
+      failed_when: false
+      when:
+        - tailscale_package_present | bool
+        - tailscale_unit.stat.exists
+
+    - name: absent | Read whether a login is there to end
+      ansible.builtin.command:
+        argv: [tailscale, status, --json]
+      register: tailscale_absent_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      until: >-
+        tailscale_absent_status.rc != 0
+        or (tailscale_absent_status.stdout | from_json).BackendState | default('NoState') != 'NoState'
+      retries: "{{ tailscale_settle_seconds }}"
+      delay: 1
+      when: tailscale_package_present | bool
+
+    # Whoever made the login: the package is this role's to remove, and logging
+    # out first expires the node's key, so a copy of the disk cannot rejoin. A
+    # logout that fails - the control server out of reach - is said, and the
+    # rest goes on, as destroy's release does: failed, it would keep Tailscale
+    # on until the network came back.
+    - name: absent | Log the node out
+      ansible.builtin.command:
+        argv: [tailscale, logout]
+      register: tailscale_logout
+      changed_when: tailscale_logout.rc == 0
+      failed_when: false
+      when:
+        - tailscale_package_present | bool
+        - tailscale_absent_status.rc | default(1) == 0
+        - (tailscale_absent_status.stdout | from_json).HaveNodeKey | default(false) | bool
+
+    # With an API credential, the device goes from the tailnet too, by the ID
+    # the node had before its logout.
+    - name: absent | Delete the node's device from the tailnet
+      ansible.builtin.include_tasks: api_delete.yml
+      vars:
+        tailscale_api_node: "{{ tailscale_absent_node }}"
+        tailscale_api_go: >-
+          {{ tailscale_api_auth_method != 'none' and tailscale_logout is changed and tailscale_absent_node | length > 0 }}
+
+    # Stopped, but not disabled when the package goes next: removing it takes
+    # the unit with it, and the package's postinst enables tailscaled again on a
+    # reinstall only when the link its first install made is still there. A
+    # disable took that link away, so a Tailscale installed again later - by
+    # hand, as the README invites - came up disabled and never started (probed
+    # against 1.104.1). A unit with no package behind it is disabled as well.
+    - name: absent | Stop tailscaled
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        state: stopped
+        enabled: "{{ omit if tailscale_package_present | bool else false }}"
+      when: tailscale_unit.stat.exists
+
+    # remove, not purge: purge would also delete /var/lib/tailscale, and the
+    # conffile /etc/default/tailscaled is dpkg's to keep.
+    - name: absent | Remove the package
+      ansible.builtin.apt:
+        name: tailscale
+        state: absent
+      when: tailscale_package_present | bool
+
+    - name: absent | Remove the repository
+      ansible.builtin.deb822_repository:
+        name: tailscale
+        state: absent
+
+    # The joined marker stays with a login that may be left on the node: turned
+    # on again, the daemon starts on that state, and the login is still the role's.
+    - name: absent | Remove the log switch and the markers
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ [tailscale_dropin_path, tailscale_installed_marker_path]
+           + ([] if tailscale_absent_login_left | bool else [tailscale_joined_marker_path]) }}
+
+    - name: absent | Say what is gone, and what stays in the tailnet
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ ('Tailscale is off - logged out and removed, and its device deleted from your tailnet.')
+             if tailscale_logout is changed and tailscale_api_deleted | bool
+             else ('Tailscale is off - logged out and removed; ' ~ tailscale_api_gone_said ~ '.')
+             if tailscale_logout is changed and tailscale_api_gone_already | bool
+             else ('Tailscale is off - logged out and removed, but its device was not deleted - '
+                   ~ tailscale_api_refused_why ~ tailscale_api_by_hand ~ '.')
+             if tailscale_logout is changed and tailscale_api_auth_method != 'none' and not (tailscale_api_gone_already | bool)
+             else ('Tailscale is off - logged out and removed; its device stays in your tailnet, expired, until you delete it at '
+              ~ tailscale_admin_page ~ '.') if tailscale_logout is changed
+             else ('Tailscale is off and removed, but its logout failed ('
+                   ~ ((tailscale_logout.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim)
+                      or 'no reason given')
+                   ~ '): its login stays valid until you delete its device at ' ~ tailscale_admin_page ~ '.')
+             if tailscale_absent_logout_failed | bool
+             else ('Tailscale is off and removed, but tailscaled did not answer, so the node could not be logged out:'
+                   ~ ' a login it had stays valid until you delete its device at ' ~ tailscale_admin_page ~ '.')
+             if tailscale_absent_unasked | bool
+             else 'Tailscale is off, and removed.' if tailscale_package_present | bool
+             else 'Tailscale is off; what an earlier run left of its install is removed.' }}

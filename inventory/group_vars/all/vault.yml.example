@@ -30,3 +30,22 @@ vault_github_token: ""
 # log in with your Claude account instead - and leave it empty if you want
 # Remote Control (claude_remote_control), which an API key would override.
 vault_anthropic_api_key: ""
+
+# Optional: a Tailscale auth key, so each new VM joins your tailnet during
+# configuration with nothing to click. Make it reusable (one key for the whole
+# fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale
+# removes an ephemeral node within the hour of it going offline, and a VM left
+# stopped would be. Leave it empty to sign each VM in by Tailscale's web login
+# instead (make tailscale-login VM_NAME=<name>), with no secret here. Only ever
+# used for a VM's first join. README, "Reaching a VM over Tailscale".
+vault_tailscale_auth_key: ""
+
+# Optional: what deletes a VM's device from your tailnet when make destroy
+# deletes the VM (tailscale_api_auth_method in local.yml). Used only on this
+# machine, never sent to a VM. token: an API access token (Settings, Keys;
+# tskey-api-..., at most 90 days). oauth: an OAuth client with the devices:core
+# scope (Settings, OAuth clients), which does not expire. README, "Removing
+# devices for you".
+vault_tailscale_api_token: ""
+vault_tailscale_oauth_client_id: ""
+vault_tailscale_oauth_client_secret: ""

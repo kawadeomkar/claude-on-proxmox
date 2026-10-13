@@ -1,0 +1,292 @@
+---
+# Internals, read lazily from the registers ownership.yml and status.yml leave.
+# Vars rather than facts, as in the other roles: a skipped register is
+# overwritten, a skipped set_fact is not, so nothing here can go stale between
+# two runs of the role in one play.
+
+tailscale_deb_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
+tailscale_installed_marker_path: "{{ tailscale_marker_dir }}/tailscale-installed"
+tailscale_joined_marker_path: "{{ tailscale_marker_dir }}/tailscale-joined"
+# Written before the package, so the daemon's first start already has it.
+tailscale_dropin_path: /etc/systemd/system/tailscaled.service.d/10-claude-on-proxmox.conf
+tailscale_unit_path: /lib/systemd/system/tailscaled.service
+# How long a join with the key may take: Tailscale took up to 14 s to refuse
+# a key while probing, and artis3n's collection settled on 120.
+tailscale_join_timeout: 90
+# How long a read waits for the state to settle after a start (status.yml).
+tailscale_settle_seconds: 30
+
+# --- What is there, and who made it (ownership.yml) ---
+tailscale_package_present: "{{ (tailscale_dpkg.stdout | default('')) == 'installed' }}"
+# Where a Tailscale that dpkg does not know keeps itself: the daemon of
+# Tailscale's static binaries - in /usr/sbin, as their unit has it, or under
+# /usr/local - and the snap's command. /usr/sbin/tailscaled is the package's
+# too, and goes with it when the package is removed.
+tailscale_foreign_paths: [/usr/sbin/tailscaled, /usr/local/sbin/tailscaled, /usr/local/bin/tailscaled, /snap/bin/tailscale]
+tailscale_foreign_present: >-
+  {{ not (tailscale_package_present | bool)
+     and tailscale_foreign.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+         | list | length > 0 }}
+# A Tailscale on the VM, however it got there.
+tailscale_installed: "{{ tailscale_package_present | bool or tailscale_foreign_present | bool }}"
+# A VM with no Tailscale (the role is about to install it), or the one this
+# role installed. A package with no marker, or a Tailscale dpkg does not know,
+# was installed some other way.
+tailscale_ours: "{{ (tailscale_installed_marker.stat.exists | default(false)) or not (tailscale_installed | bool) }}"
+# Check mode on a VM without the package: nothing to install from (no
+# repository is written in check mode) and no daemon to read.
+tailscale_check_without_package: "{{ ansible_check_mode and not (tailscale_package_present | bool) }}"
+tailscale_joined_marker_text: >-
+  {{ (tailscale_joined_marker.content | b64decode | trim) if tailscale_joined_marker.content is defined else '' }}
+
+# --- The state (status.yml) ---
+tailscale_daemon_up: "{{ (tailscale_status_raw.rc | default(1)) == 0 }}"
+tailscale_state: "{{ (tailscale_status_raw.stdout | from_json) if tailscale_daemon_up | bool else {} }}"
+tailscale_backend: "{{ tailscale_state.BackendState | default('NoState') }}"
+# NoState: tailscaled has not heard from its control server yet. Starting:
+# joined, waiting for a relay or a peer. Neither says anything to act on.
+tailscale_settled: "{{ tailscale_backend not in ['NoState', 'Starting'] }}"
+tailscale_joined: "{{ tailscale_state.HaveNodeKey | default(false) | bool }}"
+tailscale_auth_url: "{{ tailscale_state.AuthURL | default('') }}"
+tailscale_self: "{{ tailscale_state.Self | default({}, true) }}"
+tailscale_node_key: "{{ tailscale_self.PublicKey | default('') }}"
+tailscale_dns_name: "{{ (tailscale_self.DNSName | default('')) | regex_replace('[.]$', '') }}"
+tailscale_ipv4: "{{ tailscale_self.TailscaleIPs | default([], true) | tailnet_ipv4 }}"
+tailscale_tailnet: "{{ (tailscale_state.CurrentTailnet | default({}, true)).Name | default('') }}"
+# A first join: a settled NeedsLogin with no node key - a node that never
+# joined, or one logged out with `tailscale logout`, which reads the same. An
+# expired key leaves HaveNodeKey, and is never joined again with the vault key.
+tailscale_first_join: "{{ tailscale_backend == 'NeedsLogin' and not (tailscale_joined | bool) }}"
+# Joined under another name than asked: <hostname>-<n>, the name already taken.
+tailscale_name_taken: >-
+  {{ tailscale_dns_name.split('.')[0] is match('^' ~ (tailscale_hostname | lower | regex_escape) ~ '-[0-9]+$') }}
+# A login that is complete: a node key the control server took. HaveNodeKey
+# alone is not one - an expired key keeps it, and keeps it while the login that
+# replaces it waits for its approval.
+tailscale_signed_in: "{{ (tailscale_joined | bool) and tailscale_backend in ['Running', 'NeedsMachineAuth'] }}"
+# A sign-in this role started that has not ended in a login yet: web_login.yml
+# marks one before it shows the page, and connect.yml a join with the key that
+# ran out of time, which tailscaled goes on with. A page approved after the run
+# has ended still gives the role's own login, which connect.yml then records by
+# its node key. A login made by hand while one is pending cannot be told from
+# it, and is taken as the role's.
+tailscale_login_pending: "{{ tailscale_joined_marker_text == 'pending' }}"
+# The current login is the one this role's join produced - the marker holds its
+# node key - or the one a pending sign-in of this role's ended in.
+tailscale_login_ours: >-
+  {{ tailscale_node_key | length > 0
+     and ((tailscale_joined | bool) and tailscale_joined_marker_text == tailscale_node_key
+          or (tailscale_signed_in | bool) and tailscale_login_pending | bool) }}
+tailscale_prefs: >-
+  {{ (tailscale_prefs_raw.stdout | from_json) if (tailscale_prefs_raw.rc | default(1)) == 0 else {} }}
+
+# --- What a join asks for ---
+# Every managed setting explicit, after --reset: `tailscale up` refuses one that
+# leaves out a non-default setting an earlier up made. --advertise-tags only
+# when tags are configured: a tagged key's node takes the key's tags with no
+# flag at all.
+tailscale_up_flags: >-
+  {{ ['--reset', '--hostname=' ~ tailscale_hostname,
+      '--ssh=' ~ (tailscale_ssh | bool | lower),
+      '--accept-routes=' ~ (tailscale_accept_routes | bool | lower),
+      '--accept-dns=' ~ (tailscale_accept_dns | bool | lower)]
+     + (['--advertise-tags=' ~ (tailscale_advertise_tags | join(','))] if tailscale_advertise_tags | length > 0 else [])
+     + (['--login-server=' ~ tailscale_login_server] if tailscale_login_server | length > 0 else [])
+     + tailscale_up_args }}
+# Whether there is a key, for the tasks and messages that ask: they never name
+# the key itself, so that only the join renders it (tests/unit/test_tailscale.py).
+tailscale_auth_key_set: "{{ tailscale_auth_key | length > 0 }}"
+# Whether a first join uses the key: there is one, and tailscale_auth_method
+# does not leave every VM for the web login.
+tailscale_key_wanted: "{{ tailscale_auth_method != 'web' and tailscale_auth_key_set | bool }}"
+# An OAuth client secret needs tags; tailscale refuses it locally otherwise.
+tailscale_key_refused_locally: >-
+  {{ tailscale_key_wanted | bool and tailscale_auth_key is match('tskey-client-') and tailscale_advertise_tags | length == 0 }}
+# Why a join with the key did not happen, from what tailscale said - the join's
+# own line, else the health message that repeats it after a timeout, when it
+# was not there before the join (connect.yml): an earlier key's refusal stays
+# in Health until a later attempt ends. The same words from both cannot be told
+# apart; the join is then taken as still under way, and the next run tries the
+# key again. Matched on the `invalid key:` prefix only, since the words after it
+# have changed before.
+tailscale_refused_why: >-
+  {{ ('oauth authkeys require --advertise-tags' if tailscale_key_refused_locally | bool
+      else ((tailscale_join.stderr | default('') | plain_text | regex_search('invalid key: .*'))
+            or (tailscale_state.Health | default([], true) | map('plain_text')
+                | reject('in', tailscale_health_before_join | default([], true)) | select('search', 'invalid key: ')
+                | first | default('') | regex_search('invalid key: .*'))
+            or '')) | trim }}
+# What `up` prints when its --timeout runs out before the node is Running: the
+# one failure tailscaled goes on from. Any other ends that sign-in.
+tailscale_up_timeout_said: timeout waiting for Tailscale service to enter a Running state
+# A join with the key that ran out of time, unrefused: still under way in
+# tailscaled, so the login it may end in is this role's (connect.yml). A join
+# refused in other words than `invalid key:` - tags the key may not apply,
+# say - ended there, and is no sign-in of the role's to wait for.
+tailscale_join_under_way: >-
+  {{ (tailscale_join.stderr | default('')) is search(tailscale_up_timeout_said | regex_escape)
+     and tailscale_refused_why | length == 0 }}
+
+# --- What settings.yml holds the node to ---
+tailscale_set_flags: >-
+  {{ (['--hostname=' ~ tailscale_hostname] if (tailscale_prefs.Hostname | default('')) != tailscale_hostname else [])
+     + (['--ssh=' ~ (tailscale_ssh | bool | lower), '--accept-risk=lose-ssh']
+        if (tailscale_prefs.RunSSH | default(false)) != (tailscale_ssh | bool) else [])
+     + (['--accept-routes=' ~ (tailscale_accept_routes | bool | lower)]
+        if (tailscale_prefs.RouteAll | default(false)) != (tailscale_accept_routes | bool) else [])
+     + (['--accept-dns=' ~ (tailscale_accept_dns | bool | lower)]
+        if (tailscale_prefs.CorpDNS | default(true)) != (tailscale_accept_dns | bool) else []) }}
+tailscale_tags_missing: >-
+  {{ (tailscale_advertise_tags | difference(tailscale_self.Tags | default([], true)))
+     if tailscale_advertise_tags | length > 0 else [] }}
+
+# What this run did: a join with the key, or a web login's `up`. The login entry
+# point runs neither connect.yml nor settings.yml, so their registers may not
+# exist at all - or, in make deploy's sign-in play, are the configure play's,
+# from the same run, which said the join itself: that play's report
+# (tailscale_report_from_login, set by login.yml) leaves it out.
+tailscale_join_ran: "{{ (tailscale_join | default({'skipped': true})) is not skipped }}"
+tailscale_joined_now: >-
+  {{ ((tailscale_join | default({})) is changed and not (tailscale_report_from_login | default(false) | bool)
+      or (tailscale_web_up | default({'skipped': true})) is not skipped)
+     and tailscale_backend == 'Running' }}
+
+# --- The web login (login.yml, web_login.yml) ---
+# Asked about a VM someone is here for (make deploy, a Claude code entered),
+# Enter or "y" goes and anything else - "n" - stays; asked about any other,
+# only "y" goes, so that a run with no terminal, where pause returns at once
+# with nothing, skips it. Not asked, the switch alone decides.
+tailscale_login_answer: "{{ (tailscale_login_asked | default({})).user_input | default('', true) | trim | lower }}"
+tailscale_login_go: >-
+  {{ tailscale_login_answer in (['', 'y', 'yes'] if tailscale_login_interactive | bool else ['y', 'yes'])
+     if tailscale_login_ask | bool
+     else tailscale_login_interactive | bool }}
+# A Tailscale this role installed, settled in NeedsLogin - never signed in,
+# logged out, or with a login of the role's whose key expired (an expired node
+# keeps its node key, which the marker holds) or a sign-in of the role's
+# pending. Never over an expired login made by hand: the web login's
+# `up --reset` would put the role's settings over its own, and record it as the
+# role's.
+tailscale_login_expired_elsewhere: >-
+  {{ tailscale_joined | bool and not (tailscale_login_ours | bool) and not (tailscale_login_pending | bool) }}
+tailscale_login_possible: >-
+  {{ tailscale_enabled | bool and tailscale_package_present | bool and tailscale_ours | bool
+     and tailscale_backend == 'NeedsLogin' and tailscale_auth_method != 'key'
+     and not (tailscale_login_expired_elsewhere | bool) }}
+tailscale_login_wait_said: >-
+  {{ ((tailscale_login_timeout | int) // 60) ~ ' minutes'
+     if (tailscale_login_timeout | int) % 60 == 0 and (tailscale_login_timeout | int) >= 120
+     else (tailscale_login_timeout | int) ~ ' seconds' }}
+# How often the wait for the approval reads the state.
+tailscale_login_poll_seconds: 5
+# The page this attempt's `up` made, as tailscaled reports it - the VM's to
+# choose, so it is opened on this machine only when it is Tailscale's own
+# sign-in page, or one under tailscale_login_server: a path on that server
+# (however its address ends, `/` or not), in the characters a control server's
+# page uses - Headscale's /register/<id>, an older one's
+# /register/nodekey:<hex>, a query.
+tailscale_web_page: >-
+  {{ ((tailscale_web_state.stdout | from_json).AuthURL | default(''))
+     if (tailscale_web_state.rc | default(1)) == 0 else '' }}
+tailscale_web_page_trusted: >-
+  {{ (tailscale_web_page is match('https://login[.]tailscale[.]com/a/[0-9a-f]+$'))
+     if tailscale_login_server | length == 0
+     else (tailscale_web_page is match((tailscale_login_server | regex_replace('/+$', '') | regex_escape)
+                                        ~ '/[A-Za-z0-9/_:.?=&%-]+$')) }}
+
+# --- Tailscale's API (api_delete.yml) ---
+# The bearer the device's deletion is made with: the API access token, or the
+# one-hour token the OAuth client was exchanged for. Empty when there is none.
+tailscale_api_bearer: >-
+  {{ tailscale_api_token if tailscale_api_auth_method == 'token'
+     else ((tailscale_api_oauth.json | default({}, true)).access_token | default('', true))
+     if tailscale_api_auth_method == 'oauth' else '' }}
+# The device the API has under that ID, and its name's first label: the
+# MagicDNS name, <machine name>.<tailnet>. Only a device named as this project
+# asked the VM to join - tailscale_hostname, or that name with Tailscale's -<n>
+# when it was taken - is deleted (api_delete.yml says why).
+tailscale_api_device: >-
+  {{ (tailscale_api_lookup.json | default({}, true)) if (tailscale_api_lookup.status | default(0)) == 200 else {} }}
+tailscale_api_device_name: >-
+  {{ ((tailscale_api_device.name | default('', true)) or (tailscale_api_device.hostname | default('', true)))
+     | string | lower | regex_replace('[.].*$', '') }}
+tailscale_api_device_ours: >-
+  {{ tailscale_api_device_name is match('^' ~ (tailscale_hostname | lower | regex_escape) ~ '(-[0-9]+)?$') }}
+tailscale_api_deleted: "{{ (tailscale_api_delete.status | default(0)) in [200, 204] }}"
+tailscale_api_gone_already: >-
+  {{ (tailscale_api_lookup.status | default(0)) == 404 or (tailscale_api_delete.status | default(0)) == 404 }}
+tailscale_api_gone_said: >-
+  Tailscale had no such device (HTTP 404) - it was gone already, or is in a tailnet the API credential does not reach
+# What to do by hand when the device was not deleted: delete it - or, when the
+# ID the VM reported is another device's, find this VM's own.
+tailscale_api_by_hand: >-
+  {{ ("; find this VM's own device at " ~ tailscale_admin_page ~ ' and delete it')
+     if (tailscale_api_lookup.status | default(0)) == 200 and not (tailscale_api_device_ours | bool)
+     else ': delete it at ' ~ tailscale_admin_page }}
+# The last call made, for its status: the deletion, else the lookup, else the
+# OAuth exchange.
+tailscale_api_last: >-
+  {{ tailscale_api_delete if (tailscale_api_delete | default({'skipped': true})) is not skipped
+     else tailscale_api_lookup if (tailscale_api_lookup | default({'skipped': true})) is not skipped
+     else tailscale_api_oauth | default({}) }}
+# Why a device could not be deleted, in words. Tailscale documents a
+# devices:core OAuth client as scoped to the tags chosen for it, which may not
+# reach a device without them, such as one joined by the web login: a 403 says
+# so.
+tailscale_api_refused_why: >-
+  {{ ('Tailscale refused the OAuth client (HTTP ' ~ (tailscale_api_oauth.status | default('?')) ~ ')')
+     if tailscale_api_auth_method == 'oauth' and tailscale_api_bearer | length == 0
+     else 'no API access token is set (tailscale_api_token)' if tailscale_api_bearer | length == 0
+     else ('the device under the ID the VM reported is named ' ~ (tailscale_api_device_name | plain_text | to_json)
+           ~ ', not ' ~ (tailscale_hostname | to_json) ~ ", so it is not this VM's")
+     if (tailscale_api_lookup.status | default(0)) == 200 and not (tailscale_api_device_ours | bool)
+     else ('Tailscale refused the call (HTTP 403): the '
+           ~ ('OAuth client' if tailscale_api_auth_method == 'oauth' else 'API access token')
+           ~ ' may not delete this device - an OAuth client only those with its tags')
+     if (tailscale_api_last.status | default(0)) == 403
+     else ('Tailscale answered HTTP ' ~ (tailscale_api_last.status | default('?'))
+           ~ ': ' ~ ((tailscale_api_last.msg | default('') | plain_text)[:200] or 'no reason given')) }}
+
+# --- Releasing the VM before it is destroyed (release.yml) ---
+tailscale_release_state: >-
+  {{ (tailscale_release_status.stdout | from_json) if (tailscale_release_status.rc | default(1)) == 0 else {} }}
+tailscale_release_joined: "{{ tailscale_release_state.HaveNodeKey | default(false) | bool }}"
+# The node's stable ID, read before the logout clears it: what the API deletes.
+tailscale_release_node: "{{ (tailscale_release_state.Self | default({}, true)).ID | default('', true) }}"
+tailscale_release_installed: >-
+  {{ tailscale_release_unit.stat.exists | default(false) or (tailscale_release_status.rc | default(1)) == 0 }}
+# One clause for destroy's report on the VM; empty where there was nothing on
+# Tailscale to release.
+tailscale_release_summary: >-
+  {{ '' if not (tailscale_release_installed | bool)
+     else ('tailscaled did not answer, so the node could not be logged out: delete its device at '
+           ~ tailscale_admin_page ~ ', or its login stays valid') if (tailscale_release_status.rc | default(1)) != 0
+     else '' if not (tailscale_release_joined | bool)
+     else ('its node could not be logged out ('
+           ~ ((tailscale_release_logout.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim) or 'no reason given')
+           ~ '): delete its device at ' ~ tailscale_admin_page) if (tailscale_release_logout.rc | default(1)) != 0
+     else ('logged out; its device stays in your tailnet until you delete it at ' ~ tailscale_admin_page
+           ~ ', or a VM built again under its name joins as <name>-1') if tailscale_api_auth_method == 'none'
+     else 'removed from your tailnet' if tailscale_api_deleted | bool
+     else ('logged out; ' ~ tailscale_api_gone_said) if tailscale_api_gone_already | bool
+     else ('logged out, but its device was not deleted - ' ~ tailscale_api_refused_why ~ tailscale_api_by_hand) }}
+
+# --- Turning it off (absent.yml) ---
+# The node's stable ID, read before its logout: what the API deletes.
+tailscale_absent_node: >-
+  {{ (((tailscale_absent_status.stdout | from_json).Self | default({}, true)).ID | default('', true))
+     if (tailscale_absent_status.rc | default(1)) == 0 else '' }}
+# tailscaled did not answer, so a login the node had could not be ended.
+tailscale_absent_unasked: >-
+  {{ tailscale_package_present | bool and (tailscale_absent_status.rc | default(1)) != 0 }}
+# tailscaled answered, and its logout failed.
+tailscale_absent_logout_failed: >-
+  {{ (tailscale_logout | default({'skipped': true})) is not skipped and (tailscale_logout.rc | default(0)) != 0 }}
+# A login may be left on the node, in the state the package's removal keeps.
+tailscale_absent_login_left: "{{ tailscale_absent_unasked | bool or tailscale_absent_logout_failed | bool }}"
+
+# --- Where to fix what the report names ---
+tailscale_admin_page: >-
+  {{ 'your control server' if tailscale_login_server | length > 0 else 'https://login.tailscale.com/admin/machines' }}
+tailscale_configure_command: make configure VM_NAME={{ inventory_hostname }} TAGS=tailscale
+tailscale_login_command: make tailscale-login VM_NAME={{ inventory_hostname }}

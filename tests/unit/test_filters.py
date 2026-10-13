@@ -17,6 +17,7 @@ SPEC.loader.exec_module(proxmox_filters)
 
 net_mac = proxmox_filters.net_mac
 guest_ipv4 = proxmox_filters.guest_ipv4
+tailnet_ipv4 = proxmox_filters.tailnet_ipv4
 guest_address = proxmox_filters.guest_address
 guest_addresses = proxmox_filters.guest_addresses
 proxmox_access_denied = proxmox_filters.proxmox_access_denied
@@ -159,6 +160,38 @@ class TestGuestIpv4:
     def test_what_comes_back_is_exactly_the_address(self):
         returned = guest_ipv4([ETH0], LAN_MAC)
         assert returned == "192.0.2.51" and isinstance(returned, str)
+
+
+class TestTailnetIpv4:
+    """The tailnet address a VM reports for itself, held to one IPv4 address in Tailscale's range."""
+
+    def test_the_ipv4_address_beside_the_ipv6_one(self):
+        # Self.TailscaleIPs as Phase 0 recorded it, IPv4 first.
+        assert tailnet_ipv4(["100.64.0.2", "fd7a:115c:a1e0::2"]) == "100.64.0.2"
+        assert tailnet_ipv4(["fd7a:115c:a1e0::2", "100.101.102.103"]) == "100.101.102.103"
+
+    @pytest.mark.parametrize(
+        "reported",
+        [
+            [],
+            None,
+            "100.64.0.2",
+            ["fd7a:115c:a1e0::2"],
+            # Outside 100.64.0.0/10: the LAN, and the edges of the range.
+            ["192.0.2.7"],
+            ["100.63.255.255"],
+            ["100.128.0.0"],
+            # The VM's to choose: a newline would carry text of its own into a report.
+            ["100.64.0.2\nProxyCommand x"],
+            [" 100.64.0.2"],
+            [7],
+        ],
+    )
+    def test_anything_else_is_no_address(self, reported):
+        assert tailnet_ipv4(reported) == ""
+
+    def test_a_bad_entry_does_not_hide_a_good_one_after_it(self):
+        assert tailnet_ipv4(["100.64.0.2 x", "100.127.255.254"]) == "100.127.255.254"
 
 
 class TestNetMacDefault:

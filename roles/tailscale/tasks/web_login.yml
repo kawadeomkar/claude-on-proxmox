@@ -1,0 +1,162 @@
+---
+# Tailscale's web login, for one VM: one `tailscale up` starts the login inside
+# tailscaled and exits; the page's address is read from `status --json`, once;
+# then only the state is polled. Never a second `up` in one attempt: each
+# keyless `up` makes a new page, and the one on screen would stop working.
+# tailscaled finishes the login on its own once the page is approved - Phase 0
+# saw an approval given after the CLI had exited complete the join - so a wait
+# that runs out is a report (report.yml), and the page stays valid for 7 days.
+- name: web_login | Refuse more than one VM at a time
+  ansible.builtin.assert:
+    that: ansible_play_batch | length == 1
+    fail_msg: >-
+      Tailscale's web login signs in one VM at a time, each with a page of its own, but this batch holds
+      {{ ansible_play_batch | join(', ') }}: make tailscale-login runs one VM after another.
+    quiet: true
+
+# --reset, and every managed setting, as for a join with the key: an earlier
+# attempt's settings would otherwise trip tailscale's "requires mentioning all
+# non-default flags". Five seconds is enough for tailscaled to have a page,
+# and short enough that the CLI is never what waits.
+- name: web_login | Start the login inside tailscaled
+  ansible.builtin.command:
+    argv: "{{ ['tailscale', 'up', '--timeout=5s'] + tailscale_up_flags }}"
+  register: tailscale_web_up
+  changed_when: false
+  failed_when: false
+
+- name: web_login | Fail with what tailscale said, when it would not start the login
+  vars:
+    tailscale_web_up_said: "{{ tailscale_web_up.stderr | default('') | plain_text | regex_replace('\\s+', ' ') | trim }}"
+  ansible.builtin.assert:
+    that: >-
+      tailscale_web_up.rc == 0
+      or tailscale_web_up.stderr is search(tailscale_up_timeout_said | regex_escape)
+    fail_msg: "tailscale would not start the sign-in on {{ inventory_hostname }}: {{ tailscale_web_up_said }}"
+    quiet: true
+
+- name: web_login | Wait for the page's address
+  ansible.builtin.command:
+    argv: [tailscale, status, --json]
+  register: tailscale_web_state
+  changed_when: false
+  failed_when: false
+  until: >-
+    tailscale_web_state.rc == 0
+    and (((tailscale_web_state.stdout | from_json).AuthURL | default('')) | length > 0
+         or (tailscale_web_state.stdout | from_json).BackendState | default('') in ['Running', 'NeedsMachineAuth'])
+  retries: 30
+  delay: 1
+
+- name: web_login | Fail when tailscale gave no sign-in page
+  vars:
+    tailscale_web_state_said: >-
+      {{ ((tailscale_web_state.stdout | from_json).BackendState | default('?'))
+         if tailscale_web_state.rc | default(1) == 0
+         else (tailscale_web_state.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim) }}
+  ansible.builtin.assert:
+    that: >-
+      tailscale_web_page | length > 0
+      or tailscale_web_state.rc | default(1) == 0
+      and (tailscale_web_state.stdout | from_json).BackendState | default('') in ['Running', 'NeedsMachineAuth']
+    fail_msg: >-
+      tailscale on {{ inventory_hostname }} gave no sign-in page within 30 seconds ({{ tailscale_web_state_said }});
+      journalctl -u tailscaled on {{ inventory_hostname }} says why.
+    quiet: true
+
+# Before the page is shown, so before anyone can approve it: a page approved
+# after this run's wait has run out still gives the role's own login, which the
+# next configure records (connect.yml).
+- name: web_login | Mark the sign-in as this role's
+  ansible.builtin.copy:
+    content: "pending\n"
+    dest: "{{ tailscale_joined_marker_path }}"
+    mode: "0644"
+  when: tailscale_web_page | length > 0
+
+# One line of Jinja per line of text: a more-indented line in a folded scalar
+# keeps its line break. The page is what the VM's tailscaled reported, so the
+# VM chooses it: it is opened here only when it is Tailscale's own sign-in page
+# (or one under tailscale_login_server), and said otherwise with a warning.
+- name: web_login | Say where to sign in
+  vars:
+    tailscale_web_opens: >-
+      {{ '(the page opens in your browser, if this machine allows it). ' if tailscale_login_desktop | bool
+         else '' }}
+    tailscale_web_untrusted: >-
+      {{ '- not ' ~ ('Tailscale' if tailscale_login_server | length == 0 else 'your control server')
+         ~ "'s sign-in page, so it is not opened here: check where it leads before you follow it. " }}
+    tailscale_web_untagged: >-
+      {{ (' Joined this way, ' ~ inventory_hostname ~ " is your own device, which your tailnet's policy lets reach the"
+          ~ ' devices your other ones can: README, "Reaching a VM over Tailscale", says how to tag it.')
+         if tailscale_advertise_tags | length == 0 else '' }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: sign in to Tailscale at {{ tailscale_web_page | plain_text }}
+      {{ tailscale_web_opens if tailscale_web_page_trusted | bool else tailscale_web_untrusted }}This run waits up to
+      {{ tailscale_login_wait_said }}; Ctrl-C ends the whole run, and the page stays valid for 7 days either
+      way.{{ tailscale_web_untagged }}
+  when: tailscale_web_page | length > 0
+
+# The two steps on the controller, both best effort, as the other sign-ins
+# take them, and never in a test (tailscale_login_desktop).
+- name: web_login | Look for a browser opener on this machine
+  ansible.builtin.command:
+    argv: [which, open, xdg-open]
+  delegate_to: localhost
+  become: false
+  register: tailscale_web_tools
+  changed_when: false
+  failed_when: false
+  when:
+    - tailscale_login_desktop | bool
+    - tailscale_web_page_trusted | bool
+
+# The opener is the page_opener filter's (filter_plugins/desktop.py), shared
+# with the other sign-ins: the first command BROWSER names, split as a shell
+# would, else open, else xdg-open.
+- name: web_login | Open the sign-in page in your browser
+  vars:
+    tailscale_web_opener: >-
+      {{ tailscale_web_page
+         | page_opener(lookup('ansible.builtin.env', 'BROWSER'), tailscale_web_tools.stdout_lines | default([])) }}
+  ansible.builtin.command:
+    argv: "{{ tailscale_web_opener }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  failed_when: false
+  when:
+    - tailscale_login_desktop | bool
+    - tailscale_web_page_trusted | bool
+    - tailscale_web_opener | length > 0
+
+- name: web_login | Wait for the page to be approved
+  ansible.builtin.command:
+    argv: [tailscale, status, --json]
+  register: tailscale_web_wait
+  changed_when: false
+  # Outranks running out of retries: an approval still to come is a report.
+  failed_when: false
+  until: >-
+    tailscale_web_wait.rc == 0
+    and (tailscale_web_wait.stdout | from_json).BackendState | default('') in ['Running', 'NeedsMachineAuth']
+  retries: "{{ ((tailscale_login_timeout | int) / (tailscale_login_poll_seconds | int)) | round(0, 'ceil') | int }}"
+  delay: "{{ tailscale_login_poll_seconds }}"
+
+- name: web_login | Read the state after the wait
+  ansible.builtin.include_tasks: status.yml
+
+# The node key this login produced marks it as this role's, as a join with the
+# key does: settings.yml then keeps its settings. Not before the login is
+# complete - an expired node still holds its old key while the page waits.
+- name: web_login | Remember that this login is this role's
+  ansible.builtin.copy:
+    content: "{{ tailscale_node_key }}\n"
+    dest: "{{ tailscale_joined_marker_path }}"
+    mode: "0644"
+  when: tailscale_signed_in | bool
+
+- name: web_login | Read what this role has made, now that it has signed in
+  ansible.builtin.include_tasks: ownership.yml
+  when: tailscale_signed_in | bool

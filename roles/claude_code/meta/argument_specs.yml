@@ -122,6 +122,16 @@ argument_specs:
         type: bool
         default: true
         description: Open the sign-in page in the controller's browser. Off in every test.
+      claude_code_login_redirect:
+        type: bool
+        description:
+          - Bring the browser back to the VM by itself once you authorise, with nothing to paste - claude's callback
+            port forwarded from the controller over SSH for the sign-in. Defaults to claude_code_login_desktop, since
+            only a browser on the controller reaches that forward; where the forward fails, the code is pasted.
+      claude_code_login_approval_timeout:
+        type: int
+        default: 300
+        description: Seconds the run waits for you to authorise in the browser when it comes back by itself.
       claude_code_login_args:
         type: list
         elements: str
@@ -156,4 +166,17 @@ argument_specs:
       claude_code_remote_control_dir: *cc_remote_control_dir
       claude_code_remote_control_permission_mode: *cc_remote_control_permission_mode
       claude_code_remote_control_spawn: *cc_remote_control_spawn
+      claude_code_remote_control_service: *cc_remote_control_service
+
+  # tasks_from: release, which playbooks/destroy.yml runs on each VM before it
+  # is deleted.
+  release:
+    short_description: Stop Remote Control and sign Claude Code out before the VM is destroyed
+    description:
+      - Stops the Remote Control service and the path unit that starts it, then runs `claude auth logout` as
+        claude_code_user. Records what became of the login in claude_code_release_said, for destroy's report.
+    options:
+      claude_code_user:
+        type: str
+        default: dev
       claude_code_remote_control_service: *cc_remote_control_service

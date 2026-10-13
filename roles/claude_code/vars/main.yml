@@ -241,7 +241,93 @@ claude_code_login_entered_again: >-
 
 claude_code_login_command: make claude-login VM_NAME={{ inventory_hostname }}
 
+# --- the browser coming back by itself (claude_code_login_redirect) ---
+# Internal: the browser claude gets on the VM (BROWSER), which only records the
+# page claude would open - the one that redirects back to claude's own callback
+# on the VM - and the file it records it in; and the pid of the far end of the
+# forward to that callback, which ends it.
+claude_code_login_browser: "{{ claude_code_login_dir }}/claude-login.browser"
+claude_code_login_page_file: "{{ claude_code_login_dir }}/claude-login.page"
+claude_code_login_forward_pidfile: "{{ claude_code_login_dir }}/claude-login.forward.pid"
+# Internal: what makes a page Claude's own sign-in page. The VM chooses both
+# the page claude prints and the one its browser is handed, so only a page
+# like this opens here, and only its callback is forwarded.
+claude_code_login_page_pattern: '^https://(claude[.]com/cai|claude[.]ai)/oauth/authorize[?]'
+claude_code_login_page_trusted: "{{ claude_code_login_url is match(claude_code_login_page_pattern) }}"
+# Internal: the page claude handed its browser, and the port of the callback it
+# redirects to, http://localhost:<port>/callback - claude's listener on the
+# VM's 127.0.0.1, which only a forward makes reachable from your browser.
+claude_code_login_auto_url: >-
+  {{ (claude_code_login_page_read.content | b64decode | trim) if claude_code_login_page_read.content is defined else '' }}
+claude_code_login_callback: >-
+  {{ claude_code_login_auto_url | regex_search('[?&]redirect_uri=http%3A%2F%2Flocalhost%3A[0-9]+%2Fcallback(&|$)') or '' }}
+claude_code_login_callback_port: >-
+  {{ (claude_code_login_callback | regex_replace('^.*localhost%3A', '') | regex_replace('%2Fcallback.*$', '') | int)
+     if claude_code_login_callback | length > 0 else 0 }}
+# Internal: whether a browser on this machine can take the page there: one
+# BROWSER names, or open / xdg-open where login_desktop let the run look for
+# them - and make not run over SSH, where the person is at another machine,
+# whose browser the page would send to its own localhost.
+claude_code_login_controller_remote: "{{ lookup('ansible.builtin.env', 'SSH_CONNECTION') | length > 0 }}"
+claude_code_login_browser_here: >-
+  {{ not (claude_code_login_controller_remote | bool)
+     and claude_code_login_auto_url | page_opener(lookup('ansible.builtin.env', 'BROWSER'),
+                                                  claude_code_login_tools.stdout_lines | default([])) | length > 0 }}
+# Internal: whether this attempt comes back by itself - wanted, no code given
+# instead, a browser here, Claude's own page with a port that can be forwarded
+# - and, once the forward was tried, whether it is up.
+claude_code_login_redirect_ready: >-
+  {{ claude_code_login_redirect | bool and claude_code_login_code | length == 0
+     and claude_code_login_browser_here | bool
+     and claude_code_login_auto_url is match(claude_code_login_page_pattern)
+     and (claude_code_login_callback_port | int) >= 1024 and (claude_code_login_callback_port | int) <= 65535 }}
+claude_code_login_redirecting: >-
+  {{ claude_code_login_redirect_ready | bool and (claude_code_login_forward.rc | default(1)) == 0 }}
+# Internal: the ssh that makes the forward, on its own connection to the VM as
+# Ansible reaches it, and how long its far end lasts: the wait, and a minute.
+# Bound to this machine's loopback; ExitOnForwardFailure fails it when the port
+# is taken here, and -f returns once it is up. A stand-in replaces ssh in tests.
+claude_code_login_ssh: ssh
+claude_code_login_forward_argv: >-
+  {{ ['sh', '-c', 'exec "$@" >/dev/null 2>&1', 'sh', claude_code_login_ssh, '-f', '-n', '-T',
+      '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=15',
+      '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
+      '-p', (hostvars[inventory_hostname].ansible_port | default(22)) | string,
+      '-L', 'localhost:' ~ claude_code_login_callback_port ~ ':127.0.0.1:' ~ claude_code_login_callback_port]
+     + (['-i', hostvars[inventory_hostname].ansible_ssh_private_key_file]
+        if hostvars[inventory_hostname].ansible_ssh_private_key_file is defined else [])
+     + [(hostvars[inventory_hostname].ansible_user | default(claude_code_user)) ~ '@'
+        ~ hostvars[inventory_hostname].ansible_host | default(inventory_hostname),
+        'echo $$ > ' ~ (claude_code_login_forward_pidfile | quote) ~ ' && exec sleep '
+        ~ (claude_code_login_approval_timeout | int + 60)] }}
+# Internal: whether someone answered this attempt - a code entered, or the
+# browser come back - for make deploy's later sign-ins, and for the outcome.
+claude_code_login_responded: >-
+  {{ claude_code_login_entered | length > 0
+     or (claude_code_login_redirecting | bool and (claude_code_login_landed.finished | default(0) | int) == 1) }}
+
 # Internal: how long the server gets to fail after a start before it counts as
 # up (remote_control.yml). One "active" reading proves nothing: Type=simple is
 # active the moment the process forks.
 claude_code_remote_control_stay_up_seconds: 20
+
+# --- releasing the VM before it is destroyed (release.yml) ---
+claude_code_release_state: >-
+  {{ (claude_code_release_status.stdout | from_json) if (claude_code_release_status.stdout | default('') | trim)[:1] == '{' else {} }}
+claude_code_release_signed_in: "{{ claude_code_release_state.loggedIn | default(false) | bool }}"
+# The service, not the path unit that waits for a login: only a running
+# server had a session to take offline.
+claude_code_release_rc_stopped: >-
+  {{ claude_code_release_stopped.results | default([]) | selectattr('changed', 'defined') | selectattr('changed')
+     | selectattr('item.item', 'equalto', 'service') | list | length > 0 }}
+# One clause for destroy's report on the VM; empty where Claude Code had no
+# login and no Remote Control to end.
+claude_code_release_why: >-
+  {{ (claude_code_release_logout.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim) or 'no reason given' }}
+claude_code_release_summary: >-
+  {{ ((['Remote Control stopped (its session stays in the Claude app, offline)']
+       if claude_code_release_rc_stopped | bool else [])
+      + ([('signed out' if (claude_code_release_logout.rc | default(1)) == 0
+           else 'could not sign out (' ~ claude_code_release_why ~ ')')]
+         if claude_code_release_signed_in | bool else []))
+     | join('; ') }}

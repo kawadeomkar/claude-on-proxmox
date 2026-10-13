@@ -220,6 +220,62 @@
 # The alias configure.yml left on the controller, in the ephemeral directory
 # host_vars/localhost.yml points it at. Resolved with the real ssh client, as
 # VS Code's Remote - SSH would.
+    # Tailscale, configured last: installed, its daemon running with logs off,
+    # the VM joined by the vault key through the stand-in - and the key nowhere
+    # on the VM, since it went in on standard input.
+    - name: Read Tailscale's state through the stand-in
+      ansible.builtin.command:
+        argv: [tailscale, status, --json]
+      register: verify_tailscale_status
+      changed_when: false
+
+    - name: Read the role's joined marker and tailscaled's unit
+      ansible.builtin.command:
+        argv:
+          - sh
+          - -c
+          - >-
+            cat /var/lib/claude-on-proxmox/tailscale-joined;
+            systemctl is-active tailscaled; systemctl show tailscaled -p Environment
+      register: verify_tailscale
+      changed_when: false
+
+    - name: Assert the VM joined, and tailscaled runs with logs off
+      vars:
+        verify_tailscale_state: "{{ verify_tailscale_status.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - verify_tailscale_state.BackendState == 'Running'
+          - verify_tailscale.stdout_lines[0] == verify_tailscale_state.Self.PublicKey
+          - verify_tailscale.stdout_lines[1] == 'active'
+          - verify_tailscale.stdout_lines[2] is search('TS_NO_LOGS_NO_SUPPORT=true')
+        fail_msg: "{{ verify_tailscale.stdout_lines }}"
+        quiet: true
+
+    # The needle on standard input, under no_log: in environment:, sudo would log
+    # it with the command line. Where a key could land, devices and FIFOs
+    # skipped (one would block grep), Ansible's temporary directories left out:
+    # this task's module file holds the needle while it runs.
+    - name: Look for the Tailscale key anywhere on the VM
+      ansible.builtin.command:
+        argv:
+          - sh
+          - -c
+          - >-
+            read -r needle; grep -rlF -D skip --exclude-dir='ansible-tmp-*' -- "$needle"
+            /etc /root /home /tmp /var /run 2>/dev/null | head -5
+        stdin: tskey-auth-kGood0CNTRL-TestOnly0000000000000000000000
+      register: verify_tailscale_key
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Assert the key reached no file
+      ansible.builtin.assert:
+        that: verify_tailscale_key.stdout | length == 0
+        fail_msg: "Files holding the Tailscale key: {{ verify_tailscale_key.stdout_lines | join(', ') }}"
+        quiet: true
+
 - name: Verify the SSH alias written on the controller
   hosts: localhost
   gather_facts: false

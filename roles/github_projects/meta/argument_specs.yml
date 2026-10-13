@@ -122,3 +122,24 @@ argument_specs:
           - The whole role runs for this VM next, in the same run, so a vault token
             gh is not yet signed in with is said to be signed in by it rather than
             by a command to run.
+
+  # tasks_from: release, which playbooks/destroy.yml runs on each VM before it
+  # is deleted.
+  release:
+    short_description: Sign gh out before the VM is destroyed
+    description:
+      - Signs gh out, and records what became of the login in github_projects_release_said, for destroy's report. No
+        token is revoked at GitHub - revoking one gh sign-in there ends every gh sign-in of the account - so the report
+        says where to revoke it, and what that does.
+    options:
+      github_projects_user:
+        type: str
+        default: dev
+      github_projects_home:
+        type: path
+        default: ""
+      github_projects_token:
+        type: str
+        default: ""
+        no_log: true
+        description: The vault token, only to say that a login with it is every VM's.
