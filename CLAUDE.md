@@ -40,12 +40,17 @@ make docs            # regenerate the wiki's reference pages; make docs-serve pr
 
 **A change to behaviour changes the wiki in the same commit.** The page for it is in `docs/`
 (`docs/README.md` maps them; `docs/architecture/` for the design, cited by section number). The
-reference pages are generated from `argument_specs.yml`, `local.yml.example`, `vault.yml.example` and
-the Makefile's `## ` text: edit those and run `make docs`, never the generated section.
-`tests/unit/test_docs.py` fails on a stale page, a broken link or anchor, or a cited `docs/` page or
+reference pages are generated from `argument_specs.yml`, `local.yml.example`, `vault.yml.example`,
+`inventory/group_vars/all/defaults.yml`, the roles' `defaults/main.yml` and the Makefile's `## ` text:
+edit those and run `make docs` (the pre-commit hook does too), never the generated section. A new
+setting goes in an example file and a new role default in `argument_specs.yml`, or the page misses it.
+`tests/unit/test_docs.py` fails on a stale or incomplete page, a broken link or anchor, a page that
+renders differently on GitHub and on the site, an unlinked cross-page `§`, or a cited `docs/` page or
 `§` section that does not exist. Name repository files in backticks there, never by a relative link
-out of `docs/`, which breaks on the site. A `</` in a code span (`</dev/tty`) drops the rest of the
-page on the site, so write it `< /dev/tty`.
+out of `docs/`, which breaks on the site. The site's Markdown drops the rest of a page at a `</` in a
+code span, so write `</dev/tty` as `< /dev/tty`; it also needs a blank line before a list and four
+spaces before a nested one. Only `docs/README.md` and `docs/`'s folders are the wiki: anything else at
+the top of `docs/` is a local working document, ignored and refused by the tracked-file guard.
 
 Every target that runs Ansible, Molecule included, writes its whole run to
 `.logs/<YYYYMMDD-HHMMSS>-<target>.log` through `ANSIBLE_LOG_PATH`. When a user says they ran

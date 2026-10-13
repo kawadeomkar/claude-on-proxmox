@@ -15,8 +15,13 @@ updates:
     allow:
       - dependency-type: all
     # One pull request a week for the tooling; ansible-core on its own, since
-    # its releases change what the playbooks may do.
+    # its releases change what the playbooks may do; and the wiki's tools on
+    # their own, since a release that changes what they render fails the docs
+    # tests until `make docs` runs. A package goes to the first group it
+    # matches, so docs comes before tooling.
     groups:
+      docs:
+        patterns: [zensical, aar-doc, markdown, pymdown-extensions, markdown-it-py]
       tooling:
         patterns: ["*"]
         exclude-patterns: ["ansible-core"]

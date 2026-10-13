@@ -41,7 +41,7 @@ anything else to `ansible-playbook` (`ANSIBLE_ARGS="-e proxmox_vm_start_existing
 | `make template` | Build the cloud-init VM template on the Proxmox host (once) |
 | `make provision` | Create and start VM(s): make provision VM_NAME=alpha,beta (default: claude-on-proxmox-default) |
 | `make list` | Show the VMs this project created, and their addresses (all, unless VM_NAME) |
-| `make configure` | Configure the VM(s): packages, tools, Claude Code, GitHub projects (every tagged VM, unless VM_NAME) |
+| `make configure` | Configure the VM(s): packages, tools, Claude Code, GitHub projects, Tailscale (every tagged VM, unless VM_NAME) |
 | `make deploy` | Everything, for VM_NAME only: template (if missing), provision, configure, sign in to Claude, GitHub and Tailscale, open VS Code (default: claude-on-proxmox-default) |
 | `make destroy` | Release the VM(s) from Claude, GitHub and Tailscale, then delete them (default: claude-on-proxmox-default) |
 | `make claude-login` | Sign Claude Code in on the VM(s) in VM_NAME, one after another, and start Remote Control; without VM_NAME, report every VM |
@@ -74,6 +74,6 @@ anything else to `ansible-playbook` (`ANSIBLE_ARGS="-e proxmox_vm_start_existing
 | `make vagrant-up` | End-to-end test of configure.yml on a real VirtualBox VM |
 | `make vagrant-destroy` | Destroy the Vagrant test VM |
 | `make pre-commit` | Run all pre-commit hooks against the whole tree |
-| `make clean` | Remove caches, the virtualenv and the run logs |
+| `make clean` | Remove caches, the virtualenv, the run logs and the built site |
 
 <!-- END_GENERATED: make-targets -->

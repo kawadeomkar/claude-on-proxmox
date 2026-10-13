@@ -49,8 +49,8 @@ NO_TTY_ARGS = $$([ -t 0 ] || printf '%s' '-e {"login_desktop":false,"deploy_sign
 PROJECT    ?=
 PROJECT_ARGS := $(if $(PROJECT),-e '{"vm_project": "$(PROJECT)"}',)
 # Re-run part of configure: make configure VM_NAME=alpha TAGS=claude_code
-# Role tags are common, vscode_server, dev_tools, claude_code and
-# github_projects. Discovery is
+# Role tags are common, vscode_server, dev_tools, claude_code, github_projects
+# and tailscale. Discovery is
 # tagged "always", so it runs whichever of these you pick. Only configure and
 # check take TAGS. deploy refuses it: nothing that builds the template or
 # creates a VM is tagged, so --tags would skip all of that and exit 0 having
@@ -224,7 +224,7 @@ list: vault-check vm-name-check log-setup ## Show the VMs this project created, 
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/list.yml
 
 .PHONY: configure
-configure: vault-check vm-name-check log-setup ## Configure the VM(s): packages, tools, Claude Code, GitHub projects (every tagged VM, unless VM_NAME)
+configure: vault-check vm-name-check log-setup ## Configure the VM(s): packages, tools, Claude Code, GitHub projects, Tailscale (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: deploy
@@ -238,8 +238,9 @@ destroy: vault-check vm-name-check log-setup ## Release the VM(s) from Claude, G
 
 # Remote Control needs a claude.ai login on the VM, and Anthropic supports no
 # non-interactive way to create one. Given VM names, this runs the browser
-# sign-in as far as it goes - the page opens here, and the code it shows is
-# pasted at a prompt - one VM after another, and starts Remote Control. Without
+# sign-in as far as it goes - the page opens here and the browser comes back
+# to the VM, or the code it shows is pasted at a prompt - one VM after another,
+# and starts Remote Control. Without
 # a name it reports every VM's state. make deploy runs it for its VMs.
 .PHONY: claude-login
 claude-login: vault-check vm-name-check log-setup ## Sign Claude Code in on the VM(s) in VM_NAME, one after another, and start Remote Control; without VM_NAME, report every VM
@@ -297,7 +298,7 @@ docs: ## Regenerate the wiki's reference pages (targets, settings, roles) from t
 
 .PHONY: docs-serve
 docs-serve: ## Serve the wiki as a site at http://127.0.0.1:8000, rebuilt as you save
-	$(BIN)/zensical serve
+	$(BIN)/zensical serve -a 127.0.0.1:8000
 
 .PHONY: docs-build
 docs-build: ## Build the wiki as a site in site/, failing on a broken link or anchor
@@ -378,6 +379,6 @@ pre-commit: ## Run all pre-commit hooks against the whole tree
 	$(BIN)/pre-commit run --all-files
 
 .PHONY: clean
-clean: logs-clean ## Remove caches, the virtualenv and the run logs
+clean: logs-clean ## Remove caches, the virtualenv, the run logs and the built site
 	rm -rf $(VENV) .cache .pytest_cache .ruff_cache .ansible .molecule collections site
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

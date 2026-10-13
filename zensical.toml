@@ -1,6 +1,7 @@
-# The wiki in docs/, built into a site by Zensical (the successor to MkDocs and
-# Material for MkDocs, from the same team). The pages are plain Markdown and read
-# the same on GitHub; this file only adds the navigation, search and theme.
+# The wiki in docs/, built into a site by Zensical, the successor to Material for
+# MkDocs from the team that made it. The pages are plain Markdown and read the
+# same on GitHub; this file only adds the navigation, search and theme. It needs
+# Zensical 0.0.70 or later, the first to support exclude_docs.
 #
 #   make docs-serve   preview at http://127.0.0.1:8000, rebuilt on every save
 #   make docs-build   the site in site/, strict: a broken link or anchor fails it
@@ -16,13 +17,17 @@ edit_uri = "edit/main/docs/"
 extra_css = ["stylesheets/extra.css"]
 docs_dir = "docs"
 site_dir = "site"
-# Working documents that stay local to their author (see .gitignore).
+# The wiki is docs/README.md and the folders; anything else at the top of docs/ is
+# a working document that stays local to its author (see .gitignore).
 exclude_docs = """
-plan-*
-review-*
-live-smoke-*
-*.src
-*.html
+/*
+!/README.md
+!/getting-started/
+!/guides/
+!/reference/
+!/architecture/
+!/development/
+!/stylesheets/
 """
 
 nav = [
@@ -31,7 +36,6 @@ nav = [
     { "Requirements" = "getting-started/requirements.md" },
     { "Proxmox access" = "getting-started/proxmox-access.md" },
     { "Your first deploy" = "getting-started/first-deploy.md" },
-    { "Upgrading" = "getting-started/upgrading.md" },
   ] },
   { "Guides" = [
     { "VMs and fleets" = "guides/vms.md" },
@@ -42,6 +46,7 @@ nav = [
     { "During a run" = "guides/runs.md" },
     { "Tearing down" = "guides/destroy.md" },
     { "What the VM trusts" = "guides/what-the-vm-trusts.md" },
+    { "Upgrading" = "guides/upgrading.md" },
   ] },
   { "Reference" = [
     { "Make targets" = "reference/make-targets.md" },
@@ -57,22 +62,21 @@ nav = [
       { "proxmox_vm" = "reference/roles/proxmox_vm.md" },
       { "proxmox_template" = "reference/roles/proxmox_template.md" },
     ] },
-    { "Repository layout" = "reference/layout.md" },
   ] },
   { "Architecture" = [
     "architecture/README.md",
-    { "4. Lifecycle" = "architecture/lifecycle.md" },
+    { "4. Lifecycle and control flow" = "architecture/lifecycle.md" },
     { "5. Roles" = "architecture/roles.md" },
-    { "6. Variables" = "architecture/variables.md" },
+    { "6. Variable architecture" = "architecture/variables.md" },
     { "7. Custom code" = "architecture/custom-code.md" },
-    { "8. Convergence" = "architecture/convergence.md" },
+    { "8. Convergence and idempotence" = "architecture/convergence.md" },
     { "9. Failure modes" = "architecture/failure-modes.md" },
     { "10. Security model" = "architecture/security-model.md" },
-    { "11. Testing" = "architecture/testing.md" },
+    { "11. Testing architecture" = "architecture/testing.md" },
     { "12. CI" = "architecture/ci.md" },
     { "13. Toolchain" = "architecture/toolchain.md" },
     { "14. File map" = "architecture/file-map.md" },
-    { "15. Open questions" = "architecture/open-questions.md" },
+    { "15. Open design questions" = "architecture/open-questions.md" },
   ] },
   { "Development" = [
     { "Testing" = "development/testing.md" },
@@ -122,4 +126,9 @@ toc.slugify = { object = "pymdownx.slugs.slugify", kwds = { case = "lower" } }
 pymdownx.details = {}
 pymdownx.highlight.anchor_linenums = true
 pymdownx.inlinehilite = {}
-pymdownx.superfences = {}
+# A bare URL becomes a link, as GitHub makes it.
+pymdownx.magiclink = {}
+# A ```mermaid fence becomes a diagram, as GitHub draws it.
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]

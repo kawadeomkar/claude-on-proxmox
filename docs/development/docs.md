@@ -2,7 +2,8 @@
 
 The documentation lives in `docs/`, as Markdown, beside the code it describes, and changes in the
 same pull request as that code. It reads the same on GitHub, where every page is a file, and as a
-site that Zensical builds from the same files, with navigation and search.
+site that Zensical builds from the same files, with navigation and search. The site is not published
+anywhere yet: `make docs-serve` is how to read it as one.
 
 ## How it is organised
 
@@ -10,14 +11,18 @@ site that Zensical builds from the same files, with navigation and search.
 |---|---|
 | `getting-started/` | What a new user needs, in the order they need it |
 | `guides/` | One page per feature: what it does, how to use it, what to do when it goes wrong |
-| `reference/` | Lists to look things up in, mostly generated |
-| `architecture/` | How it is built and why, numbered by section (§5.5 is `architecture/roles.md`, section 5.5) |
+| `reference/` | Lists to look things up in, generated from the files they describe |
+| `architecture/` | How it is built and why, in numbered sections: [§5.5](../architecture/roles.md#55-claude_code--install-claude-code) is section 5.5, on `architecture/roles.md` |
 | `development/` | Working on the project |
 
 The root `README.md` stays a short getting-started page that links here. `CONTRIBUTING.md` and
-`SECURITY.md` stay at the root, where GitHub looks for them. Working documents - plans, reviews and
-smoke runbooks - may sit in `docs/` on your machine as `plan-*`, `review-*` and `live-smoke-*`: git
-ignores them and the site leaves them out.
+`SECURITY.md` stay at the root, where GitHub looks for them.
+
+The wiki is `docs/README.md` and those folders, and `docs/stylesheets/`. Anything else at the top of
+`docs/` is a working document - a plan, a review, a smoke runbook that names your hosts - and stays on
+your machine whatever it is called: `.gitignore` ignores it, `tests/check_no_local_files.sh` refuses it
+even with `git add -f`, and `zensical.toml`'s `exclude_docs` leaves it out of the site. A new wiki folder
+is added to all three.
 
 ## Generated sections
 
@@ -28,17 +33,30 @@ hand and kept on every run, which is where context goes.
 | Page | Generated from | Markers |
 |---|---|---|
 | `reference/make-targets.md` | the `## ` comment on each target in the `Makefile`, grouped by its `# --- name ---` banners | `BEGIN_GENERATED: make-targets` |
-| `reference/settings.md` | `local.yml.example` and `vault.yml.example`: each comment block and the settings under it, grouped by banner, with the default from `defaults.yml` or the role's `defaults/main.yml`, and the role variable `defaults.yml` wires each setting into | `BEGIN_GENERATED: settings` |
-| `reference/roles/<role>.md` | `roles/<role>/meta/argument_specs.yml`, rendered by [aar-doc](https://github.com/telekom-mms/Automated-Ansible-Role-Documentation) with `tools/templates/role.md.j2` | `BEGIN_ANSIBLE_DOCS` |
+| `reference/settings.md` | `local.yml.example` and `vault.yml.example`: each comment block and the settings under it, grouped by banner; the default from `defaults.yml` or the role's `defaults/main.yml`; the role variable each setting ends up in, followed through `defaults.yml`'s wiring, with the first sentence of its `argument_specs` description | `BEGIN_GENERATED: settings` |
+| `reference/roles/<role>.md` | `roles/<role>/meta/argument_specs.yml`, rendered by [aar-doc](https://github.com/telekom-mms/Automated-Ansible-Role-Documentation) with `tools/templates/role.md.j2`; a default `argument_specs` leaves out comes from the role's `defaults/main.yml` | `BEGIN_ANSIBLE_DOCS` |
 
-`tools/docs.py` does all three; `make docs` runs it. To change what a generated section says, change
-its source - a role variable's `description:` in `argument_specs.yml`, the comment above a setting in
-`local.yml.example`, a target's `## ` text - and run `make docs`. A new role gets its page, with the
-markers and a title, the first time `make docs` runs; add it to the `nav` in `zensical.toml`.
+`tools/docs.py` does all three; `make docs` runs it, and so does a pre-commit hook whenever a commit
+touches one of the sources. To change what a generated section says, change its source - a role
+variable's `description:` in `argument_specs.yml`, the comment above a setting in `local.yml.example`
+or `vault.yml.example`, a default in `defaults.yml` or a role's `defaults/main.yml`, a target's `## `
+text - and run `make docs`. A new role gets its page, with the markers and a title, the first time
+`make docs` runs; add it to the `nav` in `zensical.toml`. Text taken from a source is escaped outside
+code spans, so a placeholder such as `<name>` reads as text rather than vanishing as an HTML tag.
 
-`argument_specs.yml` is the role's interface as Ansible itself reads it: Ansible validates every
-role's arguments against it when the role runs, so the reference cannot list a variable the role
-does not take.
+The example files are parsed strictly: in `local.yml.example` a setting is a commented `# name: value`
+line under a `# --- Section ---` banner, in `vault.yml.example` an uncommented one, and the generator
+stops on a name listed twice, a setting with no default anywhere, or an example whose type differs from
+its default's - each a comment line read as a setting.
+
+`argument_specs.yml` is the role's interface as Ansible itself reads it: Ansible checks the type and the
+choices of every variable it lists when the role runs. It does not check that the list is complete, so a
+test holds every variable in a role's `defaults/main.yml` to an entry there, and every setting that ends
+up in a role to an entry in one of the example files.
+
+aar-doc is the maintained tool that renders `argument_specs.yml` into Markdown between those markers,
+which is why it is used; `ansible-doc -t role -j`, which ships with ansible-core, gives the same data as
+JSON and would do instead, should aar-doc stop being maintained.
 
 ## Building the site
 
@@ -48,9 +66,12 @@ make docs-serve    # the site at http://127.0.0.1:8000, rebuilt as you save
 make docs-build    # the site in site/ (git-ignored), failing on any warning
 ```
 
-The site is configured in `zensical.toml`: the navigation, the theme, and heading anchors made the way
-GitHub makes them, so that `page.md#a-heading` works in both places. Zensical comes from the team
-behind Material for MkDocs, which reaches its end of life on 2026-11-05, and reads the same Markdown.
+The site is configured in `zensical.toml`: the navigation, the theme, Mermaid diagrams, and heading
+anchors made the way GitHub makes them, so that `page.md#a-heading` works in both places. Zensical is the
+successor to Material for MkDocs, from the team that made it; Material for MkDocs is maintained until
+May 5, 2027. Zensical is pre-1.0 - its 0.1.0, on 2026-11-05, starts a release line its authors call
+dependable - and 0.0.70 is the first with `exclude_docs`, which the configuration uses. The docs tools
+are the `docs` group in `pyproject.toml`, and Dependabot proposes them as one pull request of their own.
 Nothing here depends on a site-generator plugin - the generation is `tools/docs.py`, run before the
 build - so the pages would build with another generator unchanged.
 
@@ -59,16 +80,26 @@ build - so the pages would build with another generator unchanged.
 `tests/unit/test_docs.py`, part of `make unit` and so of CI, fails when:
 
 - a generated section is out of date with its source (run `make docs` and commit the result);
+- a setting that ends up in a role is missing from both example files, or a role default from its
+  `argument_specs.yml`;
 - the site does not build strictly - a link to a page or an anchor that does not exist;
+- a heading does not reach its built page, a page renders differently on the site from how GitHub
+  renders it (compared block by block: a list straight after a paragraph, a nested list indented two
+  spaces, text read as an HTML tag), or a ```` ```mermaid ```` fence does not become a diagram;
+- a code span holds a closing tag such as `< /dev/tty` written without its space, which drops the rest
+  of a page from the site;
+- a page repeats a heading, whose anchor GitHub and the site would number differently;
 - a page in `docs/` is not in the `nav`, or the `nav` names a page that does not exist;
 - a link in `docs/` leaves `docs/` by a relative path, which works on GitHub and breaks on the site
   (name a source file in backticks instead, or link to it on GitHub);
 - a relative link in `README.md`, `CONTRIBUTING.md`, `SECURITY.md` or `CLAUDE.md` points at a file or
   heading that does not exist;
 - a file in the repository names a `docs/` page that does not exist, as the comments that point a
-  reader to the wiki do;
-- the Proxmox token commands in `README.md` differ from those in
-  [Proxmox access](../getting-started/proxmox-access.md).
+  reader to the wiki do, or cites an architecture section (`docs/architecture/roles.md §5.5`) that is
+  not on that page;
+- a page refers to an architecture section on another page by its § without linking it;
+- the README's set-up commands, files table or Proxmox token commands differ from the copies in
+  [Your first deploy](../getting-started/first-deploy.md) and [Proxmox access](../getting-started/proxmox-access.md).
 
 ## Writing a page
 
@@ -77,5 +108,8 @@ build - so the pages would build with another generator unchanged.
 - Link to other pages relatively (`../guides/vscode.md#session-notes`); name files of the repository
   in backticks.
 - Never an address, a hostname or a token: examples use `alpha`, `192.0.2.0/24` and `you@example.com`.
-- Keep the architecture's section numbers: code comments cite them (`docs/architecture/roles.md`
-  §5.5).
+- Keep the architecture's section numbers: code comments cite them
+  (`docs/architecture/roles.md §5.5`), and link a § that is on another page.
+- Leave a blank line before a list, indent a nested list by four spaces, and never start a wrapped line
+  with a dash and a space: the site's Markdown needs the first two, and GitHub reads the third as a
+  list.
