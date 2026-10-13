@@ -1,0 +1,85 @@
+{#- The session notes of one VM (playbooks/code.yml, "Write the session notes on the VM"). Between the live
+    markers: what the window's "Session notes" task last read from the VM, carried over as it is, or the
+    placeholder it replaces. Everything else is make code's, and holds no time, nothing only the VM knows,
+    such as its MagicDNS name, and nothing of one window's: every window of the VM opens this one file. An
+    unchanged VM gives an unchanged file. -#}
+{%- set name = claude_vm_names[0] -%}
+{%- set vm = claude_vm_addressed[0] -%}
+{%- set gib = 1024 * 1024 * 1024 -%}
+# {{ name }}
+
+VM {{ vm.vmid }} on Proxmox node **{{ vm.node }}** · written by `make code` on your machine · not in any repository · edits here are overwritten
+
+{% if code_notes_live %}
+{{ code_notes_live }}
+{% else %}
+<!-- claude-on-proxmox:live -->
+## Signed in
+
+Opening the window fills this in; "Tasks: Run Task", **Session notes** refreshes it.
+<!-- /claude-on-proxmox:live -->
+{% endif %}
+
+## At a glance
+
+| | |
+|---|---|
+{% if vm.maxcpu is defined and vm.maxmem is defined %}
+| Machine | {{ vm.maxcpu }} cores · {{ '%g' | format(((vm.maxmem | int) / gib) | round(1)) }} GiB memory{% if vm.maxdisk | default(0) | int > 0 %} · {{ '%g' | format(((vm.maxdisk | int) / gib) | round(1)) }} GiB disk{% endif %} |
+{% endif %}
+| User | `{{ vm_user }}` · projects in `{{ code_root }}` |
+| LAN address | `{{ vm.address }}` (DHCP, as the guest agent reported it) |
+| SSH alias | `{{ name }}` (`make ssh-config` on your machine refreshes it) |
+
+## Reach this VM
+
+| From | Run |
+|---|---|
+| VS Code | `make code VM_NAME={{ name }}`, or one repository: `make code VM_NAME={{ name }} PROJECT=<repo>` |
+| SSH, by alias | `ssh {{ name }}` |
+| SSH, by address | `ssh {{ vm_user }}@{{ vm.address }}` |
+{% if tailscale_enabled | default(true) | bool %}
+| SSH, over Tailscale | the command in the Tailscale row of **Signed in**, once the VM is on your tailnet |
+{% endif %}
+{% if claude_code_remote_control | default(true) | bool %}
+| The Claude apps | Remote Control: claude.ai/code or the Claude mobile app, session **{{ name }}** |
+{% endif %}
+| Proxmox's console | the Proxmox web UI → VM {{ vm.vmid }} → Console |
+
+## Start here
+
+- The terminal below runs Claude Code: `claude --continue` picks this folder's conversation up; `/clear` starts afresh.
+- Your repositories are in `{{ code_root }}`: `cd {{ code_root }}/<repo>`.
+- `gh pr create` and `gh pr checks` work once `gh` is signed in.
+- Docker runs without sudo: `docker ps`.
+
+## From your machine
+
+| Command | Does |
+|---|---|
+| `make code VM_NAME={{ name }}` | open this window again |
+| `make claude-login VM_NAME={{ name }}` | sign Claude Code in |
+{% if github_auth | default(true) | bool %}
+| `make github-login VM_NAME={{ name }}` | sign `gh` in, then clone the private repositories |
+{% endif %}
+{% if tailscale_enabled | default(true) | bool %}
+| `make tailscale-login VM_NAME={{ name }}` | sign it in to Tailscale |
+{% endif %}
+| `make configure VM_NAME={{ name }}` | run the configuration again; `TAGS=<role>` for one part of it |
+| `make list` · `make logs` | the fleet · the run logs |
+| `make destroy VM_NAME={{ name }}` | sign it out of everything, then delete it |
+
+## When something is off
+
+- **No Claude terminal, and no notes?** Trust the window (the Restricted Mode banner, Manage, Trust), then allow automatic tasks ("Tasks: Manage Automatic Tasks"), or run "Tasks: Run Task", Claude.
+- **Signed in is stale?** "Tasks: Run Task", **Session notes** refreshes it.
+- **VS Code asked whether to open this file?** In a one-project window it lies outside the window's folder. Open is remembered for that window; trusting the window of `make code VM_NAME={{ name }}` once avoids the question in every project's.
+- **"REMOTE HOST IDENTIFICATION HAS CHANGED"** after a rebuild: `ssh-keygen -R {{ vm.address }}` on your machine.
+{% if claude_code_remote_control | default(true) | bool %}
+- **Not in the Claude apps?** `systemctl status {{ code_remote_control_unit }}` here, then `make configure VM_NAME={{ name }} TAGS=claude_code` on your machine.
+{% endif %}
+- **Private repositories missing?** `make configure VM_NAME={{ name }} TAGS=github_projects` on your machine.
+
+## About this file
+
+Written by `make code` and `make deploy` into `{{ code_notes_dir }}`; its "Signed in" section is rewritten by the window's **Session notes** task each time the window opens. Delete it any time; `vscode_session_notes: false` in your inventory stops it.

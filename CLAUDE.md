@@ -221,9 +221,20 @@ token; `github_auth_method: token` still fails. The status JSON carries
   added only when `ssh -G` says the user's config does not reach the managed file yet (a `${HOME}`
   spelling counts on OpenSSH 9.9+ and not before; an `Include` inside a `Host` block never does),
   and never rewrites or changes the mode of the user's file.
-- **`make code` writes one thing on the VM, and never answers VS Code's security questions.** With
-  `vscode_claude_terminal` it writes a `.code-workspace` file in `<projects>/.claude-on-proxmox/`,
-  beside the repositories and never in one, whose `folderOpen` task runs `claude` in a terminal.
+- **`make code` writes in one directory of its own on the VM, and never answers VS Code's security
+  questions.** With `vscode_claude_terminal` it writes a `.code-workspace` file in
+  `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` tasks
+  run `claude` in a terminal and a login shell split to its left (one presentation group); with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
+  0700 directory), and a second `folderOpen` task, "Session notes", run beside the Claude task, which
+  rewrites only the notes' section between the live markers each time the window opens and opens them.
+  Never make it the Claude task's `dependsOn`: VS Code misses a workspace-file task when it looks a
+  dependency up and asks every task provider instead (npm, gulp running `gulp`, grunt, jake), which held
+  Claude back 7.5 s live; `test_code_session.py` fails on any `dependsOn`. Its bash runs the Python part
+  in the background, waits 5 s at most and ends `exit 0`, so the notes always open; never `exec` into
+  Python. The notes' directory is a
+  second workspace folder only where the window's own folder contains it: VS Code stores the folders a
+  user trusted, not their parents, so a folder added to a trusted workspace drops it to Restricted Mode.
+  `make code` slurps the notes to carry their live section over, so an unchanged VM rewrites nothing.
   VS Code runs that task only in a trusted window and once the user has allowed automatic tasks;
   `code.yml` reads `task.allowAutomaticTasks` from the user's VS Code settings to say which to
   expect, and must never write it, set trust, or lower `security.workspace.trust.*` or
@@ -237,8 +248,10 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `tests/unit/test_code_session.py` runs it (once at a pseudo-terminal, for Ctrl-C), runs the window
   step's own tasks with stand-ins for `which` and `code` first on PATH, and holds
   every task in `code.yml` to an allowlist: read-only on this machine (plus `which`/`code` and the
-  alias through `tasks/ssh_config.yml`), or `stat`/`getent`/`find` and the two writes delegated to
-  the VM; a `shell`, a writer in a `block`, or a `connection` fails it by name. The `provision`
+  alias through `tasks/ssh_config.yml`), or `stat`/`getent`/`find`/`slurp` and the four writes (the
+  workspace and its directory, the notes and theirs) delegated to the VM; a `shell`, a writer in a
+  `block`, or a `connection` fails it by name. The helper is run against stand-ins with nothing else
+  on PATH: never a login shell there, which would put this machine's own `code` and `tailscale` back. The `provision`
   scenario, which runs `code.yml`, points `vscode_user_settings_file` into the ephemeral directory,
   since the message depends on it, and asserts that file's bytes and mtime after every run.
 - **Tests never write into the developer's `~/.ssh`.** The `configure` scenario runs the real

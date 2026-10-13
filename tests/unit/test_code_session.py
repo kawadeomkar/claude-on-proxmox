@@ -33,13 +33,17 @@ VS Code settings.
 
 from __future__ import annotations
 
+import ast
 import copy
 import fcntl
+import importlib.util
 import json
 import os
 import pty
+import pwd
 import re
 import select
+import stat
 import subprocess
 import sys
 import termios
@@ -72,11 +76,18 @@ GITHUB_FAILED = "Not signed in to GitHub. From your machine: make github-login V
 GITHUB_CODE = "FAKE-C0DE"
 GITHUB_EXPIRED = "failed to authenticate via web browser: This 'device_code' has expired. (expired_token)"
 
+# --continue as Claude Code 2.1 answers it in a folder with nothing to continue,
+# with CONTINUE_RC: at once, or with CONTINUE_SLEEP after a session of that long.
 STAND_IN = """#!/bin/sh
 echo "claude $*" >> "$CLAUDE_LOG"
 case "$1 $2" in
   "auth status") exit "$STATUS_RC";;
   "auth login") exit "$LOGIN_RC";;
+  "--continue "*)
+    [ -n "$CONTINUE_RC" ] || exit 0
+    [ -z "$CONTINUE_SLEEP" ] || /bin/sleep "$CONTINUE_SLEEP"
+    echo "No conversation found to continue"
+    exit "$CONTINUE_RC";;
 esac
 exit 0
 """
@@ -133,6 +144,8 @@ def _terminal(
     gh_status_any_rc=None,
     gh_login_rc=0,
     github_signed_in=GITHUB_SIGNED_IN,
+    continue_rc=None,
+    continue_sleep=None,
 ) -> tuple[list[str], dict]:
     """The script's command line and environment, with the stand-ins in place."""
     bin_dir = tmp_path / "bin"
@@ -160,6 +173,8 @@ def _terminal(
         "GH_STATUS_RC": str(gh_status_rc),
         "GH_STATUS_ANY_RC": str(gh_status_rc if gh_status_any_rc is None else gh_status_any_rc),
         "GH_LOGIN_RC": str(gh_login_rc),
+        "CONTINUE_RC": "" if continue_rc is None else str(continue_rc),
+        "CONTINUE_SLEEP": "" if continue_sleep is None else str(continue_sleep),
     }
     return [*argv, "https", "workflow", "alpha"], env
 
@@ -229,6 +244,21 @@ def test_the_script_and_its_messages_are_not_templates():
         "code_github_signed_in",
     ):
         assert "${" not in _play()["vars"][message]
+
+
+def test_with_nothing_to_continue_a_fresh_claude_starts(tmp_path):
+    # Claude Code 2.1 exits 1 at once on --continue in a folder with no
+    # conversation of its own; VS Code then printed the whole command line.
+    result, asked = _run(tmp_path, status_rc=0, continue_rc=1)
+    assert result.returncode == 0
+    assert asked == ["claude auth status", GITHUB_STATUS, "claude --continue", "claude"]
+
+
+def test_a_continued_session_that_ends_badly_is_not_started_again(tmp_path):
+    # Only a --continue that fails at once means there was nothing to continue.
+    result, asked = _run(tmp_path, status_rc=0, continue_rc=1, continue_sleep=6)
+    assert result.returncode == 0
+    assert asked[-1] == "claude --continue"
 
 
 def test_without_claude_it_says_how_to_install_it_and_stops(tmp_path):
@@ -357,7 +387,7 @@ def test_github_auth_off_leaves_gh_alone(tmp_path):
 def test_the_task_passes_the_script_and_its_messages_as_arguments():
     # The role-level names: the inventory wires them, the roles read them, and
     # an override of one reaches both.
-    task = _play()["vars"]["code_workspace_file"]["tasks"]["tasks"][0]
+    task = _play()["vars"]["code_claude_task"]
     assert task["command"] == "/bin/bash"
     assert task["args"][:3] == ["-lc", "{{ code_terminal_script }}", "make-code"]
     assert task["args"][3:] == [
@@ -369,6 +399,11 @@ def test_the_task_passes_the_script_and_its_messages_as_arguments():
         "{{ github_projects_clone_protocol | default('https') }}",
         "{{ github_projects_login_scopes | default(['workflow']) | join(',') }}",
         "{{ claude_vm_names[0] }}",
+        # The session notes' helper, their path and the Remote Control unit,
+        # for the refresh after a sign-in in the terminal.
+        "{{ code_notes_script if code_notes | bool else '' }}",
+        "{{ code_notes_file if code_notes | bool else '' }}",
+        "{{ code_remote_control_unit }}",
     ]
     assert task["runOptions"] == {"runOn": "folderOpen"}
 
@@ -395,8 +430,13 @@ OPENED = {
     "code_ws_dir": "/home/dev/projects/.claude-on-proxmox",
     "code_project": "",
     "code_reach": "192.0.2.51",
+    "code_notes_dir": "/home/dev/projects/.claude-on-proxmox/session",
+    "code_notes_file": "/home/dev/projects/.claude-on-proxmox/session/alpha-session.md",
 }
-ARGS = "code_workspace_file.tasks.tasks[0].args[3:]"
+# The Claude task's arguments after the script, the session notes' three aside.
+ARGS = "code_claude_task.args[3:11]"
+NOTES = {**OPENED, "show": "code_workspace_file"}
+SESSION = "/home/dev/projects/.claude-on-proxmox/session"
 LATER = " VS Code was not opened; to open it later: make code VM_NAME=alpha"
 
 
@@ -618,6 +658,39 @@ WINDOWS = {
         "local": {"github_projects_auth_method": "token"},
         **OPENED,
     },
+    # The session notes, by window: the workspace file as code.yml writes it, and what is said.
+    "notes, whole directory": {"keep": ["Say what was opened"], "in_deploy": False, "vm_name": "alpha", **NOTES},
+    "notes, one project": {
+        "keep": ["Say what was opened"],
+        "in_deploy": False,
+        "vm_name": "alpha",
+        **NOTES,
+        "code_target": "/home/dev/projects/discord-music-bot",
+        "code_project": "discord-music-bot",
+    },
+    "notes, workspaces elsewhere": {
+        "keep": ["Say what was opened"],
+        "in_deploy": False,
+        "vm_name": "alpha",
+        **NOTES,
+        "code_ws_dir": "/home/dev/.vscode-workspaces",
+        "code_notes_dir": "/home/dev/.vscode-workspaces/session",
+        "code_notes_file": "/home/dev/.vscode-workspaces/session/alpha-session.md",
+    },
+    "notes, automatic tasks off": {
+        "keep": ["Say what was opened"],
+        "in_deploy": False,
+        "vm_name": "alpha",
+        **NOTES,
+        "code_vscode_auto_tasks": "off",
+    },
+    "notes off": {
+        "keep": ["Say what was opened"],
+        "in_deploy": False,
+        "vm_name": "alpha",
+        "local": {"vscode_session_notes": False},
+        **NOTES,
+    },
 }
 
 
@@ -837,7 +910,7 @@ COMMANDS_HERE = {
     ("code", "--install-extension"),
     ("code", "--remote"),
 }
-READS_ON_VM = {"ansible.builtin.getent", "ansible.builtin.stat", "ansible.builtin.find"}
+READS_ON_VM = {"ansible.builtin.getent", "ansible.builtin.stat", "ansible.builtin.find", "ansible.builtin.slurp"}
 WRITES_ON_VM = {"ansible.builtin.file", "ansible.builtin.copy"}
 
 
@@ -877,7 +950,8 @@ def test_every_task_reads_this_machine_or_is_delegated_to_the_vm(task):
         assert task.get("delegate_to") == ON_VM
     elif action in WRITES_ON_VM:
         assert task.get("delegate_to") == ON_VM
-        assert task.get("when") == "code_terminal"
+        # The workspace with the terminal; the notes with it and their own switch.
+        assert task.get("when") in ("code_terminal", "code_notes | bool")
     elif action == "ansible.builtin.meta":
         # The one meta action: a deploy for a fleet ends the play.
         assert task[action] == "end_play", task.get("name")
@@ -921,6 +995,8 @@ def test_make_code_writes_exactly_the_directory_and_the_file():
     assert [t["name"] for t in _every_task() if _action(t) in WRITES_ON_VM] == [
         "Make the directory for VS Code workspace files on the VM",
         "Write the VS Code workspace on the VM",
+        "Make the directory for the session notes on the VM",
+        "Write the session notes on the VM",
     ]
 
 
@@ -961,3 +1037,394 @@ def test_the_provision_scenario_s_deploy_runs_never_read_the_developer_s_vscode_
         if "pve2" in argv:
             continue
         assert "vscode_user_settings_file" in argv and "MOLECULE_EPHEMERAL_DIRECTORY" in argv, task["name"]
+
+
+# ---------------------------------------------------------------- the session notes in the window ---
+def _workspace(run: dict) -> dict:
+    return run["shown"]
+
+
+def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a_preview(windows):
+    run = windows["notes, whole directory"]
+    workspace = _workspace(run)
+    # A second folder only where the window's own folder holds it: trust is unchanged.
+    assert workspace["folders"] == [
+        {"path": "/home/dev/projects"},
+        {"path": SESSION, "name": "alpha · session"},
+    ]
+    assert workspace["settings"] == {
+        "files.exclude": {".claude-on-proxmox": True},
+        "workbench.editorAssociations": {
+            "**/.claude-on-proxmox/session/*-session.md": "vscode.markdown.preview.editor"
+        },
+    }
+    # Side by side when the window opens: the notes never hold Claude up. A
+    # dependsOn made VS Code ask every task provider first, 7.5 s live.
+    notes, shell, claude = workspace["tasks"]["tasks"]
+    assert notes["label"] == "Session notes" and notes["runOptions"] == {"runOn": "folderOpen"}
+    assert notes["args"][2:] == ["session-notes", f"{SESSION}/alpha-session.md", "alpha", "claude-remote-control"]
+    assert notes["presentation"] == {
+        "reveal": "never",
+        "focus": False,
+        "echo": False,
+        "close": True,
+        "showReuseMessage": False,
+    }
+    assert claude["label"] == "Claude" and "dependsOn" not in claude
+    assert claude["runOptions"] == {"runOn": "folderOpen"}
+    assert claude["args"][-3:] == [notes["args"][1], f"{SESSION}/alpha-session.md", "claude-remote-control"]
+    # A shell beside Claude's terminal, on its left: one presentation group
+    # splits a terminal in the order its tasks start, which is the order listed.
+    assert (shell["label"], shell["command"], shell["args"]) == ("Shell", "/bin/bash", ["-l"])
+    assert shell["options"] == {"cwd": "/home/dev/projects"} == claude["options"]
+    assert shell["runOptions"] == {"runOn": "folderOpen"}
+    assert shell["presentation"]["group"] == claude["presentation"]["group"] == "claude"
+    assert shell["presentation"]["focus"] is False and claude["presentation"]["focus"] is True
+    assert shell["presentation"]["close"] is True
+    assert "A shell in the same folder opens to its left." in run["opened"]
+    assert f"The session notes open beside it each time ({SESSION}/alpha-session.md)." in run["opened"]
+    assert "may ask" not in run["opened"]
+    assert run["opened"].endswith("vscode_session_notes: false turns them off.")
+
+
+def test_a_project_s_window_keeps_its_one_folder_and_says_the_question_vs_code_may_ask(windows):
+    # The notes' folder is outside the project's: added, it would put a window
+    # trusted before back in Restricted Mode, without the Claude terminal.
+    run = windows["notes, one project"]
+    workspace = _workspace(run)
+    assert workspace["folders"] == [{"path": "/home/dev/projects/discord-music-bot"}]
+    assert [task["label"] for task in workspace["tasks"]["tasks"]] == ["Session notes", "Shell", "Claude"]
+    assert workspace["tasks"]["tasks"][1]["options"] == {"cwd": "/home/dev/projects/discord-music-bot"}
+    assert (
+        "VS Code may ask once whether to open them, as a file outside this window's folder: Open, or trust the"
+        " window of make code VM_NAME=alpha, which covers them." in run["opened"]
+    ), run["opened"]
+
+
+def test_workspace_files_kept_elsewhere_give_no_window_the_notes_folder(windows):
+    run = windows["notes, workspaces elsewhere"]
+    workspace = _workspace(run)
+    assert workspace["folders"] == [{"path": "/home/dev/projects"}]
+    assert workspace["settings"] == {
+        "workbench.editorAssociations": {"**/.vscode-workspaces/session/*-session.md": "vscode.markdown.preview.editor"}
+    }
+    assert "as a file outside this window's folder: Open." in run["opened"]
+    assert "which covers them" not in run["opened"]
+
+
+def test_with_automatic_tasks_off_the_notes_are_named_with_how_to_open_them(windows):
+    run = windows["notes, automatic tasks off"]
+    assert (
+        f'The session notes are at {SESSION}/alpha-session.md: "Tasks: Run Task", Session notes opens them.'
+        in run["opened"]
+    ), run["opened"]
+    # The shell does not start by itself either.
+    assert '"Tasks: Run Task", Shell opens a shell in the same folder beside it.' in run["opened"]
+    assert "opens to its left" not in run["opened"]
+
+
+def test_no_task_of_the_workspace_depends_on_another():
+    # VS Code looks a dependency of a workspace-file task up, misses it, and
+    # asks every task provider instead: 7.5 s before Claude started, live.
+    play = _play()
+    for name in ("code_claude_task", "code_notes_task", "code_shell_task"):
+        assert "dependsOn" not in play["vars"][name], name
+    assert "dependsOn" not in str(play["vars"]["code_workspace_file"])
+
+
+def test_with_the_notes_off_the_workspace_is_as_it_was(windows):
+    run = windows["notes off"]
+    workspace = _workspace(run)
+    assert workspace["folders"] == [{"path": "/home/dev/projects"}]
+    assert workspace["settings"] == {"files.exclude": {".claude-on-proxmox": True}}
+    shell, claude = workspace["tasks"]["tasks"]
+    assert (shell["label"], claude["label"]) == ("Shell", "Claude")
+    assert "dependsOn" not in claude
+    assert claude["args"][-3:] == ["", "", "claude-remote-control"]
+    assert "session notes" not in run["opened"]
+
+
+# ---------------------------------------------------------------- the session notes' helper ---
+# Run as the "Session notes" task runs it, with stand-ins for what it reads, and
+# nothing else on PATH: never this machine's own claude, gh, tailscale or code.
+LIVE_START, LIVE_END = "<!-- claude-on-proxmox:live -->", "<!-- /claude-on-proxmox:live -->"
+NOTES_TEXT = (
+    f"# alpha\n\nVM 101\n\n{LIVE_START}\n## Signed in\n\nOpening the window fills this in.\n{LIVE_END}\n"
+    "\n## At a glance\n"
+)
+SIGNED_IN = {
+    "claude": '{"loggedIn": true, "authMethod": "claude.ai", "email": "dev@example.com", "subscriptionType": "max"}',
+    "systemctl": "active",
+    "gh": '{"hosts":{"github.com":[{"active":true,"login":"octocat","state":"success","gitProtocol":"https",'
+    '"token":"gho_NEVERSHOWN"}]}}',
+    "tailscale": '{"BackendState":"Running","Self":{"DNSName":"alpha.tail1234.ts.net.",'
+    '"TailscaleIPs":["100.64.0.7","fd7a:115c:a1e0::7"]}}',
+}
+SIGNED_OUT = {
+    "claude": '{"loggedIn": false, "authMethod": "none"}',
+    "systemctl": "inactive",
+    # gh 2.81+ signed out: no github.com entry at all (tests/molecule/fake_gh.sh, from gh itself).
+    "gh": '{"hosts":{}}',
+    "tailscale": '{"BackendState":"NeedsLogin"}',
+}
+
+
+def _helper(
+    tmp_path: Path, *, answers=SIGNED_IN, slow=(), python="real", text=NOTES_TEXT, refresh=False, errexit=False
+):
+    """Run the helper; its exit status, the seconds it took, the notes after, and what `code` was asked."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "sleep").symlink_to("/bin/sleep")
+    for name, answer in answers.items():
+        stand_in = bin_dir / name
+        # printf is the shell's own: nothing but the stand-ins is on PATH.
+        wait = "exec /bin/sleep 30\n" if name in slow else ""
+        stand_in.write_text(f"#!/bin/sh\n{wait}printf '%s\\n' '{answer}'\n")
+        stand_in.chmod(0o755)
+    (bin_dir / "code").write_text(f'#!/bin/sh\necho "code $*" >> "{tmp_path}/code.log"\n')
+    (bin_dir / "code").chmod(0o755)
+    if python == "real":
+        (bin_dir / "python3").symlink_to(sys.executable)
+    elif python is not None:
+        body = {"raise": "exit 1", "hang": "exec /bin/sleep 30"}[python]
+        (bin_dir / "python3").write_text(f"#!/bin/sh\n{body}\n")
+        (bin_dir / "python3").chmod(0o755)
+    notes = tmp_path / "alpha-session.md"
+    if isinstance(text, bytes):
+        notes.write_bytes(text)
+    elif text is not None:
+        notes.write_text(text)
+    if notes.exists():
+        notes.chmod(0o600)
+    script = _play()["vars"]["code_notes_script"]
+    argv = ["/bin/bash", *(["-e"] if errexit else []), "-c", script, "session-notes", str(notes), "alpha"]
+    argv += ["claude-remote-control", *(["refresh-only"] if refresh else [])]
+    began = time.monotonic()
+    result = subprocess.run(argv, env={"PATH": str(bin_dir)}, capture_output=True, text=True, check=False, timeout=60)
+    took = time.monotonic() - began
+    log = tmp_path / "code.log"
+    after = notes.read_bytes() if notes.exists() and not notes.is_symlink() else None
+    return result, took, after, (log.read_text().splitlines() if log.exists() else []), notes
+
+
+def _live(text: bytes) -> str:
+    decoded = text.decode()
+    return decoded[decoded.index(LIVE_START) : decoded.index(LIVE_END) + len(LIVE_END)]
+
+
+def test_the_helper_rewrites_the_live_section_only_and_opens_the_notes(tmp_path):
+    result, took, after, asked, notes = _helper(tmp_path)
+    assert result.returncode == 0 and result.stdout == "" and result.stderr == "", result
+    before = NOTES_TEXT
+    outside = before[: before.index(LIVE_START)], before[before.index(LIVE_END) + len(LIVE_END) :]
+    text = after.decode()
+    assert text.startswith(outside[0]) and text.endswith(outside[1])
+    live = _live(after)
+    user = pwd.getpwuid(os.getuid()).pw_name
+    assert "| Claude Code | `dev@example.com` · claude.ai, max plan |" in live
+    assert "| Remote Control | live: open claude.ai/code or the Claude app, and pick **alpha** |" in live
+    assert "| GitHub (`gh`) | `octocat` · git over https |" in live
+    assert (
+        "| Tailscale | running as `alpha.tail1234.ts.net` · `100.64.0.7` · "
+        f"`ssh {user}@alpha.tail1234.ts.net` |" in live
+    ), live
+    # The VM's own clock, said with its zone: the user's is not the VM's.
+    assert re.search(r"^\| \| as of \d\d:\d\d \S+ on \d\d \w\w\w \|$", live, re.M), live
+    assert "gho_" not in text
+    assert stat.S_IMODE(notes.stat().st_mode) == 0o600
+    assert asked == [f"code -r {notes}"]
+    assert took < 4, took
+
+
+def test_a_vm_signed_in_nowhere_names_each_sign_in(tmp_path):
+    _, _, after, _, _ = _helper(tmp_path, answers=SIGNED_OUT)
+    live = _live(after)
+    assert "| Claude Code | not signed in: make claude-login VM_NAME=alpha on your machine |" in live
+    assert "| Remote Control | not running (inactive) |" in live
+    assert "| GitHub (`gh`) | not signed in: make github-login VM_NAME=alpha on your machine |" in live
+    assert "| Tailscale | NeedsLogin: make tailscale-login VM_NAME=alpha signs it in |" in live
+
+
+def test_what_a_tool_prints_is_read_as_utf_8_whatever_the_locale(tmp_path):
+    # No LANG here: an account name outside ASCII is still read, never a failure that leaves the notes stale.
+    answers = {**SIGNED_IN, "claude": SIGNED_IN["claude"].replace("dev@example.com", "dév@exämple.com")}
+    _, _, after, _, _ = _helper(tmp_path, answers=answers)
+    assert "| Claude Code | `dév@exämple.com` · claude.ai, max plan |" in _live(after)
+
+
+def test_what_a_tool_prints_reaches_the_notes_as_plain_text_in_one_cell(tmp_path):
+    # An account name is whoever chose it: a sequence that writes the clipboard (OSC 52) or clears the
+    # screen when the notes are shown in a terminal, a column break, a code span closed early.
+    answers = {
+        **SIGNED_IN,
+        "claude": SIGNED_IN["claude"].replace("dev@example.com", r"dev\u001b[2J\u009b31m@example.com\tx"),
+        "gh": SIGNED_IN["gh"].replace('"octocat"', r'"octo\u001b]52;c;aGk=\u0007cat|`rm`\n"'),
+    }
+    _, _, after, _, _ = _helper(tmp_path, answers=answers)
+    live = _live(after)
+    assert "| Claude Code | `dev@example.com x` · claude.ai, max plan |" in live
+    assert "| GitHub (`gh`) | `octocat\\|'rm'` · git over https |" in live
+    assert all(ch == "\n" or (ord(ch) >= 0x20 and not 0x7F <= ord(ch) <= 0x9F) for ch in live), repr(live)
+    for row in live.splitlines():
+        if row.startswith("| "):
+            assert len(re.findall(r"(?<!\\)\|", row)) == 3, row
+
+
+def _helper_patterns() -> dict[str, str]:
+    """The patterns the helper compiles, read from its Python."""
+    script = _play()["vars"]["code_notes_script"]
+    source = script.split("<<'PY' >/dev/null 2>&1 &\n", 1)[1].split("\nPY\n", 1)[0]
+    patterns = {}
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and len(node.targets) == 1:
+            name = getattr(node.targets[0], "id", None)
+            if name in ("SEQUENCES", "CONTROL"):
+                patterns[name] = ast.literal_eval(node.value.args[0])
+    return patterns
+
+
+def test_the_helper_removes_what_plain_text_removes():
+    # It runs on the VM, so it has its own copy of plain_text's patterns, and this test keeps it one:
+    # a sequence plain_text learns to remove, the notes must not keep.
+    spec = importlib.util.spec_from_file_location("text_filters_for_code", REPO / "filter_plugins" / "text.py")
+    text = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(text)
+    helper = _helper_patterns()
+    assert helper["SEQUENCES"] == text._SEQUENCES.pattern
+    # A table cell takes no tab or newline either: every control character plain_text removes, and those two.
+    every = "".join(map(chr, range(0x110000)))
+    assert set(re.findall(helper["CONTROL"], every)) == set(text._CONTROL.findall(every)) | {"\t", "\n"}
+
+
+@pytest.mark.parametrize(
+    ("gh", "row"),
+    [
+        pytest.param('{"hosts":{"github.com":[]}}', "not signed in: make github-login", id="an empty github.com"),
+        pytest.param("", "unknown (gh auth status gave no status; it needs gh 2.81.0 or newer)", id="no JSON"),
+        pytest.param('{"error":"unknown flag"}', "unknown (gh auth status gave no status", id="not gh's JSON"),
+    ],
+)
+def test_the_github_row_tells_signed_out_from_a_gh_it_cannot_read(tmp_path, gh, row):
+    _, _, after, _, _ = _helper(tmp_path, answers={**SIGNED_IN, "gh": gh})
+    assert f"| GitHub (`gh`) | {row}" in _live(after)
+
+
+def test_a_read_that_hangs_costs_two_seconds_and_is_said(tmp_path):
+    # The four run at once, so a GitHub that does not answer delays the others by nothing.
+    result, took, after, asked, _ = _helper(tmp_path, slow=("gh",))
+    assert result.returncode == 0
+    live = _live(after)
+    assert "| GitHub (`gh`) | unknown (no answer in 2 s) |" in live
+    assert "`dev@example.com`" in live and "alpha.tail1234.ts.net" in live
+    assert asked and took < 5, took
+
+
+@pytest.mark.parametrize("python", ["raise", "hang", None])
+def test_the_helper_exits_0_and_opens_the_notes_whatever_its_python_does(tmp_path, python):
+    # Whatever its Python does, the notes are left as they were and opened, and the helper ends 0,
+    # so VS Code never reports the task failed with its whole command line.
+    result, took, after, asked, notes = _helper(tmp_path, python=python)
+    assert result.returncode == 0, result
+    assert after == NOTES_TEXT.encode()
+    assert asked == [f"code -r {notes}"]
+    assert took < 8, took
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(NOTES_TEXT.encode().replace(b"VM 101", b"VM \xff\xfe"), id="not UTF-8"),
+        pytest.param("# alpha\n\nno live section\n", id="no markers"),
+    ],
+)
+def test_notes_it_cannot_read_or_has_no_section_in_are_left_as_they_are(tmp_path, text):
+    result, _, after, asked, _ = _helper(tmp_path, text=text)
+    assert result.returncode == 0
+    assert after == (text if isinstance(text, bytes) else text.encode())
+    assert asked
+
+
+def test_a_symlink_at_the_notes_path_is_neither_followed_nor_opened(tmp_path):
+    target = tmp_path / "elsewhere.md"
+    target.write_text(NOTES_TEXT)
+    (tmp_path / "alpha-session.md").symlink_to(target)
+    result, _, _, asked, _ = _helper(tmp_path, text=None)
+    assert result.returncode == 0
+    assert target.read_text() == NOTES_TEXT
+    assert asked == []
+
+
+def test_errexit_from_a_login_profile_does_not_end_the_helper_early(tmp_path):
+    # A login shell reads the user's profile, which may set -e; bash -e stands in for it.
+    result, _, after, asked, _ = _helper(tmp_path, python="raise", errexit=True)
+    assert result.returncode == 0 and asked, result
+
+
+def test_refresh_only_waits_rewrites_and_opens_nothing(tmp_path):
+    # After a sign-in in the Claude terminal: Remote Control is given a moment,
+    # and the notes, open already, follow the file.
+    result, took, after, asked, _ = _helper(tmp_path, refresh=True)
+    assert result.returncode == 0
+    assert "`dev@example.com`" in _live(after)
+    assert asked == []
+    assert took >= 5, took
+
+
+def test_the_helper_hands_bash_nothing_it_could_lose_control_to():
+    script = _play()["vars"]["code_notes_script"]
+    for marker in ("{{", "{%", "{#", "${"):
+        assert marker not in script
+    assert not re.search(r"^\s*exec\b", script, re.M)
+    assert script.splitlines()[0] == "set +e" and script.splitlines()[-1] == "exit 0"
+    # Nothing waits on it any more, so no wait of its own; code -r in the
+    # foreground, so the task's terminal does not close under it.
+    assert "sleep 1" not in script
+    assert re.search(r'^  code -r "\$1" </dev/null >/dev/null 2>&1$', script, re.M)
+    assert re.search(r"""^python3 - "\$1" "\$2" "\$3" <<'PY' >/dev/null 2>&1 &$""", script, re.M)
+
+
+# ------------------------------------------------- the Claude terminal refreshes them after a sign-in ---
+def _signing_in(tmp_path: Path, helper: str | None, **case):
+    """The Claude script with the notes' three arguments; what it printed, and what the helper was asked."""
+    argv, env = _terminal(tmp_path, **case)
+    (tmp_path / "bin" / "bash").symlink_to("/bin/bash")
+    marker = tmp_path / "helper.log"
+    script = "" if helper is None else f'printf "%s\\n" "$0 $*" >> "{marker}"'
+    argv = [*argv, script, str(tmp_path / "alpha-session.md"), "claude-remote-control"]
+    result = subprocess.run(argv, env=env, capture_output=True, text=True, check=False, timeout=30)
+    deadline = time.monotonic() + 5
+    while helper is not None and not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return result, (marker.read_text().splitlines() if marker.exists() else [])
+
+
+def test_a_claude_sign_in_in_the_terminal_refreshes_the_notes_in_the_background(tmp_path):
+    result, called = _signing_in(tmp_path, "log", status_rc=1, login_rc=0)
+    assert result.returncode == 0
+    assert called == [f"session-notes {tmp_path}/alpha-session.md alpha claude-remote-control refresh-only"]
+    # Its terminal sees what it saw before: nothing from the helper.
+    assert result.stdout == SIGNING_IN + "\n" + UNWATCHED + "\n"
+
+
+def test_a_github_sign_in_in_the_terminal_refreshes_the_notes(tmp_path):
+    _, called = _signing_in(tmp_path, "log", status_rc=0, gh_status_rc=1, gh_login_rc=0)
+    assert called and called[0].endswith("refresh-only")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param({"status_rc": 0}, id="signed in already"),
+        pytest.param({"status_rc": 1, "login_rc": 1}, id="a sign-in that failed"),
+    ],
+)
+def test_no_sign_in_here_leaves_the_notes_to_the_window(tmp_path, case):
+    _, called = _signing_in(tmp_path, "log", **case)
+    time.sleep(0.5)
+    assert called == []
+
+
+def test_without_notes_a_sign_in_starts_no_helper(tmp_path):
+    result, called = _signing_in(tmp_path, None, status_rc=1, login_rc=0)
+    assert result.returncode == 0 and called == []

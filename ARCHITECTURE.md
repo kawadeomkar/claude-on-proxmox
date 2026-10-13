@@ -558,7 +558,9 @@ outranks a play var, and no task var shares a fact's name.
 
 **The workspace file** is built as data and written with `to_nice_json`, so no path breaks its JSON;
 `copy` leaves an unchanged file alone. It names the folder by absolute path, hides its own directory
-from the explorer of the window that shows it, and holds one task, `Claude`: a `process` task,
+from the explorer of the window that shows it, and holds a `Shell` task - `/bin/bash -l` in the folder,
+`folderOpen` too, in the same presentation group as Claude's so the two share a terminal as split panes,
+the shell on the left because it is listed, and so started, first - and the `Claude` task: a `process` task,
 `/bin/bash -lc <script> make-code` and eight arguments (the line without `claude`, the two lines a
 sign-in ends with, the path unit's file, GitHub's line, the git protocol, the scopes, the VM's name),
 `cwd` the folder, `runOptions.runOn:
@@ -567,7 +569,7 @@ shells non-login and `claude` is on the login `PATH` only (`make claude-login` u
 the same reason). The script checks `claude` is installed, runs `claude auth login` when
 `claude auth status` fails (a failed one says how to retry), signs gh in by the device flow when
 `gh auth status --hostname github.com --active` fails (Ctrl-C skips it: `trap ':' INT`), and then
-`exec claude --continue` - the folder's latest conversation, or a new one, because a task terminal
+`claude --continue` - the folder's latest conversation; where there is none, Claude Code 2.1 exits 1 at once ("No conversation found to continue"), and a `--continue` that fails within five seconds starts a fresh `claude` instead, the script ending `exit 0` either way - because a task terminal
 does not survive a window reload, after which the task runs again; its messages arrive as arguments,
 never as script text, and
 `tests/unit/test_code_session.py` runs it against a stand-in `claude`. `${workspaceFolder}`
@@ -596,13 +598,53 @@ include a workspace file's tasks, and a path ending in `.code-workspace` given t
 workspace. The defaults moved twice in 2026 (1.109, 1.126); CI cannot watch the user's editor, so a
 manual run of `make code` is the check when they move again.
 
-The workspace file is the one thing written on the VM, last, as the VM user, so every refusal above
-leaves the VM as it was; a workspace directory that already exists keeps its mode, since
+The workspace file and the session notes (below) are all that is written on the VM, last, as the VM
+user, so every refusal above leaves the VM as it was; a workspace directory that already exists keeps its mode, since
 `vscode_workspaces_dir` may name one of the user's own. `tests/unit/test_code_session.py` holds
 every task in `code.yml` to an allowlist - read-only here, or delegated to the VM - and the
 `provision` scenario checks the settings file it planted is byte-for-byte untouched after every
 run. `PROJECT=.claude-on-proxmox`, which names the files' own directory, is refused. Cloud-init placed the key, so a VM that was provisioned but never configured still
 opens once it has a workspace, and its terminal says to run `make configure`.
+
+**The session notes.** With `vscode_session_notes` (the default, with the terminal), a page about the
+VM opens beside the Claude terminal every time the window opens - from `make code`, *Open Recent*, a
+restart that restores the window, or a reload - as a rendered preview, with its sign-in status read from
+the VM at that moment. VS Code has no workspace setting that opens a file, and a file named in the
+`code --remote` call opens only from `make` and stops the window restoring its editors, so the trigger
+is a second `folderOpen` task in the workspace file, `Session notes`, run beside the Claude task on the
+same terms (a trusted window, automatic tasks allowed); VS Code's one-time automatic-tasks question lists
+both. Not the Claude task's `dependsOn`, which was the first design: VS Code looks a dependency of a
+workspace-file task up, misses it, and asks every task provider instead - npm, gulp (which runs `gulp`),
+grunt, jake - which held Claude back about 7.5 s on a projects directory of 22 repositories, measured
+live. Side by side, the notes open a moment after the Claude terminal and usually take the keyboard
+focus from it. The helper's bash (`code_notes_script`) is in charge whatever its Python part does:
+Python runs in the background, bash waits for it 5 s at most, runs `code -r <notes>` in the foreground
+through the remote CLI VS Code Server puts on every task's `PATH`, and ends `exit 0`, so the notes always
+open and VS Code never prints the command line. Python reads `claude auth status`, the Remote Control unit, gh's login and `tailscale status
+--json` at once, 2 s each, and rewrites only the section between `<!-- claude-on-proxmox:live -->` and
+its closing marker, atomically, 0600, in a regular file that has them; every value is cleaned as
+`plain_text` cleans, no command it runs prints a token, and the Tailscale row carries the `ssh` command
+over the MagicDNS name, which only the VM knows. The Claude task gets three more arguments - the
+helper, the notes' path, the unit - and after a sign-in that succeeded in its terminal starts the helper
+once more, `refresh-only`, in the background (`shift 8`: `${10}` would be VS Code's to resolve).
+
+`make code` writes the rest from `playbooks/templates/vm_session.md.j2` into
+`<workspaces>/session/<vm>-session.md` (0600; `session/` 0700): the VM's facts from the cluster listing,
+its addresses and alias, and the commands with its name - nothing of one window's, since every window of
+the VM opens the one file, and no time, so an unchanged VM gives an unchanged file. It `slurp`s the
+notes first and carries their live section over. `workbench.editorAssociations` in the workspace's
+settings opens them as a preview; the key holds a `/`, so VS Code matches it against the file's scheme
+and path.
+
+The notes' directory is a **second workspace folder only where the window's own folder contains it** -
+the whole projects directory's window under the default `vscode_workspaces_dir`. VS Code computes trust
+over every folder and the saved workspace file, each `isEqualOrParent` of a URI the user trusted, and
+trusting stores exactly those URIs (`workspaceTrust.ts`): a folder added to a workspace trusted before
+is untrusted, and the window drops to Restricted Mode without its Claude terminal. A one-project window,
+and every window under a `vscode_workspaces_dir` outside the projects directory, keep their one folder;
+they open the notes from outside it, which VS Code asks about once per workspace
+(`requestOpenFilesTrust`, remembered on *Open*) unless a trusted folder covers them - the projects
+directory, trusted in its own window - and `make code`'s message says so.
 
 ### 4.10 `playbooks/tailscale_login.yml`
 
@@ -1727,7 +1769,7 @@ fails the test if it is called.
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 860 tests. By file:
+pytest over `tests/unit/`: 906 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 27): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -1789,9 +1831,16 @@ pytest over `tests/unit/`: 860 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 79): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 111): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
-  for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine.
+  for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
+  session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
+  exit 0 and the notes opened when its Python raises, hangs or is missing, a read that hangs costing
+  2 s, a symlink neither followed nor opened - the refresh after a sign-in in the terminal, and the
+  workspace each window gets: the notes' folder only where its own folder holds them.
+- **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
+  renders it - the placeholder, a live section carried over, the parts switched off, the same file
+  from every window, and no time, template marker or token shape in it.
 - **The managed SSH config** (`test_ssh_config.py` 29): `tasks/ssh_config.yml` for real against a
   temporary home, resolved with `ssh -G` - the refusal of a name or address that is not one plain word,
   the guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, that no
@@ -2062,7 +2111,8 @@ playbooks/
                                   controller, and a last play failing what the rescue recorded
   destroy.yml                     confirm, verify ownership, release (Claude, GitHub, Tailscale), delete in parallel, forget each alias
   ssh_config.yml                  refresh every alias from the fleet; fleet-wide, prune the vanished
-  code.yml                        refresh one alias, write the Claude workspace file, open it in VS Code
+  code.yml                        refresh one alias, write the Claude workspace file and the session notes, open it
+  templates/vm_session.md.j2      the session notes: a page about one VM, opened beside the Claude terminal
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
   tasks/ssh_config.yml            one blockinfile block per VM in ~/.ssh/claude-on-proxmox.conf, Include once

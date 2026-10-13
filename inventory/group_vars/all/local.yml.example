@@ -94,6 +94,10 @@
 # Where those files go on the VM, as an absolute path of its own. Empty:
 # .claude-on-proxmox in vm_projects_dir.
 # vscode_workspaces_dir: ""
+# A page about the VM - addresses, what is signed in, the make commands - opened
+# beside the Claude terminal each time the window opens, its sign-in status read
+# from the VM then. Needs vscode_claude_terminal.
+# vscode_session_notes: true
 # The VS Code settings read (never written) to say whether the terminal starts
 # on its own. Empty: where stock VS Code keeps them on macOS and Linux; set it
 # for Insiders, VSCodium, or a VS Code on Windows driven from WSL.
