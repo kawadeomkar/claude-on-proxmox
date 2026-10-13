@@ -33,8 +33,10 @@ VS Code settings.
 
 from __future__ import annotations
 
+import ast
 import copy
 import fcntl
+import importlib.util
 import json
 import os
 import pty
@@ -1251,6 +1253,50 @@ def test_what_a_tool_prints_is_read_as_utf_8_whatever_the_locale(tmp_path):
     assert "| Claude Code | `dév@exämple.com` · claude.ai, max plan |" in _live(after)
 
 
+def test_what_a_tool_prints_reaches_the_notes_as_plain_text_in_one_cell(tmp_path):
+    # An account name is whoever chose it: a sequence that writes the clipboard (OSC 52) or clears the
+    # screen when the notes are shown in a terminal, a column break, a code span closed early.
+    answers = {
+        **SIGNED_IN,
+        "claude": SIGNED_IN["claude"].replace("dev@example.com", r"dev\u001b[2J\u009b31m@example.com\tx"),
+        "gh": SIGNED_IN["gh"].replace('"octocat"', r'"octo\u001b]52;c;aGk=\u0007cat|`rm`\n"'),
+    }
+    _, _, after, _, _ = _helper(tmp_path, answers=answers)
+    live = _live(after)
+    assert "| Claude Code | `dev@example.com x` · claude.ai, max plan |" in live
+    assert "| GitHub (`gh`) | `octocat\\|'rm'` · git over https |" in live
+    assert all(ch == "\n" or (ord(ch) >= 0x20 and not 0x7F <= ord(ch) <= 0x9F) for ch in live), repr(live)
+    for row in live.splitlines():
+        if row.startswith("| "):
+            assert len(re.findall(r"(?<!\\)\|", row)) == 3, row
+
+
+def _helper_patterns() -> dict[str, str]:
+    """The patterns the helper compiles, read from its Python."""
+    script = _play()["vars"]["code_notes_script"]
+    source = script.split("<<'PY' >/dev/null 2>&1 &\n", 1)[1].split("\nPY\n", 1)[0]
+    patterns = {}
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and len(node.targets) == 1:
+            name = getattr(node.targets[0], "id", None)
+            if name in ("SEQUENCES", "CONTROL"):
+                patterns[name] = ast.literal_eval(node.value.args[0])
+    return patterns
+
+
+def test_the_helper_removes_what_plain_text_removes():
+    # It runs on the VM, so it has its own copy of plain_text's patterns, and this test keeps it one:
+    # a sequence plain_text learns to remove, the notes must not keep.
+    spec = importlib.util.spec_from_file_location("text_filters_for_code", REPO / "filter_plugins" / "text.py")
+    text = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(text)
+    helper = _helper_patterns()
+    assert helper["SEQUENCES"] == text._SEQUENCES.pattern
+    # A table cell takes no tab or newline either: every control character plain_text removes, and those two.
+    every = "".join(map(chr, range(0x110000)))
+    assert set(re.findall(helper["CONTROL"], every)) == set(text._CONTROL.findall(every)) | {"\t", "\n"}
+
+
 @pytest.mark.parametrize(
     ("gh", "row"),
     [
@@ -1276,7 +1322,8 @@ def test_a_read_that_hangs_costs_two_seconds_and_is_said(tmp_path):
 
 @pytest.mark.parametrize("python", ["raise", "hang", None])
 def test_the_helper_exits_0_and_opens_the_notes_whatever_its_python_does(tmp_path, python):
-    # Claude's task depends on this one, and runs only when it exits 0.
+    # Whatever its Python does, the notes are left as they were and opened, and the helper ends 0,
+    # so VS Code never reports the task failed with its whole command line.
     result, took, after, asked, notes = _helper(tmp_path, python=python)
     assert result.returncode == 0, result
     assert after == NOTES_TEXT.encode()
