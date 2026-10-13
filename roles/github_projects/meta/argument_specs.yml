@@ -21,6 +21,7 @@ argument_specs:
       github_projects_api_url:
         type: str
         default: https://api.github.com
+        description: Base URL of the GitHub REST API that lists the repositories and, for ssh clones, GitHub's host keys. Tests point it at a stand-in.
       github_projects_home:
         type: path
         default: ""
@@ -31,9 +32,11 @@ argument_specs:
       github_projects_include_forks:
         type: bool
         default: false
+        description: Also clone repositories that are forks.
       github_projects_include_archived:
         type: bool
         default: false
+        description: Also clone archived repositories.
       github_projects_include:
         type: list
         elements: str
@@ -43,16 +46,20 @@ argument_specs:
         type: list
         elements: str
         default: []
+        description: Repository names never cloned, even when github_projects_include names them.
       github_projects_clone_protocol:
         type: str
         choices: [https, ssh]
         default: https
+        description: https clones private repositories through gh; ssh needs a key of the user's own on the VM, and trusts GitHub's published host keys.
       github_projects_update_existing:
         type: bool
         default: false
+        description: Pull checkouts that already exist on every run. Off, a re-run never disturbs local work.
       github_projects_depth:
         type: str
         default: ""
+        description: Shallow clone depth. Empty clones the full history.
       github_projects_auth:
         type: bool
         default: true

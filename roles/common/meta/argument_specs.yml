@@ -6,52 +6,68 @@ argument_specs:
       common_user:
         type: str
         default: dev
+        description: Login user, normally created by cloud-init, that the role gives its shell, groups, sudo rule and keys. Set as vm_user.
       common_user_shell:
         type: str
         default: /bin/bash
+        description: Login shell of common_user.
       common_user_groups:
         type: list
         elements: str
         default: [sudo]
+        description: Groups common_user is added to. Groups it already has are kept.
       common_user_passwordless_sudo:
         type: bool
         default: true
+        description: Let common_user run sudo without a password, through a sudoers drop-in, which the playbooks' become relies on. false removes the drop-in.
       common_user_ssh_public_keys:
         type: list
         elements: str
         default: []
+        description: Public keys added to common_user's authorized_keys. Keys already there are kept. Set as vm_ssh_public_keys.
       common_timezone:
         type: str
         default: Etc/UTC
+        description: Timezone name from /usr/share/zoneinfo, such as Europe/Berlin, linked to /etc/localtime.
       common_manage_hostname:
         type: bool
         default: true
+        description: Set the hostname to common_hostname. Never done in a container (common_container_virt_types).
       common_hostname:
         type: str
+        description: Hostname given to the VM. Defaults to the inventory hostname, the VM's name.
       common_harden_ssh:
         type: bool
         default: true
+        description: Write an sshd drop-in that turns password logins off, root's included, even where cloud-init was given a password. false removes it.
       common_apt_upgrade:
         type: bool
         default: true
+        description: Upgrade the installed packages (apt safe upgrade) on every run.
       common_apt_cache_valid_time:
         type: int
         default: 3600
+        description: Seconds the apt cache counts as fresh. An older one is refreshed at the start of the role.
       common_apt_lock_timeout:
         type: int
         default: 600
+        description: Seconds each apt task waits for the apt lock, which unattended-upgrades holds on a fresh cloud image after first boot.
       common_container_virt_types:
         type: list
         elements: str
         default: [docker, container, containerd, podman, lxc]
+        description: Virtualisation types under which the hostname is not set, because the host is a container.
       common_packages:
         type: list
         elements: str
+        description: Baseline packages every VM gets. Setting it replaces the baseline; add packages with common_extra_packages instead.
       common_extra_packages:
         type: list
         elements: str
         default: []
+        description: More packages to install on top of common_packages.
       common_enabled_services:
         type: list
         elements: str
         default: [qemu-guest-agent]
+        description: Services enabled at boot where systemd runs, and started on a KVM guest.

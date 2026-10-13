@@ -10,32 +10,47 @@ argument_specs:
       dev_tools_install_node:
         type: bool
         default: true
+        description: Install Node.js from NodeSource, and the packages in dev_tools_npm_global_packages. false skips it and removes nothing.
       dev_tools_install_docker:
         type: bool
         default: true
+        description: Install Docker Engine from Docker's repository and add dev_tools_user to the docker group. false skips it and removes nothing.
       dev_tools_install_gh:
         type: bool
         default: true
+        description:
+          - Install the GitHub CLI from its repository; github_projects signs in and clones private repositories through
+            it. false skips it and removes nothing.
       dev_tools_install_uv:
         type: bool
         default: true
+        description:
+          - Install uv and uvx, a pinned release checked against dev_tools_uv_sha256, into dev_tools_uv_install_dir.
+            false skips it and removes nothing.
       dev_tools_apt_packages:
         type: list
         elements: str
+        description:
+          - Development packages installed from Ubuntu's archive. Keep python3-debian, which the role adds the Node.js,
+            Docker and GitHub CLI repositories with.
       dev_tools_node_major:
         type: int
         default: 22
+        description: Node.js major version, which picks the NodeSource repository.
       dev_tools_npm_global_packages:
         type: list
         elements: str
         default: []
+        description: Packages npm installs globally, with dev_tools_install_node.
       dev_tools_docker_packages:
         type: list
         elements: str
+        description: Packages installed from Docker's repository.
       dev_tools_container_virt_types:
         type: list
         elements: str
         default: [docker, container, containerd, podman, lxc]
+        description: Virtualisation types under which Docker is installed but its service neither enabled nor started, since the daemon cannot run there.
       dev_tools_docker_manage_service:
         type: bool
         description: Defaults to true unless running inside a container.
@@ -46,11 +61,14 @@ argument_specs:
       dev_tools_uv_version:
         type: str
         default: "0.9.5"
+        description: uv release to install. Changing it needs the new release's digests in dev_tools_uv_sha256.
       dev_tools_uv_arch_map:
         type: dict
+        description: uv's release target for each ansible_architecture, which names the archive downloaded.
       dev_tools_uv_sha256:
         type: dict
         description: SHA256 of the uv release archive per architecture key of dev_tools_uv_arch_map.
       dev_tools_uv_install_dir:
         type: path
         default: /usr/local/bin
+        description: Directory uv and uvx are installed into.

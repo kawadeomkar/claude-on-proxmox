@@ -26,12 +26,15 @@ argument_specs:
       proxmox_vm_api_port:
         type: int
         default: 8006
+        description: Port of the Proxmox VE API. Set as proxmox_api_port.
       proxmox_vm_api_user:
         type: str
         default: ansible@pve
+        description: Proxmox user the API token belongs to, realm included. Set as proxmox_api_user.
       proxmox_vm_api_token_id:
         type: str
         default: ansible
+        description: Name of the API token, the part after the ! in user!token. Set as proxmox_api_token_id.
       proxmox_vm_api_token_secret:
         type: str
         no_log: true
@@ -42,25 +45,32 @@ argument_specs:
       proxmox_vm_validate_certs:
         type: bool
         default: false
+        description: Verify the API's TLS certificate. Turn it on once the controller trusts the Proxmox CA. Set as proxmox_validate_certs.
       proxmox_vm_node:
         type: str
         default: pve
+        description: Node that holds the template, where new VMs are cloned. Set as proxmox_node.
       proxmox_vm_storage:
         type: str
         default: local-lvm
+        description: Storage a full clone's disks are created on. Set as proxmox_storage.
       proxmox_vm_template_name:
         type: str
         default: ubuntu-24.04-cloudinit
+        description: Name of the template VMs are cloned from. Set as proxmox_template_name.
       proxmox_vm_full_clone:
         type: bool
         default: true
+        description: Make a full clone, independent of the template. false makes a linked clone, which keeps depending on the template's disk.
       proxmox_vm_timeout:
         type: int
         default: 600
+        description: Seconds the clone, start, stop and delete calls may each take.
       proxmox_vm_state:
         type: str
         choices: [present, absent]
         default: present
+        description: present clones, configures and starts the VM; absent stops and deletes it.
       proxmox_vm_start_existing:
         type: bool
         default: false
@@ -78,9 +88,11 @@ argument_specs:
       proxmox_vm_lookup_retries:
         type: int
         default: 6
+        description: How many times a just-cloned VM's configuration is read before giving up, since the cluster listing can lag behind a clone.
       proxmox_vm_lookup_delay:
         type: int
         default: 5
+        description: Seconds between reads of a just-cloned VM's configuration.
       proxmox_vm_allow_untagged_delete:
         type: bool
         default: false
@@ -120,6 +132,7 @@ argument_specs:
       proxmox_vm_disk:
         type: str
         default: scsi0
+        description: The root disk, as the template names it, resized to proxmox_vm_disk_size.
       proxmox_vm_disk_size:
         type: str
         default: 32G
@@ -131,6 +144,7 @@ argument_specs:
       proxmox_vm_onboot:
         type: bool
         default: true
+        description: Start the VM when its Proxmox node boots.
       proxmox_vm_tags:
         type: list
         elements: str
@@ -142,6 +156,7 @@ argument_specs:
       proxmox_vm_user:
         type: str
         default: dev
+        description: Cloud-init user created on the VM. Set as vm_user, which the playbooks also log in as.
       proxmox_vm_password:
         type: str
         default: ""
@@ -153,6 +168,7 @@ argument_specs:
         type: list
         elements: str
         default: []
+        description: Public keys cloud-init authorises for proxmox_vm_user. These or proxmox_vm_password must be set. Set as vm_ssh_public_keys.
       proxmox_vm_ipconfig:
         type: str
         default: ip=dhcp

@@ -6,10 +6,14 @@ argument_specs:
       claude_code_user:
         type: str
         default: dev
+        description: User Claude Code is set up for. Its ~/.claude is written, its login read, and Remote Control run as it. Set as vm_user.
       claude_code_install_method:
         type: str
         choices: [native, npm]
         default: native
+        description:
+          - native runs the official installer, a self-updating binary in the user's ~/.local/bin; npm installs
+            @anthropic-ai/claude-code globally and needs Node.js.
       claude_code_version:
         type: str
         default: stable
@@ -17,6 +21,7 @@ argument_specs:
       claude_code_installer_url:
         type: str
         default: https://claude.ai/install.sh
+        description: The installer script the native method downloads and runs.
       claude_code_anthropic_api_key:
         type: str
         default: ""
@@ -34,6 +39,9 @@ argument_specs:
       claude_code_global_instructions:
         type: str
         default: ""
+        description:
+          - Content of ~/.claude/CLAUDE.md, the instructions Claude Code applies in every project. Empty writes nothing
+            and leaves a file already there.
       claude_code_remote_control:
         type: bool
         default: true

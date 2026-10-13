@@ -65,6 +65,7 @@ argument_specs:
       tailscale_accept_routes:
         type: bool
         default: false
+        description: Use the subnet routes other devices on the tailnet advertise.
       tailscale_accept_dns:
         type: bool
         default: false
@@ -86,6 +87,7 @@ argument_specs:
         type: list
         elements: str
         default: []
+        description: More tailscale up flags, added to every join, by key or by the web login. A node that has joined already does not get them.
       tailscale_daemon_flags:
         type: list
         elements: str
