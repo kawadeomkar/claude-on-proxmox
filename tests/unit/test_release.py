@@ -42,7 +42,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from harness import REPO, STAND_INS, _failures, _run
+from harness import REPO, STAND_INS, _failures, _left_to_do, _run, _run_at_a_terminal
 
 DESTROY = REPO / "playbooks" / "destroy.yml"
 FAKES = REPO / "tests" / "molecule"
@@ -180,7 +180,18 @@ def _destroy_tail(root: Path) -> Path:
     """destroy.yml's release play, the deletion marked as done, and its report: as destroy.yml has them."""
     plays = yaml.safe_load(DESTROY.read_text())
     release = next(play for play in plays if play.get("name") == "Release each VM from what it signed in to")
-    report = next(task for play in plays for task in play.get("tasks", []) if task.get("name") == REPORT)
+    tasks = next(play["tasks"] for play in plays if any(task.get("name") == REPORT for task in play.get("tasks", [])))
+    at = next(index for index, task in enumerate(tasks) if task.get("name") == REPORT)
+    # The report and its record for NEXT STEPS, then the kept aliases' and
+    # theirs, which are skipped here, every deletion having been done: a
+    # record's condition naming its report's task var failed every destroy.
+    report = tasks[at : at + 4]
+    assert [task.get("name") for task in report] == [
+        REPORT,
+        "Keep what is left to do for the end of the run",
+        "Say which aliases were kept, and why",
+        "Keep what is left to do for the end of the run",
+    ]
     on_these = json.loads(json.dumps(report).replace("groups['claude_vm_doomed']", "groups['claude_vms']"))
     playbook = root / "destroy_tail.yml"
     playbook.write_text(
@@ -193,7 +204,7 @@ def _destroy_tail(root: Path) -> Path:
                     "gather_facts": False,
                     "tasks": [{"ansible.builtin.set_fact": {"claude_vm_deleted": True}}],
                 },
-                {"name": "Report", "hosts": "localhost", "gather_facts": False, "tasks": [on_these]},
+                {"name": "Report", "hosts": "localhost", "gather_facts": False, "tasks": on_these},
             ]
         )
     )
@@ -373,6 +384,22 @@ def test_a_vm_that_could_not_be_reached_is_left_as_it_is_and_what_is_left_named(
     )
 
 
+def test_next_steps_keep_each_vm_with_something_left_to_do_and_nothing_for_one_released_clean(released):
+    # What the run's last lines list (callback_plugins/claude_on_proxmox.py):
+    # the report's own line where a GitHub token stays valid, a Tailscale
+    # device stays in the tailnet, or nothing was released at all.
+    _, report, _, _ = released
+    # The run itself ended well: a record failing after its report fails the destroy.
+    assert report["rc"] == 0, _failures(report)
+    said = _said(report)
+    left = {vm: matters["destroy"] for vm, matters in _left_to_do(report).items()}
+    assert set(left) == set(CASES)
+    for vm in ("everything", "vault-token", "by-hand", "refused", "liar", "two-accounts", "unreached"):
+        assert left[vm] == said[vm], vm
+    for vm in ("gone", "marked-vault", "nothing"):
+        assert left[vm] == "", (vm, said[vm])
+
+
 def test_no_token_key_or_secret_reaches_the_output(released):
     _, report, _, _ = released
     text = json.dumps(report)
@@ -527,6 +554,29 @@ def test_no_play_sets_how_to_reach_a_host_in_its_vars():
             play_vars = play.get("vars") or {}
             assert not reaching & set(play_vars), (path.name, play.get("name"), sorted(reaching & set(play_vars)))
             assert play_vars.get("ansible_connection", "local") == "local", (path.name, play.get("name"))
+
+
+@pytest.mark.parametrize("extra", [{}, {"vm_name": "alpha"}, {"vm_name": "alpha, beta,"}])
+def test_with_no_terminal_destroy_takes_no_for_an_answer_whatever_names_it_is_given(tmp_path, extra):
+    # The prompt is templated before any host is in scope, even when -e
+    # answers it: one naming an inventory variable failed every run here,
+    # where the harness has none, before anything was asked.
+    report = _run(tmp_path, DESTROY, {}, "-e", json.dumps(extra))
+    assert report["rc"] != 0
+    assert list(_failures(report).values()) == ["Abort unless confirmed: Destroy not confirmed."], report
+
+
+def test_destroy_asks_under_a_block_that_names_the_vms_and_never_logs_it(tmp_path):
+    rc, output, log = _run_at_a_terminal(
+        tmp_path, DESTROY, {}, {"vm_name": "alpha,beta"}, "no", prompt=b"Type yes to continue"
+    )
+    assert rc != 0
+    block = "##  CONFIRM DELETION\r\n" + "#" * 80 + "\r\nThis deletes alpha, beta and their disks.\r\n"
+    assert block in output, output
+    assert "Type yes to continue [no]: " in output
+    assert "Destroy not confirmed." in output
+    # vars_prompt reads with input(): neither its question nor the answer reach the run log.
+    assert "This deletes" not in log
 
 
 def test_destroy_release_defaults_to_on():

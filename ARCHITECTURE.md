@@ -317,7 +317,10 @@ against 41 s.
 **Play 1 — confirm and check (localhost).**
 
 1. `vars_prompt` confirmation with `default: "no"` — a run with no terminal (CI, cron, a nested
-   playbook) takes the default rather than hanging, so the default must be the safe answer.
+   playbook) takes the default rather than hanging, so the default must be the safe answer. The
+   question, under a `CONFIRM DELETION` block (§7.5), names the VMs from `vm_name` alone, through the
+   play var `claude_vm_confirm_names`: a `vars_prompt` is templated before any inventory variable is
+   in scope, `-e` answer or not, so naming `claude_vm_names` failed every run.
 2. List the cluster (§4.3, step 1) and assert every requested name exists among this project's VMs.
    Asking for a name that was never created is an error naming the VMs that *do* exist, not a
    confirmation prompt followed by silence. A name that exists but is untagged gets a hint: tag it,
@@ -1416,6 +1419,58 @@ that quotes the VM's text goes through it: the Claude sign-in's (`claude_code_lo
 (`github_projects_login_text`, `_status_said`, `_token_said`) and `make code`'s SSH failure. Covered by
 `tests/unit/test_text_filter.py`, and by the sign-in tests, which feed both flows escape sequences.
 
+**`banner(body, title, host='', topic='')`** — the `#` block that sets a moment the run waits for the
+person apart from the task output around it: a rule 80 columns wide (the terminal's width when that is
+narrower), a title line naming the VM and the sign-in, the rule again, then the body, never wrapped so a
+URL or a command stays whole to copy, and a last newline, so that a prompt's last word (`Code`,
+`Answer`) starts a line of its own: a `'\n'` written in the Jinja of a folded YAML scalar reaches the
+screen as a backslash and an `n`. Every part goes through `plain_text`. The prompts call it as a filter,
+the stdout callback (§7.5) by path. Covered by `tests/unit/test_text_filter.py`.
+
+### 7.5 `callback_plugins/claude_on_proxmox.py` — the waits, and NEXT STEPS
+
+The stdout callback `ansible.cfg` names (`stdout_callback`, `callback_plugins`), and nothing else does: the
+unit harness runs the JSON callback with an empty `ansible.cfg` and Molecule sets an `ANSIBLE_CONFIG` of
+its own, so no output a test pins goes through it. It subclasses the default callback and carries the
+default's `DOCUMENTATION` fragments (`default_callback`, `result_format_callback`). Without them the
+subclass has no options: every hook fails on its first `get_option`, Ansible only warns, and every task's
+result disappears from the screen and the log in a run that still exits 0. `--syntax-check` loads no
+callback, so `make syntax` would not notice; `tests/unit/test_attention_callback.py` runs real playbooks
+through it and compares its untagged output with the default's, byte for byte.
+
+A run waits for the person in three ways, and each is set apart:
+
+- **A prompt** - every `pause`, and destroy's `vars_prompt` - passes its own text through `banner`, titled
+  `USER INPUT REQUIRED` or `CONFIRM DELETION`: Ansible prints a prompt as written, before any callback
+  sees it. A `vars_prompt` is templated before any host is in scope, with the play's vars and the extra
+  vars only, even when `-e` answers it, so destroy's names its VMs from `vm_name` through a play var
+  (`claude_vm_confirm_names`); one naming `claude_vm_names` failed every run before it asked.
+- **A page to approve**: a debug result tagged `attention_browser` is drawn as a block titled `ACTION
+  REQUIRED IN YOUR BROWSER`, with the VM and the sign-in (from the task's role), instead of `ok: [host]
+  =>` and a YAML dump. A retried task with the tag - Claude's and Tailscale's browser waits - says once
+  per VM that it is waiting, with the time left, instead of a `FAILED - RETRYING` line every few seconds
+  that pushed the page off the screen. Five tasks carry the tag, none looped; the device flow's
+  `wait_for` has no retries to fold.
+- **What is left after the run**: NEXT STEPS, after PLAY RECAP, from what the report tasks recorded.
+  Each of the 18 reports that can say what to do later registers its message and records it straight
+  after with `ansible.builtin.set_stats` under its owner's stat - `claude_code_next`,
+  `github_projects_next`, `tailscale_next`, `claude_vm_next` (provision and destroy) and `code_next` - as
+  `{vm: {matter: line}}`: the message itself while something is left, `''` once nothing is. `aggregate`
+  merges the records, so the last one of a VM and matter wins across plays: configure's "not signed in"
+  is cleared by the sign-in's own report later in the same `make deploy`. The decision is made in Jinja
+  beside the message, from the same facts, because the text cannot carry it: a stopped Tailscale or a
+  missing workflow scope names no `make` command, and "make deploy signs it in next" names one with
+  nothing to do. A looped report records each VM in a looped `set_stats` keyed by the loop var, so the
+  callback reads no task result for this at all. Printed by VM name, the matters in a fixed order (`vm`,
+  `claude`, `remote_control`, `github`, `github_identity`, `tailscale`, `vscode`, `destroy`), each line
+  once, nothing when nothing is left, and nothing after Ctrl-C, which has no stats event. `profile_tasks`'
+  TASKS RECAP follows it: Ansible calls collection callbacks after the stdout one.
+
+The blocks are bright yellow through `Display`, plain under `ANSIBLE_NOCOLOR` or with no terminal; the run
+log gets them plain, but never destroy's question, which `vars_prompt` reads with `input()`. The harness
+shows custom stats (`ANSIBLE_SHOW_CUSTOM_STATS=1`), so each role's own tests read what it recorded from the
+JSON report (`_left_to_do`), in every state they already run.
+
 ## 8. Convergence and idempotence
 
 Idempotence is enforced mechanically: Molecule's idempotence stage re-runs converge and fails on any
@@ -1672,25 +1727,31 @@ fails the test if it is called.
 
 ### 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 818 tests. By file:
+pytest over `tests/unit/`: 860 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
-  `test_text_filter.py` 16): the guest-agent readers, `guest_ipv4` among them refusing anything that
+  `test_text_filter.py` 27): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
-  sign-ins' `page_opener`, and `plain_text`.
+  sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
+- **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
+  for real - untagged output byte for byte the default's, no hook failing, the browser block, one
+  waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
+  the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner`,
+  and every report followed by its record. Each role's own tests then assert what it records, in every
+  state they run.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   81), both ways.
-- **Remote Control** (`test_remote_control_playbooks.py` 55): `claude_login.yml` and `remote_control.yml`
+- **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins that fail a run that reaches for them, no terminal).
-- **The Claude sign-in** (`test_claude_login.py` 41): `browser_login.yml` against the stand-in `claude`,
+- **The Claude sign-in** (`test_claude_login.py` 42): `browser_login.yml` against the stand-in `claude`,
   five runs at a pseudo-terminal of the test's own - the page before the prompt, a partly copied code,
   an expired attempt, Ctrl-C then A, and keys typed before the prompt is ready - with the code searched
   for in every run at `-vvv` with module arguments injected; and the browser coming back by itself, a
   stand-in `ssh` recording the forward and the test playing the browser at the stand-in's callback: no
   prompt, a forward refused, a page that is not Claude's, a run over SSH or no browser here falling back
   to the paste, and a browser that never comes back skipping the VM's later sign-ins.
-- **The GitHub sign-in** (`test_github_auth.py` 117): the `github_projects` role's `auth.yml`,
+- **The GitHub sign-in** (`test_github_auth.py` 119): the `github_projects` role's `auth.yml`,
   `clone.yml`, `device_flow.yml` and `github_login.yml` for real against the stand-in `gh` and the fake
   GitHub API on a loopback port, one host per sign-in state, twice over for idempotence, with `git
   credential fill` proving that git itself gets the token through the config written, deploy's GitHub
@@ -1701,7 +1762,7 @@ pytest over `tests/unit/`: 818 tests. By file:
   sign in, a failed sign-in said in its turn, a failure after a sign-in (Remote Control's start, a
   clone) told apart from a failed one and raised at the end of `make deploy`, deploy with no terminal,
   a refused code and `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts.
-- **Tailscale** (`test_tailscale.py` 65): the role's files from `ownership.yml` on, and
+- **Tailscale** (`test_tailscale.py` 67): the role's files from `ownership.yml` on, and
   `tailscale_login.yml` whole, against the stand-in `tailscale`, with stand-ins for `dpkg-query` and
   `getent`: a first join once, with the key on stdin and in no report, argument or file; no key for a node
   whose key expired, and a node logged out by hand joined again; a refused key and an OAuth secret without
@@ -1717,7 +1778,7 @@ pytest over `tests/unit/`: 818 tests. By file:
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
   that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
-- **Destroy's release** (`test_release.py` 23): `destroy.yml`'s release play and report against the
+- **Destroy's release** (`test_release.py` 28): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
   Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
   pasted by hand signed out and told apart, the vault token even under a marker claiming it, and a logout
@@ -1728,7 +1789,7 @@ pytest over `tests/unit/`: 818 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 76): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 79): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine.
 - **The managed SSH config** (`test_ssh_config.py` 29): `tasks/ssh_config.yml` for real against a
@@ -1981,7 +2042,8 @@ Linting is the ansible-lint **production** profile with `args`, `empty-string-co
 ## 14. File map
 
 ```
-ansible.cfg                       inventory dir, accept-new host keys, forks
+ansible.cfg                       inventory dir, accept-new host keys, forks, the stdout callback
+callback_plugins/claude_on_proxmox.py   the default output, the waits set apart, NEXT STEPS after the recap (§7.5)
 .logs/                            one log per make run that used Ansible (git-ignored, 0700, pruned after 14 days)
 deploy.yml                        template (when missing) + provision + configure + the three sign-ins + VS Code
 CLAUDE.md                         agent-facing operating rules

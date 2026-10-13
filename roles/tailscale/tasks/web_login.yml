@@ -97,6 +97,8 @@
       {{ tailscale_login_wait_said }}; Ctrl-C ends the whole run, and the page stays valid for 7 days either
       way.{{ tailscale_web_untagged }}
   when: tailscale_web_page | length > 0
+  # Drawn as a block by the stdout callback (callback_plugins/claude_on_proxmox.py).
+  tags: [attention_browser]
 
 # The two steps on the controller, both best effort, as the other sign-ins
 # take them, and never in a test (tailscale_login_desktop).
@@ -143,6 +145,8 @@
     and (tailscale_web_wait.stdout | from_json).BackendState | default('') in ['Running', 'NeedsMachineAuth']
   retries: "{{ ((tailscale_login_timeout | int) / (tailscale_login_poll_seconds | int)) | round(0, 'ceil') | int }}"
   delay: "{{ tailscale_login_poll_seconds }}"
+  # One waiting line from the stdout callback, not a line per retry.
+  tags: [attention_browser]
 
 - name: web_login | Read the state after the wait
   ansible.builtin.include_tasks: status.yml

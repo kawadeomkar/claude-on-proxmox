@@ -257,6 +257,16 @@ tailscale_release_installed: >-
   {{ tailscale_release_unit.stat.exists | default(false) or (tailscale_release_status.rc | default(1)) == 0 }}
 # One clause for destroy's report on the VM; empty where there was nothing on
 # Tailscale to release.
+# The summary's cases that name a device to delete by hand: something left to
+# do, for destroy's NEXT STEPS. Not installed, never joined, removed, or gone
+# already leaves nothing.
+tailscale_release_device_left: >-
+  {{ tailscale_release_installed | bool
+     and ((tailscale_release_status.rc | default(1)) != 0
+          or (tailscale_release_joined | bool
+              and ((tailscale_release_logout.rc | default(1)) != 0
+                   or tailscale_api_auth_method == 'none'
+                   or not (tailscale_api_deleted | bool or tailscale_api_gone_already | bool)))) }}
 tailscale_release_summary: >-
   {{ '' if not (tailscale_release_installed | bool)
      else ('tailscaled did not answer, so the node could not be logged out: delete its device at '

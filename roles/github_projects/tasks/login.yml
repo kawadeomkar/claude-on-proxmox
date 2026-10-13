@@ -36,8 +36,12 @@
       {{ 'Enter signs it in now (a page opens, and this run waits up to fifteen minutes for the approval); type n and Enter to skip it'
          if github_projects_login_interactive | bool
          else 'Type y and Enter to sign it in now (a page opens, and this run waits up to fifteen minutes for the approval), or Enter alone to skip' }}
+  # The question under a block that sets it apart from the task output
+  # around it; the answer is typed after "Answer:".
   ansible.builtin.pause:
-    prompt: "{{ github_projects_login_question }}"
+    prompt: >-
+      {{ github_projects_login_question
+         | banner('USER INPUT REQUIRED', host=inventory_hostname, topic='GitHub sign-in') ~ 'Answer' }}
   register: github_projects_login_asked
   when:
     - github_projects_login_ask | bool
@@ -110,3 +114,25 @@
          else github_projects_login_unreadable if github_projects_auth_status.rc | default(0) != 0
          else github_projects_login_signed_in if github_projects_signed_in | bool
          else github_projects_login_signed_out }}
+  register: github_projects_login_reported
+
+# NEXT STEPS (callback_plugins/claude_on_proxmox.py): the line above while
+# there is something left to do - a gh too old to say where gh is the role's
+# business, a device-flow login without the workflow scope, a sign-out that nothing in this run ends - and
+# nothing otherwise: signed in, gh left alone (github_auth: false), gh not
+# installed by choice. A later record of the same VM replaces this one.
+- name: login | Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      github_projects_next: >-
+        {{ {inventory_hostname: {'github': github_projects_login_reported.msg
+             if github_projects_gh_found | bool
+                and ((github_projects_auth_status.rc | default(0) != 0 and github_projects_auth | bool)
+                     or (github_projects_signed_in | bool and github_projects_login_kind == 'oauth'
+                         and 'workflow' not in (github_projects_auth_account.scopes | default('')))
+                     or (not github_projects_signed_in | bool and github_projects_auth | bool
+                         and not (github_projects_token_wanted | bool and github_projects_token_set | bool
+                                  and github_projects_login_role_follows | bool)))
+             else ''}} }}
+    aggregate: true
+    per_host: false

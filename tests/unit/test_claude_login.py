@@ -65,7 +65,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from harness import REPO, STAND_INS, _failures, _messages, _results, _run, _run_at_a_terminal
+from harness import REPO, STAND_INS, _failures, _left_to_do, _messages, _results, _run, _run_at_a_terminal
 
 ROLE = REPO / "roles" / "claude_code"
 FAKE_CLAUDE = REPO / "tests" / "molecule" / "fake_claude.sh"
@@ -302,6 +302,15 @@ def test_no_code_ends_the_attempt_without_failing(signed):
     assert "auth login" in calls and "TERM" in calls and "invalid" not in calls, calls
     assert not (root / "skipped" / ".claude" / ".credentials.json").exists()
     assert _leftovers(root, "skipped") == []
+
+
+def test_next_steps_keep_a_sign_in_left_to_do_and_nothing_once_signed_in(signed):
+    # What the run's last lines list (callback_plugins/claude_on_proxmox.py).
+    _, report = signed
+    left = _left_to_do(report)
+    assert left["accepted"]["claude"] == ""
+    assert left["already"]["claude"] == ""
+    assert "make claude-login VM_NAME=skipped" in left["skipped"]["claude"]
 
 
 def test_a_signed_in_vm_is_only_reported(signed):
@@ -569,6 +578,7 @@ def test_a_browser_that_never_comes_back_ends_the_attempt_and_skips_the_vm(tmp_p
         "away: the browser did not come back within 6 seconds, so Claude Code is left signed out there. make"
         " claude-login VM_NAME=away signs it in later."
     )
+    assert "make claude-login VM_NAME=away" in _left_to_do(report)["away"]["claude"]
     # claude was ended, not left waiting on its callback.
     assert "TERM" in _calls(tmp_path, "away")
     assert {r["msg"] for _, host, r in _results(report) if str(r.get("msg", "")).startswith("skipped=")} == {
@@ -772,8 +782,11 @@ def test_the_prompt_reads_the_terminal_and_keeps_the_code_out_of_the_log(tmp_pat
     assert rc == 0, output
     assert "accepted" in _calls(tmp_path, "pty")
     assert (tmp_path / "pty" / ".claude" / ".credentials.json").exists()
-    # The page first: at the prompt the person needs the code it shows.
-    assert URL in output and output.index(URL) < output.index("Code:"), output
+    # The page first: at the prompt the person needs the code it shows. The
+    # prompt under its block, which says nothing that looks like the prompt.
+    block = "##  USER INPUT REQUIRED  -  pty  -  Claude Code sign-in"
+    assert URL in output and output.index(URL) < output.index(block) < output.index("Code:"), output
+    assert "Paste the code the sign-in page shows, then press Enter. Enter alone skips this VM." in output
     assert log, "no run log was written"
     assert CODES["pty"] not in log
     assert _leftovers(tmp_path, "pty") == []
@@ -785,6 +798,7 @@ def test_a_partly_copied_code_is_asked_for_again(tmp_path):
     extra = {**_extra("pty"), **INJECTED}
     rc, output, log = _run_at_a_terminal(tmp_path, PLAYBOOK, hosts, extra, steps=steps, args=VERBOSE)
     assert rc == 0, output
+    assert "That was part of the code only: paste all of it, what follows # included." in output
     calls = _calls(tmp_path, "pty")
     # The same attempt and page: claude said "Invalid code", went on reading,
     # and took the whole code.

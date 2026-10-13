@@ -51,3 +51,4 @@
 - name: release | Record what became of the node
   ansible.builtin.set_fact:
     tailscale_release_said: "{{ tailscale_release_summary }}"
+    tailscale_release_left: "{{ tailscale_release_device_left | bool }}"

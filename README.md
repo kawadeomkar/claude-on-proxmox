@@ -1078,6 +1078,36 @@ unchanged in 1.141: both gates changed in 2026 (automatic tasks off by default s
 Restricted Mode with only a banner since 1.126), so a VS Code that changes them again may ask
 differently.
 
+### What a run asks of you
+
+A run stops for you in three ways, and each is set apart from the task output around it by a block of
+`#`:
+
+```
+################################################################################
+##  USER INPUT REQUIRED  -  alpha  -  Claude Code sign-in
+################################################################################
+Paste the code the sign-in page shows, then press Enter. Enter alone skips this VM.
+Code:
+```
+
+- **`USER INPUT REQUIRED`**: a prompt to type at - the code Claude's sign-in page shows, or, with
+  `github_login_auto_start` or `tailscale_login_auto_start` off, whether to sign a VM in now.
+- **`ACTION REQUIRED IN YOUR BROWSER`**: a page to approve - Claude's, GitHub's device code, Tailscale's.
+  While the run waits for it, it says so once, with the time left, rather than a retry line every few
+  seconds.
+- **`CONFIRM DELETION`**: `make destroy` names the VMs it is about to delete.
+
+At the end, after the recap, a `NEXT STEPS` block lists what is still left to do on each VM - a sign-in
+you skipped, a VM left stopped, a Tailscale device to delete by hand - each once, and only what the run
+did not settle: a "not signed in" that a later step of the same `make deploy` signed in is not listed.
+Nothing is printed when nothing is left. The task-timing summary comes after it.
+
+The blocks come from `callback_plugins/claude_on_proxmox.py`, which `ansible.cfg` names; put
+`ANSIBLE_STDOUT_CALLBACK=default` in front of a `make` command for Ansible's own output (the prompts keep
+their blocks). The run log below holds the same blocks without colour, but never `make destroy`'s
+question, which Ansible does not log.
+
 ### Run logs
 
 Every `make` target that runs Ansible keeps a copy of the whole run in `.logs/`, one file per run,

@@ -93,3 +93,19 @@
               ~ claude_code_remote_control_login_command }}
   ansible.builtin.debug:
     msg: "{{ inventory_hostname }}: {{ claude_code_login_report }}"
+  register: claude_code_login_reported
+
+# NEXT STEPS (callback_plugins/claude_on_proxmox.py): the line above while
+# there is something left to do, and nothing once signed in, or with Remote
+# Control off on purpose. A later record of the same VM replaces this one.
+- name: login | Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      claude_code_next: >-
+        {{ {inventory_hostname: {'claude': claude_code_login_reported.msg
+             if not (claude_code_remote_control_eligible | bool)
+                and (not (claude_code_remote_control_status.loggedIn | default(false)) | bool
+                     or claude_code_remote_control_wanted | bool)
+             else ''}} }}
+    aggregate: true
+    per_host: false

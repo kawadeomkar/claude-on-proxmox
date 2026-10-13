@@ -73,6 +73,14 @@ secret gets a canned value and a place in those searches.
 - **User-facing variables** are wired in `inventory/group_vars/all/defaults.yml` and documented in the
   README table, so a user sets `github_username` rather than `github_projects_username`.
 - **Idempotence** is not optional. A task that reports `changed` on a second run will fail CI.
+- **A moment the run waits for the person is set apart.** A `pause` or `vars_prompt` passes its text
+  through the `banner` filter (`'…' | banner('USER INPUT REQUIRED', host=inventory_hostname,
+  topic='…') ~ 'Code'`), and a debug task that shows a page to approve, or a retried task that waits on
+  one, carries `tags: [attention_browser]`. `tests/unit/test_attention_callback.py` lists both.
+- **A report that says what to do after the run records it for NEXT STEPS.** Register its message and
+  follow it with `ansible.builtin.set_stats` under the owner's `*_next` stat - the message while something
+  is left to do, `''` once nothing is - decided from the facts the message is built from, never from its
+  text (ARCHITECTURE.md §7.5). The same test fails on a report without its record.
 
 ## Adding a role
 

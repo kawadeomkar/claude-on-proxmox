@@ -257,6 +257,8 @@
         msg: >-
           {{ inventory_hostname }}: sign Claude Code in at {{ claude_code_login_shown | plain_text }}
           {{ claude_code_login_opens }}{{ claude_code_login_next }}
+      # Drawn as a block by the stdout callback (callback_plugins/claude_on_proxmox.py).
+      tags: [attention_browser]
 
     # Best effort, and never in a test (claude_code_login_desktop). The opener
     # is the page_opener filter's (filter_plugins/desktop.py), shared with
@@ -281,10 +283,13 @@
     # The one place the run waits for the person. pause reads this terminal
     # through the main ansible-playbook process; with no terminal it returns at
     # once with nothing, which is the skip. no_log keeps the code out of the
-    # run log; the prompt itself is still shown.
+    # run log; the prompt itself is still shown, under a block that sets it
+    # apart from the task output around it, and still ends in "Code:".
     - name: "browser_login | Paste the code the browser shows for {{ inventory_hostname }}"
       ansible.builtin.pause:
-        prompt: Code
+        prompt: >-
+          {{ 'Paste the code the sign-in page shows, then press Enter. Enter alone skips this VM.'
+             | banner('USER INPUT REQUIRED', host=inventory_hostname, topic='Claude Code sign-in') ~ 'Code' }}
       register: claude_code_login_prompt
       no_log: true
       when:
@@ -306,6 +311,8 @@
       delay: 3
       failed_when: false
       when: claude_code_login_redirecting | bool
+      # One waiting line from the stdout callback, not a line per retry.
+      tags: [attention_browser]
 
     # For make deploy's GitHub and Tailscale steps, VM by VM: a code entered,
     # or the browser come back, says someone is here for this VM; Enter, a
@@ -323,6 +330,18 @@
           {{ inventory_hostname }}: no code was entered (Enter, or no terminal to ask at), so Claude Code is left
           signed out there.
           {{ claude_code_login_command }} signs it in later.
+      register: claude_code_login_no_code_reported
+      when:
+        - not (claude_code_login_redirecting | bool)
+        - claude_code_login_entered | length == 0
+
+    - name: browser_login | Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_code_next: >-
+            {{ {inventory_hostname: {'claude': claude_code_login_no_code_reported.msg}} }}
+        aggregate: true
+        per_host: false
       when:
         - not (claude_code_login_redirecting | bool)
         - claude_code_login_entered | length == 0
@@ -332,6 +351,18 @@
         msg: >-
           {{ inventory_hostname }}: the browser did not come back within {{ claude_code_login_approval_timeout }} seconds,
           so Claude Code is left signed out there. {{ claude_code_login_command }} signs it in later.
+      register: claude_code_login_no_return_reported
+      when:
+        - claude_code_login_redirecting | bool
+        - not (claude_code_login_responded | bool)
+
+    - name: browser_login | Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_code_next: >-
+            {{ {inventory_hostname: {'claude': claude_code_login_no_return_reported.msg}} }}
+        aggregate: true
+        per_host: false
       when:
         - claude_code_login_redirecting | bool
         - not (claude_code_login_responded | bool)
@@ -403,7 +434,9 @@
     # more, rather than the attempt thrown away with its page.
     - name: "browser_login | Paste the whole code the browser shows, what follows # included, for {{ inventory_hostname }}"
       ansible.builtin.pause:
-        prompt: Code
+        prompt: >-
+          {{ 'That was part of the code only: paste all of it, what follows # included.'
+             | banner('USER INPUT REQUIRED', host=inventory_hostname, topic='Claude Code sign-in') ~ 'Code' }}
       register: claude_code_login_prompt_again
       no_log: true
       when:

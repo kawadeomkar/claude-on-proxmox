@@ -211,6 +211,16 @@ def _env(root: Path, **settings: str) -> dict:
     return env
 
 
+def _left_to_do(report: dict) -> dict:
+    """What a run's reports recorded for NEXT STEPS: {vm: {matter: line}}, an empty line for nothing left."""
+    records: dict = {}
+    for stat, by_vm in (report.get("global_custom_stats") or {}).items():
+        if stat.endswith("_next"):
+            for vm, matters in by_vm.items():
+                records.setdefault(vm, {}).update(matters)
+    return records
+
+
 def _inventory(root: Path, hosts: dict, ordered: bool) -> Path:
     """No project config, and an inventory of hosts: by name, or with ordered, in the order given."""
     (root / "ansible.cfg").write_text("")
@@ -250,7 +260,9 @@ def _run(
     process = subprocess.Popen(
         [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, str(playbook)],
         cwd=root,
-        env=_env(root, ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json", **(env or {})),
+        # Custom stats shown: the report then carries what the run recorded
+        # for NEXT STEPS (callback_plugins/claude_on_proxmox.py), _left_to_do.
+        env=_env(root, ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json", ANSIBLE_SHOW_CUSTOM_STATS="1", **(env or {})),
         # Never the developer's terminal: a pause would wait on it. With no
         # terminal the sign-in's prompt returns at once, as in an unattended run.
         stdin=subprocess.DEVNULL,

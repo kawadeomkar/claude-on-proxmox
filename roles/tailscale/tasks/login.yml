@@ -23,6 +23,17 @@
          if not (tailscale_enabled | bool)
          else 'Tailscale is not installed; ' ~ tailscale_configure_command ~ ' installs it, and '
               ~ tailscale_login_command ~ ' then signs it in.' }}
+  register: tailscale_nothing_reported
+  when: not (tailscale_enabled | bool) or not (tailscale_installed | bool)
+
+# NEXT STEPS: an install to run is left to do; Tailscale off is a choice.
+- name: login | Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      tailscale_next: >-
+        {{ {inventory_hostname: {'tailscale': tailscale_nothing_reported.msg if tailscale_enabled | bool else ''}} }}
+    aggregate: true
+    per_host: false
   when: not (tailscale_enabled | bool) or not (tailscale_installed | bool)
 
 # make deploy, for every VM but one whose Claude prompt got Enter: the web
@@ -39,8 +50,12 @@
          if tailscale_login_interactive | bool
          else ('Type y and Enter to sign it in now (a page opens, and this run waits up to ' ~ tailscale_login_wait_said
                ~ ' for the approval), or Enter alone to skip') }}
+  # The question under a block that sets it apart from the task output
+  # around it; the answer is typed after "Answer:".
   ansible.builtin.pause:
-    prompt: "{{ tailscale_login_question }}"
+    prompt: >-
+      {{ tailscale_login_question
+         | banner('USER INPUT REQUIRED', host=inventory_hostname, topic='Tailscale sign-in') ~ 'Answer' }}
   register: tailscale_login_asked
   when:
     - tailscale_login_ask | bool

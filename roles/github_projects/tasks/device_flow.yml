@@ -101,6 +101,8 @@
           {{ inventory_hostname }}: enter the code {{ github_projects_login_code }} at {{ github_projects_login_page }}
           and authorise GitHub CLI there{{ github_projects_login_opens }}. This run waits for that: the wait ends by
           itself when the code expires, after fifteen minutes, and Ctrl-C ends the whole run.
+      # Drawn as a block by the stdout callback (callback_plugins/claude_on_proxmox.py).
+      tags: [attention_browser]
 
     # The two steps on the controller, both best effort: a headless controller
     # still has the line above. Never in a test (github_projects_login_desktop).

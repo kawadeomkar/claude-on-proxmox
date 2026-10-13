@@ -353,6 +353,15 @@ writes an alias only for hosts that have that fact, so a host that failed a role
 the workspace is the VM user's real home rather than a guess from the controller (Ansible's own
 `user_dir` fact is the *connecting* user's home, which under Molecule is root's).
 
+**NEXT STEPS is recorded by each report, never read off the output.** `callback_plugins/claude_on_proxmox.py`,
+the stdout callback `ansible.cfg` names, prints NEXT STEPS after the recap from `set_stats` records only -
+`{vm: {matter: line}}` under five `*_next` stats - each made straight after its report from the facts the
+message is built from: the line while something is left, `''` once nothing is, the last record of a VM and
+matter winning across plays. Do not decide from a message's text: a stopped Tailscale names no `make`
+command, and "make deploy signs it in next" names one with nothing to do. A new report needs its record, and
+`tests/unit/test_attention_callback.py` fails without it. Tests never load the callback (an empty
+`ansible.cfg` and the JSON callback); the harness shows custom stats, and `_left_to_do` reads the records.
+
 **Discovery is a playbook, not the `community.proxmox` inventory plugin.** The header of
 `discover.yml` records the trade-offs; the swap is a live design question, not an oversight.
 
@@ -378,6 +387,13 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   warns ("Not prompting as we are not in interactive mode") and uses the `default:`, or `None` when
   there is none. So every prompt needs a `default:`, and it must be the safe answer (`destroy.yml`
   defaults to `no`).
+- **A `vars_prompt` sees the play's vars and the extra vars, nothing else.** It is templated before any
+  host is in scope, even when `-e` answers it, so a prompt naming `claude_vm_names` (group_vars) failed
+  every `make destroy` before it asked. `test_release.py` runs destroy with no inventory variables at all.
+- **A stdout callback that subclasses the default needs the default's `DOCUMENTATION`.** Without the
+  `default_callback` and `result_format_callback` fragments it has no options, every hook fails, Ansible
+  only warns, and every task's result disappears in a run that exits 0. `--syntax-check` loads no
+  callback; `test_attention_callback.py` compares the output with the default's.
 - **A play's `vars:` apply to the tasks it delegates.** destroy's release play set `ansible_connection:
   ssh` and `ansible_host` as play vars, so its `delegate_to: localhost` calls to Tailscale's API ran on
   the VM, credential included - caught on a live run only because this machine's Python path does not

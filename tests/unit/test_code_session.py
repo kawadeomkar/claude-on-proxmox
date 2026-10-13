@@ -431,6 +431,12 @@ def _said(output: str, task: str):
     return None
 
 
+def _recorded(output: str) -> dict:
+    """What a run recorded for NEXT STEPS (callback_plugins/claude_on_proxmox.py), from its custom stats."""
+    found = re.search(r"^\tRUN: (\{.*\})$", output, re.MULTILINE)
+    return json.loads(found.group(1)).get("code_next", {}) if found else {}
+
+
 def _failures(output: str) -> list[str]:
     """The message of every task that failed, rescued or not, decoded."""
     return [
@@ -490,6 +496,8 @@ def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, lo
         ANSIBLE_CONFIG=str(root / "ansible.cfg"),
         ANSIBLE_FILTER_PLUGINS=str(REPO / "filter_plugins"),
         ANSIBLE_NOCOLOR="1",
+        # The run's stats printed: what it recorded for NEXT STEPS.
+        ANSIBLE_SHOW_CUSTOM_STATS="1",
         PATH=f"{bin_dir}:{WINDOW_PATH}",
     )
     # Never the developer's own VS Code settings: what is said depends on them.
@@ -514,6 +522,7 @@ def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, lo
         "fleet": _said(output, "Say how to open each VM"),
         "shown": _said(output, "Show it"),
         "opened": _said(output, "Say what was opened"),
+        "left": _recorded(output),
         "code": asked.read_text().splitlines() if asked.exists() else [],
     }
 
@@ -644,6 +653,7 @@ def test_make_deploy_without_vs_code_s_command_says_so_with_the_make_code_line_a
     assert run["rc"] == 0 and not run["reached"], run["output"]
     assert run["later"].startswith("`code` is not on this machine's PATH. In VS Code, run")
     assert run["later"].endswith(LATER)
+    assert run["left"] == {"alpha": {"vscode": run["later"]}}
 
 
 def test_make_code_needs_one_vm_name(windows):
@@ -662,6 +672,8 @@ def test_a_deploy_for_a_fleet_ends_at_its_first_task_with_each_vm_s_make_code_li
         "make code VM_NAME=beta",
     ]
     assert "TASK [Refuse anything but one VM]" not in run["output"]
+    # Left to do for the fleet, once, as said.
+    assert run["left"] == {"alpha, beta": {"vscode": "\n".join(run["fleet"])}}
 
 
 def test_a_deploy_that_left_its_vm_stopped_names_the_deploy_that_starts_it(windows):
@@ -672,6 +684,8 @@ def test_a_deploy_that_left_its_vm_stopped_names_the_deploy_that_starts_it(windo
         "beta is stopped, and this deploy left it so: it was not configured, signed in or opened in VS Code. "
         'To start it and finish the deploy: make deploy VM_NAME=beta ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"'
     )
+    # Recorded as the VM's own matter, in the place of provision's line about the same thing.
+    assert run["left"] == {"beta": {"vm": run["later"]}}
 
 
 def test_make_code_refuses_a_stopped_vm(windows):
@@ -811,6 +825,9 @@ READS_HERE = {
     "ansible.builtin.fail",
     "ansible.builtin.debug",
     "ansible.builtin.set_fact",
+    # What is left to do, recorded in the run's own stats for NEXT STEPS: no
+    # machine is touched.
+    "ansible.builtin.set_stats",
     "ansible.builtin.add_host",
     "ansible.builtin.import_tasks",
 }
@@ -873,7 +890,11 @@ def test_every_task_of_the_window_step_is_in_the_block_make_deploy_rescues():
     # only the fleet's end, which opens nothing.
     tasks = _play()["tasks"]
     assert [task["name"] for task in tasks] == ["Leave the windows of a fleet for later", "Open the VM in VS Code"]
-    assert [_action(task) for task in tasks[0]["block"]] == ["ansible.builtin.debug", "ansible.builtin.meta"]
+    assert [_action(task) for task in tasks[0]["block"]] == [
+        "ansible.builtin.debug",
+        "ansible.builtin.set_stats",
+        "ansible.builtin.meta",
+    ]
     assert set(tasks[1]) == {"name", "block", "rescue"}
 
 
