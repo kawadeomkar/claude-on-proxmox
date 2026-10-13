@@ -98,22 +98,41 @@
              if claude_template_exists | bool
              else 'Template "' ~ proxmox_template_name ~ '" does not exist yet; building it first, over SSH as root@'
                   ~ (groups['proxmox'][0] | default('the proxmox host')) ~ '.' }}
-        # Tailscale's sign-in is a page in the browser only where no auth key joins
+        claude_deploy_vms: >-
+          {{ (claude_vm_names[:-1] | join(', ') ~ ' and ' ~ claude_vm_names[-1]) if claude_vm_names | length > 1
+             else claude_vm_names | join }}
+        # The sign-ins that open a page in the browser, by the rules each role
+        # decides by: Claude's where no API key takes the place of a login
+        # (claude_code's login.yml), GitHub's where gh is signed in by the device
+        # flow (github_projects_web_wanted), Tailscale's where no auth key joins
         # the VM during configuration (tailscale_auth_method).
-        claude_deploy_tailscale_web: >-
-          {{ tailscale_enabled | default(true) | bool
-             and (tailscale_auth_method | default('auto') == 'web'
-                  or tailscale_auth_method | default('auto') == 'auto'
-                     and (tailscale_auth_key | default('', true) | length) == 0) }}
+        claude_deploy_pages: >-
+          {{ (['Claude'] if (anthropic_api_key | default('', true) | length) == 0 else [])
+             + (['GitHub'] if github_auth | default(true) | bool
+                             and (github_auth_method | default('auto') == 'web'
+                                  or github_auth_method | default('auto') == 'auto'
+                                     and (github_token | default('', true) | length) == 0) else [])
+             + (['Tailscale'] if tailscale_enabled | default(true) | bool
+                                and (tailscale_auth_method | default('auto') == 'web'
+                                     or tailscale_auth_method | default('auto') == 'auto'
+                                        and (tailscale_auth_key | default('', true) | length) == 0) else [])
+             if deploy_sign_in | bool else [] }}
         claude_deploy_sign_ins: >-
-          {{ (', then signing in to Claude, GitHub' ~ (' and Tailscale' if claude_deploy_tailscale_web | bool else '')
-              ~ ': each opens a page in your browser and the run waits for you there')
-             if deploy_sign_in | bool else '' }}
-        claude_deploy_window: "{{ ', and opening VS Code on it' if deploy_code | bool and claude_vm_names | length == 1 else '' }}"
+          {{ (', then signing in to '
+              ~ ((claude_deploy_pages[:-1] | join(', ') ~ ' and ' ~ claude_deploy_pages[-1]) if claude_deploy_pages | length > 1
+                 else claude_deploy_pages | join))
+             if claude_deploy_pages | length > 0 else '' }}
+        claude_deploy_window: >-
+          {{ (', and opening VS Code on ' ~ claude_vm_names[0]) if deploy_code | bool and claude_vm_names | length == 1 else '' }}
+        claude_deploy_wait: >-
+          {{ ('' if claude_deploy_pages | length == 0
+              else ' Each sign-in' if (claude_deploy_pages | length) * (claude_vm_names | length) > 1
+              else ' The sign-in')
+             ~ (' opens a page in your browser, and the run waits for you there.' if claude_deploy_pages | length > 0 else '') }}
       ansible.builtin.debug:
         msg: >-
-          {{ claude_deploy_template_said }} Then provisioning {{ claude_vm_names | join(', ') }} and configuring, which takes
-          several minutes{{ claude_deploy_sign_ins }}{{ claude_deploy_window }}.
+          {{ claude_deploy_template_said }} Then provisioning and configuring {{ claude_deploy_vms }}, which takes
+          several minutes{{ claude_deploy_sign_ins }}{{ claude_deploy_window }}.{{ claude_deploy_wait }}
 
 - name: Build the cloud-init VM template
   ansible.builtin.import_playbook: playbooks/template.yml

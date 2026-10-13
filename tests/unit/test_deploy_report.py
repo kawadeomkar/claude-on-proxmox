@@ -24,6 +24,7 @@ REPO = Path(__file__).resolve().parents[2]
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
 LOOKUP = "Look up the template by name"
 REPORT = "Report what this run will do"
+WAITS = "opens a page in your browser, and the run waits for you there."
 
 
 def _said(tmp_path: Path, built: bool, **extra) -> str:
@@ -88,5 +89,68 @@ def test_a_missing_template_is_said_to_be_built_first(tmp_path):
 @pytest.mark.parametrize("sign_in", [True, False])
 def test_the_stop_for_the_sign_ins_is_said_up_front(tmp_path, sign_in):
     said = _said(tmp_path, built=True, deploy_sign_in=sign_in)
-    assert ("each opens a page in your browser and the run waits for you there" in said) is sign_in, said
+    assert (WAITS in said) is sign_in, said
     assert "\n" not in said
+
+
+# A sign-in is said only where it opens a page: Claude's without an API key,
+# GitHub's for the device flow, Tailscale's where no auth key joins the VM. The
+# list was built by appending " and Tailscale" to "Claude, GitHub", so with a key
+# the run said "signing in to Claude, GitHub: each opens a page", and an API key
+# or a GitHub token, which open none, never took a name off it.
+KEY = "tskey-auth-kDeploy0CNTRL-TestOnly000000000000000"
+
+
+@pytest.mark.parametrize(
+    ("settings", "sign_ins"),
+    [
+        pytest.param({}, "Claude, GitHub and Tailscale", id="none-given"),
+        pytest.param({"tailscale_auth_key": KEY}, "Claude and GitHub", id="tailscale-key"),
+        pytest.param({"tailscale_enabled": False}, "Claude and GitHub", id="tailscale-off"),
+        pytest.param(
+            {"tailscale_auth_method": "web", "tailscale_auth_key": KEY},
+            "Claude, GitHub and Tailscale",
+            id="tailscale-web",
+        ),
+        pytest.param({"tailscale_auth_method": "key"}, "Claude and GitHub", id="tailscale-key-method"),
+        pytest.param({"anthropic_api_key": "an-api-key"}, "GitHub and Tailscale", id="api-key"),
+        pytest.param({"github_token": "a-token"}, "Claude and Tailscale", id="github-token"),
+        pytest.param({"github_auth": False}, "Claude and Tailscale", id="github-off"),
+        pytest.param(
+            {"github_auth_method": "web", "github_token": "a-token"}, "Claude, GitHub and Tailscale", id="github-web"
+        ),
+        pytest.param({"github_auth_method": "token"}, "Claude and Tailscale", id="github-token-method"),
+        pytest.param({"anthropic_api_key": "an-api-key", "github_auth": False}, "Tailscale", id="one"),
+    ],
+)
+def test_only_the_sign_ins_that_open_a_page_are_said(tmp_path, settings, sign_ins):
+    said = _said(tmp_path, built=True, **settings)
+    assert f"several minutes, then signing in to {sign_ins}, and opening VS Code on alpha." in said, said
+    each = "Each sign-in" if "," in sign_ins or " and " in sign_ins else "The sign-in"
+    assert said.endswith(f" {each} {WAITS}"), said
+
+
+def test_a_run_with_no_page_to_open_says_no_sign_in(tmp_path):
+    settings = {"anthropic_api_key": "an-api-key", "github_token": "a-token", "tailscale_auth_key": KEY}
+    said = _said(tmp_path, built=True, **settings)
+    assert said.endswith(
+        "Then provisioning and configuring alpha, which takes several minutes, and opening VS Code on alpha."
+    ), said
+
+
+# The VMs were joined with commas only, so two read as three things to do:
+# "provisioning alpha, beta and configuring".
+@pytest.mark.parametrize(
+    ("names", "said_as"),
+    [
+        pytest.param(["alpha", "beta"], "alpha and beta", id="two"),
+        pytest.param(["alpha", "beta", "gamma"], "alpha, beta and gamma", id="three"),
+    ],
+)
+def test_several_vms_are_said_as_a_list_and_get_no_window(tmp_path, names, said_as):
+    said = _said(tmp_path, built=True, claude_vm_names=names, tailscale_enabled=False)
+    assert (
+        f"Then provisioning and configuring {said_as}, which takes several minutes,"
+        f" then signing in to Claude and GitHub. Each sign-in {WAITS}"
+    ) in said, said
+    assert "VS Code" not in said
