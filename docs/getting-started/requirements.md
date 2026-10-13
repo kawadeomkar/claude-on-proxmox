@@ -11,7 +11,8 @@
 This project inherits your infrastructure. It creates VMs and reads back the addresses they were
 given; it does not manage networking, storage, or address allocation, and it will not change
 anything on the host outside the template it builds and the VMs it creates. A host that already runs
-VMs has everything it needs:
+VMs usually has everything it needs; check the first and third rows in particular, since a host can run
+VMs with a repository that fails `apt update`, or with static addresses and no DHCP server:
 
 | Assumption | Why |
 |---|---|
@@ -29,10 +30,11 @@ the parts of it this project depends on.
 ## Package repositories
 
 `make template` installs `libguestfs-tools` on the host to bake the QEMU guest agent into the image,
-and it refreshes the package lists first. That refresh fails if *any* repository does, so a single
-enterprise repository left enabled without a subscription (it returns `401 Unauthorized`) is enough
-to stop the build. Disable it, or add the No-Subscription repository in its place, in
-*Node → Updates → Repositories* - see
+and it refreshes the package lists first. That refresh fails if *any* repository does. A fresh install
+enables two enterprise repositories, Proxmox VE's and Ceph's (Ceph's even if you never use Ceph), and
+without a subscription both return `401 Unauthorized`, so one left enabled is enough to stop the build.
+In *Node → Updates → Repositories*, disable every entry whose URI is on `enterprise.proxmox.com`, and add
+the No-Subscription repository so the host keeps getting updates - see
 [Package Repositories](https://pve.proxmox.com/wiki/Package_Repositories).
 
 ## Networking: a bridge, and a DHCP server with room in it

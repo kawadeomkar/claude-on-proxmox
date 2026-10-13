@@ -15,10 +15,12 @@ Edit the three git-ignored files `make init` created:
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host. VMs are **not** listed here |
-| `inventory/group_vars/all/local.yml` | Proxmox node/storage names, package choices, which repos to skip |
-| `inventory/group_vars/all/vault.yml` | Proxmox API token, GitHub username/token, optional Anthropic API key and Tailscale auth key |
+| `inventory/group_vars/all/vault.yml` | `vault_proxmox_api_token_secret`: the token secret `pveum` printed, shown only once; `vault_github_username`. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key` |
+| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a storage or bridge that is not `local-lvm` or `vmbr0`, a node not named `pve`, `tailscale_enabled: false` without a Tailscale account, VM size, which repositories to clone |
 
-Every setting either file takes is in the [settings reference](../reference/settings.md).
+Every setting the two files take, with its default, is in the [settings reference](../reference/settings.md).
+Tailscale is on by default: without a Tailscale account, set `tailscale_enabled: false` in `local.yml`,
+or every deploy opens Tailscale's sign-in page and waits for it.
 
 ## Encrypt the secrets, then deploy
 
@@ -51,7 +53,7 @@ else take them: each opens a page in your browser, and the run waits for you the
 3. **Tailscale**, when there is no `vault_tailscale_auth_key` (with one, configuration joined the VM
    already). It starts by itself too: the page opens, you sign in and connect the VM, and the run waits up
    to five minutes (`tailscale_login_timeout`). A VM you approve later joins by itself. See
-   [Reaching a VM over Tailscale](../guides/tailscale.md).
+   [Tailscale](../guides/tailscale.md).
 
 With `github_login_auto_start: false` or `tailscale_login_auto_start: false` the run asks first, VM by VM,
 so a VM can be left for later: Enter signs in a VM whose Claude sign-in you just answered, `y` one that
@@ -126,5 +128,21 @@ Those VMs may be stopped, still booting, built without the agent, or on a node t
 ```
 
 Later, `make code VM_NAME=alpha` opens the VM in VS Code again, and the alias the run wrote, named
-after the VM, makes `ssh alpha` work too (see [Using VS Code on the VM](../guides/vscode.md)).
+after the VM, makes `ssh alpha` work too (see [VS Code](../guides/vscode.md)).
 [VMs and fleets](../guides/vms.md) covers naming, several VMs at once, and re-running.
+
+## If a run fails
+
+A run that fails stops and says why, and `make logs` lists the log of the whole run. Fix the cause and run
+the same `make deploy` again: every stage is idempotent, and a VM a failed run left half-built is finished
+rather than skipped. `make vault-edit` changes a secret in the encrypted vault. The usual snags on a first
+run:
+
+| What the run says | What to check |
+|---|---|
+| `make template` cannot refresh the package lists | An enterprise repository enabled on the host without a subscription: [Package repositories](requirements.md#package-repositories) |
+| The token is refused (401 or 403) | `proxmox_api_user`, `proxmox_api_token_id` and `vault_proxmox_api_token_secret`, and the role's privileges: [Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token) |
+| A VM never reports an address | The token's guest-agent privilege (`VM.Monitor` on 8.x, `VM.GuestAgent.Audit` on 9.x), and a template built with the guest agent: [Upgrading](../guides/upgrading.md) |
+| The VM is created untagged, or `make configure` finds no VM | Datacenter → Options → User Tag Access: [Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token) |
+| The clone fails, or the disk cannot be created | `proxmox_storage` (an install on ZFS has `local-zfs`, not `local-lvm`) and `proxmox_node`, which must be the node that holds the template: [Requirements](requirements.md#storage) |
+| A sign-in fails | The run names the command that retries it - `make claude-login`, `make github-login` or `make tailscale-login` with `VM_NAME` - and the rest of the deploy goes on |

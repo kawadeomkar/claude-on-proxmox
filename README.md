@@ -7,7 +7,8 @@ One command, `make deploy VM_NAME=alpha`:
 2. **Provision** – clones it into a VM named `alpha`, with your SSH key; your DHCP server gives it an
    address, and the guest agent reports it back.
 3. **Configure** – installs a baseline, developer tooling (Node.js, Docker, GitHub CLI, uv), Claude Code
-   and Tailscale, and clones your GitHub repositories into `~/projects`.
+   and Tailscale, and clones every repository of your GitHub account (or the ones you list) into
+   `~/projects`.
 4. **Sign in** – to Claude, which starts Remote Control so the session is on your phone too; `gh` to
    GitHub, ready to push; and Tailscale, to reach the VM from anywhere. Each is a page in your browser.
 5. **Open** – the VM in VS Code, with a terminal running Claude.
@@ -15,17 +16,19 @@ One command, `make deploy VM_NAME=alpha`:
 Every step is idempotent, so the same command is how you apply a change later. Everything specific to
 your environment - the Proxmox address, tokens - lives in git-ignored files.
 
-**Documentation:** the [wiki in `docs/`](docs/README.md) covers every feature, setting and design
-decision. This page gets you to a first deploy.
+**Documentation:** [`docs/`](docs/README.md) covers every feature, setting and design decision. This
+page gets you to a first deploy.
 
 ## What you need
 
 - **A Proxmox VE 8.x or 9.x host** that already runs VMs: `apt` working, a bridge with a DHCP server on
   it, and a storage for VM disks ([what the project assumes](docs/getting-started/requirements.md)).
-- **On your machine:** Python 3.12+, [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+,
-  `make`, an SSH key at `~/.ssh/id_ed25519.pub`, and VS Code with the `code` command (optional).
-- **Accounts:** a Claude Pro, Max, Team or Enterprise login, which Remote Control needs (an Anthropic API
-  key works too, with Remote Control off); GitHub; and optionally Tailscale.
+- **On your machine** (macOS or Linux): Python 3.12+, [uv](https://docs.astral.sh/uv/getting-started/installation/)
+  0.12+, `make`, an SSH key at `~/.ssh/id_ed25519.pub`, and VS Code with the `code` command (optional).
+- **Accounts:** a Claude Pro, Max, Team or Enterprise login, which Remote Control needs - on Team and
+  Enterprise an Owner turns Remote Control on for the organisation first - or an Anthropic API key, with
+  Remote Control off; GitHub; and Tailscale, which is on by default: without an account, set
+  `tailscale_enabled: false` in `local.yml`.
 
 ## Quick start
 
@@ -61,16 +64,18 @@ pveum aclmod /sdn/zones/localnetwork/vmbr0 -user ansible@pve -role AnsibleVM   #
 pveum user token add ansible@pve ansible --privsep 0
 ```
 
-[Proxmox access](docs/getting-started/proxmox-access.md) explains each privilege, a datacenter setting
-that can block the project's tag, and validating the host's certificate.
+[Proxmox access](docs/getting-started/proxmox-access.md) explains the guest-agent privilege, a datacenter
+setting that can block the project's tag, and validating the host's certificate.
 
 **3. Fill in the three git-ignored files** that `make init` created:
 
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | The token secret printed above, your GitHub username; optionally a GitHub token, an Anthropic API key and a Tailscale auth key |
-| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a storage that is not `local-lvm`, a node not named `pve`, VM size, which repositories to clone ([every setting](docs/reference/settings.md)) |
+| `inventory/group_vars/all/vault.yml` | `vault_proxmox_api_token_secret`: the token secret `pveum` printed, shown only once; `vault_github_username`. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key` |
+| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a storage or bridge that is not `local-lvm` or `vmbr0`, a node not named `pve`, `tailscale_enabled: false` without a Tailscale account, VM size, which repositories to clone |
+
+Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md).
 
 **4. Encrypt the vault and deploy.**
 
@@ -83,38 +88,47 @@ make deploy VM_NAME=alpha
 
 The run stops for you three times, each at a page it opens in your browser:
 
-1. **Claude** - authorise Claude Code; your browser comes back to the VM by itself.
+1. **Claude** - authorise Claude Code; your browser comes back to the VM by itself. Skipped when the vault
+   has an Anthropic API key.
 2. **GitHub** - the one-time code is on your clipboard: paste it and authorise. Skipped when the vault
    has a GitHub token.
-3. **Tailscale** - sign in and connect the VM. Skipped when the vault has a Tailscale auth key.
+3. **Tailscale** - sign in and connect the VM. Skipped when the vault has a Tailscale auth key, or with
+   `tailscale_enabled: false`.
 
 Then VS Code opens on the VM, in `~/projects`, with Claude running in a terminal. The first time, VS Code
 asks you to trust the folder and to allow automatic tasks; both are yours to answer.
 [Your first deploy](docs/getting-started/first-deploy.md) walks through each stop, and what to do when
 one is skipped or fails.
 
+**If a run fails**, it stops and says why, and `make logs` lists the whole run. Fix the cause and run the
+same `make deploy` again: every stage is idempotent, and a VM a failed run left half-built is finished
+rather than skipped. `make vault-edit` changes a secret. The usual first-run snags are in
+[Your first deploy](docs/getting-started/first-deploy.md#if-a-run-fails).
+
 ## Everyday commands
 
 | Command | What it does |
 |---|---|
-| `make deploy VM_NAME=alpha,beta` | Create and configure VMs, and sign them in. Re-run it after changing a setting |
+| `make deploy VM_NAME=alpha,beta` | Create and configure VMs, and sign them in. Re-run it after changing a setting (VM size applies when a VM is created) |
 | `make list` | The VMs this project created, and their addresses |
 | `make code VM_NAME=alpha [PROJECT=repo]` | Open a VM, or one repository on it, in VS Code with a Claude terminal |
-| `ssh alpha` | The alias every run keeps pointed at the VM's current address |
+| `ssh alpha` | The alias `make deploy`, `make configure` and `make code` keep pointed at the VM's address, in `~/.ssh/claude-on-proxmox.conf` (one `Include` line added to `~/.ssh/config`) |
 | `make configure VM_NAME=alpha [TAGS=claude_code]` | Re-apply the configuration, or one role of it |
-| `make claude-login` / `github-login` / `tailscale-login VM_NAME=alpha` | A sign-in that was skipped |
+| `make claude-login VM_NAME=alpha` | Sign Claude in, if that was skipped, and start Remote Control |
+| `make github-login VM_NAME=alpha` | Sign `gh` in, and clone the private repositories |
+| `make tailscale-login VM_NAME=alpha` | Join your tailnet by Tailscale's web login |
 | `make destroy VM_NAME=alpha` | Sign the VM out of Claude, GitHub and Tailscale, then delete it |
 | `make logs` | The log of every run, newest first |
 
 [Every target](docs/reference/make-targets.md) is in the reference.
 
-## Contributing
+## Help and contributing
 
-Bug reports and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, the test
-commands and the conventions this repository follows, and [the wiki's development pages](docs/development/testing.md)
-for the test suite. Security issues go through the process in [SECURITY.md](SECURITY.md) rather than a
-public issue.
+Questions and bugs go to [Issues](https://github.com/kawadeomkar/claude-on-proxmox/issues); security
+issues through [SECURITY.md](SECURITY.md) instead. Pull requests are welcome - see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the setup and the conventions, and [Testing](docs/development/testing.md)
+for the test suite.
 
 ## License
 
-MIT
+[MIT](LICENSE)
