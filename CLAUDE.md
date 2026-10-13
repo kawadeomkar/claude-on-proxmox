@@ -6,15 +6,18 @@ conventions — this file is the part that is easy to get wrong.
 
 ## Always run tooling through the virtualenv
 
-Every tool is pinned in `requirements.txt` and lives in `.venv/bin`. Use `make`, or call
-`.venv/bin/<tool>` directly. Never a system-wide `ansible`, `ansible-lint` or `molecule`.
+Every tool is pinned in `pyproject.toml`, locked with all it pulls in in `uv.lock`, and lives in
+`.venv/bin`. Use `make`, or call `.venv/bin/<tool>` directly. Never a system-wide `ansible`,
+`ansible-lint` or `molecule`. uv is the one tool on `PATH` by design: it only builds `.venv`
+(`make venv`) and the lock (`make lock`, after editing a pin; never edit `uv.lock` by hand).
 
 Molecule resolves `ansible-playbook` from `PATH` and only *appends* the virtualenv, so it must be
 **prepended** or a different ansible-core is silently used. The `molecule` targets already do this;
 a hand-rolled `molecule test` will not.
 
 ```
-make lint            # yamllint --strict, ansible-lint (production), ruff check + format
+make venv            # sync .venv to uv.lock (uv sync --locked); make lock after editing a pin
+make lint            # uv lock --check, yamllint --strict, ansible-lint (production), ruff check + format
 make syntax          # --syntax-check on deploy.yml and playbooks/*
 make unit            # pytest, tests/unit/
 make molecule MOLECULE_ROLES="proxmox_vm"      # one role scenario
