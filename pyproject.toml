@@ -1,3 +1,44 @@
+# The Python tooling for developing and testing this project, managed with uv. Edit the pins here,
+# never uv.lock, then run `make lock`: the lock pins every package these pull in as well, with
+# hashes, and `make venv` installs exactly what it lists into .venv.
+
+[project]
+name = "claude-on-proxmox"
+# The [project] table requires one; nothing is built or published, so it never changes.
+version = "0"
+description = "The controller's Python for the playbooks, and the linters and tests that check them."
+# The pinned ansible-core's controller range.
+requires-python = ">=3.12"
+# What the playbooks need on the controller.
+dependencies = [
+    "ansible-core==2.21.5",
+    # Required on the controller by the community.proxmox collection
+    "proxmoxer==2.3.0",
+    "requests==2.34.2",
+]
+
+[dependency-groups]
+# The linters, the tests and the git hooks: make lint, unit, molecule and init. uv installs this
+# group by default.
+dev = [
+    "ansible-lint==26.8.0",
+    "molecule==26.8.0",
+    "molecule-plugins[docker]==26.7.15",
+    # Required by the Docker driver for Molecule
+    "docker==7.2.0",
+    "yamllint==1.38.0",
+    "pre-commit==4.6.2",
+    "pytest==9.1.1",
+    "ruff==0.16.6",
+    # The uv CI runs: .github/actions/setup installs the version uv.lock pins, so Dependabot
+    # bumps it with everything else.
+    "uv==0.13.0",
+]
+
+[tool.uv]
+# Not a Python package: uv installs the dependencies and never builds this project.
+package = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 # The test modules share tests/unit/harness.py, imported by name in any import mode.
