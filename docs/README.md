@@ -1,0 +1,56 @@
+# claude-on-proxmox
+
+Ansible that creates Ubuntu VMs on a Proxmox VE host and configures each as a
+[Claude Code](https://code.claude.com/docs) development machine: one `make deploy` builds the template,
+creates the VM, installs the tools and Claude Code, signs it in to Claude, GitHub and Tailscale, and
+opens it in VS Code with a Claude terminal.
+
+This wiki is the project's documentation, and the source of truth for it. The
+[README](https://github.com/kawadeomkar/claude-on-proxmox#readme) gets you to a first deploy; everything
+else is here.
+
+## Getting started
+
+- [Requirements](getting-started/requirements.md) - your machine, and what the project assumes of the
+  Proxmox host: storage, DHCP, more than one node.
+- [Proxmox access](getting-started/proxmox-access.md) - root SSH for the template, and the API token
+  for everything else.
+- [Your first deploy](getting-started/first-deploy.md) - `make init`, the three files, the vault, and
+  what `make deploy` asks of you.
+- [Upgrading](getting-started/upgrading.md) - from an earlier version of this project.
+
+## Guides
+
+- [VMs and fleets](guides/vms.md) - naming, several VMs at once, re-running, one role at a time.
+- [GitHub](guides/github.md) - which repositories are cloned, private ones, pushing from the VM.
+- [Remote Control](guides/remote-control.md) - the VM's Claude session on claude.ai and your phone, or
+  an API key instead.
+- [Tailscale](guides/tailscale.md) - each VM on your tailnet, and keeping it off your other devices.
+- [VS Code](guides/vscode.md) - the SSH alias, `make code`, the Claude terminal and the session notes.
+- [During a run](guides/runs.md) - the prompts, NEXT STEPS, and the run logs.
+- [Tearing down](guides/destroy.md) - `make destroy`, and what it releases first.
+- [What the VM trusts](guides/what-the-vm-trusts.md) - the defaults a development box runs with.
+
+## Reference
+
+Generated from the files they describe by `make docs`, with notes written around them:
+
+- [Make targets](reference/make-targets.md) - every entry point.
+- [Settings](reference/settings.md) - everything `local.yml` and `vault.yml` take, with defaults.
+- [Roles](reference/roles/README.md) - each role's variables, from its `meta/argument_specs.yml`.
+- [Repository layout](reference/layout.md) - where things are.
+
+## Architecture
+
+[How it is built, and why](architecture/README.md): the identity model, each playbook and role, the
+variable layers, convergence, failure modes, the security model and the tests. Read it before
+changing behaviour.
+
+## Development
+
+- [Testing](development/testing.md) - the test suite, the fakes it runs against, and CI.
+- [This wiki](development/docs.md) - how these pages are organised, generated and checked.
+- [CONTRIBUTING.md](https://github.com/kawadeomkar/claude-on-proxmox/blob/main/CONTRIBUTING.md) - setup,
+  conventions and pull requests.
+- [SECURITY.md](https://github.com/kawadeomkar/claude-on-proxmox/blob/main/SECURITY.md) - reporting a
+  vulnerability, and the known trade-offs.

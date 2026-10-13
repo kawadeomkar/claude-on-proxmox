@@ -144,8 +144,8 @@
       tags: [always]
 
 # One SSH alias per VM on this machine, so `ssh alpha` and the host picker of
-# VS Code's Remote - SSH extension follow the address DHCP gave it (README,
-# "Using VS Code on the VM"). A localhost play after the roles: the alias must
+# VS Code's Remote - SSH extension follow the address DHCP gave it
+# (docs/guides/vscode.md). A localhost play after the roles: the alias must
 # not exist before the VM is ready, and the play above has just recorded
 # where each VM's code lives. Only a VM that finished that play gets one.
 # Tagged "always" like discovery, so `make configure TAGS=...` still

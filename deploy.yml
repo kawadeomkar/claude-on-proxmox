@@ -68,7 +68,7 @@
     # configuration on the node it is sent to, so a template on any other
     # node fails every clone with "configuration file does not exist" - right
     # after this play said the template was built. Said here instead, with
-    # both nodes named (README, "If you have more than one node").
+    # both nodes named (docs/getting-started/requirements.md).
     - name: Fail when the template is on another node
       vars:
         claude_template_node: >-

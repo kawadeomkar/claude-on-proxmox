@@ -378,7 +378,7 @@
                  | trim | regex_replace('[.]$', '') }}).
 
 # The alias this project keeps for each VM on this machine goes with the VM,
-# as its host key does (README, "Using VS Code on the VM"), and only with a
+# as its host key does (docs/guides/vscode.md), and only with a
 # VM that is actually gone: one whose deletion failed above keeps its alias,
 # since it is still there to connect to. A run refused before anything was
 # deleted never reaches this play; removing a block that is not there is a

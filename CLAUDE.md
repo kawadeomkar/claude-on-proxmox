@@ -1,8 +1,10 @@
 # CLAUDE.md
 
 Ansible that creates Ubuntu VMs on a Proxmox VE host and configures them as Claude Code
-development boxes. `README.md` is the user manual and `CONTRIBUTING.md` has the setup and
-conventions — this file is the part that is easy to get wrong.
+development boxes. The wiki in `docs/` is the documentation - the guides are the user manual,
+`docs/architecture/` the design, numbered by section - `README.md` is the short getting-started
+page, and `CONTRIBUTING.md` has the setup and conventions. This file is the part that is easy to
+get wrong.
 
 ## Always run tooling through the virtualenv
 
@@ -72,7 +74,7 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   once, and `roles/claude_code/tasks/main.yml` either includes `remote_control.yml` or removes a
   unit an earlier run installed. Both directions must converge on a VM that was on the other path:
   `settings.yml` removes a key it no longer manages, and eligibility rejects any `apiKeySource` in
-  `claude auth status`. See ARCHITECTURE.md §5.5.
+  `claude auth status`. See docs/architecture/roles.md §5.5.
 - **The GitHub sign-in converges both ways, and the listing uses whatever token the VM holds.**
   `github_projects` signs `gh` in from `github_token` when there is one, otherwise prints the
   device-flow command and uses the token `gh` stored at that login for the listing
@@ -97,7 +99,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   still lists, and a private repository is cloned only where git has a credential for it - over ssh
   always, over https with gh signed in and git's helper - and otherwise skipped and named, not cloned
   and failed. See
-  ARCHITECTURE.md §5.6.
+  docs/architecture/roles.md §5.6.
 - **Tests never open the developer's browser, touch their clipboard, or read their terminal.** The
   sign-ins - GitHub's device flow (`roles/github_projects/tasks/device_flow.yml`), Claude's browser
   sign-in (`roles/claude_code/tasks/browser_login.yml`) and Tailscale's web login
@@ -169,7 +171,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   terminal gets `deploy_sign_in: false` from the Makefile (`NO_TTY_ARGS`), since sign-ins that start by
   themselves would otherwise wait for a browser nobody watches. The path unit that starts Remote
   Control when a login lands is `PathChanged=`, never `PathExists=`, which restarts a stopped service
-  instantly, and exists only while the login is the one thing missing (ARCHITECTURE §5.5).
+  instantly, and exists only while the login is the one thing missing (docs/architecture/roles.md §5.5).
 - **Tests never touch a real Proxmox, GitHub, Tailscale or hypervisor.** `tests/molecule/` holds the
   fakes: a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, a GitHub API over
   local bare repos (the authenticated endpoints included), a stand-in `gh` installed ahead of the real

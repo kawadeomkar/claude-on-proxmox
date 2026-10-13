@@ -1,0 +1,267 @@
+# 11. Testing architecture
+
+Three tiers. **No test ever talks to a real Proxmox, a real GitHub, a real Tailscale, or a real
+hypervisor** - nor this machine's own `tailscale`, which the unit harness stands in for with one that
+fails the test if it is called.
+
+## 11.1 Unit — `make unit`
+
+pytest over `tests/unit/`: 906 tests. By file:
+
+- **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
+  `test_text_filter.py` 27): the guest-agent readers, `guest_ipv4` among them refusing anything that
+  does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
+  sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
+- **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
+  for real - untagged output byte for byte the default's, no hook failing, the browser block, one
+  waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
+  the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner`,
+  and every report followed by its record. Each role's own tests then assert what it records, in every
+  state they run.
+- **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
+  81), both ways.
+- **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
+  against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
+  allowlisted environment, desktop stand-ins that fail a run that reaches for them, no terminal).
+- **The Claude sign-in** (`test_claude_login.py` 42): `browser_login.yml` against the stand-in `claude`,
+  five runs at a pseudo-terminal of the test's own - the page before the prompt, a partly copied code,
+  an expired attempt, Ctrl-C then A, and keys typed before the prompt is ready - with the code searched
+  for in every run at `-vvv` with module arguments injected; and the browser coming back by itself, a
+  stand-in `ssh` recording the forward and the test playing the browser at the stand-in's callback: no
+  prompt, a forward refused, a page that is not Claude's, a run over SSH or no browser here falling back
+  to the paste, and a browser that never comes back skipping the VM's later sign-ins.
+- **The GitHub sign-in** (`test_github_auth.py` 119): the `github_projects` role's `auth.yml`,
+  `clone.yml`, `device_flow.yml` and `github_login.yml` for real against the stand-in `gh` and the fake
+  GitHub API on a loopback port, one host per sign-in state, twice over for idempotence, with `git
+  credential fill` proving that git itself gets the token through the config written, deploy's GitHub
+  step per VM - starting by itself, and asking first with `github_login_auto_start: false` - every task
+  that renders a token held to `no_log`, and the whole output searched for every canned token.
+- **The sign-in playbooks** (`test_sign_in_plays.py` 24): `claude_login.yml`, `github_login.yml` and
+  `deploy.yml`'s own sign-in steps end to end - a VM whose ssh refuses the connection among VMs that
+  sign in, a failed sign-in said in its turn, a failure after a sign-in (Remote Control's start, a
+  clone) told apart from a failed one and raised at the end of `make deploy`, deploy with no terminal,
+  a refused code and `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts.
+- **Tailscale** (`test_tailscale.py` 67): the role's files from `ownership.yml` on, and
+  `tailscale_login.yml` whole, against the stand-in `tailscale`, with stand-ins for `dpkg-query` and
+  `getent`: a first join once, with the key on stdin and in no report, argument or file; no key for a node
+  whose key expired, and a node logged out by hand joined again; a refused key and an OAuth secret without
+  tags as reports; one `set` for drift; a login or a Tailscale made by hand only read; tags compared only
+  when configured; `NoState` reads, `Starting` and a silent daemon; check mode; the web login's one `up`,
+  its page said before the wait and opened only when it is Tailscale's, an approval after `up` exited, a
+  wait that runs out; a page approved after the run, recorded as the role's login by the next configure,
+  and a join still under way marked pending - an earlier key's refusal still in Health included - a refused
+  key or refused tags leaving nothing; a control server's page trusted however its address ends, and never
+  one on another host; make deploy's sign-in step saying nothing its configure play did again; an expired
+  login made by hand left to whoever made it, never signed in again by the web; a page still waiting reported
+  before an expired or refused key, make deploy's two plays included; a Tailscale dpkg does not know only
+  read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
+  first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
+  that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
+- **Destroy's release** (`test_release.py` 28): `destroy.yml`'s release play and report against the
+  stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
+  Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
+  pasted by hand signed out and told apart, the vault token even under a marker claiming it, and a logout
+  gh refuses said as such; a
+  device deleted by an API token and by an OAuth client, refused, already gone, and never when the ID the
+  VM reports names another device; a VM that could not be reached, with what is left of it named; every
+  canned credential searched for in the output; and, read from `destroy.yml`, a name two VMs share
+  refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
+  stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
+  against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
+- **`make code`** (`test_code_session.py` 111): the Claude terminal's script against stand-ins, once at a
+  pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
+  for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
+  session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
+  exit 0 and the notes opened when its Python raises, hangs or is missing, a read that hangs costing
+  2 s, a symlink neither followed nor opened - the refresh after a sign-in in the terminal, and the
+  workspace each window gets: the notes' folder only where its own folder holds them.
+- **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
+  renders it - the placeholder, a live section carried over, the parts switched off, the same file
+  from every window, and no time, template marker or token shape in it.
+- **The managed SSH config** (`test_ssh_config.py` 29): `tasks/ssh_config.yml` for real against a
+  temporary home, resolved with `ssh -G` - the refusal of a name or address that is not one plain word,
+  the guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, that no
+  playbook sets the task file's inputs as facts, and that the user's own Include and file mode are left
+  alone, a group the user is not in included (macOS).
+- **Smaller ones**: `test_configure_tags.py` 2 (`--tags claude_code` still runs discovery and the alias
+  play), `test_deploy_report.py` 4 (deploy's opening message, rendered by its own tasks),
+  `test_proxmox_vm_absent.py` 5 (deleting a VM forgets its host key under its address and
+  `<name>.<domain>`), `test_var_names.py` 21 (no task var named like a register or fact, in any
+  playbook or role), `test_cloud_init_wait.py` 3 (a first boot that failed is said with what failed and
+  how to build the VM again).
+- **The Makefile** (`test_makefile.py` 77): `vm-name-check` accepts DNS-like names and refuses
+  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision`,
+  `ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the check before the
+  playbook; `deploy` refuses `TAGS`; `code` refuses no name and several, and passes `PROJECT` as its own
+  JSON extra-var after `project-name-check` has accepted real repository names and refused `/`, `.`,
+  `..`, quotes, shell syntax, a newline, non-ASCII and more than 100 characters; a run with no terminal
+  turns the desktop steps off; every playbook target exports its own `ANSIBLE_LOG_PATH` (never named
+  after `VM_NAME`) into a `0700` directory, `LOG_DIR=` turns it off, old run logs are pruned and nothing
+  else is, and `logs-clean` deletes only run logs.
+
+## 11.2 Role scenarios — `make molecule MOLECULE_ROLES="..."`
+
+One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting driver and platform
+from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
+side_effect → verify → destroy.
+
+`vscode_server`'s side effect takes the forwarding away three ways, each in a drop-in of its own,
+runs the role inside a `block`/`rescue`, and asserts the failure names the setting and the file:
+`AllowTcpForwarding no` sorted before the role's drop-in, `DisableForwarding yes`, and a
+`Match User dev` block sorted last that limits forwarding to the remote direction - the case a
+global `sshd -T` cannot see. Then it runs the role switched off and asserts both files are gone, and
+switched on again for verify, which reads the drop-in, the sysctl file and `sshd -T` (forwarding on,
+converge's keepalive values in effect).
+
+`tailscale`'s scenario runs two VMs - one that never had Tailscale and one where it was installed and
+signed in by hand - with the real package and daemon, log upload off, and the stand-in `tailscale` in front
+of it from `prepare` on. Molecule's `check` stage runs converge in check mode before converge, as every
+VM meets the first `make check` after the upgrade. The side effect sets back a hostname changed behind the
+role's back with one `set`, turns Tailscale off twice (removed once, then nothing) and on again, and makes
+`pkgs.tailscale.com` unreachable: the install fails at the package, the repository comes back out, `apt`
+still works, and turning Tailscale off removes what the failed run left. Verify reads the conffile -
+`PORT` kept beside the role's `FLAGS` - the daemon's flags and the drop-in in effect, finds the key in no
+file (searched for with the needle on stdin, since sudo logs a command's environment), no connection of
+`tailscaled`'s, and the hand-installed VM as it was.
+
+`proxmox_vm`'s scenario is the interesting one:`proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
+came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —
+`192.0.2.51`, not `172.17.0.1`, which would mean the docker bridge was picked up. Its side effect
+proves the ownership guards: an untagged VM and the template are refused by both provisioning and
+deletion without a single config write reaching either, and a VM left tagged but unconfigured — what
+an interrupted run leaves — is repaired. `proxmox_template`'s side effect runs the role against a
+VMID the fake `/etc/pve/.vmlist` places on a second node and asserts the refusal names that node and
+that no build started.
+
+## 11.3 Playbook scenarios — `make molecule-scenario SCENARIO=...`
+
+| Scenario | What it proves |
+|---|---|
+| `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs |
+| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM |
+
+Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scenario inventory, so the
+actual variable wiring is exercised rather than a copy. Test overrides live in `host_vars/`. The
+symlink must survive checkout — clone the repo, do not download a zip.
+
+The `provision` scenario is deliberately adversarial. Before discovery runs, `verify.yml` seeds VMs
+that must not be claimed, or that are this project's but once broke a fleet-wide command:
+
+| Fixture | Why |
+|---|---|
+| `stranger`, tagged `claude-on-proxmox-staging` | a substring match would configure someone else's staging box |
+| `bystander`, tagged `not-claude-on-proxmox` | the same trap from the other side |
+| `nonic`, correctly tagged but with its `net0` removed (`delete=net0`) | `net_mac` used to raise and take discovery down for the fleet |
+| `commas`, tagged `ansible,claude-on-proxmox` and kept comma-joined | exercises the `,` separator of `claude_vm_tag_pattern`; every other VM has the `;` form |
+| `netone`, tagged, LAN NIC on `net1` and no `net0` | skipped with `proxmox_nic: net0`, found at `192.0.2.59` with `net1` — discovery and the listing used to hard-code `net0` |
+| `parked`, tagged, **stopped**, VMID **4013** | its agent answers `VM 4013 is not running`, which the unanchored `40[13]` took for a 401 and failed discovery and `make list` |
+| `legacy`, tagged `claude;ansible` as `main` tagged VMs, stopped | `destroy.yml` must refuse it, and delete it with `proxmox_vm_allow_untagged_delete` |
+
+Every running fixture's agent is waited on, and a check before discovery confirms the fake really
+serves what each fixture depends on — `nonic` has no `net0`, `commas`' tags come back comma-joined,
+the untagged template has no `tags` key, `parked`'s agent error carries Proxmox's reason text, and an
+unrelated VM sits on a node that answers every request with 595 — so the only thing a fixture tests
+is the code under test.
+
+That unrelated VM on a node that is down is always there (§11.4), so every fleet-wide command in both
+Proxmox scenarios runs against a cluster with one unreachable node.
+
+`vm_name` is passed only to converge's import of `provision.yml`, not set in `group_vars`, so
+discovery and the listing each run three times: once without it, as a bare `make configure` or
+`make list` does, where the ownership filter is all that stands between them and every running VM;
+once with it, to prove the narrowing; and once for `netone` with `proxmox_nic: net1`. The fleet-wide
+passes assert that discovery considered exactly `alpha`, `beta`, `commas`, `netone`, `nonic` and
+`parked`, published only `alpha`, `beta` and `commas`, and that the listing shows all six, with a
+blank address for `netone`, `nonic` and `parked`. The request log is checked for one clone per VM,
+by name, with VMIDs from `/cluster/nextid`.
+
+Several outcomes are failures or partial results, which an imported playbook cannot express, so the
+scenario's last play runs `ansible-playbook` as a child process against its own inventory, searching
+stdout and stderr for a failure message (Molecule prints task failures to stderr):
+
+- fleet-wide discovery with two tagged VMs named `twin` must exit non-zero with the duplicate-name
+  refusal;
+- re-running `provision.yml` after shutting `beta` down must exit 0, publish `alpha`, report `beta` as
+  stopped and leave it stopped;
+- `discover.yml --check`, as `make check` runs it, must still find `alpha`;
+- `deploy.yml` for the stopped `beta` must report the template as built, and with
+  `proxmox_template_name` pointing at nothing, as about to be built;
+- `destroy.yml` must refuse without confirmation (the prompt's non-interactive default), refuse
+  `legacy` with the hint to tag it, and refuse the template even with
+  `proxmox_vm_allow_untagged_delete` — deleting nothing — then delete `commas` and `parked` in one
+  run and `legacy` with the flag, leaving every other VM in place. Aliases seeded for all of them
+  beforehand survive every refusal, and each deletion takes exactly its own. `guarded`, tagged and
+  with protection on, joins the `commas,parked` run: Proxmox refuses to delete it (the fake does as
+  Proxmox does), the run exits non-zero, the other two are still deleted, and `guarded` keeps both
+  its VM and its alias.
+- `ssh_config.yml` fleet-wide, with aliases seeded for a VM that exists nowhere and for the untagged
+  `stranger`: with the node that is down still down it prunes nothing and says which VMID holds it;
+  with that node switched back on (§11.4) it prunes the vanished one, leaves `stranger` alone and
+  reports it, and refreshes `alpha` with the workspace the destroy fixtures recorded; with `VM_NAME`
+  it prunes nothing.
+- `code.yml` against a stand-in `code` on `PATH` that records its arguments and lists what a file
+  says. The VM side is read with Ansible's local connection, against a projects directory made in
+  the ephemeral directory and given as `vm_projects_dir`, because the fake fleet's addresses
+  answer nothing: the first run installs the Remote - SSH extension and opens the workspace, the
+  second only opens it, the third opens `discord-music-bot` in it. Refused, each with its own
+  message and nothing opened: `stranger`, `nonic` (no address), a missing name, two names, the
+  stopped `beta` with `claude_ssh_host_domain` set (its name would still resolve), a
+  mistyped project (the projects are listed, the file among them is not), `parkbnb` for `ParkBnb`
+  (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file,
+  `../etc` and `..` (the playbook's own check), a VM with no projects directory,
+  an empty one, `.claude-on-proxmox` (the workspace files' own directory), a relative
+  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The user ssh
+  config in the ephemeral directory never exists. The workspace files are read back and parsed: one
+  folder, the project's path; one task, `folderOpen`, `bash -lc` in that folder; the whole
+  directory's hides `.claude-on-proxmox`. With VS Code settings in the ephemeral directory (never the
+  developer's) saying nothing, `"on"` behind a commented-out `"off"`, and `"off"`, the message asks
+  for trust and *Allow*, trust only, and says the terminal will not start; reopening leaves the file's
+  mtime and checksum alone; `vscode_claude_terminal: false` opens the bare folder and writes no file,
+  and no refusal writes one either.
+
+## 11.4 The fakes — `tests/molecule/`
+
+| Fake | Stands in for | Notes |
+|---|---|---|
+| `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does |
+| `fake_qm.sh` | `qm` on the PVE node | stateful, one config file per VMID, logs every invocation |
+| `fake_virt_customize.sh` | `virt-customize` | so `proxmox_template` runs in a container |
+| `fake_github_api.py` | the GitHub REST API | serves local bare repositories; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took, so a test can hold that nothing reaches it |
+| `fake_tailscale_api.py` | Tailscale's API | the OAuth client exchange, and a device looked up and deleted by node ID, each device with the name it was started with; 403 and 404 on cue, and `/fake/deleted` lists what went |
+| `fake_gh.sh` | `gh` | the auth commands only; one login per user, in a file under HOME, with every call logged |
+| `fake_tailscale.sh` | `tailscale` | the commands the role runs, against a node whose state is files under HOME: `status --json` and `debug prefs` shaped as a Running and a signed-out node really print, a join with a canned key on stdin, a refused or slow key, the web login's page and an approval that lands after `up` has exited, `NeedsMachineAuth`, a taken name, `NoState` reads after a start, logout resetting the prefs, a node ID (`node-id`), and with `real-daemon` an answer only while the real daemon's socket exists; a key is never written, and `calls.log` shows `KEY` in its place |
+| `fake_claude.sh` | `claude` | `auth status` and `auth login` as probed against Claude Code: the page, the `Paste code here if prompted >` prompt, then `Login successful.`, `Login failed: ...` or `Invalid code` for the line read from stdin, writing `~/.claude/.credentials.json` on success; given `BROWSER`, it hands it the page that redirects to its own callback on `127.0.0.1` and takes a code from there as from stdin; `auth logout`; `fake-refusal`, `fake-no-page`, `fake-gone` and `fake-foreign-page` in its state directory make it refuse in other words, print an error in place of the page, exit before reading a code, or hand its browser a page that is not Claude's |
+
+`fake_pve_api.py` is deliberately faithful where fidelity has caught bugs:
+
+- `normalise_tags()` stores tags the way PVE does — `;`-joined, lowercased, deduplicated, sorted.
+  Echoing the request back verbatim hid the `,` vs `;` difference from every test.
+- The agent refuses `AGENT_READY_AFTER = 2` polls **per VM**. With a single global counter the first
+  VM absorbed every refusal and the second's first poll succeeded, so a fleet never exercised the
+  wait loop more than once.
+- `agent_interfaces()` always reports `lo`, a `docker0` bridge the role must ignore, and the VM's own
+  `eth0` — which is what makes the "address came from the right NIC" assertion meaningful.
+- 401 replies have an empty body, as the real API does.
+- Failures carry Proxmox's reason phrase — `VM 4013 is not running` for a stopped VM's agent,
+  `QEMU guest agent is not running` while it boots — because proxmoxer copies it into the error
+  message that callers pattern-match.
+- `/cluster/resources` leaves `tags` out for an untagged guest, as PVE does. Sending `tags: ""`
+  hid that `claude_vm_tagged` needs `selectattr('tags', 'defined')`.
+- A second node, `pve2`, is listed as offline and holds an unrelated VM (8000, below the template so
+  `/cluster/nextid` is unaffected); every request to it gets a 595, as pveproxy returns for a node it
+  cannot reach. `PUT /api2/json/fake/nodes/pve2?status=online` - not a PVE endpoint - brings it back:
+  its guests are then listed with their names and as stopped, the way Proxmox lists guests on a node
+  that has just come back, which is the only way the "nothing is pruned while a node is down" path
+  can be shown to recover.
+- A config write carrying `fake-verbatim-tags` keeps its tags as sent, for the comma-joined fixture.
+  It is not a PVE parameter.
+
+## 11.5 Vagrant — `make vagrant-up`
+
+`configure.yml` against a real VirtualBox VM, with `claude_vm_discovery: false`. Not part of CI.
+
+## 11.6 Which scenarios need the network
+
+`common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects`, `tailscale` and the `configure` scenario
+install packages inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_template` and the
+`provision` scenario talk only to local fakes and still run offline.

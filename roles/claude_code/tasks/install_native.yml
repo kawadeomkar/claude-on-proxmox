@@ -28,7 +28,8 @@
       register: claude_code_tmp
 
     # The installer verifies the binary against the release manifest, but the
-    # script itself is trusted through TLS to claude.ai only (README).
+    # script itself is trusted through TLS to claude.ai only
+    # (docs/guides/what-the-vm-trusts.md).
     - name: install_native | Download installer script
       ansible.builtin.get_url:
         url: "{{ claude_code_installer_url }}"

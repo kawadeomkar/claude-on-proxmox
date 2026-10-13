@@ -1,12 +1,13 @@
 ---
 # Proxmox API connection. Token auth only. Prefer a dedicated user/token with
-# VM-scoped privileges over root@pam (see README, "Creating the Proxmox API token").
+# VM-scoped privileges over root@pam (docs/getting-started/proxmox-access.md).
 proxmox_vm_api_host: ""
 proxmox_vm_api_port: 8006
 proxmox_vm_api_user: ansible@pve
 proxmox_vm_api_token_id: ansible
 proxmox_vm_api_token_secret: ""
-# Set to true after trusting the PVE CA on the controller (README).
+# Set to true after trusting the PVE CA on the controller
+# (docs/getting-started/proxmox-access.md).
 proxmox_vm_validate_certs: false
 
 # Where and from what to create the VM.

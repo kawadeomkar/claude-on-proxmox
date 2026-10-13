@@ -60,5 +60,13 @@ collections/ansible_collections/
 .vscode/
 .DS_Store
 
-# Working documents - review reports and the like - stay local to the author.
-docs/
+# Working documents - plans, review reports, smoke runbooks and their renders -
+# stay local to the author, beside the wiki in docs/, which is committed.
+# zensical.toml's exclude_docs keeps them out of the site as well.
+docs/plan-*
+docs/review-*
+docs/live-smoke-*
+docs/*.html
+docs/*.src
+# The wiki built as a site (make docs-build, and the docs tests).
+site/

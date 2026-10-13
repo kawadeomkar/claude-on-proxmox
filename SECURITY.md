@@ -69,11 +69,12 @@ the repository.
 
 ## Known trade-offs, not vulnerabilities
 
-Some defaults trade strictness for a working first run. These are documented in the README, and reports
+Some defaults trade strictness for a working first run. These are documented in the wiki, and reports
 that only restate them are not treated as vulnerabilities:
 
 - `proxmox_validate_certs` defaults to `false`, because a stock Proxmox install presents a self-signed
-  certificate. The README explains how to trust the Proxmox CA and turn it on.
+  certificate. [Proxmox access](docs/getting-started/proxmox-access.md#trusting-the-proxmox-certificate)
+  explains how to trust the Proxmox CA and turn it on.
 - The VM's user gets passwordless sudo and docker group membership by default; both are toggles.
 - SSH host keys are accepted on first contact (`StrictHostKeyChecking=accept-new`) so a freshly cloned VM
   can be reached without manual steps. Changed keys are still refused.
@@ -111,7 +112,7 @@ that only restate them are not treated as vulnerabilities:
   VM a run provisions, so a second VM would be given the same address.
 
 - **Tailscale reach.** A tailnet's default policy lets every device reach every other, tagged devices
-  included, and these VMs run an AI agent with passwordless sudo. The README's policy edit narrows the
+  included, and these VMs run an AI agent with passwordless sudo. The [policy edit](docs/guides/tailscale.md#keeping-an-agent-vm-off-your-other-devices) narrows the
   default rule to the people's own devices, so a tagged VM can be reached but can open no connection, and
   adds a test the admin console runs on every save; a VM joined by the web login without a tag is the
   user's own device, and reaches what the user's devices reach. On the VM, sudo can always log the node
@@ -148,7 +149,7 @@ If you can show one of these is exploitable beyond the documented trade-off, ple
 ## Secrets committed by mistake
 
 CI runs gitleaks over the working tree and over every commit a push or pull request brings in, so a
-token committed and then deleted in a later commit still fails the run (ARCHITECTURE.md §10 lists what
+token committed and then deleted in a later commit still fails the run ([docs/architecture/security-model.md](docs/architecture/security-model.md) lists what
 it cannot see). A failing scan means the secret has already been pushed to a public repository, and
 rewritten commits stay reachable by SHA, from pull requests and in forks. Revoke or rotate the
 credential first, as GitHub's guide to [removing sensitive data][sensitive] advises; rewriting history
