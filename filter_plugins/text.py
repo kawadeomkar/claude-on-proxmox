@@ -55,9 +55,9 @@ def banner(body, title, host="", topic="", width=None):
     if width is None:
         width = min(_WIDTH, shutil.get_terminal_size((_WIDTH, 24)).columns)
     rule = "#" * max(int(width), _NARROWEST)
-    heading = "  -  ".join(
-        plain_text(part).strip() for part in (title, host, topic) if part is not None and plain_text(part).strip()
-    )
+    # plain_text gives "" for None, so a part that is missing or cleans to nothing is left out.
+    parts = (plain_text(part).strip() for part in (title, host, topic))
+    heading = "  -  ".join(part for part in parts if part)
     lines = body if isinstance(body, (list, tuple)) else [body]
     text = "\n".join(plain_text(line) for line in lines if line is not None).strip("\n")
     return f"{rule}\n##  {heading}\n{rule}\n" + (f"{text}\n" if text else "")

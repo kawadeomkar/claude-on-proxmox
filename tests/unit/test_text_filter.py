@@ -65,6 +65,13 @@ def test_a_banner_without_a_host_or_topic_names_the_title_alone():
     assert banner("x", "NEXT STEPS", width=30).splitlines()[1] == "##  NEXT STEPS"
 
 
+@pytest.mark.parametrize("missing", [None, "", "  ", "\x1b[0m", "\x07 \x1b]0;t\x07"])
+def test_a_host_or_topic_that_is_missing_or_cleans_to_nothing_is_left_out(missing):
+    # No "  -  " with nothing after it.
+    assert banner("x", "T", host=missing, topic="sign-in", width=30).splitlines()[1] == "##  T  -  sign-in"
+    assert banner("x", "T", host="alpha", topic=missing, width=30).splitlines()[1] == "##  T  -  alpha"
+
+
 def test_a_banner_never_wraps_its_body():
     # A URL or a command stays whole to copy; the terminal soft-wraps it.
     url = "https://claude.com/cai/oauth/authorize?" + "a" * 200
