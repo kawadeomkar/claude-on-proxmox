@@ -104,8 +104,9 @@ the stdout callback (§7.5) by path. Covered by `tests/unit/test_text_filter.py`
 ## 7.5 `callback_plugins/claude_on_proxmox.py` — the waits, and NEXT STEPS
 
 The stdout callback `ansible.cfg` names (`stdout_callback`, `callback_plugins`), and nothing else does: the
-unit harness runs the JSON callback with an empty `ansible.cfg` and Molecule sets an `ANSIBLE_CONFIG` of
-its own, so no output a test pins goes through it. It subclasses the default callback and carries the
+unit harness runs the JSON callback with an `ansible.cfg` that holds only `inject_facts_as_vars = false`
+(`harness.ANSIBLE_CFG`) and Molecule sets an `ANSIBLE_CONFIG` of its own, so no output a test pins goes
+through it. It subclasses the default callback and carries the
 default's `DOCUMENTATION` fragments (`default_callback`, `result_format_callback`). Without them the
 subclass has no options: every hook fails on its first `get_option`, Ansible only warns, and every task's
 result disappears from the screen and the log in a run that still exits 0. `--syntax-check` loads no

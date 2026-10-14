@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from harness import ansible_config
 
 REPO = Path(__file__).resolve().parents[2]
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
@@ -41,7 +42,6 @@ def _said(tmp_path: Path, built: bool, **extra) -> str:
     }
     playbook = tmp_path / "deploy_report.yml"
     playbook.write_text(yaml.safe_dump([play], sort_keys=False))
-    (tmp_path / "ansible.cfg").write_text("")
     variables = {
         "proxmox_template_name": "ubuntu-24.04-cloudinit",
         "proxmox_node": "pve",
@@ -51,7 +51,7 @@ def _said(tmp_path: Path, built: bool, **extra) -> str:
         **extra,
     }
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
-    env.update(ANSIBLE_CONFIG=str(tmp_path / "ansible.cfg"), ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json")
+    env.update(ANSIBLE_CONFIG=ansible_config(tmp_path), ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json")
     result = subprocess.run(
         [str(ANSIBLE_PLAYBOOK), "-i", "localhost,", "-c", "local", "-e", json.dumps(variables), str(playbook)],
         cwd=tmp_path,

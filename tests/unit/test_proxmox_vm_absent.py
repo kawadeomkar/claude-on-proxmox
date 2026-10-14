@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from harness import ansible_config
 
 REPO = Path(__file__).resolve().parents[2]
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
@@ -40,10 +41,9 @@ def _forget(tmp_path: Path, **extra) -> set[str]:
     vars_files = [str(ROLE / "vars" / "main.yml")]
     play = {"hosts": "localhost", "gather_facts": False, "vars_files": vars_files, "tasks": [task]}
     playbook.write_text(yaml.safe_dump([play]))
-    (tmp_path / "ansible.cfg").write_text("")
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
     # The module expands ~/.ssh/known_hosts from HOME: the scratch one.
-    env.update(HOME=str(home), ANSIBLE_CONFIG=str(tmp_path / "ansible.cfg"), ANSIBLE_NOCOLOR="1")
+    env.update(HOME=str(home), ANSIBLE_CONFIG=ansible_config(tmp_path), ANSIBLE_NOCOLOR="1")
     result = subprocess.run(
         [str(ANSIBLE_PLAYBOOK), "-i", "localhost,", "-c", "local", "-e", json.dumps(extra), str(playbook)],
         cwd=tmp_path,

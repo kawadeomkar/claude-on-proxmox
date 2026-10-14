@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from harness import ansible_config
 
 REPO = Path(__file__).resolve().parents[2]
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
@@ -75,9 +76,8 @@ def _render(tmp_path: Path, **overrides) -> str:
             ]
         )
     )
-    (tmp_path / "ansible.cfg").write_text("")
     env = {
-        "ANSIBLE_CONFIG": str(tmp_path / "ansible.cfg"),
+        "ANSIBLE_CONFIG": ansible_config(tmp_path),
         "ANSIBLE_NOCOLOR": "1",
         "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
         "HOME": str(tmp_path),
