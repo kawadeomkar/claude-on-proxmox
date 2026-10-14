@@ -38,11 +38,17 @@ described, so a VM rebuilt under the same name within the hour was configured wi
 `inject_facts_as_vars = false`, set in Molecule's shared config too, stops Ansible copying each to a
 top-level `ansible_architecture`, as ansible-core 2.24 will, so a read of one fails now rather than on
 that upgrade; `tests/unit/test_gathered_facts.py` scans for one on a path no scenario takes. `forks`
-is the number of VMs cloned, booted or configured at once - every `proxmox_vm` task is a localhost-delegated API call, and
-`configure` is SSH to the fleet - so it is set above the default and `ANSIBLE_ARGS="-f N"` raises
-it for a larger fleet. Setting `inventory_ignore_extensions` *replaces* Ansible's
-default ignore list rather than extending it, so the value in `ansible.cfg` re-lists the defaults
-worth keeping and adds `.example`; drop one and a stray `hosts.yml.bak` would be parsed as inventory.
+is the number of VMs cloned, booted or configured at once - every `proxmox_vm` task is a
+localhost-delegated API call, and `configure` is SSH to the fleet - so it is set above the default and
+`ANSIBLE_ARGS="-f N"` raises it for a larger fleet. Pipelining sends each module over stdin, so a
+module that transfers no file gets no per-task temporary directory, and the ones `copy` and `template`
+make belong to the connecting user, made without become: the first module running as root that needs
+one creates root's `remote_tmp` itself and warns that it did - `get_url` building the template on a new
+Proxmox host, `deb822_repository` in `dev_tools` on a new VM. So `template.yml` and `configure.yml` make
+it first (`playbooks/tasks/remote_tmp.yml`), as that warning asks, at the `remote_tmp` the run is
+configured with. Setting `inventory_ignore_extensions` *replaces* Ansible's default ignore list rather
+than extending it, so the value in `ansible.cfg` re-lists the defaults worth keeping and adds
+`.example`; drop one and a stray `hosts.yml.bak` would be parsed as inventory.
 
 Linting is the ansible-lint **production** profile with `args`, `empty-string-compare`,
 `no-log-password`, `no-same-owner`, `name[prefix]` and `yaml` additionally enabled.
