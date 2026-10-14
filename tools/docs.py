@@ -11,8 +11,11 @@ so context goes above and below it and survives every run:
                                                                      with defaults and wiring from
                                                                      defaults.yml and the roles' defaults,
                                                                      and each role variable's description
-    docs/reference/roles/<role>.md   BEGIN_ANSIBLE_DOCS              roles/<role>/meta/argument_specs.yml,
-                                                                     rendered by aar-doc with
+    docs/reference/roles/<role>.md   BEGIN_GENERATED: role           roles/<role>/: the variables from
+                                                                     meta/argument_specs.yml, the internal
+                                                                     values from vars/main.yml, and every
+                                                                     task, with a flowchart of each task
+                                                                     file, rendered by docsible with
                                                                      tools/templates/role.md.j2
 
 A role without a page gets one, holding only its title and the markers. Text taken from a source is
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import re
 import subprocess
 import sys
@@ -43,6 +47,8 @@ BANNER = re.compile(r"^# -{3,} (.+?) -{3,}$")
 CODE = re.compile(r"(`+)(?:.+?)\1|<code>.*?</code>|\]\([^)]*\)")
 # What the role template writes where argument_specs gives no default; filled from defaults/main.yml.
 NO_DEFAULT = "@@no-default@@"
+# Where the role template puts the role's internal values, which docsible cannot show in full.
+INTERNALS = "@@internals@@"
 
 
 def roles() -> list[str]:
@@ -291,22 +297,51 @@ def settings() -> str:
 # ---------------------------------------------------------------- roles ----
 
 
+def internals(role: str) -> str:
+    """The role's vars/main.yml as a table, every value as written: docsible's own reading of the file
+    shows a multi-line value as a placeholder."""
+    path = ROOT / "roles" / role / "vars" / "main.yml"
+    values = (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
+    if not values:
+        return ""
+    computed = sum(isinstance(v, str) and "{{" in v for v in values.values())
+    rows = "\n".join(f"| `{name}` | {_literal(v)} |" for name, v in values.items())
+    share = "All" if computed == len(values) else f"{computed} of the"
+    said = f" {share} {len(values)} are computed during a run, from earlier tasks' results." if computed else ""
+    return (
+        f"## Internal values\n\nSet in `roles/{role}/vars/main.yml`. These are not settings: Ansible ranks a "
+        f"role's vars above `local.yml`, so a value set there has no effect.{said}\n\n"
+        f"| Name | Value |\n|---|---|\n{rows}"
+    )
+
+
+def _literal(v) -> str:
+    """A value as written, on one line: a code span, or a code element where a span cannot hold it."""
+    text = " ".join(v.split()) if isinstance(v, str) else json.dumps(v)
+    if "|" in text or "`" in text or "</" in text:
+        return "<code>" + text.replace("&", "&amp;").replace("<", "&lt;").replace("|", "&#124;") + "</code>"
+    return f"`{text}`" if text else '`""`'
+
+
 def _role_section(role: str, section: str) -> str:
-    """The aar-doc output, finished: blank lines collapsed, text escaped, missing defaults filled."""
+    """docsible's output, finished: internal values put in, missing defaults filled, text escaped and
+    blank lines collapsed - outside the flowcharts' fences, which pass through as they are."""
     defaults = yaml.safe_load((ROOT / "roles" / role / "defaults" / "main.yml").read_text()) or {}
     out: list[str] = []
-    for line in section.splitlines():
-        if line.startswith("<!--"):
-            out.append(line)
-            continue
-        if NO_DEFAULT in line:
-            var = re.match(r"\| `(\w+)` \|", line)
-            shown = value(defaults[var.group(1)]) if var and var.group(1) in defaults else ""
-            line = line.replace(NO_DEFAULT, shown)
-        line = escape(line) if not line.startswith("|") else _escape_row(line)
-        if line or (out and out[-1]):
-            out.append(line)
-    return "\n".join(out)
+    fence = False
+    for line in section.replace(INTERNALS, internals(role)).splitlines():
+        if line.startswith("```"):
+            fence = not fence
+        elif not fence:
+            if NO_DEFAULT in line:
+                var = re.match(r"\| `(\w+)` \|", line)
+                shown = value(defaults[var.group(1)]) if var and var.group(1) in defaults else ""
+                line = line.replace(NO_DEFAULT, shown)
+            line = escape(line) if not line.startswith("|") else _escape_row(line)
+            if not line and (not out or not out[-1]):
+                continue
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 def _escape_row(row: str) -> str:
@@ -316,25 +351,23 @@ def _escape_row(row: str) -> str:
 
 
 def role_page(role: str, page: Path, text: str) -> str:
-    """The page with its BEGIN_ANSIBLE_DOCS section rendered by aar-doc from the role's argument_specs."""
-    aar_doc = Path(sys.executable).parent / "aar-doc"
-    if not aar_doc.exists():
-        raise SystemExit(f"{aar_doc} is missing: run make venv")
+    """The page with its role section rendered by docsible from roles/<role>/."""
+    docsible = Path(sys.executable).parent / "docsible"
+    if not docsible.exists():
+        raise SystemExit(f"{docsible} is missing: run make venv")
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / f"{role}.md"
-        work.write_text(text)
-        command = [str(aar_doc), "--output-file", str(work), "--output-template", str(ROLE_TEMPLATE)]
-        command += ["--output-mode", "inject", str(ROOT / "roles" / role), "markdown"]
+        command = [str(docsible), "--role", str(ROOT / "roles" / role), "--md-template", str(ROLE_TEMPLATE)]
+        command += ["--graph", "--no-backup", "--no-docsible", "--output", str(work)]
         result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            # aar-doc reports on stdout: "Could not find <!-- BEGIN_ANSIBLE_DOCS --> in the output file".
+        if result.returncode != 0 or not work.exists():
             said = (result.stdout + result.stderr).strip()
-            raise SystemExit(f"{page.relative_to(ROOT)}: aar-doc failed on roles/{role}: {said}")
+            raise SystemExit(f"{page.relative_to(ROOT)}: docsible failed on roles/{role}: {said}")
         rendered = work.read_text()
-    head, rest = rendered.split("<!-- BEGIN_ANSIBLE_DOCS -->\n", 1)
-    section, tail = rest.split("<!-- END_ANSIBLE_DOCS -->\n", 1)
-    body = _role_section(role, section).strip()
-    return f"{head}<!-- BEGIN_ANSIBLE_DOCS -->\n{body}\n\n<!-- END_ANSIBLE_DOCS -->\n{tail}"
+    # docsible wraps what it renders in markers of its own.
+    section = rendered.split("<!-- DOCSIBLE START -->", 1)[-1].split("<!-- DOCSIBLE END -->", 1)[0]
+    source = f"roles/{role}/meta/argument_specs.yml, vars/main.yml and tasks/"
+    return inject(page, text, "role", _role_section(role, section), source)
 
 
 # ---------------------------------------------------------------- main ----
@@ -353,7 +386,7 @@ def expected() -> dict[Path, str]:
         text = (
             page.read_text()
             if page.exists()
-            else f"# `{role}`\n\n<!-- BEGIN_ANSIBLE_DOCS -->\n<!-- END_ANSIBLE_DOCS -->\n"
+            else f"# `{role}`\n\n<!-- BEGIN_GENERATED: role -->\n<!-- END_GENERATED: role -->\n"
         )
         pages[page] = role_page(role, page, text)
     return pages

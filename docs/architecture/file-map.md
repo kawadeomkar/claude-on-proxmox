@@ -10,7 +10,7 @@ README.md                         getting started; everything else is in docs/
 docs/                             the wiki (docs/development/docs.md): getting-started/, guides/, reference/
                                   (generated in part), architecture/ (these pages), development/
 zensical.toml                     the wiki as a site: navigation, theme, GitHub-style anchors
-tools/docs.py                     make docs: the generated reference sections; templates/role.md.j2 for aar-doc
+tools/docs.py                     make docs: the generated reference sections; templates/role.md.j2 for docsible
 pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
 
 playbooks/

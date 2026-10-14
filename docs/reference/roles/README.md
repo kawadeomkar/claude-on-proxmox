@@ -2,9 +2,11 @@
 
 One role per concern. `make deploy` builds the template with `proxmox_template` over root SSH when it is
 missing, creates and starts the VMs with `proxmox_vm` through the Proxmox API, then runs the rest on each
-VM, in the order `playbooks/configure.yml` lists them. Each role's page lists every variable it takes,
-generated from its `meta/argument_specs.yml`. Many of them you set through a shorter name in
-`local.yml`, which the [settings reference](../settings.md) maps to the role variable it feeds.
+VM, in the order `playbooks/configure.yml` lists them. Each role's page is generated from the role's
+files: every variable it takes, from its `meta/argument_specs.yml`; its internal values, from
+`vars/main.yml`; and every task, with a flowchart of each task file. Many of the variables you set
+through a shorter name in `local.yml`, which the [settings reference](../settings.md) maps to the role
+variable it feeds.
 
 | Role | Purpose | Key variables |
 |------|---------|---------------|

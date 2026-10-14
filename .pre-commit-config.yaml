@@ -55,7 +55,8 @@ repos:
         files: |
           (?x)^(
             Makefile|
-            roles/[^/]+/(meta/argument_specs|defaults/main)\.yml|
+            roles/[^/]+/(meta/argument_specs|defaults/main|vars/main)\.yml|
+            roles/[^/]+/tasks/.*|
             inventory/group_vars/all/(defaults\.yml|[^/]+\.example)|
             tools/.*|
             docs/reference/.*

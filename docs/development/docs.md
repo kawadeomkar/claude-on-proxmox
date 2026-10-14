@@ -34,13 +34,13 @@ hand and kept on every run, which is where context goes.
 |---|---|---|
 | `reference/make-targets.md` | the `## ` comment on each target in the `Makefile`, grouped by its `# --- name ---` banners | `BEGIN_GENERATED: make-targets` |
 | `reference/settings.md` | `local.yml.example` and `vault.yml.example`: each comment block and the settings under it, grouped by banner; the default from `defaults.yml` or the role's `defaults/main.yml`; the role variable each setting ends up in, followed through `defaults.yml`'s wiring, with the first sentence of its `argument_specs` description | `BEGIN_GENERATED: settings` |
-| `reference/roles/<role>.md` | `roles/<role>/meta/argument_specs.yml`, rendered by [aar-doc](https://github.com/telekom-mms/Automated-Ansible-Role-Documentation) with `tools/templates/role.md.j2`; a default `argument_specs` leaves out comes from the role's `defaults/main.yml` | `BEGIN_ANSIBLE_DOCS` |
+| `reference/roles/<role>.md` | `roles/<role>/`: the variables of each entry point from `meta/argument_specs.yml` (a default it leaves out comes from `defaults/main.yml`), the internal values in `vars/main.yml`, and every task in `tasks/` with a flowchart of each task file, rendered by [docsible](https://github.com/docsible/docsible) with `tools/templates/role.md.j2` | `BEGIN_GENERATED: role` |
 
 `tools/docs.py` does all three; `make docs` runs it, and so does a pre-commit hook whenever a commit
 touches one of the sources. To change what a generated section says, change its source - a role
 variable's `description:` in `argument_specs.yml`, the comment above a setting in `local.yml.example`
-or `vault.yml.example`, a default in `defaults.yml` or a role's `defaults/main.yml`, a target's `## `
-text - and run `make docs`. A new role gets its page, with the markers and a title, the first time
+or `vault.yml.example`, a default in `defaults.yml` or a role's `defaults/main.yml`, a task file, a target's
+`## ` text - and run `make docs`. A new role gets its page, with the markers and a title, the first time
 `make docs` runs; add it to the `nav` in `zensical.toml`. Text taken from a source is escaped outside
 code spans, so a placeholder such as `<name>` reads as text rather than vanishing as an HTML tag.
 
@@ -54,9 +54,17 @@ choices of every variable it lists when the role runs. It does not check that th
 test holds every variable in a role's `defaults/main.yml` to an entry there, and every setting that ends
 up in a role to an entry in one of the example files.
 
-aar-doc is the maintained tool that renders `argument_specs.yml` into Markdown between those markers,
-which is why it is used; `ansible-doc -t role -j`, which ships with ansible-core, gives the same data as
-JSON and would do instead, should aar-doc stop being maintained.
+docsible renders the role pages because it reads the task files as well as `argument_specs.yml`: each
+page lists every task and draws a flowchart of each task file, so a task added, renamed or removed changes
+its page, and the drift test fails until `make docs` runs. The pages use this project's template rather
+than docsible's own, which turns every `|` into `¦`, leaves the descriptions out on entry points other
+than `main`, drops the tasks under `rescue` and `always`, and shows a multi-line value as a placeholder -
+for that last reason `tools/docs.py` writes the internal-values table itself. The flowcharts are
+docsible's, with their labels lowercased and their punctuation removed. Task comments stay off: in
+docsible 0.8.0, the release pinned, they break its tables. docsible is pre-1.0 and that release is from
+November 2025; should it stop being maintained, `ansible-doc -t role -j`, which ships with ansible-core,
+gives the variables as JSON. The role pages come to about 2,250 lines, most of them tasks and internal
+values; should they grow too large to read, the internal values are the part to leave out.
 
 ## Building the site
 

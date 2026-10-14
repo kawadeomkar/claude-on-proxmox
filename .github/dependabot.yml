@@ -21,7 +21,7 @@ updates:
     # matches, so docs comes before tooling.
     groups:
       docs:
-        patterns: [zensical, aar-doc, markdown, pymdown-extensions, markdown-it-py]
+        patterns: [zensical, docsible, markdown, pymdown-extensions, markdown-it-py]
       tooling:
         patterns: ["*"]
         exclude-patterns: ["ansible-core"]

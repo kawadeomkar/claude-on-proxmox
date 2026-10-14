@@ -79,9 +79,10 @@ secret gets a canned value and a place in those searches.
   reference.
 - **Documentation** lives in the wiki in `docs/`, and changes in the same pull request as the
   behaviour it describes. Its reference pages are generated: after changing a role's
-  `argument_specs.yml` or `defaults/main.yml`, `inventory/group_vars/all/defaults.yml` (these two
-  defaults files feed the settings page's Default column), `local.yml.example`, `vault.yml.example` or
-  a Makefile target's `## ` text, run `make docs` and commit the result
+  `argument_specs.yml`, `defaults/main.yml`, `vars/main.yml` or task files,
+  `inventory/group_vars/all/defaults.yml` (it and the roles' `defaults/main.yml` feed the settings
+  page's Default column), `local.yml.example`, `vault.yml.example` or a Makefile target's `## ` text,
+  run `make docs` and commit the result
   ([docs/development/docs.md](docs/development/docs.md)).
 - **Idempotence** is not optional. A task that reports `changed` on a second run will fail CI.
 - **A moment the run waits for the person is set apart.** A `pause` or `vars_prompt` passes its text
@@ -101,7 +102,7 @@ secret gets a canned value and a place in those searches.
 3. Add the role to `ROLES` in the `Makefile` and to the matrix in `.github/workflows/ci.yml`. Renaming a
    CI job also means updating the required status checks on `main`, or pull requests can never merge.
 4. Add it to the role table in `docs/reference/roles/README.md` and to the `nav` in `zensical.toml`,
-   and run `make docs`, which writes its reference page from `meta/argument_specs.yml`.
+   and run `make docs`, which writes its reference page from its files.
 
 ## Pull requests
 

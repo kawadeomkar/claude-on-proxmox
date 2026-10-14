@@ -34,14 +34,15 @@ dev = [
     # bumps it with everything else.
     "uv==0.13.0",
 ]
-# The wiki in docs/: aar-doc renders each role's reference page from its meta/argument_specs.yml
-# (make docs), and Zensical builds the pages into a site (make docs-serve; the docs tests build it
-# strictly, failing on a broken link). Zensical 0.0.70 is the first with exclude_docs, which
-# zensical.toml uses. Markdown and pymdown-extensions render the site and make its heading anchors,
-# which must stay the ones GitHub makes; markdown-it-py renders the pages as GitHub does for the
-# test that compares the two. Dependabot groups all five.
+# The wiki in docs/: docsible renders each role's reference page - its variables, tasks and a
+# flowchart of each task file - with tools/templates/role.md.j2 (make docs), and Zensical builds the
+# pages into a site (make docs-serve; the docs tests build it strictly, failing on a broken link).
+# Zensical 0.0.70 is the first with exclude_docs, which zensical.toml uses. Markdown and
+# pymdown-extensions render the site and make its heading anchors, which must stay the ones GitHub
+# makes; markdown-it-py renders the pages as GitHub does for the test that compares the two.
+# Dependabot groups all five.
 docs = [
-    "aar-doc==2.4.0",
+    "docsible==0.8.0",
     "zensical==0.0.70",
     "Markdown==3.11",
     "pymdown-extensions==12.2",

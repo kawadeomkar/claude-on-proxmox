@@ -41,8 +41,9 @@ make docs            # regenerate the wiki's reference pages; make docs-serve pr
 **A change to behaviour changes the wiki in the same commit.** The page for it is in `docs/`
 (`docs/README.md` maps them; `docs/architecture/` for the design, cited by section number). The
 reference pages are generated from `argument_specs.yml`, `local.yml.example`, `vault.yml.example`,
-`inventory/group_vars/all/defaults.yml`, the roles' `defaults/main.yml` and the Makefile's `## ` text:
-edit those and run `make docs` (the pre-commit hook does too), never the generated section. A new
+`inventory/group_vars/all/defaults.yml`, the roles' `defaults/main.yml`, `vars/main.yml` and task files
+(rendered by docsible), and the Makefile's `## ` text: edit those and run `make docs` (the pre-commit
+hook does too), never the generated section; a task change is a docs change. A new
 setting goes in an example file and a new role default in `argument_specs.yml`, or the page misses it.
 `tests/unit/test_docs.py` fails on a stale or incomplete page, a broken link or anchor, a page that
 renders differently on GitHub and on the site, an unlinked cross-page `§`, or a cited `docs/` page or

@@ -16,7 +16,7 @@ group, and the wiki's the `docs` group; `make venv` installs all three. The vers
 | pytest | `make unit` |
 | pre-commit | the hooks run on commit, and the file checks CI runs with them |
 | proxmoxer, requests | the `community.proxmox` collection, on the controller |
-| aar-doc | `make docs`: each role's reference page, rendered from its `meta/argument_specs.yml` |
+| docsible | `make docs`: each role's reference page - its variables, internal values, tasks and a flowchart of each task file |
 | Zensical | the wiki in `docs/` built as a site (`make docs-serve`, `make docs-build`) |
 | Markdown, pymdown-extensions | the site's rendering and its heading anchors, kept the ones GitHub makes |
 | markdown-it-py | the pages rendered as GitHub does, for the test that compares the two |
