@@ -10,6 +10,7 @@
                                  not (never given, or deleted already), 403 for
                                  tskey-api-denied-0000, 401 for any other
   GET    /fake/deleted           what was deleted, for the tests
+  GET    /fake/exchanged         the client ID of every exchange asked for
 
 It never reaches Tailscale: there is no network code but the listener.
 
@@ -26,6 +27,7 @@ TOKENS = {"tskey-api-good-0000", "tskey-api-oauth-0000"}
 FORBIDDEN = "tskey-api-denied-0000"
 DEVICES = dict(arg.split("=", 1) for arg in sys.argv[2:])
 DELETED: list = []
+EXCHANGED: list = []
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -44,6 +46,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"message": "not found"})
             return
         form = parse_qs(self._body().decode())
+        EXCHANGED.append(form.get("client_id", [""])[0])
         if form.get("client_secret") == ["tskey-client-good-0000"] and form.get("client_id"):
             self._send(200, {"access_token": "tskey-api-oauth-0000", "token_type": "Bearer", "expires_in": 3600})
         else:
@@ -77,6 +80,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/fake/deleted":
             self._send(200, DELETED)
+        elif path == "/fake/exchanged":
+            self._send(200, EXCHANGED)
         elif path.startswith("/api/v2/device/"):
             device = self._device()
             if device:

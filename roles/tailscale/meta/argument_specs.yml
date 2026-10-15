@@ -28,26 +28,27 @@ argument_specs:
             joins with the key only, and an empty one fails by name; web leaves every VM for the web login.
       tailscale_api_auth_method:
         type: str
-        default: none
-        choices: [none, token, oauth]
+        default: auto
+        choices: [auto, none, token, oauth]
         description:
-          - How the device is deleted from the tailnet through Tailscale's API, on this machine. none leaves it there,
+          - How the device is deleted from the tailnet through Tailscale's API, on this machine. auto uses whichever
+            credential is set, tailscale_api_token first, and is none when neither is; none leaves the device there,
             logged out, and names it; token uses tailscale_api_token; oauth exchanges tailscale_oauth_client_id and
             tailscale_oauth_client_secret, a client with the devices:core scope, for an access token.
       tailscale_api_token:
         type: str
         default: ""
         no_log: true
-        description: An API access token (tskey-api-...), for tailscale_api_auth_method token.
+        description: An API access token (tskey-api-...), used under tailscale_api_auth_method auto or token.
       tailscale_oauth_client_id:
         type: str
         default: ""
-        description: An OAuth client's ID, for tailscale_api_auth_method oauth.
+        description: An OAuth client's ID, used under tailscale_api_auth_method auto or oauth.
       tailscale_oauth_client_secret:
         type: str
         default: ""
         no_log: true
-        description: That client's secret (tskey-client-...), for tailscale_api_auth_method oauth.
+        description: That client's secret (tskey-client-...), used under tailscale_api_auth_method auto or oauth.
       tailscale_api_url:
         type: str
         default: https://api.tailscale.com
@@ -158,26 +159,27 @@ argument_specs:
     options:
       tailscale_api_auth_method:
         type: str
-        default: none
-        choices: [none, token, oauth]
+        default: auto
+        choices: [auto, none, token, oauth]
         description:
-          - How the device is deleted from the tailnet through Tailscale's API, on this machine. none leaves it there,
+          - How the device is deleted from the tailnet through Tailscale's API, on this machine. auto uses whichever
+            credential is set, tailscale_api_token first, and is none when neither is; none leaves the device there,
             logged out, and names it; token uses tailscale_api_token; oauth exchanges tailscale_oauth_client_id and
             tailscale_oauth_client_secret, a client with the devices:core scope, for an access token.
       tailscale_api_token:
         type: str
         default: ""
         no_log: true
-        description: An API access token (tskey-api-...), for tailscale_api_auth_method token.
+        description: An API access token (tskey-api-...), used under tailscale_api_auth_method auto or token.
       tailscale_oauth_client_id:
         type: str
         default: ""
-        description: An OAuth client's ID, for tailscale_api_auth_method oauth.
+        description: An OAuth client's ID, used under tailscale_api_auth_method auto or oauth.
       tailscale_oauth_client_secret:
         type: str
         default: ""
         no_log: true
-        description: That client's secret (tskey-client-...), for tailscale_api_auth_method oauth.
+        description: That client's secret (tskey-client-...), used under tailscale_api_auth_method auto or oauth.
       tailscale_api_url:
         type: str
         default: https://api.tailscale.com

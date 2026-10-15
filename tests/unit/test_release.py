@@ -56,23 +56,41 @@ HAND_TOKEN = "gho_pastedbyhand000000000000"
 API_TOKEN = "tskey-api-good-0000"
 FORBIDDEN_TOKEN = "tskey-api-denied-0000"
 CLIENT_SECRET = "tskey-client-good-0000"
-SECRETS = [DEVICE_TOKEN, VAULT_TOKEN, HAND_TOKEN, API_TOKEN, FORBIDDEN_TOKEN, CLIENT_SECRET, "tskey-api-oauth-0000"]
+REFUSED_CLIENT_SECRET = "tskey-client-refused-0000"
+SECRETS = [
+    DEVICE_TOKEN,
+    VAULT_TOKEN,
+    HAND_TOKEN,
+    API_TOKEN,
+    FORBIDDEN_TOKEN,
+    CLIENT_SECRET,
+    REFUSED_CLIENT_SECRET,
+    "tskey-api-oauth-0000",
+]
 
 GETENT = """#!/bin/sh
 [ "$1" = passwd ] || { echo "stand-in getent: unexpected database $1" >&2; exit 3; }
 printf '%s:x:1000:1000:%s:%s:/bin/bash\\n' "$2" "$2" "$HOME"
 """
 
-# One VM per way a release can go.
+# One VM per way a release can go. "api" is the Tailscale API credential the
+# vault holds, and "method" tailscale_api_auth_method where a case sets it:
+# elsewhere the role's default, auto, decides from the credential alone.
 CASES = {
     # Everything this project signs a VM in to, and an API access token.
     "everything": {"claude": True, "gh": DEVICE_TOKEN, "device_marker": True, "node": "nEVERYTHING", "api": "token"},
     # The vault's token in gh; Tailscale with no API credential.
-    "vault-token": {"gh": VAULT_TOKEN, "vault": True, "node": "nVAULT", "api": "none"},
+    "vault-token": {"gh": VAULT_TOKEN, "vault": True, "node": "nVAULT"},
     # A token pasted by hand; Tailscale through an OAuth client.
     "by-hand": {"gh": HAND_TOKEN, "node": "nBYHAND", "api": "oauth"},
-    # A credential Tailscale refuses for this device.
-    "refused": {"node": "nREFUSED", "api": "forbidden"},
+    # A credential Tailscale refuses for this device, named by the method.
+    "refused": {"node": "nREFUSED", "api": "forbidden", "method": "token"},
+    # An API access token in the vault, and none asked for: it stays unused.
+    "kept": {"node": "nKEPT", "api": "token", "method": "none"},
+    # An API access token and an OAuth client, one Tailscale would refuse.
+    "both": {"node": "nBOTH", "api": "both"},
+    # Half an OAuth client: its ID, and no secret.
+    "half-oauth": {"node": "nHALF", "api": "half-oauth"},
     # A device the tailnet no longer has.
     "gone": {"node": "nGONE", "api": "token"},
     # A VM reporting another device's ID - a laptop's: never deleted.
@@ -156,7 +174,7 @@ def _hosts(root: Path, cases: dict, github: str, tailscale: str) -> dict:
             (state / "joined").write_text("")
             (state / "node-id").write_text(case["node"])
         (home / "python").symlink_to(bin_dir / "python")
-        api = case.get("api", "none")
+        api = case.get("api", "")
         hosts[name] = {
             "ansible_connection": "local",
             "ansible_python_interpreter": str(home / "python"),
@@ -165,10 +183,10 @@ def _hosts(root: Path, cases: dict, github: str, tailscale: str) -> dict:
             "github_projects_api_url": github,
             "github_projects_token": VAULT_TOKEN if case.get("vault") else "",
             "tailscale_api_url": tailscale,
-            "tailscale_api_auth_method": {"forbidden": "token"}.get(api, api),
-            "tailscale_api_token": {"token": API_TOKEN, "forbidden": FORBIDDEN_TOKEN}.get(api, ""),
-            "tailscale_oauth_client_id": "kOAUTHCLIENT" if api == "oauth" else "",
-            "tailscale_oauth_client_secret": CLIENT_SECRET if api == "oauth" else "",
+            **({"tailscale_api_auth_method": case["method"]} if "method" in case else {}),
+            "tailscale_api_token": {"token": API_TOKEN, "both": API_TOKEN, "forbidden": FORBIDDEN_TOKEN}.get(api, ""),
+            "tailscale_oauth_client_id": {"oauth": "kOAUTHCLIENT", "both": "kBOTH", "half-oauth": "kHALF"}.get(api, ""),
+            "tailscale_oauth_client_secret": {"oauth": CLIENT_SECRET, "both": REFUSED_CLIENT_SECRET}.get(api, ""),
             # Every module's arguments in its result, so that a credential handed
             # to a task without no_log would reach the report searched below.
             "ansible_inject_invocation": True,
@@ -224,6 +242,9 @@ DEVICES = {
     "nVAULT": "vault-token",
     "nBYHAND": "by-hand-1",
     "nREFUSED": "refused",
+    "nKEPT": "kept",
+    "nBOTH": "both",
+    "nHALF": "half-oauth",
     "nLAPTOP": "laptop",
 }
 
@@ -363,6 +384,35 @@ def test_a_device_is_deleted_only_under_the_name_this_project_asked_the_vm_to_jo
     )
 
 
+def test_a_credential_in_the_vault_is_enough_and_none_keeps_it_unused(released):
+    # everything, by-hand, gone and liar set no method: auto took their credential.
+    _, report, _, deleted = released
+    assert {"nEVERYTHING", "nBYHAND"} <= set(deleted)
+    assert "nKEPT" not in deleted
+    assert _said(report)["kept"] == (
+        f"kept: released - Tailscale: logged out; its device stays in your tailnet until you delete it at {ADMIN},"
+        " or a VM built again under its name joins as <name>-1."
+    )
+
+
+def test_auto_takes_the_api_access_token_over_an_oauth_client(released, fake_tailscale):
+    # both's OAuth client has a secret Tailscale refuses: its device goes only by the token.
+    _, report, _, deleted = released
+    assert "nBOTH" in deleted
+    assert _said(report)["both"] == "both: released - Tailscale: removed from your tailnet."
+    assert "kBOTH" not in _get(f"{fake_tailscale}/fake/exchanged")
+
+
+def test_half_an_oauth_client_is_said_and_never_sent(released, fake_tailscale):
+    _, report, _, deleted = released
+    assert "nHALF" not in deleted
+    assert _said(report)["half-oauth"] == (
+        "half-oauth: released - Tailscale: logged out, but its device was not deleted - the OAuth client needs both"
+        f" tailscale_oauth_client_id and tailscale_oauth_client_secret: delete it at {ADMIN}."
+    )
+    assert _get(f"{fake_tailscale}/fake/exchanged") == ["kOAUTHCLIENT"]
+
+
 def test_the_vault_token_is_never_taken_for_this_project_s_sign_in_whatever_the_vm_s_marker_says(released):
     _, report, _, _ = released
     assert "GitHub: gh signed out (vault_github_token is every VM's" in _said(report)["marked-vault"]
@@ -394,9 +444,19 @@ def test_next_steps_keep_each_vm_with_something_left_to_do_and_nothing_for_one_r
     said = _said(report)
     left = {vm: matters["destroy"] for vm, matters in _left_to_do(report).items()}
     assert set(left) == set(CASES)
-    for vm in ("everything", "vault-token", "by-hand", "refused", "liar", "two-accounts", "unreached"):
+    for vm in (
+        "everything",
+        "vault-token",
+        "by-hand",
+        "refused",
+        "kept",
+        "half-oauth",
+        "liar",
+        "two-accounts",
+        "unreached",
+    ):
         assert left[vm] == said[vm], vm
-    for vm in ("gone", "marked-vault", "nothing"):
+    for vm in ("gone", "both", "marked-vault", "nothing"):
         assert left[vm] == "", (vm, said[vm])
 
 
@@ -582,7 +642,9 @@ def test_destroy_asks_under_a_block_that_names_the_vms_and_never_logs_it(tmp_pat
 def test_destroy_release_defaults_to_on():
     defaults = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults.yml").read_text())
     assert defaults["destroy_release"] is True
-    assert defaults["tailscale_api_auth_method"] == "none"
+    # A credential in the vault is enough: nothing else to set, in either defaults file.
+    role = yaml.safe_load((REPO / "roles" / "tailscale" / "defaults" / "main.yml").read_text())
+    assert defaults["tailscale_api_auth_method"] == role["tailscale_api_auth_method"] == "auto"
 
 
 def test_every_api_call_is_made_on_this_machine_and_never_logged():

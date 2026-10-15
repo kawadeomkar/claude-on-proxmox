@@ -195,12 +195,25 @@ tailscale_web_page_trusted: >-
                                         ~ '/[A-Za-z0-9/_:.?=&%-]+$')) }}
 
 # --- Tailscale's API (api_delete.yml) ---
+# The credential a device is deleted with: tailscale_api_auth_method, or under
+# auto whatever the vault holds - the API access token first, since it can
+# delete every device this project makes, where an OAuth client reaches only
+# those with its tags; else the OAuth client, even half of one, so that a
+# missing half is said rather than ignored; else none.
+tailscale_api_credential: >-
+  {{ tailscale_api_auth_method if tailscale_api_auth_method != 'auto'
+     else 'token' if tailscale_api_token | length > 0
+     else 'oauth' if (tailscale_oauth_client_id | length > 0 or tailscale_oauth_client_secret | length > 0)
+     else 'none' }}
+# Both halves of the OAuth client: only then is it sent to Tailscale.
+tailscale_api_oauth_whole: >-
+  {{ tailscale_oauth_client_id | length > 0 and tailscale_oauth_client_secret | length > 0 }}
 # The bearer the device's deletion is made with: the API access token, or the
 # one-hour token the OAuth client was exchanged for. Empty when there is none.
 tailscale_api_bearer: >-
-  {{ tailscale_api_token if tailscale_api_auth_method == 'token'
+  {{ tailscale_api_token if tailscale_api_credential == 'token'
      else ((tailscale_api_oauth.json | default({}, true)).access_token | default('', true))
-     if tailscale_api_auth_method == 'oauth' else '' }}
+     if tailscale_api_credential == 'oauth' else '' }}
 # The device the API has under that ID, and its name's first label: the
 # MagicDNS name, <machine name>.<tailnet>. Only a device named as this project
 # asked the VM to join - tailscale_hostname, or that name with Tailscale's -<n>
@@ -234,14 +247,16 @@ tailscale_api_last: >-
 # reach a device without them, such as one joined by the web login: a 403 says
 # so.
 tailscale_api_refused_why: >-
-  {{ ('Tailscale refused the OAuth client (HTTP ' ~ (tailscale_api_oauth.status | default('?')) ~ ')')
-     if tailscale_api_auth_method == 'oauth' and tailscale_api_bearer | length == 0
+  {{ 'the OAuth client needs both tailscale_oauth_client_id and tailscale_oauth_client_secret'
+     if tailscale_api_credential == 'oauth' and not (tailscale_api_oauth_whole | bool)
+     else ('Tailscale refused the OAuth client (HTTP ' ~ (tailscale_api_oauth.status | default('?')) ~ ')')
+     if tailscale_api_credential == 'oauth' and tailscale_api_bearer | length == 0
      else 'no API access token is set (tailscale_api_token)' if tailscale_api_bearer | length == 0
      else ('the device under the ID the VM reported is named ' ~ (tailscale_api_device_name | plain_text | to_json)
            ~ ', not ' ~ (tailscale_hostname | to_json) ~ ", so it is not this VM's")
      if (tailscale_api_lookup.status | default(0)) == 200 and not (tailscale_api_device_ours | bool)
      else ('Tailscale refused the call (HTTP 403): the '
-           ~ ('OAuth client' if tailscale_api_auth_method == 'oauth' else 'API access token')
+           ~ ('OAuth client' if tailscale_api_credential == 'oauth' else 'API access token')
            ~ ' may not delete this device - an OAuth client only those with its tags')
      if (tailscale_api_last.status | default(0)) == 403
      else ('Tailscale answered HTTP ' ~ (tailscale_api_last.status | default('?'))
@@ -265,7 +280,7 @@ tailscale_release_device_left: >-
      and ((tailscale_release_status.rc | default(1)) != 0
           or (tailscale_release_joined | bool
               and ((tailscale_release_logout.rc | default(1)) != 0
-                   or tailscale_api_auth_method == 'none'
+                   or tailscale_api_credential == 'none'
                    or not (tailscale_api_deleted | bool or tailscale_api_gone_already | bool)))) }}
 tailscale_release_summary: >-
   {{ '' if not (tailscale_release_installed | bool)
@@ -276,7 +291,7 @@ tailscale_release_summary: >-
            ~ ((tailscale_release_logout.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim) or 'no reason given')
            ~ '): delete its device at ' ~ tailscale_admin_page) if (tailscale_release_logout.rc | default(1)) != 0
      else ('logged out; its device stays in your tailnet until you delete it at ' ~ tailscale_admin_page
-           ~ ', or a VM built again under its name joins as <name>-1') if tailscale_api_auth_method == 'none'
+           ~ ', or a VM built again under its name joins as <name>-1') if tailscale_api_credential == 'none'
      else 'removed from your tailnet' if tailscale_api_deleted | bool
      else ('logged out; ' ~ tailscale_api_gone_said) if tailscale_api_gone_already | bool
      else ('logged out, but its device was not deleted - ' ~ tailscale_api_refused_why ~ tailscale_api_by_hand) }}

@@ -70,7 +70,7 @@
       vars:
         tailscale_api_node: "{{ tailscale_absent_node }}"
         tailscale_api_go: >-
-          {{ tailscale_api_auth_method != 'none' and tailscale_logout is changed and tailscale_absent_node | length > 0 }}
+          {{ tailscale_api_credential != 'none' and tailscale_logout is changed and tailscale_absent_node | length > 0 }}
 
     # Stopped, but not disabled when the package goes next: removing it takes
     # the unit with it, and the package's postinst enables tailscaled again on a
@@ -118,7 +118,7 @@
              if tailscale_logout is changed and tailscale_api_gone_already | bool
              else ('Tailscale is off - logged out and removed, but its device was not deleted - '
                    ~ tailscale_api_refused_why ~ tailscale_api_by_hand ~ '.')
-             if tailscale_logout is changed and tailscale_api_auth_method != 'none' and not (tailscale_api_gone_already | bool)
+             if tailscale_logout is changed and tailscale_api_credential != 'none' and not (tailscale_api_gone_already | bool)
              else ('Tailscale is off - logged out and removed; its device stays in your tailnet, expired, until you delete it at '
               ~ tailscale_admin_page ~ '.') if tailscale_logout is changed
              else ('Tailscale is off and removed, but its logout failed ('
