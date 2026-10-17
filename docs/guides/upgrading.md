@@ -4,6 +4,13 @@ What to do when you update an install made by an earlier version of this project
 versions yet, so each section names the pull request that brought the change; an install made after it
 needs nothing.
 
+After pulling a new version, run `make deps` before anything else. It syncs the virtualenv to
+`uv.lock` and installs the Galaxy collections `requirements.yml` pins, and a pull changes neither.
+Every target that runs Ansible compares the installed collections with those pins first and stops,
+naming `make deps`, while one differs. They live in `~/.ansible/collections`, which every checkout
+on the machine shares, so another clone or worktree on a different version needs `make deps` again
+when you go back to it.
+
 ## A template built before the guest agent
 
 From PR #6, which finds each VM's address through its guest agent. Provisioning now needs `qemu-guest-agent` **inside** the image: it is what

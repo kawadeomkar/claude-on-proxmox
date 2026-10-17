@@ -419,6 +419,10 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   `ansible.cfg` a unit test writes (`harness.ansible_config`) already set `inject_facts_as_vars = false`, so
   the top-level name is undefined here. The first `make deploy` of a new VM printed a deprecation per read
   until they moved; `tests/unit/test_gathered_facts.py` scans for one and holds all three settings.
+- **Every checkout on a machine shares `~/.ansible/collections`.** `make deps` in a worktree that still
+  pinned ansible.posix 2.1.0 put it back under every other checkout, whose runs went on without a word.
+  Every Ansible target now runs `collections-check` first (`ansible-galaxy collection install --offline`
+  against `requirements.yml`), and refuses, naming `make deps`, while a collection differs from its pin.
 - **`-e key=value` splits extra-vars on whitespace.** `VM_NAME="alpha beta"` silently provisioned
   half the fleet. The Makefile passes JSON (`-e '{"vm_name": "..."}'`) to keep the value whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them

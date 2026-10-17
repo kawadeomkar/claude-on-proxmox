@@ -144,6 +144,18 @@ vault-check:
 	@head -c 14 $(VAULT_FILE) | grep -q '^\$$ANSIBLE_VAULT' \
 	  || { echo "error: $(VAULT_FILE) is not encrypted. Run: make vault-encrypt"; exit 1; }
 
+# Refuse to run Ansible with Galaxy collections other than the ones
+# requirements.yml pins. Nothing else compares them: Ansible never reads that
+# file, only make deps does, and every checkout on this machine - a worktree, an
+# older clone - shares ~/.ansible/collections, so a pull that bumped a pin, or
+# make deps in a checkout pinning an older one, left the runs on another version
+# without a word. --offline resolves against what is installed and contacts
+# nothing: with every pin installed it changes nothing, and otherwise it fails.
+.PHONY: collections-check
+collections-check:
+	@$(BIN)/ansible-galaxy collection install -r requirements.yml --offline </dev/null >/dev/null 2>&1 \
+	  || { echo "error: the installed Galaxy collections are not the ones requirements.yml pins. Run: make deps"; exit 1; }
+
 # VM names are DNS-like, with commas separating a list. A quote, space or shell
 # metacharacter in VM_NAME would break out of the single-quoted JSON in VM_ARGS
 # or reshape it, so refuse those before any VM target runs. Read through the
@@ -212,28 +224,28 @@ logs-clean: ## Delete every run log in LOG_DIR
 
 # ------------------------------------------------------------ run books ----
 .PHONY: template
-template: vault-check log-setup ## Build the cloud-init VM template on the Proxmox host (once)
+template: vault-check collections-check log-setup ## Build the cloud-init VM template on the Proxmox host (once)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/template.yml
 
 .PHONY: provision
-provision: vault-check vm-name-check log-setup ## Create and start VM(s): make provision VM_NAME=alpha,beta (default: claude-on-proxmox-default)
+provision: vault-check vm-name-check collections-check log-setup ## Create and start VM(s): make provision VM_NAME=alpha,beta (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/provision.yml
 
 .PHONY: list
-list: vault-check vm-name-check log-setup ## Show the VMs this project created, and their addresses (all, unless VM_NAME)
+list: vault-check vm-name-check collections-check log-setup ## Show the VMs this project created, and their addresses (all, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/list.yml
 
 .PHONY: configure
-configure: vault-check vm-name-check log-setup ## Configure the VM(s): packages, tools, Claude Code, GitHub projects, Tailscale (every tagged VM, unless VM_NAME)
+configure: vault-check vm-name-check collections-check log-setup ## Configure the VM(s): packages, tools, Claude Code, GitHub projects, Tailscale (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: deploy
-deploy: vault-check vm-name-check log-setup ## Everything, for VM_NAME only: template (if missing), provision, configure, sign in to Claude, GitHub and Tailscale, open VS Code (default: claude-on-proxmox-default)
+deploy: vault-check vm-name-check collections-check log-setup ## Everything, for VM_NAME only: template (if missing), provision, configure, sign in to Claude, GitHub and Tailscale, open VS Code (default: claude-on-proxmox-default)
 	@test -z "$(TAGS)" || { echo "error: deploy takes no TAGS. To re-run one role: make configure VM_NAME=<name> TAGS=$(TAGS)"; exit 1; }
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) deploy.yml
 
 .PHONY: destroy
-destroy: vault-check vm-name-check log-setup ## Release the VM(s) from Claude, GitHub and Tailscale, then delete them (default: claude-on-proxmox-default)
+destroy: vault-check vm-name-check collections-check log-setup ## Release the VM(s) from Claude, GitHub and Tailscale, then delete them (default: claude-on-proxmox-default)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 
 # Remote Control needs a claude.ai login on the VM, and Anthropic supports no
@@ -243,7 +255,7 @@ destroy: vault-check vm-name-check log-setup ## Release the VM(s) from Claude, G
 # and starts Remote Control. Without
 # a name it reports every VM's state. make deploy runs it for its VMs.
 .PHONY: claude-login
-claude-login: vault-check vm-name-check log-setup ## Sign Claude Code in on the VM(s) in VM_NAME, one after another, and start Remote Control; without VM_NAME, report every VM
+claude-login: vault-check vm-name-check collections-check log-setup ## Sign Claude Code in on the VM(s) in VM_NAME, one after another, and start Remote Control; without VM_NAME, report every VM
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) playbooks/claude_login.yml
 
 # Without a token in the vault, gh is signed in to GitHub by its device flow,
@@ -253,7 +265,7 @@ claude-login: vault-check vm-name-check log-setup ## Sign Claude Code in on the 
 # repositories. Without a name it reports every VM's state. make deploy runs it
 # for its VMs once its Claude sign-in has been answered.
 .PHONY: github-login
-github-login: vault-check vm-name-check log-setup ## Sign gh in to GitHub on the VM(s) in VM_NAME by the device flow, one after another, then clone private repositories; without VM_NAME, report every VM
+github-login: vault-check vm-name-check collections-check log-setup ## Sign gh in to GitHub on the VM(s) in VM_NAME by the device flow, one after another, then clone private repositories; without VM_NAME, report every VM
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) playbooks/github_login.yml
 
 # Without an auth key in the vault, a VM joins Tailscale by its web login,
@@ -263,11 +275,11 @@ github-login: vault-check vm-name-check log-setup ## Sign gh in to GitHub on the
 # itself. Without a name it reports every VM's state. make deploy runs it for
 # its VMs after GitHub's sign-in.
 .PHONY: tailscale-login
-tailscale-login: vault-check vm-name-check log-setup ## Sign the VM(s) in VM_NAME in to Tailscale by its web login, one after another; without VM_NAME, report every VM
+tailscale-login: vault-check vm-name-check collections-check log-setup ## Sign the VM(s) in VM_NAME in to Tailscale by its web login, one after another; without VM_NAME, report every VM
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) playbooks/tailscale_login.yml
 
 .PHONY: check
-check: vault-check vm-name-check log-setup ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
+check: vault-check vm-name-check collections-check log-setup ## Dry-run configure against real hosts (--check --diff; every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) --check --diff playbooks/configure.yml
 
 # The SSH aliases this project keeps in ~/.ssh/claude-on-proxmox.conf, so
@@ -275,7 +287,7 @@ check: vault-check vm-name-check log-setup ## Dry-run configure against real hos
 # configure refresh the VMs they touch; this one refreshes the fleet and,
 # without VM_NAME, prunes the aliases of VMs that no longer exist.
 .PHONY: ssh-config
-ssh-config: vault-check vm-name-check log-setup ## Refresh the SSH alias of every VM this project created (all, unless VM_NAME; fleet-wide also prunes)
+ssh-config: vault-check vm-name-check collections-check log-setup ## Refresh the SSH alias of every VM this project created (all, unless VM_NAME; fleet-wide also prunes)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/ssh_config.yml
 
 # One VM at a time: VS Code opens one window per workspace, and "open it in
@@ -283,7 +295,7 @@ ssh-config: vault-check vm-name-check log-setup ## Refresh the SSH alias of ever
 # vm-name-check, so the value is never interpolated into the recipe.
 .PHONY: code
 code: export VM_NAME_CHECK := $(value VM_NAME)
-code: vault-check vm-name-check project-name-check log-setup ## Open a VM in VS Code with a Claude terminal, or one project on it: make code VM_NAME=alpha [PROJECT=<repo>]
+code: vault-check vm-name-check project-name-check collections-check log-setup ## Open a VM in VS Code with a Claude terminal, or one project on it: make code VM_NAME=alpha [PROJECT=<repo>]
 	@test -n "$$VM_NAME_CHECK" || { echo "error: code opens one VM: make code VM_NAME=<name>"; exit 1; }
 	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(PROJECT_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
@@ -328,7 +340,7 @@ unit: ## pytest over tests/unit/: the filters, the github_repos module, the play
 # the venv must come first or a system-wide Ansible would be used instead of
 # the pinned one.
 .PHONY: molecule
-molecule: log-setup ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_ROLES="common claude_code"
+molecule: collections-check log-setup ## Run Molecule (Docker) tests for every role: make molecule MOLECULE_ROLES="common claude_code"
 	@for role in $(MOLECULE_ROLES); do \
 	  echo "===== molecule: $$role"; \
 	  (cd roles/$$role && PATH="$(ABSBIN):$$PATH" $(ABSBIN)/molecule test) || exit 1; \
@@ -338,7 +350,7 @@ molecule: log-setup ## Run Molecule (Docker) tests for every role: make molecule
 # developer runs. CI used to inline the molecule call, which meant these
 # targets could break without CI noticing.
 .PHONY: molecule-scenario
-molecule-scenario: log-setup ## Run one playbook scenario: make molecule-scenario SCENARIO=provision
+molecule-scenario: collections-check log-setup ## Run one playbook scenario: make molecule-scenario SCENARIO=provision
 	@test -n "$(SCENARIO)" || { echo "error: set SCENARIO, e.g. make molecule-scenario SCENARIO=provision"; exit 1; }
 	PATH="$(ABSBIN):$$PATH" $(BIN)/molecule test -s $(SCENARIO)
 
