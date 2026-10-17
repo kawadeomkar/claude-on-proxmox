@@ -299,18 +299,24 @@ def test_configure_names_the_sign_in_that_comes_next(check_mode):
     assert "and starts it" not in said["not-ready-blocked"]
 
 
-def test_next_steps_keep_a_blocker_only_where_claude_is_signed_in(check_mode):
+def test_next_steps_name_the_sign_in_unless_one_follows_and_a_blocker_where_signed_in(check_mode):
     # What the run's last lines list (callback_plugins/claude_on_proxmox.py).
     _, _, report = check_mode
     said = _messages(report, "Say exactly what to run")
-    left = {host: matters.get("remote_control") for host, matters in _left_to_do(report).items()}
-    # Signed out, the sign-in is the one thing left, and the login report says it.
-    for host in ("not-ready", "not-ready-in-deploy", "not-ready-blocked"):
-        assert left[host] == "", host
+    left = _left_to_do(report)
+    # Signed out, the sign-in is the one thing left, under the sign-in's matter.
+    # This once left it to the sign-in's own report, which a make configure, or
+    # a make deploy with no terminal, never runs, so theirs named no sign-in.
+    for host in ("not-ready", "not-ready-blocked"):
+        assert left[host] == {"remote_control": "", "claude": said[host]}, host
+        assert "make claude-login VM_NAME=" + host in left[host]["claude"]
+    # Under make deploy its sign-in follows, and that report says what is left.
+    assert left["not-ready-in-deploy"] == {"remote_control": "", "claude": ""}
     blocked = [host for host, (_, expected) in SETTINGS.items() if expected]
     assert blocked
     for host in blocked:
-        assert left[host] == said[host], host
+        # Signed in: the sign-in's matter is login.yml's alone.
+        assert left[host] == {"remote_control": said[host]}, host
 
 
 @pytest.mark.parametrize("host", sorted(SETTINGS))
