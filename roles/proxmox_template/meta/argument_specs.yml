@@ -12,12 +12,15 @@ argument_specs:
       proxmox_template_vmid:
         type: int
         default: 9000
+        description: VMID the template is built under. Anything but the finished template there, on this node or another, fails the run.
       proxmox_template_name:
         type: str
         default: ubuntu-24.04-cloudinit
+        description: Template name. VMs are cloned from it by name, and a finished template at the VMID is recognised by it.
       proxmox_template_image_url:
         type: str
         default: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+        description: Cloud image downloaded and imported as the template's root disk.
       proxmox_template_image_checksum:
         type: str
         default: sha256:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS
@@ -32,24 +35,31 @@ argument_specs:
       proxmox_template_storage:
         type: str
         default: local-lvm
+        description: Proxmox storage the root disk and the cloud-init drive are created on. Set through proxmox_storage in local.yml.
       proxmox_template_bridge:
         type: str
         default: vmbr0
+        description: Bridge the template's net0 is attached to, and so every clone's. Set through proxmox_bridge in local.yml.
       proxmox_template_cores:
         type: int
         default: 2
+        description: CPU cores of the template itself. proxmox_vm sets each VM's own.
       proxmox_template_memory_mb:
         type: int
         default: 2048
+        description: Memory of the template itself, in MB. proxmox_vm sets each VM's own.
       proxmox_template_cpu_type:
         type: str
         default: host
+        description: CPU type (qm --cpu), which every VM cloned from the template keeps.
       proxmox_template_ostype:
         type: str
         default: l26
+        description: Guest OS type (qm --ostype). l26 is Linux 2.6 or later.
       proxmox_template_qm:
         type: path
         default: /usr/sbin/qm
+        description: Path of qm on the node. Tests point it at a stand-in.
       proxmox_template_install_guest_agent:
         description:
           - Bake qemu-guest-agent into the image with virt-customize.
@@ -68,3 +78,4 @@ argument_specs:
       proxmox_template_virt_customize:
         type: path
         default: /usr/bin/virt-customize
+        description: Path of virt-customize on the node. Tests point it at a stand-in.

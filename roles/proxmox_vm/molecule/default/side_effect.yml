@@ -490,7 +490,7 @@
         quiet: true
 
     # A wrong or expired token is the likeliest first-run failure, and the
-    # README devotes a section to creating one. The user should get something
+    # wiki devotes a section to creating one. The user should get something
     # better than a raw proxmoxer traceback.
     - name: Run the role with a bad API token
       block:

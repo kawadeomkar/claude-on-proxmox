@@ -18,7 +18,8 @@ argument_specs:
         no_log: true
         description:
           - A key for the first join only (tskey-auth-..., or a tskey-client-... OAuth secret, which needs
-            tailscale_advertise_tags). Empty leaves the VM for the web login.
+            tailscale_advertise_tags). Empty leaves the VM for the web login. Set through vault_tailscale_auth_key in
+            vault.yml.
       tailscale_auth_method:
         type: str
         default: auto
@@ -39,16 +40,20 @@ argument_specs:
         type: str
         default: ""
         no_log: true
-        description: An API access token (tskey-api-...), used under tailscale_api_auth_method auto or token.
+        description: >-
+          An API access token (tskey-api-...), used under tailscale_api_auth_method auto or token. Set through vault_tailscale_api_token in vault.yml.
       tailscale_oauth_client_id:
         type: str
         default: ""
-        description: An OAuth client's ID, used under tailscale_api_auth_method auto or oauth.
+        description: >-
+          An OAuth client's ID, used under tailscale_api_auth_method auto or oauth. Set through vault_tailscale_oauth_client_id in vault.yml.
       tailscale_oauth_client_secret:
         type: str
         default: ""
         no_log: true
-        description: That client's secret (tskey-client-...), used under tailscale_api_auth_method auto or oauth.
+        description: >-
+          That client's secret (tskey-client-...), used under tailscale_api_auth_method auto or oauth.
+          Set through vault_tailscale_oauth_client_secret in vault.yml.
       tailscale_api_url:
         type: str
         default: https://api.tailscale.com
@@ -65,6 +70,7 @@ argument_specs:
       tailscale_accept_routes:
         type: bool
         default: false
+        description: Use the subnet routes other devices on the tailnet advertise.
       tailscale_accept_dns:
         type: bool
         default: false
@@ -86,6 +92,7 @@ argument_specs:
         type: list
         elements: str
         default: []
+        description: More tailscale up flags, added to every join, by key or by the web login. A node that has joined already does not get them.
       tailscale_daemon_flags:
         type: list
         elements: str
@@ -102,7 +109,7 @@ argument_specs:
       tailscale_login_desktop:
         type: bool
         default: true
-        description: Open the sign-in page in a browser on the machine running Ansible.
+        description: Open the sign-in page in a browser on the machine running Ansible. Set through login_desktop in local.yml.
       tailscale_sign_in_follows:
         type: bool
         default: false
@@ -170,16 +177,20 @@ argument_specs:
         type: str
         default: ""
         no_log: true
-        description: An API access token (tskey-api-...), used under tailscale_api_auth_method auto or token.
+        description: >-
+          An API access token (tskey-api-...), used under tailscale_api_auth_method auto or token. Set through vault_tailscale_api_token in vault.yml.
       tailscale_oauth_client_id:
         type: str
         default: ""
-        description: An OAuth client's ID, used under tailscale_api_auth_method auto or oauth.
+        description: >-
+          An OAuth client's ID, used under tailscale_api_auth_method auto or oauth. Set through vault_tailscale_oauth_client_id in vault.yml.
       tailscale_oauth_client_secret:
         type: str
         default: ""
         no_log: true
-        description: That client's secret (tskey-client-...), used under tailscale_api_auth_method auto or oauth.
+        description: >-
+          That client's secret (tskey-client-...), used under tailscale_api_auth_method auto or oauth.
+          Set through vault_tailscale_oauth_client_secret in vault.yml.
       tailscale_api_url:
         type: str
         default: https://api.tailscale.com

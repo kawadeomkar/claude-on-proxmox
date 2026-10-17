@@ -42,6 +42,9 @@ patterns=(
   # output names the Proxmox host and every VM by address.
   '(^|/)\.logs/'
   '\.log$'
+  # Working documents beside the wiki: a plan, a review or a smoke runbook
+  # names the Proxmox host and the VMs. The wiki itself is exempted below.
+  '^docs/'
 )
 
 # Tracked files a rule above matches that hold no real values.
@@ -56,6 +59,12 @@ allowed=(
   # there. Exactly that name: this list is applied before the rules above, so
   # a wider match here would also exempt a vault-proxmox.yml.
   '(^|/)group_vars/(.+/)?proxmox\.ya?ml$'
+  # The wiki: its home page, its pages in the folders .gitignore re-includes,
+  # and its stylesheet. Pages and stylesheets only, so a vault.yml dropped in a
+  # wiki folder is still caught.
+  '^docs/README\.md$'
+  '^docs/(getting-started|guides|reference|architecture|development)/.+\.md$'
+  '^docs/stylesheets/[^/]+\.css$'
 )
 
 pattern=$(IFS='|'; echo "${patterns[*]}")

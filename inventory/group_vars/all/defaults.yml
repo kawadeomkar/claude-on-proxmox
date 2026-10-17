@@ -9,12 +9,13 @@ proxmox_api_host: >-
   {{ hostvars[groups['proxmox'][0]]['ansible_host'] | default(groups['proxmox'][0])
      if groups['proxmox'] | default([]) else '' }}
 proxmox_api_port: 8006
-# A dedicated, VM-scoped user is recommended over root@pam (README).
+# A dedicated, VM-scoped user is recommended over root@pam
+# (docs/getting-started/proxmox-access.md).
 proxmox_api_user: ansible@pve
 proxmox_api_token_id: ansible
 proxmox_api_token_secret: "{{ vault_proxmox_api_token_secret }}"
 # Proxmox ships a self-signed certificate. Set to true once the PVE CA is
-# trusted on the controller (README, "Trusting the Proxmox certificate").
+# trusted on the controller (docs/getting-started/proxmox-access.md).
 proxmox_validate_certs: false
 proxmox_node: pve
 proxmox_storage: local-lvm
@@ -51,7 +52,7 @@ proxmox_api_url: >-
 # The header carries the token: every task that sends it is no_log.
 proxmox_api_headers:
   Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
-# The README trusts the Proxmox CA through REQUESTS_CA_BUNDLE, which the
+# The wiki trusts the Proxmox CA through REQUESTS_CA_BUNDLE, which the
 # modules' HTTP client reads and `uri` does not, so it is passed on. Empty
 # when certificates are not validated; callers `default(omit, true)` it.
 proxmox_api_ca_path: "{{ lookup('ansible.builtin.env', 'REQUESTS_CA_BUNDLE') if proxmox_validate_certs | bool else '' }}"
@@ -134,8 +135,7 @@ vm_ssh_public_keys: >-
 github_username: "{{ vault_github_username | default('', true) }}"
 # Optional. With it, private repositories are listed and cloned, and gh on
 # each VM is signed in with it, so `git push` and `gh pr create` work there
-# (README, "Private repositories, and pushing from the VM", for the
-# permissions it needs). Without it, gh is signed in once per VM by GitHub's
+# (docs/guides/github.md, for the permissions it needs). Without it, gh is signed in once per VM by GitHub's
 # device flow - `make github-login VM_NAME=<name>` runs it and then clones the
 # private repositories, and the terminal `make code` opens runs it too - and
 # every later `make configure` lists with the token gh stored. Either way the
@@ -235,8 +235,8 @@ login_desktop: true
 
 # ------------------------------------------------------------ Tailscale -----
 # Each VM joins your tailnet, so you can reach it - ssh, VS Code, a dev server -
-# from anywhere your other devices are, not only from this LAN (README,
-# "Reaching a VM over Tailscale"). Optional, and on by default. false turns it
+# from anywhere your other devices are, not only from this LAN
+# (docs/guides/tailscale.md). Optional, and on by default. false turns it
 # off again where this project installed it: logged out, stopped and removed.
 # A Tailscale installed on a VM by hand is left alone either way.
 tailscale_enabled: true
@@ -271,7 +271,7 @@ tailscale_api_token: "{{ vault_tailscale_api_token | default('', true) }}"
 tailscale_oauth_client_id: "{{ vault_tailscale_oauth_client_id | default('', true) }}"
 tailscale_oauth_client_secret: "{{ vault_tailscale_oauth_client_secret | default('', true) }}"
 # Tailscale SSH on the tailnet address, in place of sshd there, authorised by
-# your tailnet's policy, which needs an ssh rule for it (README).
+# your tailnet's policy, which needs an ssh rule for it (docs/guides/tailscale.md).
 tailscale_ssh: false
 # Use the subnet routes your other devices advertise.
 tailscale_accept_routes: false
@@ -279,7 +279,7 @@ tailscale_accept_routes: false
 # keeps the resolver DHCP gave it, and your devices still reach it by its
 # tailnet name. On, a tailnet that overrides local DNS sends all the VM's
 # lookups to its nameservers - and one on the tailnet is out of reach of a VM
-# the README's policy isolates.
+# the policy in docs/guides/tailscale.md isolates.
 tailscale_accept_dns: false
 # Tags asked for at the join, such as [tag:claude-vm]. Leave empty with a tagged
 # key: the VM takes the key's tags. Set it to tag a VM you sign in by the web.
@@ -297,7 +297,7 @@ tailscale_login_timeout: 300
 # Make each VM ready for VS Code's Remote - SSH extension: an sshd drop-in that
 # keeps the port forward the VS Code Server is reached through enabled, a
 # check that sshd really runs with it, and a higher inotify limit for the file
-# watcher (README, "Using VS Code on the VM"). Set false to remove both files.
+# watcher (docs/guides/vscode.md). Set false to remove both files.
 vscode_remote: true
 
 # Where the code lives on each VM: what github_projects clones into, where a
@@ -312,8 +312,8 @@ vm_projects_dir: ""
 # not been. The file is the one thing make code writes on the VM, in a
 # directory of its own (empty: .claude-on-proxmox in the projects directory),
 # never in a repository. VS Code still asks once to trust the folder and to
-# allow automatic tasks; this project answers neither for you (README, "A
-# Claude session in the window"). Set false to open the bare folder and write
+# allow automatic tasks; this project answers neither for you
+# (docs/guides/vscode.md). Set false to open the bare folder and write
 # nothing on the VM.
 vscode_claude_terminal: true
 # Where those files go on the VM: an absolute path (no "~"), not the projects
@@ -327,7 +327,7 @@ vscode_workspaces_dir: ""
 # session/ under the workspaces directory, never in a repository; the window's
 # "Session notes" task rewrites their "Signed in" section from the VM each
 # time it opens. They need that task, so they come with vscode_claude_terminal
-# (README, "Session notes"). Set false for neither.
+# (docs/guides/vscode.md). Set false for neither.
 vscode_session_notes: true
 # The VS Code user settings make code reads, and never writes, to say whether
 # that terminal will start on its own. Empty: where VS Code itself would keep

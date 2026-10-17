@@ -77,7 +77,7 @@
       {{ claude_vm_denied_first.msg | default('HTTP ' ~ (claude_vm_denied_first.status | default('?'))) }}.
       Reading a VM needs VM.Audit, and its address needs the guest-agent privilege:
       VM.Monitor on Proxmox VE 8, VM.GuestAgent.Audit on 9
-      (README, "Creating the Proxmox API token").
+      (docs/getting-started/proxmox-access.md, "Creating the Proxmox API token").
     quiet: true
 
 # guest_addresses reads the MAC of proxmox_nic from each config and picks the

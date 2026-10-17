@@ -49,13 +49,10 @@ at a prompt. Use it rather than a `subprocess` call of your own: a run inherits 
 names, never reads your terminal, and fails its test if it calls a browser opener, a clipboard or this
 machine's `tailscale`.
 
-Tests never talk to a real Proxmox, a real GitHub, a real Tailscale or a real hypervisor. `tests/molecule/` holds fakes for
-all of them: a stateful Proxmox API (including the guest agent), a stateful `qm`, a `virt-customize`, and
-a GitHub API serving local bare repositories, a stand-in `gh` for the GitHub sign-in, and a stand-in
-`claude` (`fake_claude.sh`) that answers the Claude sign-in the way Claude Code was probed to, and a
-stand-in `tailscale` (`fake_tailscale.sh`) for the join and the web login, and a fake Tailscale API
-(`fake_tailscale_api.py`) for deleting a device when a VM is destroyed. If
-your change needs a new external interaction, extend a fake rather than reaching for the network.
+Tests never talk to a real Proxmox, a real GitHub, a real Tailscale or a real hypervisor:
+`tests/molecule/` holds a fake or a stand-in for each, listed in
+[docs/architecture/testing.md](docs/architecture/testing.md#114-the-fakes--testsmolecule). If your change
+needs a new external interaction, extend a fake rather than reaching for the network.
 
 Secrets in tests are canned and searched for. `tests/unit/test_github_auth.py` holds every task that
 renders a GitHub token to `no_log` (`test_every_task_that_renders_a_token_is_no_log`) and greps every
@@ -76,8 +73,17 @@ secret gets a canned value and a place in those searches.
   enforces this. Every variable needs a default in `defaults/main.yml` and an entry in
   `meta/argument_specs.yml`, with `no_log: true` if it can hold a secret.
 - **Task names** in an included task file are prefixed with the file name: `- name: node | Install Node.js`.
-- **User-facing variables** are wired in `inventory/group_vars/all/defaults.yml` and documented in the
-  README table, so a user sets `github_username` rather than `github_projects_username`.
+- **User-facing variables** are wired in `inventory/group_vars/all/defaults.yml` and documented in
+  `local.yml.example` (or `vault.yml.example`), so a user sets `github_username` rather than
+  `github_projects_username`. The comment above each one is its entry in the wiki's settings
+  reference.
+- **Documentation** lives in the wiki in `docs/`, and changes in the same pull request as the
+  behaviour it describes. Its reference pages are generated: after changing a role's
+  `argument_specs.yml`, `defaults/main.yml`, `vars/main.yml` or task files,
+  `inventory/group_vars/all/defaults.yml` (it and the roles' `defaults/main.yml` feed the settings
+  page's Default column), `local.yml.example`, `vault.yml.example` or a Makefile target's `## ` text,
+  run `make docs` and commit the result
+  ([docs/development/docs.md](docs/development/docs.md)).
 - **Idempotence** is not optional. A task that reports `changed` on a second run will fail CI.
 - **A moment the run waits for the person is set apart.** A `pause` or `vars_prompt` passes its text
   through the `banner` filter (`'…' | banner('USER INPUT REQUIRED', host=inventory_hostname,
@@ -86,7 +92,7 @@ secret gets a canned value and a place in those searches.
 - **A report that says what to do after the run records it for NEXT STEPS.** Register its message and
   follow it with `ansible.builtin.set_stats` under the owner's `*_next` stat - the message while something
   is left to do, `''` once nothing is - decided from the facts the message is built from, never from its
-  text (ARCHITECTURE.md §7.5). The same test fails on a report without its record.
+  text ([docs/architecture/custom-code.md](docs/architecture/custom-code.md) §7.5). The same test fails on a report without its record.
 
 ## Adding a role
 
@@ -95,7 +101,8 @@ secret gets a canned value and a place in those searches.
    `.config/molecule/config.yml`, so it only needs what differs.
 3. Add the role to `ROLES` in the `Makefile` and to the matrix in `.github/workflows/ci.yml`. Renaming a
    CI job also means updating the required status checks on `main`, or pull requests can never merge.
-4. Add it to the role table in the README.
+4. Add it to the role table in `docs/reference/roles/README.md` and to the `nav` in `zensical.toml`,
+   and run `make docs`, which writes its reference page from its files.
 
 ## Pull requests
 

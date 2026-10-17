@@ -14,9 +14,9 @@ what it stores:
 
 - **The custom module** `roles/github_projects/library/github_repos.py`, which handles a GitHub token.
 - **Supply chain**: the vendored apt signing keys in `roles/dev_tools/files/` and
-  `roles/tailscale/files/`, the checksum-pinned uv
-  download, the Ubuntu cloud image verified against its published `SHA256SUMS`, and the Claude Code
-  installer fetched over TLS.
+  `roles/tailscale/files/`, and every other download a VM gets - the uv release, the Ubuntu cloud image,
+  the Claude Code installer - each verified as [What the VM trusts](docs/guides/what-the-vm-trusts.md)
+  says.
 - **Credential handling**: the Proxmox API token, GitHub token and Anthropic API key, which live in an
   ansible-vault file and are marked `no_log`. Every task that hands the GitHub token on is `no_log` too,
   which also keeps it out of the VM's journal (a module logs the arguments its spec does not mark
@@ -27,7 +27,7 @@ what it stores:
   character removed. The GitHub token is also stored on the VM, by `gh`
   (`~/.config/gh/hosts.yml`, mode 0600), so that `git` and `gh` there can push; a device-flow login
   made on the VM stores its own token the same way. Either is readable by the VM user, and so by
-  Claude Code, like the Anthropic key in `~/.claude/settings.json`. The Claude sign-in's one-time code
+  Claude Code ([What the VM trusts](docs/guides/what-the-vm-trusts.md)). The Claude sign-in's one-time code
   (`roles/claude_code/tasks/browser_login.yml`) is read at a `pause` under `no_log` and travels to the
   VM on stdin into a 0600 named pipe only that `claude auth login` reads. With pipelining on, as
   `ansible.cfg` sets it, it is never written to a file or a command line; with pipelining off - which
@@ -69,12 +69,16 @@ the repository.
 
 ## Known trade-offs, not vulnerabilities
 
-Some defaults trade strictness for a working first run. These are documented in the README, and reports
-that only restate them are not treated as vulnerabilities:
+Some defaults trade strictness for a working first run. These are documented in the wiki - the defaults
+a VM lives with in [What the VM trusts](docs/guides/what-the-vm-trusts.md), how each is enforced in
+[docs/architecture/security-model.md](docs/architecture/security-model.md) - and reports that only
+restate them are not treated as vulnerabilities:
 
 - `proxmox_validate_certs` defaults to `false`, because a stock Proxmox install presents a self-signed
-  certificate. The README explains how to trust the Proxmox CA and turn it on.
-- The VM's user gets passwordless sudo and docker group membership by default; both are toggles.
+  certificate. [Proxmox access](docs/getting-started/proxmox-access.md#trusting-the-proxmox-certificate)
+  explains how to trust the Proxmox CA and turn it on.
+- The VM's user gets passwordless sudo and docker group membership by default; both are toggles, and
+  [What the VM trusts](docs/guides/what-the-vm-trusts.md) says what they mean.
 - SSH host keys are accepted on first contact (`StrictHostKeyChecking=accept-new`) so a freshly cloned VM
   can be reached without manual steps. Changed keys are still refused.
 - The `vscode_server` role keeps `AllowTcpForwarding` on, which VS Code's Remote - SSH needs and OpenSSH
@@ -111,7 +115,7 @@ that only restate them are not treated as vulnerabilities:
   VM a run provisions, so a second VM would be given the same address.
 
 - **Tailscale reach.** A tailnet's default policy lets every device reach every other, tagged devices
-  included, and these VMs run an AI agent with passwordless sudo. The README's policy edit narrows the
+  included, and these VMs run an AI agent with passwordless sudo. The [policy edit](docs/guides/tailscale.md#keeping-an-agent-vm-off-your-other-devices) narrows the
   default rule to the people's own devices, so a tagged VM can be reached but can open no connection, and
   adds a test the admin console runs on every save; a VM joined by the web login without a tag is the
   user's own device, and reaches what the user's devices reach. On the VM, sudo can always log the node
@@ -148,7 +152,8 @@ If you can show one of these is exploitable beyond the documented trade-off, ple
 ## Secrets committed by mistake
 
 CI runs gitleaks over the working tree and over every commit a push or pull request brings in, so a
-token committed and then deleted in a later commit still fails the run (ARCHITECTURE.md §10 lists what
+token committed and then deleted in a later commit still fails the run
+([docs/architecture/security-model.md](docs/architecture/security-model.md#secret-scanning) lists what
 it cannot see). A failing scan means the secret has already been pushed to a public repository, and
 rewritten commits stay reachable by SHA, from pull requests and in forks. Revoke or rotate the
 credential first, as GitHub's guide to [removing sensitive data][sensitive] advises; rewriting history

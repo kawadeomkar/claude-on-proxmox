@@ -6,7 +6,7 @@ is drawn as a block titled ACTION REQUIRED IN YOUR BROWSER instead of an
 that it is waiting instead of a FAILED - RETRYING line every few seconds.
 After PLAY RECAP it prints NEXT STEPS: what the report tasks recorded with
 set_stats as still left to do, per VM and matter, the last record of each
-winning (ARCHITECTURE.md §7.5).
+winning (docs/architecture/custom-code.md §7.5).
 
 Everything else is the default callback's, options included: a subclass
 without DOCUMENTATION has no options, every hook then fails on its first

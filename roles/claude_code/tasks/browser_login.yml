@@ -15,7 +15,7 @@
 # prompt in the terminal running make, and it reaches claude through a named
 # pipe. Authorising is the person's part, and the only part.
 #
-# What it rests on, probed against Claude Code 2.1.296 (ARCHITECTURE §5.5):
+# What it rests on, probed against Claude Code 2.1.296 (docs/architecture/roles.md §5.5):
 # - With no terminal, claude prints the page as a plain URL and reads the code
 #   as one line from stdin, "<code>#<state>". A pipe is enough.
 # - Given BROWSER, it runs it with the page that redirects to

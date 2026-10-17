@@ -7,12 +7,20 @@
 #
 # Values are referenced indirectly (vault_* -> plain name) in defaults.yml so
 # `grep` finds their usage and ansible-lint's naming conventions are satisfied.
+# docs/reference/settings.md lists them, generated from this file (make docs).
 
-# Proxmox API token secret for proxmox_api_user (default ansible@pve). See the
-# README section "Creating the Proxmox API token" for the pveum commands that
-# create a VM-scoped user, role and token.
+# ---------------------------------------------------------------- Proxmox ---
+# Proxmox API token secret for proxmox_api_user (default ansible@pve). See
+# "Creating the Proxmox API token" in docs/getting-started/proxmox-access.md
+# for the pveum commands that create a VM-scoped user, role and token.
 vault_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
+# -------------------------------------------------------------------- VMs ---
+# Optional: a password for the VM user, for the Proxmox console. SSH stays
+# key-only either way (common_harden_ssh). Empty sets none.
+vm_password: ""
+
+# ----------------------------------------------------------------- GitHub ---
 # GitHub account whose repositories get cloned onto the VM.
 vault_github_username: "your-github-username"
 # Optional. With it, private repositories are listed and cloned and gh on each
@@ -22,22 +30,24 @@ vault_github_username: "your-github-username"
 # repositories. Leave it empty to sign in once per VM by GitHub's device flow
 # instead (make github-login VM_NAME=<name>), with no secret here: that run
 # clones the private repositories too, and later runs list with the token gh
-# stored. README, "Private repositories, and pushing from the VM".
+# stored. docs/guides/github.md.
 vault_github_token: ""
 
+# ------------------------------------------------------------ Claude Code ---
 # Optional: skip interactive `claude` login on the VM.
 # Billing for Claude Code on the VM via Anthropic API credits. Leave empty to
 # log in with your Claude account instead - and leave it empty if you want
 # Remote Control (claude_remote_control), which an API key would override.
 vault_anthropic_api_key: ""
 
+# -------------------------------------------------------------- Tailscale ---
 # Optional: a Tailscale auth key, so each new VM joins your tailnet during
 # configuration with nothing to click. Make it reusable (one key for the whole
 # fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale
 # removes an ephemeral node within the hour of it going offline, and a VM left
 # stopped would be. Leave it empty to sign each VM in by Tailscale's web login
 # instead (make tailscale-login VM_NAME=<name>), with no secret here. Only ever
-# used for a VM's first join. README, "Reaching a VM over Tailscale".
+# used for a VM's first join. docs/guides/tailscale.md.
 vault_tailscale_auth_key: ""
 
 # Optional: what deletes a VM's device from your tailnet when make destroy
@@ -45,8 +55,8 @@ vault_tailscale_auth_key: ""
 # (tailscale_api_auth_method in local.yml can say otherwise). Used only on this
 # machine, never sent to a VM. token: an API access token (Settings, Keys;
 # tskey-api-..., at most 90 days). oauth: an OAuth client with the devices:core
-# scope (Settings, OAuth clients), which does not expire. README, "Removing
-# devices for you".
+# scope (Settings, OAuth clients), which does not expire. "Removing devices
+# for you" in docs/guides/tailscale.md.
 vault_tailscale_api_token: ""
 vault_tailscale_oauth_client_id: ""
 vault_tailscale_oauth_client_secret: ""

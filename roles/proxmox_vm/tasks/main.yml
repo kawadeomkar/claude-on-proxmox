@@ -9,7 +9,7 @@
     fail_msg: >-
       Set proxmox_api_host in inventory/hosts.yml and vault_proxmox_api_token_secret
       in inventory/group_vars/all/vault.yml. See "Creating the Proxmox API token"
-      in the README.
+      in docs/getting-started/proxmox-access.md.
     quiet: true
 
 - name: Validate the VM name

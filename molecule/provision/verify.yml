@@ -535,7 +535,7 @@
           beta {{ verify_beta_status.json.data.status }}): {{ verify_stopped_run.stdout_lines[-20:] }}
         quiet: true
 
-    # `make provision VM_NAME=solo`, the README's first command: one name, so
+    # `make provision VM_NAME=solo`, the simplest command: one name, so
     # play 1 lists nothing, asks for no VMID and hands the role no
     # proxmox_vm_id - every lazy var there defaults from a skipped register,
     # and the role lets Proxmox pick the VMID. Every other provision run here
