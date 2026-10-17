@@ -66,11 +66,18 @@
     state: absent
   when: not common_user_passwordless_sudo
 
+# As the user, not root: authorized_key follows a symlink at ~/.ssh, so as root
+# it made the keys file in the link's target and set that directory to 0700,
+# wherever it was (ansible.posix 2.2.1 stopped it following a link at the keys
+# file, not at the directory). As the user, a link reaches nothing the user
+# could not change already.
 - name: Authorise SSH keys
   ansible.posix.authorized_key:
     user: "{{ common_user }}"
     key: "{{ item }}"
     state: present
+  become: true
+  become_user: "{{ common_user }}"
   loop: "{{ common_user_ssh_public_keys }}"
   loop_control:
     label: "{{ item.split(' ')[-1] if item.count(' ') > 1 else item[:32] ~ '...' }}"
