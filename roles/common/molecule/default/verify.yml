@@ -76,6 +76,42 @@
       changed_when: false
       failed_when: "'sudo' not in common_verify_groups.stdout.split()"
 
+    # common_masked_units: the stand-ins prepare.yml installed are masked and
+    # stopped, none of them failed (fwupd's timer, which side_effect.yml left
+    # failed, included), the two units the container never had are left
+    # without a mask, and snapd, given a snap in side_effect.yml, runs.
+    - name: Read the state of each unit
+      ansible.builtin.command:
+        argv: [systemctl, show, --property=UnitFileState, --property=ActiveState, "{{ item }}"]
+      loop: [fwupd.service, fwupd-refresh.timer, multipathd.service, multipathd.socket, snapd.service, snapd.socket]
+      register: common_verify_units
+      changed_when: false
+
+    - name: Look for a mask on the units the container never had
+      ansible.builtin.stat:
+        path: /etc/systemd/system/{{ item }}
+      loop: [ModemManager.service, udisks2.service]
+      register: common_verify_absent_units
+
+    - name: Assert what is masked and what runs
+      vars:
+        common_verify_state: >-
+          {{ dict(common_verify_units.results | map(attribute='item')
+                  | zip(common_verify_units.results | map(attribute='stdout'))) }}
+      ansible.builtin.assert:
+        that:
+          - common_verify_state['fwupd.service'] is search('UnitFileState=masked')
+          - common_verify_state['fwupd.service'] is search('ActiveState=inactive')
+          - common_verify_state['fwupd-refresh.timer'] is search('UnitFileState=masked')
+          - common_verify_state['fwupd-refresh.timer'] is search('ActiveState=inactive')
+          - common_verify_state['multipathd.service'] is search('UnitFileState=masked')
+          - common_verify_state['multipathd.socket'] is search('UnitFileState=masked')
+          - common_verify_state['multipathd.socket'] is search('ActiveState=inactive')
+          - common_verify_state['snapd.service'] is search('UnitFileState=enabled')
+          - common_verify_state['snapd.service'] is search('ActiveState=active')
+          - common_verify_absent_units.results | map(attribute='stat.exists') | select | list == []
+        quiet: true
+
     # common_apt_keep_downloads: false - apt deletes what it installed (sl and
     # the baseline came through it), and what was left before is gone too.
     - name: Read apt's settings

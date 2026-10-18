@@ -1,0 +1,74 @@
+---
+# Masked rather than removed: multipath-tools is a dependency of ubuntu-server,
+# so removing it takes the metapackage too, and `apt autoremove` then what came
+# with it. A masked unit stops, and nothing - a socket, a timer, D-Bus - starts
+# it again. Only the units the VM has: the minimal image proxmox_template
+# builds from ships snapd alone of them, and a mask on a unit that is not there
+# would only leave a link to /dev/null behind.
+- name: masked_units | List which of the units to mask the VM has
+  ansible.builtin.command:
+    argv: "{{ ['systemctl', 'list-unit-files', '--no-legend', '--full', '--'] + common_masked_units }}"
+  register: common_masked_units_listed
+  changed_when: false
+  # 1 is "none of them": nothing to mask.
+  failed_when: common_masked_units_listed.rc not in [0, 1]
+  check_mode: false
+
+# A snap installed by hand stops working with snapd masked, so snapd is left
+# alone on a VM that has one. Each installed snap revision is a file here; the
+# directory exists only with snapd, and find warns about one that does not.
+- name: masked_units | Look for installed snaps
+  ansible.builtin.find:
+    paths: /var/lib/snapd/snaps
+    patterns: "*.snap"
+  register: common_masked_units_snaps
+  when: common_masked_units_listed.stdout is search('^snapd[.]', multiline=True)
+
+# Stopped first, then masked: systemd_service masks before it stops, and a
+# timer masked while it waits fails ("Unit to trigger vanished") - the stop
+# after it then skips a unit that is not running, and the VM stays degraded.
+# Timers, sockets and paths stop before the services they would start again.
+- name: masked_units | Stop and mask the units
+  vars:
+    common_masked_units_present: >-
+      {{ common_masked_units | intersect(common_masked_units_listed.stdout_lines | map('split') | map('first') | list) }}
+    common_masked_units_kept: >-
+      {{ common_masked_units | select('match', 'snapd[.]') | list
+         if common_masked_units_snaps.matched | default(0) > 0 else [] }}
+    common_masked_units_doomed: "{{ common_masked_units_present | difference(common_masked_units_kept) }}"
+    common_masked_units_triggers: "{{ common_masked_units_doomed | select('search', '[.](timer|socket|path)$') | list }}"
+  when: common_masked_units_doomed | length > 0
+  block:
+    - name: masked_units | Stop each unit, timers, sockets and paths first
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ common_masked_units_triggers + (common_masked_units_doomed | difference(common_masked_units_triggers)) }}"
+
+    - name: masked_units | Mask each unit
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: true
+      loop: "{{ common_masked_units_doomed }}"
+
+    # One line per unit, in the order given; rc 1 is "none failed".
+    - name: masked_units | Read which of the units failed
+      ansible.builtin.command:
+        argv: "{{ ['systemctl', 'is-failed', '--'] + common_masked_units_doomed }}"
+      register: common_masked_units_states
+      changed_when: false
+      failed_when: common_masked_units_states.rc not in [0, 1]
+      check_mode: false
+
+    # A unit that failed before - on its own, or masked while it ran, as a
+    # mask before the stop leaves a timer - stays failed once stopped and
+    # masked, and keeps the VM degraded until a reboot.
+    - name: masked_units | Clear the failed state a unit was left in
+      vars:
+        common_masked_units_failed: >-
+          {{ dict(common_masked_units_doomed | zip(common_masked_units_states.stdout_lines))
+             | dict2items | selectattr('value', 'eq', 'failed') | map(attribute='key') | list }}
+      ansible.builtin.command:
+        argv: "{{ ['systemctl', 'reset-failed', '--'] + common_masked_units_failed }}"
+      changed_when: true
+      when: common_masked_units_failed | length > 0

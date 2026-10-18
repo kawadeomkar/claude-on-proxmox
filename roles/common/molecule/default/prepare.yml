@@ -1,4 +1,11 @@
 ---
+# The container has none of the units common_masked_units names, so stand-ins
+# for four of them play their part: a running service and a waiting timer
+# (fwupd, and the timer's own service), a listening socket and its service
+# (multipathd), and snapd with its socket and an empty snaps directory - no
+# snap installed, so it is masked too. ModemManager and udisks2 stay absent,
+# which is the minimal image's case for them: nothing is masked there.
+#
 # The image's own docker-clean deletes every downloaded package after apt runs,
 # so it goes, and only the role's setting keeps apt's download cache empty. A
 # package left there stands for what a first boot's upgrade leaves behind.
@@ -6,7 +13,85 @@
   hosts: all
   become: true
   gather_facts: false
+  vars:
+    common_prepare_units:
+      fwupd.service: |
+        [Unit]
+        Description=Stand-in for fwupd (common scenario)
+        [Service]
+        ExecStart=/bin/sleep infinity
+        [Install]
+        WantedBy=multi-user.target
+      fwupd-refresh.timer: |
+        [Unit]
+        Description=Stand-in for fwupd's refresh timer (common scenario)
+        [Timer]
+        OnActiveSec=1d
+        [Install]
+        WantedBy=timers.target
+      fwupd-refresh.service: |
+        [Unit]
+        Description=Stand-in for fwupd's refresh (common scenario)
+        [Service]
+        Type=oneshot
+        ExecStart=/bin/true
+      multipathd.service: |
+        [Unit]
+        Description=Stand-in for multipathd (common scenario)
+        [Service]
+        ExecStart=/bin/sleep infinity
+      multipathd.socket: |
+        [Unit]
+        Description=Stand-in for multipathd's socket (common scenario)
+        [Socket]
+        ListenStream=/run/multipathd-stand-in.socket
+        [Install]
+        WantedBy=sockets.target
+      snapd.service: |
+        [Unit]
+        Description=Stand-in for snapd (common scenario)
+        [Service]
+        ExecStart=/bin/sleep infinity
+        [Install]
+        WantedBy=multi-user.target
+      snapd.socket: |
+        [Unit]
+        Description=Stand-in for snapd's socket (common scenario)
+        [Socket]
+        ListenStream=/run/snapd-stand-in.socket
+        [Install]
+        WantedBy=sockets.target
   tasks:
+    # Where a package puts its units: /etc/systemd/system is the admin's, and
+    # a mask is a link to /dev/null that systemctl makes there.
+    - name: Install the stand-in units
+      ansible.builtin.copy:
+        content: "{{ item.value }}"
+        dest: /usr/lib/systemd/system/{{ item.key }}
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ common_prepare_units | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Start them
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      # A socket first: systemd refuses to start one whose service already runs.
+      loop: [fwupd.service, fwupd-refresh.timer, multipathd.socket, snapd.socket, snapd.service]
+
+    - name: Give snapd its snaps directory, with no snap in it
+      ansible.builtin.file:
+        path: /var/lib/snapd/snaps
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Remove the image's own apt cleanup
       ansible.builtin.file:
         path: /etc/apt/apt.conf.d/docker-clean

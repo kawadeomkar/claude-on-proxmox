@@ -169,3 +169,9 @@
     state: "{{ 'started' if ansible_facts['virtualization_type'] == 'kvm' else omit }}"
   loop: "{{ common_enabled_services }}"
   when: ansible_facts['service_mgr'] == 'systemd'
+
+- name: Mask the services a headless VM has no use for
+  ansible.builtin.include_tasks: masked_units.yml
+  when:
+    - ansible_facts['service_mgr'] == 'systemd'
+    - common_masked_units | length > 0

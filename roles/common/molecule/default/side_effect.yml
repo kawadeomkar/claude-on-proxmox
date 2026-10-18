@@ -1,0 +1,77 @@
+---
+# Converge masked snapd, which had no snap installed. A VM with a snap keeps
+# snapd running: the snap would stop working without it. So snapd is put back,
+# a snap appears, and the role's masking runs again; verify.yml then finds
+# snapd running and every other stand-in still masked. Before that, fwupd's
+# timer is left failed, as masking it while it waits leaves it: the run must
+# clear that too.
+- name: Run the masking again once a snap is installed
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read what converge left snapd as
+      ansible.builtin.command:
+        argv: [systemctl, is-enabled, snapd.service]
+      register: common_side_effect_snapd
+      changed_when: false
+      failed_when: common_side_effect_snapd.stdout != 'masked'
+
+    # Both unmasked before either starts: a socket whose service is masked does
+    # not start, nor one whose service already runs.
+    - name: Unmask snapd
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: false
+      loop: [snapd.socket, snapd.service]
+
+    - name: Start snapd again
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop: [snapd.socket, snapd.service]
+
+    # Converge stopped the timer before it masked it, so the timer never
+    # failed: the clear after the mask has nothing to hide.
+    - name: Read what the timer logged in converge
+      ansible.builtin.command:
+        argv: [journalctl, --no-pager, --output=cat, --unit=fwupd-refresh.timer]
+      register: common_side_effect_timer_log
+      changed_when: false
+      failed_when: >-
+        common_side_effect_timer_log.stdout is not search('Stopped')
+        or common_side_effect_timer_log.stdout is search('Unit to trigger vanished')
+
+    # The mask before the stop: systemd_service masks first, and the timer,
+    # masked under a reload while it waits, fails.
+    - name: Start fwupd's timer again
+      ansible.builtin.systemd_service:
+        name: fwupd-refresh.timer
+        masked: false
+        state: started
+
+    - name: Mask the timer while it waits
+      ansible.builtin.systemd_service:
+        name: fwupd-refresh.timer
+        masked: true
+
+    - name: Read what that left the timer as
+      ansible.builtin.command:
+        argv: [systemctl, is-failed, fwupd-refresh.timer]
+      register: common_side_effect_timer
+      changed_when: false
+      failed_when: common_side_effect_timer.stdout != 'failed'
+
+    - name: Install a snap, as snapd keeps one
+      ansible.builtin.copy:
+        content: "a snap\n"
+        dest: /var/lib/snapd/snaps/hello_42.snap
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Run the role's masking again
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: masked_units

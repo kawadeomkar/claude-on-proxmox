@@ -86,7 +86,8 @@ clear: the project has no fact cache ([§13](toolchain.md)).
 apt deletes each package it downloads once installed → apt cache refresh → optional safe upgrade →
 baseline packages (~26, including `qemu-guest-agent` and `python3-debian`) → empty apt's download
 cache of what was left → timezone → hostname → user, groups and passwordless sudo → authorised keys
-→ sshd hardening → `~/.local/bin` on PATH for login shells → enable services.
+→ sshd hardening → `~/.local/bin` on PATH for login shells → enable services → mask the units a
+headless VM has no use for.
 
 Notable choices:
 
@@ -108,6 +109,15 @@ Notable choices:
   through `apt-get clean` for its lock, after the installs: the clean makes apt's lock file in
   `/var/lib/apt/lists`, which dates lists that are not there as fresh, so before the refresh it made the
   refresh skip them.
+- **Units are masked, not removed** (`common_masked_units`). A masked unit stops, and no socket, timer or
+  D-Bus activation starts it again. Removing the packages is not safe: `multipath-tools` is a dependency
+  of `ubuntu-server`, so removing it takes the metapackage too, and `apt autoremove` then what came with
+  it. Only the units the VM has are masked, so the minimal image, which has snapd alone of them, gets no
+  masks for the rest; and snapd only while no snap is installed, since a snap installed by hand stops
+  working without it. Each is stopped before it is masked, timers and sockets before the services they
+  start: `systemd_service` masks before it stops, a timer masked while it waits fails ("Unit to trigger
+  vanished"), and the stop then skips it, leaving the VM `degraded`. A unit among them left failed is
+  cleared with `systemctl reset-failed`.
 - Host-level settings are skipped under `common_container_virt_types`.
 
 ## 5.4 `dev_tools` — developer tooling

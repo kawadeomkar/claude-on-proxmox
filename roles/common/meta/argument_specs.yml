@@ -77,3 +77,19 @@ argument_specs:
         elements: str
         default: [qemu-guest-agent]
         description: Services enabled at boot where systemd runs, and started on a KVM guest.
+      common_masked_units:
+        type: list
+        elements: str
+        default:
+          - fwupd.service
+          - fwupd-refresh.timer
+          - multipathd.service
+          - multipathd.socket
+          - ModemManager.service
+          - udisks2.service
+          - snapd.service
+          - snapd.socket
+          - snapd.seeded.service
+        description:
+          - Units masked and stopped where systemd runs, of those the VM has; snapd's only while no snap is installed.
+            [] masks none, and a unit taken off the list stays masked.

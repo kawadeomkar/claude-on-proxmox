@@ -65,3 +65,19 @@ common_extra_packages: []
 # Services to enable at boot. qemu-guest-agent only starts on real VMs.
 common_enabled_services:
   - qemu-guest-agent
+
+# Units masked where systemd runs: what Ubuntu's server image starts that a
+# headless VM has no use for - firmware updates, multipath storage, modems,
+# removable disks and snaps, about 110 MB between them. Only the units a VM
+# has are masked, and snapd's only while no snap is installed. [] masks none;
+# a unit taken off the list stays masked until `sudo systemctl unmask <unit>`.
+common_masked_units:
+  - fwupd.service
+  - fwupd-refresh.timer
+  - multipathd.service
+  - multipathd.socket
+  - ModemManager.service
+  - udisks2.service
+  - snapd.service
+  - snapd.socket
+  - snapd.seeded.service

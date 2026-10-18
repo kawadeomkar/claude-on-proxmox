@@ -30,6 +30,7 @@ What those defaults mean for the VM: [What the VM trusts](../../guides/what-the-
 | `common_packages` | list of `str` | `[apt-transport-https, bash-completion, build-essential, ca-certificates, curl, fd-find, git, gnupg, htop, jq, less, openssh-server, python3, python3-pip, python3-debian, python3-venv, qemu-guest-agent, ripgrep, rsync, tmux, tree, unzip, vim, wget, zip, zstd]` | Baseline packages every VM gets. Setting it replaces the baseline; add packages with common_extra_packages instead. |
 | `common_extra_packages` | list of `str` | `[]` | More packages to install on top of common_packages. |
 | `common_enabled_services` | list of `str` | `["qemu-guest-agent"]` | Services enabled at boot where systemd runs, and started on a KVM guest. |
+| `common_masked_units` | list of `str` | `["fwupd.service", "fwupd-refresh.timer", "multipathd.service", "multipathd.socket", "ModemManager.service", "udisks2.service", "snapd.service", "snapd.socket", "snapd.seeded.service"]` | Units masked and stopped where systemd runs, of those the VM has; snapd's only while no snap is installed. [] masks none, and a unit taken off the list stays masked. |
 
 ## Tasks
 
@@ -59,6 +60,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Remove sshd hardening | `ansible.builtin.file` | <code>not common_harden_ssh</code> |
 | Put ~/.local/bin on PATH for all users | `ansible.builtin.template` |  |
 | Enable services | `ansible.builtin.service` | <code>ansible_facts['service_mgr'] == 'systemd'</code> |
+| Mask the services a headless VM has no use for | `ansible.builtin.include_tasks` | <code>ansible_facts['service_mgr'] == 'systemd' and common_masked_units &#124; length > 0</code> |
 
 ```mermaid
 flowchart TD
@@ -91,7 +93,43 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Harden_sshd15-->|Task| Remove_sshd_hardening16[remove sshd hardening<br>When: **not common harden ssh**]:::task
   Remove_sshd_hardening16-->|Task| Put____local_bin_on_PATH_for_all_users17[put    local bin on path for all users]:::task
   Put____local_bin_on_PATH_for_all_users17-->|Task| Enable_services18[enable services<br>When: **ansible facts  service mgr       systemd**]:::task
-  Enable_services18-->End
+  Enable_services18-->|Include task| Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_19[mask the services a headless vm has no use for<br>When: **ansible facts  service mgr       systemd  and<br>common masked units   length   0**<br>include_task: masked units yml]:::includeTasks
+  Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_19-->End
+```
+
+### `masked_units.yml`
+
+| Task | Module | When |
+|---|---|---|
+| List which of the units to mask the VM has | `ansible.builtin.command` |  |
+| Look for installed snaps | `ansible.builtin.find` | <code>common_masked_units_listed.stdout is search('^snapd[.]', multiline=True)</code> |
+| Stop and mask the units | block | <code>common_masked_units_doomed &#124; length > 0</code> |
+| &amp;emsp;Stop each unit, timers, sockets and paths first | `ansible.builtin.systemd_service` |  |
+| &amp;emsp;Mask each unit | `ansible.builtin.systemd_service` |  |
+| &amp;emsp;Read which of the units failed | `ansible.builtin.command` |  |
+| &amp;emsp;Clear the failed state a unit was left in | `ansible.builtin.command` | <code>common_masked_units_failed &#124; length > 0</code> |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| masked_units___List_which_of_the_units_to_mask_the_VM_has0[masked units   list which of the units to mask the<br>vm has]:::task
+  masked_units___List_which_of_the_units_to_mask_the_VM_has0-->|Task| masked_units___Look_for_installed_snaps1[masked units   look for installed snaps<br>When: **common masked units listed stdout is search  <br>snapd      multiline true**]:::task
+  masked_units___Look_for_installed_snaps1-->|Block Start| masked_units___Stop_and_mask_the_units2_block_start_0[[masked units   stop and mask the units<br>When: **common masked units doomed   length   0**]]:::block
+  masked_units___Stop_and_mask_the_units2_block_start_0-->|Task| masked_units___Stop_each_unit__timers__sockets_and_paths_first0[masked units   stop each unit  timers  sockets and<br>paths first]:::task
+  masked_units___Stop_each_unit__timers__sockets_and_paths_first0-->|Task| masked_units___Mask_each_unit1[masked units   mask each unit]:::task
+  masked_units___Mask_each_unit1-->|Task| masked_units___Read_which_of_the_units_failed2[masked units   read which of the units failed]:::task
+  masked_units___Read_which_of_the_units_failed2-->|Task| masked_units___Clear_the_failed_state_a_unit_was_left_in3[masked units   clear the failed state a unit was<br>left in<br>When: **common masked units failed   length   0**]:::task
+  masked_units___Clear_the_failed_state_a_unit_was_left_in3-.->|End of Block| masked_units___Stop_and_mask_the_units2_block_start_0
+  masked_units___Clear_the_failed_state_a_unit_was_left_in3-->End
 ```
 
 <!-- END_GENERATED: role -->
