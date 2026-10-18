@@ -46,18 +46,18 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Read the cluster-wide VM list | `ansible.builtin.slurp` | <code>proxmox_template_existing.rc != 0</code> |
 | Refuse a VMID another node holds, {{ proxmox_template_vmid }} | `ansible.builtin.assert` | <code>proxmox_template_existing.rc != 0</code> |
 | Build the template | block | <code>proxmox_template_existing.rc != 0</code> |
-| &amp;emsp;Ensure image directory exists | `ansible.builtin.file` |  |
-| &amp;emsp;Download cloud image | `ansible.builtin.get_url` |  |
-| &amp;emsp;Decide which image to import | `ansible.builtin.set_fact` |  |
-| &amp;emsp;Prepare the image for customization | block | <code>proxmox_template_install_guest_agent &#124; bool</code> |
-| &amp;emsp;&amp;emsp;Install libguestfs-tools | `ansible.builtin.apt` | <code>proxmox_template_manage_libguestfs &#124; bool</code> |
-| &amp;emsp;&amp;emsp;Copy the cloud image for customization | `ansible.builtin.copy` |  |
-| &amp;emsp;&amp;emsp;Install packages into the image with virt-customize | `ansible.builtin.command` |  |
-| &amp;emsp;Create VM {{ proxmox_template_vmid }} | `ansible.builtin.command` |  |
-| &amp;emsp;Import the cloud image as the root disk | `ansible.builtin.command` |  |
-| &amp;emsp;Add cloud-init drive and set boot order | `ansible.builtin.command` |  |
-| &amp;emsp;Convert VM to template | `ansible.builtin.command` |  |
-| &amp;emsp;Remove the customised image | `ansible.builtin.file` | <code>proxmox_template_import_path != proxmox_template_image.dest</code> |
+| &emsp;Ensure image directory exists | `ansible.builtin.file` |  |
+| &emsp;Download cloud image | `ansible.builtin.get_url` |  |
+| &emsp;Decide which image to import | `ansible.builtin.set_fact` |  |
+| &emsp;Prepare the image for customization | block | <code>proxmox_template_install_guest_agent &#124; bool</code> |
+| &emsp;&emsp;Install libguestfs-tools | `ansible.builtin.apt` | <code>proxmox_template_manage_libguestfs &#124; bool</code> |
+| &emsp;&emsp;Copy the cloud image for customization | `ansible.builtin.copy` |  |
+| &emsp;&emsp;Install packages into the image with virt-customize | `ansible.builtin.command` |  |
+| &emsp;Create VM {{ proxmox_template_vmid }} | `ansible.builtin.command` |  |
+| &emsp;Import the cloud image as the root disk | `ansible.builtin.command` |  |
+| &emsp;Add cloud-init drive and set boot order | `ansible.builtin.command` |  |
+| &emsp;Convert VM to template | `ansible.builtin.command` |  |
+| &emsp;Remove the customised image | `ansible.builtin.file` | <code>proxmox_template_import_path != proxmox_template_image.dest</code> |
 
 ```mermaid
 flowchart TD

@@ -305,6 +305,19 @@ def test_no_code_span_holds_a_closing_tag():
     assert found == []
 
 
+def test_no_page_shows_a_character_reference_as_text():
+    """A reference escaped twice, as `&amp;emsp;`, shows as `&emsp;` on GitHub and on the site alike, so
+    the comparison above passes it: the role pages once put one before every task inside a block. Code
+    is left out, where a page writes one to show it."""
+    md = MarkdownIt("commonmark").enable("table").enable("strikethrough")
+    shown = []
+    for page in _pages():
+        prose = re.sub(r"<code>.*?</code>", "", md.render(page.read_text()), flags=re.S)
+        for _, text in _blocks(prose).blocks:
+            shown += [f"{page.relative_to(DOCS)}: {ref}" for ref in re.findall(r"&#?\w+;", text)]
+    assert shown == []
+
+
 def test_no_page_repeats_a_heading():
     """GitHub suffixes a repeated heading's anchor -1, the site _1: a link to it works in one only."""
     repeated = []

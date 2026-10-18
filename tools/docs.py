@@ -49,6 +49,9 @@ CODE = re.compile(r"(`+)(?:.+?)\1|<code>.*?</code>|\]\([^)]*\)")
 NO_DEFAULT = "@@no-default@@"
 # Where the role template puts the role's internal values, which docsible cannot show in full.
 INTERNALS = "@@internals@@"
+# What the role template writes for each level a task sits inside a block: an em space, put in after the
+# escaping, which turned the template's own `&emsp;` into text.
+INDENT = "@@indent@@"
 
 
 def roles() -> list[str]:
@@ -351,6 +354,7 @@ def _role_section(role: str, section: str) -> str:
                 shown = value(defaults[var.group(1)]) if var and var.group(1) in defaults else ""
                 line = line.replace(NO_DEFAULT, shown)
             line = escape(line) if not line.startswith("|") else _escape_row(line)
+            line = line.replace(INDENT, "&emsp;")
             if not line and (not out or not out[-1]):
                 continue
         out.append(line)

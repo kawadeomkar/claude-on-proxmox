@@ -4,7 +4,8 @@
 
     An entry point other than main lists the variables it adds, and those it describes in a way of its own;
     the rest it shares with main are named in one line. tools/docs.py escapes the text, fills in
-    @@no-default@@ from the role's defaults/main.yml, and puts the internal values at @@internals@@. -#}
+    @@no-default@@ from the role's defaults/main.yml, puts the internal values at @@internals@@, and an em
+    space at each @@indent@@ (a task inside a block), after the escaping, which would show it as text. -#}
 {%- set specs = (role.argument_specs or {}).get('argument_specs') or {} %}
 {%- set main_options = specs.get('main', {}).get('options') or {} %}
 {%- macro value(v) -%}
@@ -117,10 +118,10 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 {%- for task in tasks if task is mapping %}
 {%- set name = task.name | default('(no name)') | string %}
 {%- set name = name[stem | length + 3:] if name.startswith(stem ~ ' | ') else name %}
-| {{ '&emsp;' * depth }}{{ name | replace('|', '\\|') }} | {{ module(task) }} | {{ when(task) }} |
+| {{ '@@indent@@' * depth }}{{ name | replace('|', '\\|') }} | {{ module(task) }} | {{ when(task) }} |
 {%- for part in ['block', 'rescue', 'always'] if task[part] is defined and task[part] %}
 {%- if part != 'block' %}
-| {{ '&emsp;' * (depth + 1) }}*{{ part }}:* | | |
+| {{ '@@indent@@' * (depth + 1) }}*{{ part }}:* | | |
 {%- endif %}
 {{- rows(task[part], stem, depth + (1 if part == 'block' else 2)) }}
 {%- endfor %}

@@ -151,11 +151,11 @@ classDef rescue stroke:#665352,stroke-width:2px;
 |---|---|---|
 | Check installed version | `ansible.builtin.command` |  |
 | Install version {{ dev_tools_uv_version }} | block | <code>dev_tools_uv_current.rc != 0 or ('uv ' ~ dev_tools_uv_version) not in dev_tools_uv_current.stdout</code> |
-| &amp;emsp;Create download directory | `ansible.builtin.tempfile` |  |
-| &amp;emsp;Download release archive | `ansible.builtin.get_url` |  |
-| &amp;emsp;Extract binaries | `ansible.builtin.unarchive` |  |
-| &amp;emsp;*always:* | | |
-| &amp;emsp;&amp;emsp;Remove download directory | `ansible.builtin.file` | <code>dev_tools_uv_tmp.path is defined</code> |
+| &emsp;Create download directory | `ansible.builtin.tempfile` |  |
+| &emsp;Download release archive | `ansible.builtin.get_url` |  |
+| &emsp;Extract binaries | `ansible.builtin.unarchive` |  |
+| &emsp;*always:* | | |
+| &emsp;&emsp;Remove download directory | `ansible.builtin.file` | <code>dev_tools_uv_tmp.path is defined</code> |
 
 ```mermaid
 flowchart TD
