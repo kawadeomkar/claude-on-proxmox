@@ -39,7 +39,7 @@
     name: "{{ common_hostname }}"
   when:
     - common_manage_hostname
-    - ansible_virtualization_type not in common_container_virt_types
+    - ansible_facts['virtualization_type'] not in common_container_virt_types
 
 - name: Create user {{ common_user }}
   ansible.builtin.user:
@@ -66,11 +66,18 @@
     state: absent
   when: not common_user_passwordless_sudo
 
+# As the user, not root: authorized_key follows a symlink at ~/.ssh, so as root
+# it made the keys file in the link's target and set that directory to 0700,
+# wherever it was (ansible.posix 2.2.1 stopped it following a link at the keys
+# file, not at the directory). As the user, a link reaches nothing the user
+# could not change already.
 - name: Authorise SSH keys
   ansible.posix.authorized_key:
     user: "{{ common_user }}"
     key: "{{ item }}"
     state: present
+  become: true
+  become_user: "{{ common_user }}"
   loop: "{{ common_user_ssh_public_keys }}"
   loop_control:
     label: "{{ item.split(' ')[-1] if item.count(' ') > 1 else item[:32] ~ '...' }}"
@@ -116,6 +123,6 @@
   ansible.builtin.service:
     name: "{{ item }}"
     enabled: true
-    state: "{{ 'started' if ansible_virtualization_type == 'kvm' else omit }}"
+    state: "{{ 'started' if ansible_facts['virtualization_type'] == 'kvm' else omit }}"
   loop: "{{ common_enabled_services }}"
-  when: ansible_service_mgr == 'systemd'
+  when: ansible_facts['service_mgr'] == 'systemd'

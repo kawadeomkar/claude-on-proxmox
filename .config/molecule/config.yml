@@ -23,5 +23,7 @@ provisioner:
     defaults:
       callback_result_format: yaml
       interpreter_python: auto_silent
+      # As ansible.cfg: gathered facts only under ansible_facts.
+      inject_facts_as_vars: false
 verifier:
   name: ansible

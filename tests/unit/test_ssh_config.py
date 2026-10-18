@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from harness import ansible_config
 
 REPO = Path(__file__).resolve().parents[2]
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
@@ -60,11 +61,10 @@ def _run(tmp_path: Path, vms: list[dict], state: str = "present", **extra) -> su
     )
     # No project config or inventory: a developer's own inventory would bring
     # in a vault this cannot open, and the defaults under test are passed here.
-    (tmp_path / "ansible.cfg").write_text("")
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
     # HOME is the temporary one too: the task file recognises the ~/... and
     # ${HOME}/... spellings of the Include by it.
-    env.update(ANSIBLE_CONFIG=str(tmp_path / "ansible.cfg"), ANSIBLE_NOCOLOR="1", HOME=str(tmp_path / "home"))
+    env.update(ANSIBLE_CONFIG=ansible_config(tmp_path), ANSIBLE_NOCOLOR="1", HOME=str(tmp_path / "home"))
     # The project default for the options, from inventory/group_vars, which
     # the wrapper does not load; the task file itself defaults to none.
     extra_vars = {

@@ -3,8 +3,8 @@
   ansible.builtin.deb822_repository:
     name: docker
     types: deb
-    uris: "https://download.docker.com/linux/{{ ansible_distribution | lower }}"
-    suites: "{{ ansible_distribution_release }}"
+    uris: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
     components: stable
     # Vendored key (roles/dev_tools/files/docker.asc) so a swapped download
     # endpoint cannot supply its own signing key.

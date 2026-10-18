@@ -53,6 +53,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from harness import ansible_config
 
 REPO = Path(__file__).resolve().parents[2]
 CODE = REPO / "playbooks" / "code.yml"
@@ -500,7 +501,6 @@ def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, lo
     if local:
         (group_vars / "local.yml").write_text(yaml.safe_dump(local))
     (root / "inventory" / "hosts.yml").write_text("all:\n  hosts:\n    localhost:\n      ansible_connection: local\n")
-    (root / "ansible.cfg").write_text("")
     bin_dir = root / "bin"
     bin_dir.mkdir()
     # VS Code's command, found only where `code_here` says it is installed,
@@ -533,7 +533,7 @@ def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, lo
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
     env.update(
-        ANSIBLE_CONFIG=str(root / "ansible.cfg"),
+        ANSIBLE_CONFIG=ansible_config(root),
         ANSIBLE_FILTER_PLUGINS=str(REPO / "filter_plugins"),
         ANSIBLE_NOCOLOR="1",
         # The run's stats printed: what it recorded for NEXT STEPS.

@@ -57,14 +57,14 @@ argument_specs:
       dev_tools_deb_arch:
         type: str
         choices: [amd64, arm64]
-        description: Derived from ansible_architecture by default.
+        description: Derived from the architecture fact by default.
       dev_tools_uv_version:
         type: str
         default: "0.9.5"
         description: uv release to install. Changing it needs the new release's digests in dev_tools_uv_sha256.
       dev_tools_uv_arch_map:
         type: dict
-        description: uv's release target for each ansible_architecture, which names the archive downloaded.
+        description: uv's release target for each value of the architecture fact, which names the archive downloaded.
       dev_tools_uv_sha256:
         type: dict
         description: SHA256 of the uv release archive per architecture key of dev_tools_uv_arch_map.

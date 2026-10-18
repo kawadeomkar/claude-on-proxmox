@@ -1,0 +1,18 @@
+---
+# Make the remote_tmp of the user modules run as - root, under the play's
+# become - before a module does, which warns "Module remote_tmp
+# /root/.ansible/tmp did not exist and was created with a mode of 0700". With
+# pipelining (ansible.cfg) a module that transfers no file gets no per-task
+# temporary directory, and the ones copy and template make belong to the
+# connecting user, made without become. So the first module running as root
+# that needs one creates root's remote_tmp itself and warns: get_url building
+# the template on a new Proxmox host, deb822_repository in dev_tools on a new
+# VM. Made here first, as that warning asks: the directory the run is
+# configured with (ansible.cfg's remote_tmp, ANSIBLE_REMOTE_TMP or a host's
+# own), 0700, as the module would. The file module needs none, so this task
+# cannot warn.
+- name: remote_tmp | Make the temporary directory Ansible's modules use
+  ansible.builtin.file:
+    path: "{{ lookup('ansible.builtin.config', 'remote_tmp', plugin_type='shell', plugin_name='sh') }}"
+    state: directory
+    mode: "0700"

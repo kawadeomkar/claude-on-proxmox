@@ -109,24 +109,22 @@ EVERY_KIND = """
 """
 
 
-def _write(root: Path, callback: str, extra_roles: Path | None = None) -> None:
-    (root / "ansible.cfg").write_text(
-        "[defaults]\ncallback_result_format = yaml\n"
-        f"stdout_callback = {callback}\ncallback_plugins = {PLUGINS}\n"
-        + (f"roles_path = {extra_roles}\n" if extra_roles else "")
+def _config(callback: str, extra_roles: Path | None = None) -> str:
+    """The run's ansible.cfg after harness.ANSIBLE_CFG: the result format and callback, as ansible.cfg has them."""
+    return f"callback_result_format = yaml\nstdout_callback = {callback}\ncallback_plugins = {PLUGINS}\n" + (
+        f"roles_path = {extra_roles}\n" if extra_roles else ""
     )
-    (root / "hosts").write_text(f"localhost ansible_connection=local ansible_python_interpreter={sys.executable}\n")
 
 
 def _play(root: Path, playbook: str, callback: str = "claude_on_proxmox", roles: Path | None = None, **env) -> tuple:
     """Run playbook text with callback; stdout, stderr and the run log."""
-    _write(root, callback, roles)
+    (root / "hosts").write_text(f"localhost ansible_connection=local ansible_python_interpreter={sys.executable}\n")
     path = root / "play.yml"
     path.write_text(playbook)
     log = root / "run.log"
     log.unlink(missing_ok=True)
     settings = {"ANSIBLE_LOG_PATH": str(log), **env}
-    environment = _env(root, **settings)
+    environment = _env(root, config=_config(callback, roles), **settings)
     if roles:
         environment["ANSIBLE_ROLES_PATH"] = str(roles)
     result = subprocess.run(

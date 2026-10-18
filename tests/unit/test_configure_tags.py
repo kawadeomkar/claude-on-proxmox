@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from harness import ansible_config
+
 REPO = Path(__file__).resolve().parents[2]
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
 DISCOVERY = "Discover VMs on Proxmox"
@@ -25,11 +27,8 @@ def _listed_tasks(tmp_path: Path, *args: str) -> dict[str, list[str]]:
     """The tasks `ansible-playbook --list-tasks` selects from configure.yml, by play name."""
     # No project config or inventory: nothing here needs them, and a
     # developer's own inventory would bring in a vault this cannot open.
-    (tmp_path / "ansible.cfg").write_text("")
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
-    env.update(
-        ANSIBLE_CONFIG=str(tmp_path / "ansible.cfg"), ANSIBLE_ROLES_PATH=str(REPO / "roles"), ANSIBLE_NOCOLOR="1"
-    )
+    env.update(ANSIBLE_CONFIG=ansible_config(tmp_path), ANSIBLE_ROLES_PATH=str(REPO / "roles"), ANSIBLE_NOCOLOR="1")
     result = subprocess.run(
         [str(ANSIBLE_PLAYBOOK), "-i", "localhost,", "--list-tasks", *args, str(REPO / "playbooks" / "configure.yml")],
         cwd=tmp_path,

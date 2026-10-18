@@ -80,6 +80,12 @@
         - configure_cloud_init.rc | default(0) not in [0, 2]
       tags: [always]
 
+    # Before the roles, whose modules would make it and warn; tagged like the
+    # waits, since a role run alone by TAGS can be a new VM's first.
+    - name: Make root's Ansible temporary directory
+      ansible.builtin.import_tasks: tasks/remote_tmp.yml
+      tags: [always]
+
   roles:
     - role: common
       tags: [common]

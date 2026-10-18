@@ -394,8 +394,8 @@ the stdout callback `ansible.cfg` names, prints NEXT STEPS after the recap from 
 message is built from: the line while something is left, `''` once nothing is, the last record of a VM and
 matter winning across plays. Do not decide from a message's text: a stopped Tailscale names no `make`
 command, and "make deploy signs it in next" names one with nothing to do. A new report needs its record, and
-`tests/unit/test_attention_callback.py` fails without it. Tests never load the callback (an empty
-`ansible.cfg` and the JSON callback); the harness shows custom stats, and `_left_to_do` reads the records.
+`tests/unit/test_attention_callback.py` fails without it. Tests never load the callback (an
+`ansible.cfg` holding only `inject_facts_as_vars = false`, and the JSON callback); the harness shows custom stats, and `_left_to_do` reads the records.
 
 **Discovery is a playbook, not the `community.proxmox` inventory plugin.** The header of
 `discover.yml` records the trade-offs; the swap is a live design question, not an oversight.
@@ -414,6 +414,15 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
 ## Things that have bitten this repo
 
 - **ansible-core 2.21**: a non-boolean conditional is a fatal error, not a warning.
+- **A gathered fact is `ansible_facts['architecture']`, never `ansible_architecture`.** ansible-core 2.24
+  stops injecting facts as top-level variables, and `ansible.cfg`, Molecule's shared config and every
+  `ansible.cfg` a unit test writes (`harness.ansible_config`) already set `inject_facts_as_vars = false`, so
+  the top-level name is undefined here. The first `make deploy` of a new VM printed a deprecation per read
+  until they moved; `tests/unit/test_gathered_facts.py` scans for one and holds all three settings.
+- **Every checkout on a machine shares `~/.ansible/collections`.** `make deps` in a worktree that still
+  pinned ansible.posix 2.1.0 put it back under every other checkout, whose runs went on without a word.
+  Every Ansible target now runs `collections-check` first (`ansible-galaxy collection install --offline`
+  against `requirements.yml`), and refuses, naming `make deps`, while a collection differs from its pin.
 - **`-e key=value` splits extra-vars on whitespace.** `VM_NAME="alpha beta"` silently provisioned
   half the fleet. The Makefile passes JSON (`-e '{"vm_name": "..."}'`) to keep the value whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them

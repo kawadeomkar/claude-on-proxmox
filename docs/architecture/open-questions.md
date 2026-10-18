@@ -14,6 +14,6 @@ records the same trade-offs.
 ## `common_enabled_services` and the `kvm` check
 
 `Enable services` starts a service only when
-`ansible_virtualization_type == 'kvm'`, which is right for `qemu-guest-agent` (the only entry today)
+`ansible_facts['virtualization_type'] == 'kvm'`, which is right for `qemu-guest-agent` (the only entry today)
 but means anything a user adds to the list is enabled-but-not-started on Vagrant or bare metal. Two
 tasks earlier, the hostname guard uses the more general `not in common_container_virt_types`.

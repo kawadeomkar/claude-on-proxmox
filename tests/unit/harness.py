@@ -51,6 +51,23 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
+# The ansible.cfg of every run a test makes. None of the project's settings but
+# the one that changes what a play can read: gathered facts only under
+# ansible_facts, as ansible.cfg has it (test_gathered_facts.py), so the plays only
+# these tests run read facts as make's runs do.
+ANSIBLE_CFG = "[defaults]\ninject_facts_as_vars = false\n"
+
+
+def ansible_config(directory: Path, extra: str = "") -> str:
+    """Write the ansible.cfg of a run in directory - ANSIBLE_CFG, then extra - and return its path, for ANSIBLE_CONFIG.
+
+    Every ansible.cfg a test writes or points a run at is written here, and
+    test_gathered_facts.py fails on one written or named any other way.
+    """
+    path = directory / "ansible.cfg"
+    path.write_text(ANSIBLE_CFG + extra)
+    return str(path)
+
 
 # What `claude auth status` prints for each way of being signed in, and its
 # exit status: 0 when logged in, 1 when not.
@@ -195,14 +212,17 @@ def _fail_if_the_desktop_was_reached(root: Path) -> None:
         )
 
 
-def _env(root: Path, **settings: str) -> dict:
-    """The environment of a run under root: PASSED_ON, the desktop stand-ins first on PATH, and settings."""
+def _env(root: Path, config: str = "", **settings: str) -> dict:
+    """The environment of a run under root: PASSED_ON, the desktop stand-ins first on PATH, and settings.
+
+    It writes the run's ansible.cfg, with config after ANSIBLE_CFG.
+    """
     desktop = _desktop(root)
     env = {name: value for name, value in os.environ.items() if name in PASSED_ON or name.startswith("LC_")}
     env["PATH"] = f"{desktop}{os.pathsep}{os.environ.get('PATH', os.defpath)}"
     env["BROWSER"] = str(desktop / "open")
     env.update(
-        ANSIBLE_CONFIG=str(root / "ansible.cfg"),
+        ANSIBLE_CONFIG=ansible_config(root, config),
         ANSIBLE_ROLES_PATH=str(REPO / "roles"),
         ANSIBLE_FILTER_PLUGINS=str(REPO / "filter_plugins"),
         ANSIBLE_NOCOLOR="1",
@@ -222,8 +242,7 @@ def _left_to_do(report: dict) -> dict:
 
 
 def _inventory(root: Path, hosts: dict, ordered: bool) -> Path:
-    """No project config, and an inventory of hosts: by name, or with ordered, in the order given."""
-    (root / "ansible.cfg").write_text("")
+    """An inventory of hosts, by name or, with ordered, in the order given; never the project's."""
     inventory = root / "hosts.yml"
     inventory.write_text(
         yaml.safe_dump({"claude_vms": {"hosts": hosts, "vars": {"vm_user": "dev"}}}, sort_keys=not ordered)

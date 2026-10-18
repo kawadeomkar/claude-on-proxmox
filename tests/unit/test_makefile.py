@@ -17,10 +17,10 @@ nothing but `make` itself exercises them:
 `make -n` prints a recipe without running it, which is enough to see what
 `provision` would pass. The TAGS refusal and the prerequisite wiring are shell
 lines, which -n does not run, so those tests run `make` for real with VENV
-pointed at an empty directory and VAULT_FILE at a stub that only looks
-encrypted: nothing could reach an ansible-playbook even if a guard regressed,
-and vault-check, which every playbook target runs first, lets the run reach
-the guard under test.
+pointed at a directory holding only a stand-in ansible-galaxy and VAULT_FILE at
+a stub that only looks encrypted: nothing could reach an ansible-playbook even
+if a guard regressed, and vault-check and collections-check, which every
+playbook target runs, let the run reach the guard under test.
 """
 
 from __future__ import annotations
@@ -35,7 +35,22 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+MAKEFILE = REPO / "Makefile"
 MAKE = shutil.which("make")
+PLAYBOOK_TARGETS = [
+    "template",
+    "provision",
+    "list",
+    "configure",
+    "deploy",
+    "destroy",
+    "claude-login",
+    "github-login",
+    "tailscale-login",
+    "check",
+    "ssh-config",
+    "code",
+]
 NAME_ERROR = "VM_NAME may contain only letters, digits and . _ - ,"
 
 pytestmark = pytest.mark.skipif(MAKE is None, reason="make is not installed")
@@ -52,10 +67,21 @@ def _make(*args: str) -> subprocess.CompletedProcess[str]:
 VAULT_HEADER = "$ANSIBLE_VAULT;1.1;AES256\n"
 
 
+def _stand_in_galaxy(bin_dir: Path, rc: int = 0) -> Path:
+    """An ansible-galaxy in bin_dir for collections-check: it records its arguments and exits rc; returns the record."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    record = bin_dir / "galaxy-args"
+    stand_in = bin_dir / "ansible-galaxy"
+    stand_in.write_text(f'#!/bin/sh\nfor arg in "$@"; do printf "%s\\n" "$arg"; done > {record}\nexit {rc}\n')
+    stand_in.chmod(0o755)
+    return record
+
+
 def _safe_overrides(tmp_path: Path) -> list[str]:
     """Make the run harmless: no ansible-playbook to execute, a vault stub vault-check accepts, and logs in tmp."""
     vault = tmp_path / "vault.yml"
     vault.write_text(VAULT_HEADER)
+    _stand_in_galaxy(tmp_path / "no-venv" / "bin")
     return [f"VENV={tmp_path / 'no-venv'}", f"VAULT_FILE={vault}", f"LOG_DIR={tmp_path / 'logs'}"]
 
 
@@ -90,6 +116,47 @@ def test_list_stops_at_the_missing_vault_before_the_playbook(tmp_path: Path) -> 
     assert result.returncode != 0
     assert "missing. Run: make init" in output
     assert "ansible-playbook" not in output
+
+
+# collections-check: every checkout on a machine shares ~/.ansible/collections,
+# so a run whose collections differ from requirements.yml's pins is refused,
+# naming make deps, before its playbook.
+def test_collections_check_asks_galaxy_offline_whether_the_pins_are_installed(tmp_path: Path) -> None:
+    record = _stand_in_galaxy(tmp_path / "venv" / "bin")
+    result = _make("collections-check", f"VENV={tmp_path / 'venv'}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert record.read_text().splitlines() == ["collection", "install", "-r", "requirements.yml", "--offline"]
+
+
+def test_a_playbook_target_stops_at_collections_that_are_not_the_pins(tmp_path: Path) -> None:
+    overrides = _safe_overrides(tmp_path)
+    _stand_in_galaxy(tmp_path / "no-venv" / "bin", rc=1)
+    result = _make("list", *overrides)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "are not the ones requirements.yml pins. Run: make deps" in output
+    assert "ansible-playbook" not in output
+
+
+def _prerequisites(target: str) -> list[str]:
+    line = next(line for line in MAKEFILE.read_text().splitlines() if line.startswith(f"{target}: ") and "##" in line)
+    return line.split(":", 1)[1].split("##", 1)[0].split()
+
+
+@pytest.mark.parametrize("target", [*PLAYBOOK_TARGETS, "molecule", "molecule-scenario"])
+def test_every_target_that_runs_ansible_checks_the_collections_first(target: str) -> None:
+    prerequisites = _prerequisites(target)
+    assert "collections-check" in prerequisites, prerequisites
+    # After what checks the input, before the log of a run it may refuse.
+    assert prerequisites[-2:] == ["collections-check", "log-setup"], prerequisites
+
+
+def test_the_targets_checked_are_every_playbook_target() -> None:
+    # Every target whose recipe runs ansible-playbook from the virtualenv, but
+    # syntax, which only parses the playbooks.
+    text = MAKEFILE.read_text()
+    running = set(re.findall(r"(?m)^([a-z-]+):[^\n]*\n(?:\t[^\n]*\n)*?\t[^\n]*\$\(BIN\)/ansible-playbook", text))
+    assert running - {"syntax"} == set(PLAYBOOK_TARGETS), running
 
 
 @pytest.mark.parametrize("value", ["alpha", "alpha,beta", "a.b-c_d", ""])
@@ -210,6 +277,7 @@ def _logging_overrides(tmp_path: Path) -> list[str]:
     stub = venv / "ansible-playbook"
     stub.write_text('#!/bin/sh\necho "stub ANSIBLE_LOG_PATH=[$ANSIBLE_LOG_PATH]"\n')
     stub.chmod(0o755)
+    _stand_in_galaxy(venv)
     vault = tmp_path / "vault.yml"
     vault.write_text(VAULT_HEADER)
     return [f"VENV={tmp_path / 'venv'}", f"VAULT_FILE={vault}", f"LOG_DIR={tmp_path / 'logs'}"]
@@ -379,6 +447,7 @@ def _recorded_args(tmp_path: Path, target: str, stdin) -> list[str]:
     stand_in = venv / "bin" / "ansible-playbook"
     stand_in.write_text(f'#!/bin/sh\nfor arg in "$@"; do printf "%s\\n" "$arg"; done > {record}\n')
     stand_in.chmod(0o755)
+    _stand_in_galaxy(venv / "bin")
     overrides = [f"VENV={venv}", *_safe_overrides(tmp_path)[1:]]
     env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/"), "LANG": "en_US.UTF-8"}
     result = subprocess.run(

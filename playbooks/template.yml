@@ -10,5 +10,10 @@
   # not this line - it only saves a pointless gather on the first run, when the
   # play does execute.
   gather_facts: false
+  # A new Proxmox host has no root remote_tmp yet either, and the build's
+  # get_url would make it and warn.
+  pre_tasks:
+    - name: Make root's Ansible temporary directory
+      ansible.builtin.import_tasks: tasks/remote_tmp.yml
   roles:
     - role: proxmox_template

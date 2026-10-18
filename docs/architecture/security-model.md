@@ -49,11 +49,15 @@ Two independent mechanisms:
 ## Supply chain
 
 Galaxy collections are pinned to exact versions (a range means every run silently
-picks up the latest publish, and made the CI cache key useless since it hashes the file). pre-commit
-hooks are pinned to commit SHAs, not tags, because a tag can be moved. apt signing keys are vendored
-in-repo. The uv release is pinned by version *and* per-architecture SHA-256, stored separately from
-the download. The Molecule base image is pinned by digest, with an unpinned weekly canary. What
-verifies each download a VM gets is listed in [What the VM trusts](../guides/what-the-vm-trusts.md).
+picks up the latest publish, and made the CI cache key useless since it hashes the file). Ansible never
+reads `requirements.yml`, and every checkout on a machine shares `~/.ansible/collections`, so every
+target that runs Ansible runs `collections-check` first: `ansible-galaxy collection install --offline`
+against the pins, which changes nothing when they are installed and fails, naming `make deps`, when one
+is not. pre-commit hooks are pinned to commit SHAs, not tags, because a tag can be moved. apt signing
+keys are vendored in-repo. The uv release is pinned by version *and* per-architecture SHA-256, stored
+separately from the download. The Molecule base image is pinned by digest, with an unpinned weekly
+canary. What verifies each download a VM gets is listed in
+[What the VM trusts](../guides/what-the-vm-trusts.md).
 
 ## Secret scanning
 

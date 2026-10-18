@@ -6,10 +6,10 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 906 tests. By file:
+pytest over `tests/unit/`: 988 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
-  `test_text_filter.py` 27): the guest-agent readers, `guest_ipv4` among them refusing anything that
+  `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
   sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
 - **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
@@ -19,7 +19,7 @@ pytest over `tests/unit/`: 906 tests. By file:
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
-  81), both ways.
+  94), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins that fail a run that reaches for them, no terminal).
@@ -57,7 +57,7 @@ pytest over `tests/unit/`: 906 tests. By file:
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
   that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
-- **Destroy's release** (`test_release.py` 28): `destroy.yml`'s release play and report against the
+- **Destroy's release** (`test_release.py` 31): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
   Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
   pasted by hand signed out and told apart, the vault token even under a marker claiming it, and a logout
@@ -68,7 +68,7 @@ pytest over `tests/unit/`: 906 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 111): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 113): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
@@ -84,12 +84,16 @@ pytest over `tests/unit/`: 906 tests. By file:
   playbook sets the task file's inputs as facts, and that the user's own Include and file mode are left
   alone, a group the user is not in included (macOS).
 - **Smaller ones**: `test_configure_tags.py` 2 (`--tags claude_code` still runs discovery and the alias
-  play), `test_deploy_report.py` 4 (deploy's opening message, rendered by its own tasks),
-  `test_proxmox_vm_absent.py` 5 (deleting a VM forgets its host key under its address and
-  `<name>.<domain>`), `test_var_names.py` 21 (no task var named like a register or fact, in any
-  playbook or role), `test_cloud_init_wait.py` 3 (a first boot that failed is said with what failed and
-  how to build the VM again).
-- **The Makefile** (`test_makefile.py` 77): `vm-name-check` accepts DNS-like names and refuses
+  play), `test_deploy_report.py` 18 (deploy's opening message, rendered by its own tasks, naming only the
+  sign-ins that open a page and the VMs as a list), `test_proxmox_vm_absent.py` 5 (deleting a VM
+  forgets its host key under its address and `<name>.<domain>`), `test_var_names.py` 21 (no task var
+  named like a register or fact, in any playbook or role), `test_cloud_init_wait.py` 3 (a first boot
+  that failed is said with what failed and how to build the VM again), `test_gathered_facts.py` 5 (no
+  tracked file reads a fact by its top-level name, and every `ansible.cfg` a run reads, the tests' own
+  through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
+  pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
+  would make it and warn, and both plays that run modules as root import it before their roles).
+- **The Makefile** (`test_makefile.py` 94): `vm-name-check` accepts DNS-like names and refuses
   whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision`,
   `ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the check before the
   playbook; `deploy` refuses `TAGS`; `code` refuses no name and several, and passes `PROJECT` as its own
@@ -97,7 +101,16 @@ pytest over `tests/unit/`: 906 tests. By file:
   `..`, quotes, shell syntax, a newline, non-ASCII and more than 100 characters; a run with no terminal
   turns the desktop steps off; every playbook target exports its own `ANSIBLE_LOG_PATH` (never named
   after `VM_NAME`) into a `0700` directory, `LOG_DIR=` turns it off, old run logs are pruned and nothing
-  else is, and `logs-clean` deletes only run logs.
+  else is, and `logs-clean` deletes only run logs; and every target that runs Ansible runs
+  `collections-check` first, which asks `ansible-galaxy --offline` about `requirements.yml` and stops a
+  run, naming `make deps`, at collections that are not the pins.
+- **The wiki** (`test_docs.py` 19): the generated reference sections are up to date, and every setting
+  and role default is documented; the site builds strictly from the pages git knows, every heading
+  reaches its built page, and every page renders the same on GitHub as on the site, its diagrams
+  included; no page repeats a heading or holds a closing tag in a code span; the navigation lists every
+  page and only pages; no relative link leaves `docs/`; the root files' links, the pages the repository
+  names and the architecture sections it cites all exist, a section cited from another page is a link,
+  and the README's quick start matches the wiki.
 
 ## 11.2 Role scenarios — `make molecule MOLECULE_ROLES="..."`
 
