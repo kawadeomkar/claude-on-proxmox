@@ -45,6 +45,7 @@ All API calls are delegated to the controller.
 | `proxmox_vm_id` | raw | `""` | Pin the VM to a specific VMID. Left empty, Proxmox assigns the next free one. The VM is identified by name, not by ID, so this is rarely needed. Run across several hosts at once, the role clones one VM at a time unless each has a distinct VMID here, because concurrent clones that ask Proxmox for one are handed the same. provision.yml sets one for every new VM of a fleet. Declared raw so the role can validate it and report a helpful message. |
 | `proxmox_vm_cores` | int | `2` | Defaults to the vm_cores host var, else 2. Set through vm_cores in local.yml. |
 | `proxmox_vm_memory_mb` | int | `4096` | Defaults to the vm_memory_mb host var, else 4096. Set through vm_memory_mb in local.yml. |
+| `proxmox_vm_memory_min_mb` | int | computed | The least memory the host may leave the VM (Proxmox's minimum memory, ballooning), from 1 to proxmox_vm_memory_mb. Below it, the host takes the difference back once its memory use passes the node's ballooning target. Defaults to the vm_memory_min_mb host var, else proxmox_vm_memory_mb, a fixed allocation. Applied when the VM is created. Set through vm_memory_min_mb in local.yml. |
 | `proxmox_vm_disk` | str | `scsi0` | The root disk, as the template names it, resized to proxmox_vm_disk_size. |
 | `proxmox_vm_disk_size` | str | `32G` | Absolute root disk size with unit suffix (K, M, G, T). Applied when the VM is created or an unfinished one is repaired, and with proxmox_vm_force_update. Proxmox cannot shrink a disk, so a size below the current one fails. Defaults to the vm_disk_size host var, else 32G. Set through vm_disk_size in local.yml. |
 | `proxmox_vm_onboot` | bool | `true` | Start the VM when its Proxmox node boots. |
@@ -88,6 +89,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Validate the Proxmox connection settings | `ansible.builtin.assert` |  |
 | Validate the VM name | `ansible.builtin.assert` |  |
 | Validate the login credentials for the VM | `ansible.builtin.assert` |  |
+| Validate the minimum memory | `ansible.builtin.assert` |  |
 | Validate the VM ID | `ansible.builtin.assert` |  |
 | Manage the VM | block |  |
 | &amp;emsp;Look up Proxmox VM {{ proxmox_vm_name }} | `community.proxmox.proxmox_vm_info` |  |
@@ -115,9 +117,10 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Start-->|Task| Validate_the_Proxmox_connection_settings0[validate the proxmox connection settings]:::task
   Validate_the_Proxmox_connection_settings0-->|Task| Validate_the_VM_name1[validate the vm name]:::task
   Validate_the_VM_name1-->|Task| Validate_the_login_credentials_for_the_VM2[validate the login credentials for the vm]:::task
-  Validate_the_login_credentials_for_the_VM2-->|Task| Validate_the_VM_ID3[validate the vm id]:::task
-  Validate_the_VM_ID3-->|Block Start| Manage_the_VM4_block_start_0[[manage the vm]]:::block
-  Manage_the_VM4_block_start_0-->|Task| Look_up_Proxmox_VM_proxmox_vm_name0[look up proxmox vm proxmox vm name]:::task
+  Validate_the_login_credentials_for_the_VM2-->|Task| Validate_the_minimum_memory3[validate the minimum memory]:::task
+  Validate_the_minimum_memory3-->|Task| Validate_the_VM_ID4[validate the vm id]:::task
+  Validate_the_VM_ID4-->|Block Start| Manage_the_VM5_block_start_0[[manage the vm]]:::block
+  Manage_the_VM5_block_start_0-->|Task| Look_up_Proxmox_VM_proxmox_vm_name0[look up proxmox vm proxmox vm name]:::task
   Look_up_Proxmox_VM_proxmox_vm_name0-->|Task| Refuse_to_act_on_a_duplicated_VM_name1[refuse to act on a duplicated vm name]:::task
   Refuse_to_act_on_a_duplicated_VM_name1-->|Task| Record_whether_the_VM_already_exists2[record whether the vm already exists]:::task
   Record_whether_the_VM_already_exists2-->|Task| Refuse_to_configure_a_template3[refuse to configure a template<br>When: **proxmox vm state     present  and proxmox vm<br>exists**]:::task
@@ -126,7 +129,7 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Create_the_VM_present_yml_5-->|Task| Refuse_to_delete_a_template6[refuse to delete a template<br>When: **proxmox vm state     absent  and proxmox vm exists**]:::task
   Refuse_to_delete_a_template6-->|Task| Refuse_to_delete_a_VM_this_project_does_not_own7[refuse to delete a vm this project does not own<br>When: **proxmox vm state     absent  and proxmox vm exists<br>and not  proxmox vm allow untagged delete   bool**]:::task
   Refuse_to_delete_a_VM_this_project_does_not_own7-->|Include task| Delete_the_VM_absent_yml_8[delete the vm<br>When: **proxmox vm state     absent**<br>include_task: absent yml]:::includeTasks
-  Delete_the_VM_absent_yml_8-.->|End of Block| Manage_the_VM4_block_start_0
+  Delete_the_VM_absent_yml_8-.->|End of Block| Manage_the_VM5_block_start_0
   Delete_the_VM_absent_yml_8-->End
 ```
 

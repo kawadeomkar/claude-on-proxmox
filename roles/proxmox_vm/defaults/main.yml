@@ -40,6 +40,13 @@ proxmox_vm_id: ""
 # Hardware (taken from the vm_* host vars by default)
 proxmox_vm_cores: "{{ vm_cores | default(2) }}"
 proxmox_vm_memory_mb: "{{ vm_memory_mb | default(4096) }}"
+# The least memory the host may leave the VM (Proxmox's minimum memory, the
+# balloon). Below proxmox_vm_memory_mb, the host takes back the difference -
+# the guest's cache first - once its own memory use passes the target its
+# owner set (the node's ballooning-target, 80% unless changed), and gives it
+# back as that use falls. That target is the host's, and this project leaves
+# it alone. Equal to proxmox_vm_memory_mb by default: a fixed allocation.
+proxmox_vm_memory_min_mb: "{{ vm_memory_min_mb | default(proxmox_vm_memory_mb) }}"
 proxmox_vm_disk: scsi0
 # Which NIC of the template carries the LAN address. Only change this if the
 # template was built with something other than a single net0.

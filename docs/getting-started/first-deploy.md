@@ -69,7 +69,7 @@ each of these waits looks.
 
 Every stage is idempotent, so `make deploy` is also what you re-run after changing a variable: a VM
 already signed in is only reported, and VS Code brings its window to the front. (VM hardware — cores,
-memory, disk — is applied only when the VM is created; changing it for a VM that already exists needs
+memory and its minimum, disk — is applied only when the VM is created; changing it for a VM that already exists needs
 `proxmox_vm_force_update`, see [Re-running](../guides/vms.md#re-running).) It works on the VMs named in `VM_NAME` and
 nothing else: it configures exactly what it has just provisioned, never the rest of your VMs, and
 signs them in one after another. For more than one VM it opens no window, and ends with each VM's

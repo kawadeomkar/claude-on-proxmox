@@ -1143,3 +1143,66 @@
   roles:
     - role: proxmox_vm
       proxmox_vm_state: absent
+
+# A minimum of 0 is Proxmox's "no balloon device", which would also stop the
+# VM reporting the memory it uses; one above the memory Proxmox refuses. Both
+# are refused before anything is asked of the API.
+- name: Refuse a minimum memory outside 1 to the memory
+  hosts: claude-on-proxmox-proxmox_vm
+  gather_facts: false
+  tasks:
+    - name: Count the requests the fake has logged so far
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_log_before
+      become: true
+
+    - name: Try a minimum of 0
+      block:
+        - name: Run the role with proxmox_vm_memory_min_mb 0
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_memory_min_mb: 0
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: proxmox_vm went on with a minimum memory of 0, which removes the balloon device.
+      rescue:
+        - name: Assert it refused the minimum of 0
+          ansible.builtin.assert:
+            that: ansible_failed_result.msg is search('vm_memory_min_mb must be from 1 to vm_memory_mb \(8192\), got "0"')
+            fail_msg: "Expected the minimum memory refusal, got: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Try a minimum above the memory
+      block:
+        - name: Run the role with proxmox_vm_memory_min_mb 8193
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_memory_min_mb: 8193
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: proxmox_vm went on with a minimum memory above the memory, which Proxmox refuses.
+      rescue:
+        - name: Assert it refused the minimum above the memory
+          ansible.builtin.assert:
+            that: ansible_failed_result.msg is search('got "8193"')
+            fail_msg: "Expected the minimum memory refusal, got: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Read the requests the attempts made
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_log_after
+      become: true
+
+    - name: Assert neither attempt reached the API
+      ansible.builtin.assert:
+        that: >-
+          (proxmox_vm_log_after.content | b64decode).splitlines() | length
+          == (proxmox_vm_log_before.content | b64decode).splitlines() | length
+        fail_msg: A refused minimum memory still sent requests to the API.
+        quiet: true

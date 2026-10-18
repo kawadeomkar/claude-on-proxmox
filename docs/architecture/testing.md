@@ -143,7 +143,9 @@ came from Proxmox (9001, the next free one) and that the address came from the V
 exact clone, config, resize, start, shutdown and delete requests, the deletes in a destroy pass of
 its side effect. That side effect also proves the ownership guards: an untagged VM and the template are refused by both provisioning and
 deletion without a single config write reaching either, and a VM left tagged but unconfigured — what
-an interrupted run leaves — is repaired. `proxmox_template`'s side effect runs the role against a
+an interrupted run leaves — is repaired; and a minimum memory of 0, or one above the memory, is refused
+before any request is made, while converge's 2048 reaches the settings call as `balloon`.
+`proxmox_template`'s side effect runs the role against a
 VMID the fake `/etc/pve/.vmlist` places on a second node and asserts the refusal names that node and
 that no build started.
 
