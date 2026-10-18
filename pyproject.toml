@@ -29,7 +29,7 @@ dev = [
     "yamllint==1.38.0",
     "pre-commit==4.6.2",
     "pytest==9.1.1",
-    "ruff==0.16.10",
+    "ruff==0.17.0",
     # The uv CI runs: .github/actions/setup installs the version uv.lock pins, so Dependabot
     # bumps it with everything else.
     "uv==0.13.0",
