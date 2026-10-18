@@ -400,11 +400,12 @@ def test_the_task_passes_the_script_and_its_messages_as_arguments():
         "{{ github_projects_clone_protocol | default('https') }}",
         "{{ github_projects_login_scopes | default(['workflow']) | join(',') }}",
         "{{ claude_vm_names[0] }}",
-        # The session notes' helper, their path and the Remote Control unit,
-        # for the refresh after a sign-in in the terminal.
+        # The session notes' helper, their path, the Remote Control unit and
+        # the time zone, for the refresh after a sign-in in the terminal.
         "{{ code_notes_script if code_notes | bool else '' }}",
         "{{ code_notes_file if code_notes | bool else '' }}",
         "{{ code_remote_control_unit }}",
+        "{{ code_timezone }}",
     ]
     assert task["runOptions"] == {"runOn": "folderOpen"}
 
@@ -540,8 +541,16 @@ def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, lo
         ANSIBLE_SHOW_CUSTOM_STATS="1",
         PATH=f"{bin_dir}:{WINDOW_PATH}",
     )
-    # Never the developer's own VS Code settings: what is said depends on them.
-    extra = {"ansible_python_interpreter": sys.executable, "vscode_user_settings_file": str(root / "none"), **extra}
+    # Never the developer's own VS Code settings, nor their time zone: what is said depends on them. With
+    # none of the zone's sources there, it is UTC.
+    extra = {
+        "ansible_python_interpreter": sys.executable,
+        "vscode_user_settings_file": str(root / "none"),
+        "code_tz_env": "",
+        "code_localtime": str(root / "no-localtime"),
+        "code_timezone_file": str(root / "no-timezone"),
+        **extra,
+    }
     result = subprocess.run(
         [str(ANSIBLE_PLAYBOOK), "-i", str(root / "inventory"), "-e", json.dumps(extra), str(root / "window.yml")],
         cwd=root,
@@ -1062,7 +1071,13 @@ def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a
     # dependsOn made VS Code ask every task provider first, 7.5 s live.
     notes, shell, claude = workspace["tasks"]["tasks"]
     assert notes["label"] == "Session notes" and notes["runOptions"] == {"runOn": "folderOpen"}
-    assert notes["args"][2:] == ["session-notes", f"{SESSION}/alpha-session.md", "alpha", "claude-remote-control"]
+    assert notes["args"][2:] == [
+        "session-notes",
+        f"{SESSION}/alpha-session.md",
+        "alpha",
+        "claude-remote-control",
+        "UTC",
+    ]
     assert notes["presentation"] == {
         "reveal": "never",
         "focus": False,
@@ -1072,7 +1087,7 @@ def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a
     }
     assert claude["label"] == "Claude" and "dependsOn" not in claude
     assert claude["runOptions"] == {"runOn": "folderOpen"}
-    assert claude["args"][-3:] == [notes["args"][1], f"{SESSION}/alpha-session.md", "claude-remote-control"]
+    assert claude["args"][-4:] == [notes["args"][1], f"{SESSION}/alpha-session.md", "claude-remote-control", "UTC"]
     # A shell beside Claude's terminal, on its left: one presentation group
     # splits a terminal in the order its tasks start, which is the order listed.
     assert (shell["label"], shell["command"], shell["args"]) == ("Shell", "/bin/bash", ["-l"])
@@ -1140,7 +1155,7 @@ def test_with_the_notes_off_the_workspace_is_as_it_was(windows):
     shell, claude = workspace["tasks"]["tasks"]
     assert (shell["label"], claude["label"]) == ("Shell", "Claude")
     assert "dependsOn" not in claude
-    assert claude["args"][-3:] == ["", "", "claude-remote-control"]
+    assert claude["args"][-4:] == ["", "", "claude-remote-control", "UTC"]
     assert "session notes" not in run["opened"]
 
 
@@ -1170,7 +1185,15 @@ SIGNED_OUT = {
 
 
 def _helper(
-    tmp_path: Path, *, answers=SIGNED_IN, slow=(), python="real", text=NOTES_TEXT, refresh=False, errexit=False
+    tmp_path: Path,
+    *,
+    answers=SIGNED_IN,
+    slow=(),
+    python="real",
+    text=NOTES_TEXT,
+    refresh=False,
+    errexit=False,
+    zone="UTC",
 ):
     """Run the helper; its exit status, the seconds it took, the notes after, and what `code` was asked."""
     bin_dir = tmp_path / "bin"
@@ -1199,7 +1222,7 @@ def _helper(
         notes.chmod(0o600)
     script = _play()["vars"]["code_notes_script"]
     argv = ["/bin/bash", *(["-e"] if errexit else []), "-c", script, "session-notes", str(notes), "alpha"]
-    argv += ["claude-remote-control", *(["refresh-only"] if refresh else [])]
+    argv += ["claude-remote-control", zone, *(["refresh-only"] if refresh else [])]
     began = time.monotonic()
     result = subprocess.run(argv, env={"PATH": str(bin_dir)}, capture_output=True, text=True, check=False, timeout=60)
     took = time.monotonic() - began
@@ -1229,12 +1252,25 @@ def test_the_helper_rewrites_the_live_section_only_and_opens_the_notes(tmp_path)
         "| Tailscale | running as `alpha.tail1234.ts.net` · `100.64.0.7` · "
         f"`ssh {user}@alpha.tail1234.ts.net` |" in live
     ), live
-    # The VM's own clock, said with its zone: the user's is not the VM's.
-    assert re.search(r"^\| \| as of \d\d:\d\d \S+ on \d\d \w\w\w \|$", live, re.M), live
+    # Said with its zone, the one it was given.
+    assert re.search(r"^\| \| as of \d\d:\d\d UTC on \d\d \w\w\w \|$", live, re.M), live
     assert "gho_" not in text
     assert stat.S_IMODE(notes.stat().st_mode) == 0o600
     assert asked == [f"code -r {notes}"]
     assert took < 4, took
+
+
+# The time is said in the zone of the machine make code ran on, which the VM's clock (UTC) is not.
+def test_the_helper_says_its_time_in_the_zone_it_is_given(tmp_path):
+    _, _, after, _, _ = _helper(tmp_path, zone="Asia/Kolkata")
+    assert re.search(r"^\| \| as of \d\d:\d\d IST on \d\d \w\w\w \|$", _live(after), re.M), _live(after)
+
+
+@pytest.mark.parametrize("zone", ["Mars/Olympus", "../../etc/passwd", ""])
+def test_the_helper_says_utc_for_a_zone_it_cannot_find(tmp_path, zone):
+    # A zone the VM's tzdata lacks, or no zone: the time is still said, in UTC.
+    _, _, after, _, _ = _helper(tmp_path, zone=zone)
+    assert re.search(r"^\| \| as of \d\d:\d\d UTC on \d\d \w\w\w \|$", _live(after), re.M), _live(after)
 
 
 def test_a_vm_signed_in_nowhere_names_each_sign_in(tmp_path):
@@ -1381,17 +1417,80 @@ def test_the_helper_hands_bash_nothing_it_could_lose_control_to():
     # foreground, so the task's terminal does not close under it.
     assert "sleep 1" not in script
     assert re.search(r'^  code -r "\$1" </dev/null >/dev/null 2>&1$', script, re.M)
-    assert re.search(r"""^python3 - "\$1" "\$2" "\$3" <<'PY' >/dev/null 2>&1 &$""", script, re.M)
+    assert re.search(r"""^python3 - "\$1" "\$2" "\$3" "\$4" <<'PY' >/dev/null 2>&1 &$""", script, re.M)
+
+
+# ------------------------------------------------------------- the zone the notes say their time in ---
+# Where /etc/localtime may point, under the run's own root: Linux's, macOS's (a versioned tzdata), a
+# posix/ copy.
+ZONES = {
+    "TZ, a name": ({"tz": "Europe/Berlin"}, "Europe/Berlin"),
+    "TZ, a zoneinfo path": ({"tz": ":/usr/share/zoneinfo/America/New_York"}, "America/New_York"),
+    "the link, Linux": ({"link": "usr/share/zoneinfo/Asia/Kolkata"}, "Asia/Kolkata"),
+    "the link, macOS": ({"link": "var/db/timezone/tz/2026d.1.0/zoneinfo/America/Los_Angeles"}, "America/Los_Angeles"),
+    "the link, posix": ({"link": "usr/share/zoneinfo/posix/Europe/Paris"}, "Europe/Paris"),
+    "TZ, a rule, then the link": (
+        {"tz": "CET-1CEST,M3.5.0,M10.5.0/3", "link": "usr/share/zoneinfo/Asia/Tokyo"},
+        "Asia/Tokyo",
+    ),
+    "a copy, then /etc/timezone": ({"copy": True, "file": "Australia/Sydney\n"}, "Australia/Sydney"),
+    "nothing": ({}, "UTC"),
+    "TZ, shell syntax": ({"tz": "a b;rm -rf ~"}, "UTC"),
+    "a path out, both ways": ({"tz": "../../etc/passwd", "file": "../../etc/shadow\n"}, "UTC"),
+}
+
+
+def _zone(root: Path, *, tz="", link=None, copy=False, file=None) -> dict:
+    root.mkdir(parents=True)
+    localtime, timezone_file = root / "localtime", root / "timezone"
+    if link:
+        (root / link).parent.mkdir(parents=True)
+        (root / link).write_bytes(b"TZif")
+        localtime.symlink_to(root / link)
+    elif copy:
+        localtime.write_bytes(b"TZif")
+    if file is not None:
+        timezone_file.write_text(file)
+    return _window(
+        root / "run",
+        [],
+        in_deploy=False,
+        vm_name="alpha",
+        show="code_timezone",
+        code_tz_env=tz,
+        code_localtime=str(localtime),
+        code_timezone_file=str(timezone_file),
+    )
+
+
+@pytest.fixture(scope="module")
+def zones(tmp_path_factory):
+    root = tmp_path_factory.mktemp("zones")
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        runs = {
+            name: pool.submit(_zone, root / re.sub(r"\W+", "-", name), **sources)
+            for name, (sources, _) in ZONES.items()
+        }
+    return {name: run.result() for name, run in runs.items()}
+
+
+@pytest.mark.parametrize("case", ZONES)
+def test_the_notes_say_their_time_in_this_machine_s_zone_or_utc(zones, case):
+    # TZ, then the zone /etc/localtime links to, then /etc/timezone; a zone's name only, else UTC.
+    run = zones[case]
+    assert run["rc"] == 0, run["output"]
+    assert run["shown"] == ZONES[case][1]
+    assert "[WARNING]" not in run["output"], run["output"]
 
 
 # ------------------------------------------------- the Claude terminal refreshes them after a sign-in ---
 def _signing_in(tmp_path: Path, helper: str | None, **case):
-    """The Claude script with the notes' three arguments; what it printed, and what the helper was asked."""
+    """The Claude script with the notes' four arguments; what it printed, and what the helper was asked."""
     argv, env = _terminal(tmp_path, **case)
     (tmp_path / "bin" / "bash").symlink_to("/bin/bash")
     marker = tmp_path / "helper.log"
     script = "" if helper is None else f'printf "%s\\n" "$0 $*" >> "{marker}"'
-    argv = [*argv, script, str(tmp_path / "alpha-session.md"), "claude-remote-control"]
+    argv = [*argv, script, str(tmp_path / "alpha-session.md"), "claude-remote-control", "Asia/Kolkata"]
     result = subprocess.run(argv, env=env, capture_output=True, text=True, check=False, timeout=30)
     deadline = time.monotonic() + 5
     while helper is not None and not marker.exists() and time.monotonic() < deadline:
@@ -1402,7 +1501,9 @@ def _signing_in(tmp_path: Path, helper: str | None, **case):
 def test_a_claude_sign_in_in_the_terminal_refreshes_the_notes_in_the_background(tmp_path):
     result, called = _signing_in(tmp_path, "log", status_rc=1, login_rc=0)
     assert result.returncode == 0
-    assert called == [f"session-notes {tmp_path}/alpha-session.md alpha claude-remote-control refresh-only"]
+    assert called == [
+        f"session-notes {tmp_path}/alpha-session.md alpha claude-remote-control Asia/Kolkata refresh-only"
+    ]
     # Its terminal sees what it saw before: nothing from the helper.
     assert result.stdout == SIGNING_IN + "\n" + UNWATCHED + "\n"
 

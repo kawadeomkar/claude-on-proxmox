@@ -247,7 +247,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` tasks
   run `claude` in a terminal and a login shell split to its left (one presentation group); with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
   0700 directory), and a second `folderOpen` task, "Session notes", run beside the Claude task, which
-  rewrites only the notes' section between the live markers each time the window opens and opens them.
+  rewrites only the notes' section between the live markers each time the window opens and opens them,
+  its time in this machine's zone (`code_timezone`, an argument like everything variable; UTC without one).
   Never make it the Claude task's `dependsOn`: VS Code misses a workspace-file task when it looks a
   dependency up and asks every task provider instead (npm, gulp running `gulp`, grunt, jake), which held
   Claude back 7.5 s live; `test_code_session.py` fails on any `dependsOn`. Its bash runs the Python part

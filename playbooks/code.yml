@@ -135,6 +135,7 @@
         - "{{ code_notes_script if code_notes | bool else '' }}"
         - "{{ code_notes_file if code_notes | bool else '' }}"
         - "{{ code_remote_control_unit }}"
+        - "{{ code_timezone }}"
       options:
         cwd: "{{ code_target }}"
       runOptions:
@@ -163,6 +164,7 @@
         - "{{ code_notes_file }}"
         - "{{ claude_vm_names[0] }}"
         - "{{ code_remote_control_unit }}"
+        - "{{ code_timezone }}"
       runOptions:
         runOn: folderOpen
       presentation:
@@ -178,15 +180,28 @@
     # file's scheme and path, so this follows vscode_workspaces_dir.
     code_notes_glob: "**/{{ code_ws_dir | basename }}/session/*-session.md"
     code_remote_control_unit: "{{ claude_code_remote_control_service | default('claude-remote-control') }}"
+    # The time zone the notes' time is said in: this machine's, the user's, where the VM's clock keeps
+    # common_timezone (UTC). TZ first, as the shell running make has it, then the zone /etc/localtime
+    # links into a zoneinfo directory for (macOS, most Linux), then /etc/timezone (Debian, where
+    # /etc/localtime may be a copy). Only a zone's name, such as Europe/Berlin, is taken, anything else
+    # falls through, and with none it is UTC; the helper says UTC too for a zone the VM's tzdata lacks.
+    # Read by a filter and lookups rather than a task: nothing in this play runs here but which and code.
+    code_tz_env: "{{ lookup('ansible.builtin.env', 'TZ') }}"
+    code_localtime: /etc/localtime
+    code_timezone_file: /etc/timezone
+    code_timezone: >-
+      {{ [code_tz_env, code_localtime | realpath, lookup('ansible.builtin.file', code_timezone_file, errors='ignore')]
+         | map('default', '', true) | map('trim') | map('regex_replace', '^:?(?:.*/zoneinfo/)?(?:posix/|right/)?', '')
+         | select('match', '^[A-Za-z0-9_+-]{1,32}(?:/[A-Za-z0-9_+-]{1,32}){0,3}$') | first | default('UTC', true) }}
 
-    # What the task runs: `bash -lc <this> make-code <$1> ... <$11>`, the
+    # What the task runs: `bash -lc <this> make-code <$1> ... <$12>`, the
     # arguments being, in order: what to say without claude; the line a
     # sign-in here ends with where the claude_code role's path unit watches
     # for the login, and so starts Remote Control, and the line where nothing
     # does; that unit's file; GitHub's line, empty to leave GitHub alone; the
     # git protocol and the scopes for gh; the VM's name; and the session notes'
-    # helper, their path and the Remote Control unit, the helper empty without
-    # notes - reached by shift, since ${10} is VS Code's to resolve. A login shell,
+    # helper, their path, the Remote Control unit and the time zone, the helper
+    # empty without notes - reached by shift, since ${10} is VS Code's to resolve. A login shell,
     # because tasks start non-login shells and claude is on the login PATH
     # only. `claude auth status` exits non-zero until the VM is signed in, by
     # claude.ai or by an API key; `claude auth login` is the browser flow, and
@@ -264,7 +279,7 @@
       if [ -n "$refresh" ] && [ -n "$9" ]; then
         vm=$8
         shift 8
-        ( trap '' INT; bash -c "$1" session-notes "$2" "$vm" "$3" refresh-only ) </dev/null >/dev/null 2>&1 &
+        ( trap '' INT; bash -c "$1" session-notes "$2" "$vm" "$3" "$4" refresh-only ) </dev/null >/dev/null 2>&1 &
       fi
       started=$SECONDS
       claude --continue
@@ -274,7 +289,7 @@
       fi
       exit 0
     # What the "Session notes" task runs: `bash -lc <this> session-notes <notes>
-    # <vm> <Remote Control unit> [refresh-only]`, beside the Claude task. bash
+    # <vm> <Remote Control unit> <time zone> [refresh-only]`, beside the Claude task. bash
     # stays in charge whatever its Python part does - raises, hangs, or is
     # missing - waits for it 5 seconds at most, opens the notes and exits 0, so
     # the notes always open and VS Code never prints the command line; set +e,
@@ -293,8 +308,8 @@
     # which VS Code would resolve in the arguments before bash saw them.
     code_notes_script: |-
       set +e
-      [ "$4" != refresh-only ] || sleep 5
-      python3 - "$1" "$2" "$3" <<'PY' >/dev/null 2>&1 &
+      [ "$5" != refresh-only ] || sleep 5
+      python3 - "$1" "$2" "$3" "$4" <<'PY' >/dev/null 2>&1 &
       import json
       import os
       import pwd
@@ -304,10 +319,10 @@
       import subprocess
       import sys
       import tempfile
-      import time
       from concurrent.futures import ThreadPoolExecutor
+      from datetime import datetime, timezone
 
-      notes, vm, unit = sys.argv[1], sys.argv[2], sys.argv[3]
+      notes, vm, unit, zone = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
       START, END = "<!-- claude-on-proxmox:live -->", "<!-- /claude-on-proxmox:live -->"
       # What plain_text removes (filter_plugins/text.py): whole escape sequences, then every control character.
       SEQUENCES = re.compile(
@@ -411,6 +426,16 @@
           return row + (f" · `ssh {clean(user)}@{name}`" if name else "")
 
 
+      def now():
+          # In the zone of the machine make code ran on, the user's; UTC where the VM's tzdata lacks it.
+          try:
+              from zoneinfo import ZoneInfo
+
+              return datetime.now(ZoneInfo(zone))
+          except Exception:
+              return datetime.now(timezone.utc)
+
+
       def main():
           info = os.lstat(notes)
           if not stat.S_ISREG(info.st_mode):
@@ -433,7 +458,7 @@
                   ("Tailscale", tailscale_row(tailscale.result(), user)),
               ]
           live = "\n".join(
-              [START, "## Signed in", "", f"| | as of {time.strftime('%H:%M %Z on %d %b')} |", "|---|---|"]
+              [START, "## Signed in", "", f"| | as of {now().strftime('%H:%M %Z on %d %b')} |", "|---|---|"]
               + [f"| {label} | {value} |" for label, value in rows]
               + [END]
           )
@@ -460,7 +485,7 @@
         tries=$((tries + 1))
       done
       { kill "$notes_pid"; wait "$notes_pid"; } 2>/dev/null
-      [ "$4" != refresh-only ] || exit 0
+      [ "$5" != refresh-only ] || exit 0
       if [ -f "$1" ] && [ ! -L "$1" ] && command -v code >/dev/null 2>&1; then
         code -r "$1" </dev/null >/dev/null 2>&1
       fi

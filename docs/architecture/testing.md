@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 1167 tests. By file:
+pytest over `tests/unit/`: 1181 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -68,13 +68,15 @@ pytest over `tests/unit/`: 1167 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 113): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 127): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
   exit 0 and the notes opened when its Python raises, hangs or is missing, a read that hangs costing
-  2 s, a symlink neither followed nor opened - the refresh after a sign-in in the terminal, and the
-  workspace each window gets: the notes' folder only where its own folder holds them.
+  2 s, a symlink neither followed nor opened, the time in the zone it is given or in UTC for one it
+  cannot find - the refresh after a sign-in in the terminal, the zone `code.yml` finds (`TZ`, the
+  `/etc/localtime` link on Linux and macOS, `/etc/timezone`, else UTC, shell syntax and paths refused),
+  and the workspace each window gets: the notes' folder only where its own folder holds them.
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
