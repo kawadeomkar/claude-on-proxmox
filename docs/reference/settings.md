@@ -102,6 +102,12 @@ VM sizing. These apply to every VM a run creates - VMs are no longer listed in h
 |---|---|---|
 | `vm_cores` | `2` | Sets `proxmox_vm_cores` ([`proxmox_vm`](roles/proxmox_vm.md)): Defaults to the vm_cores host var, else 2. |
 | `vm_memory_mb` | `4096` | Sets `proxmox_vm_memory_mb` ([`proxmox_vm`](roles/proxmox_vm.md)): Defaults to the vm_memory_mb host var, else 4096. |
+
+The least memory the Proxmox host may leave a VM (its minimum memory, the balloon), from 1 to vm_memory_mb. Below vm_memory_mb, the host takes the difference back - the VM's cache first - once its own memory use passes the target whoever runs it set (80% unless changed; a host setting this project never touches), and gives it back as that use falls. Keep it above what the VM runs at its busiest. Default: vm_memory_mb, a fixed allocation.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `vm_memory_min_mb` | same as `vm_memory_mb` | Sets `proxmox_vm_memory_min_mb` ([`proxmox_vm`](roles/proxmox_vm.md)): The least memory the host may leave the VM (Proxmox's minimum memory, ballooning), from 1 to proxmox_vm_memory_mb. For example `2048`. |
 | `vm_disk_size` | `32G` | Sets `proxmox_vm_disk_size` ([`proxmox_vm`](roles/proxmox_vm.md)): Absolute root disk size with unit suffix (K, M, G, T). |
 | `vm_nameservers` | `[]` | Sets `proxmox_vm_nameservers` ([`proxmox_vm`](roles/proxmox_vm.md)): Defaults to the vm_nameservers host var. For example `[1.1.1.1, 8.8.8.8]`. |
 

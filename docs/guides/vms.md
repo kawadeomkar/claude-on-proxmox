@@ -27,6 +27,25 @@ already serves your network assigns the address, exactly as it would for a lapto
 guest agent - baked into the template by `make template` - reports that address back so Ansible can
 reach the VM and print it for you. The only address you ever type is your Proxmox host's.
 
+## Memory
+
+Proxmox counts a VM's memory as used unless the VM reports it free, so the disk cache Linux keeps in idle
+memory reads as used: a VM just deployed shows close to its whole allocation in the Proxmox UI while its
+programs use about half a gigabyte. The cache gives way the moment a program needs the memory.
+
+What the host can take back depends on the VM's minimum memory. By default a VM keeps all of
+`vm_memory_mb`. With `vm_memory_min_mb` below it in `local.yml`, Proxmox's ballooning takes the difference
+back - the VM's cache first - once the host's memory use passes its ballooning target, 80% unless whoever
+runs the host changed it, and gives it back as that use falls. The target is a setting of the host, which
+this project never changes. Keep the minimum above what the VM runs at its busiest: past it, a VM with no
+swap has programs killed. Like the rest of a VM's hardware, it is applied when the VM is created
+([Re-running](#re-running)).
+
+Each VM also has less to hold. Its template is built from Ubuntu's minimal cloud image, `common` masks the
+services a headless VM has no use for (`common_masked_units`: fwupd, multipathd, ModemManager, udisks2,
+and snapd while no snap is installed), and apt deletes each package it downloads once it is installed
+(`common_apt_keep_downloads`).
+
 ## Re-running
 
 All playbooks are idempotent. `make configure` can be re-run at any time to pick up variable changes, and

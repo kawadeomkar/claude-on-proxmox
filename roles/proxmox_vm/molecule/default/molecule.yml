@@ -39,6 +39,7 @@ provisioner:
         proxmox_vm_name: claude-dev
         proxmox_vm_cores: 4
         proxmox_vm_memory_mb: 8192
+        proxmox_vm_memory_min_mb: 2048
         proxmox_vm_disk_size: 64G
         # No VMID and no address: Proxmox assigns 9001 (next after the fake
         # template) and the fake guest agent reports 192.0.2.51 for that VMID.

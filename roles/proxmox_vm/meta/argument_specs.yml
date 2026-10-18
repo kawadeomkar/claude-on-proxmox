@@ -132,6 +132,13 @@ argument_specs:
         type: int
         default: 4096
         description: Defaults to the vm_memory_mb host var, else 4096. Set through vm_memory_mb in local.yml.
+      proxmox_vm_memory_min_mb:
+        type: int
+        description:
+          - The least memory the host may leave the VM (Proxmox's minimum memory, ballooning), from 1 to
+            proxmox_vm_memory_mb. Below it, the host takes the difference back once its memory use passes the node's
+            ballooning target. Defaults to the vm_memory_min_mb host var, else proxmox_vm_memory_mb, a fixed
+            allocation. Applied when the VM is created. Set through vm_memory_min_mb in local.yml.
       proxmox_vm_disk:
         type: str
         default: scsi0

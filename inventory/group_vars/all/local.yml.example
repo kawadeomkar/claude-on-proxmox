@@ -46,6 +46,13 @@
 # different sizes in separate runs.
 # vm_cores: 2
 # vm_memory_mb: 4096
+# The least memory the Proxmox host may leave a VM (its minimum memory, the
+# balloon), from 1 to vm_memory_mb. Below vm_memory_mb, the host takes the
+# difference back - the VM's cache first - once its own memory use passes the
+# target whoever runs it set (80% unless changed; a host setting this project
+# never touches), and gives it back as that use falls. Keep it above what the
+# VM runs at its busiest. Default: vm_memory_mb, a fixed allocation.
+# vm_memory_min_mb: 2048
 # vm_disk_size: 32G
 # vm_nameservers: [1.1.1.1, 8.8.8.8]
 # The DNS search domain cloud-init gives the VMs. Empty leaves it out.

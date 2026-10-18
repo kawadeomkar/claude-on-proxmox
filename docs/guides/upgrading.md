@@ -101,6 +101,28 @@ instead, after checking in the Proxmox UI that the name is the VM you mean:
 make destroy VM_NAME=old-dev ANSIBLE_ARGS="-e proxmox_vm_allow_untagged_delete=true"
 ```
 
+## A template built from Ubuntu's server image
+
+From PR #35, the template is built from Ubuntu's minimal cloud image. A template built before keeps the
+server image, and so do the VMs cloned from it; they work as before, and the next `make configure` masks
+the services the minimal image leaves out anyway (fwupd, multipathd, ModemManager, udisks2, and snapd
+while no snap is installed) and empties apt's download cache. To build new VMs from the minimal image,
+rebuild the template once, on the Proxmox host. The VMs you have are full clones, so they do not depend on
+it. VMs built from the minimal image have no manual pages or package documentation, as on Ubuntu's other
+minimal images; `sudo unminimize` puts them back.
+
+```bash
+qm destroy 9000        # the template's VMID (proxmox_template_vmid)
+```
+
+```bash
+make template          # rebuilds it from the minimal image
+```
+
+The minimum memory a VM may be left with (`vm_memory_min_mb`, from the same PR) is applied when a VM is
+created; `proxmox_vm_force_update: true` applies it to the VMs you have
+([Re-running](vms.md#re-running)).
+
 ## See also
 
 - [Requirements](../getting-started/requirements.md) and [Proxmox access](../getting-started/proxmox-access.md),

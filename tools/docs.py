@@ -141,9 +141,15 @@ def wiring() -> tuple[dict, dict[str, list[str]]]:
             if m:
                 feeds.setdefault(m.group(2), []).append(m.group(1))
                 if m.group(3) is not None:
-                    # default(value) or default(value, true): the first argument, as YAML reads it.
-                    args = yaml.safe_load("[" + m.group(3).replace("'", '"') + "]")
-                    defaults.setdefault(m.group(2), args[0])
+                    # default(value) or default(value, true): the first argument, as YAML reads it - or,
+                    # a bare name, the variable it names, as Ansible reads it
+                    # (`proxmox_vm_memory_min_mb: "{{ vm_memory_min_mb | default(proxmox_vm_memory_mb) }}"`).
+                    first = m.group(3).split(",")[0].strip()
+                    if re.fullmatch(r"[a-z_]\w*", first) and first not in ("true", "false", "none", "omit"):
+                        defaults.setdefault(m.group(2), "{{ " + first + " }}")
+                    else:
+                        args = yaml.safe_load("[" + m.group(3).replace("'", '"') + "]")
+                        defaults.setdefault(m.group(2), args[0])
     return defaults, feeds
 
 
@@ -261,6 +267,9 @@ def _notes(name: str, feeds: dict[str, list[str]], role_specs: dict) -> list[str
 def settings() -> str:
     defaults, feeds = wiring()
     role_specs = specs()
+    # The setting a role variable is set through, for a default that is one: vm_memory_mb, not
+    # proxmox_vm_memory_mb, is what the reader of this page sets.
+    fed_by = {var: setting for setting, variables in feeds.items() for var in variables}
     out = []
     for title, groups in parse_example(GROUP_VARS / "local.yml.example", secret=False):
         out += [f"### {title}", ""]
@@ -282,7 +291,11 @@ def settings() -> str:
                 notes = _notes(name, feeds, role_specs)
                 if example not in ("", [], {}, None) and example != default:
                     notes.append(f"For example {value(example)}.")
-                out.append(f"| `{name}` | {value(default)} | {' '.join(notes)} |")
+                shown = value(default)
+                same = re.fullmatch(r"\{\{ (\w+) \}\}", default) if isinstance(default, str) else None
+                if same and same.group(1) in fed_by:
+                    shown = f"same as `{fed_by[same.group(1)]}`"
+                out.append(f"| `{name}` | {shown} | {' '.join(notes)} |")
             out.append("")
     for title, groups in parse_example(GROUP_VARS / "vault.yml.example", secret=True):
         out += [f"### Secrets: {title}", ""]

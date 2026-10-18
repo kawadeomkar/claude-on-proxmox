@@ -13,9 +13,12 @@ a sibling node looks free to it; before building, the role reads pmxcfs's cluste
 ran to `qm create` - after the download and `virt-customize` - and died there with
 `VM 9000 already exists on node 'pve2'`.
 
-1. Download the Ubuntu Noble cloud image, checksummed against Ubuntu's published `SHA256SUMS`, into
+1. Download Ubuntu Noble's minimal cloud image, checksummed against Ubuntu's published `SHA256SUMS`, into
    `proxmox_template_image_dir` (`/var/lib/vz/claude-on-proxmox`, created `0755`). Not a content
-   directory of the `local` storage: under `template/iso` Proxmox listed the image as an ISO.
+   directory of the `local` storage: under `template/iso` Proxmox listed the image as an ISO. The
+   minimal image has 288 packages to the server image's 426: no multipathd, fwupd, ModemManager,
+   udisks2, polkit or rsyslog, which a headless VM has no use for, and the same kernel package. What a
+   development VM needs on top, `common` installs.
 2. If `proxmox_template_install_guest_agent` (default true), **copy** the image and run
    `virt-customize --install qemu-guest-agent --truncate /etc/machine-id` on the copy. The pristine
    download is left untouched so `get_url` stays idempotent.
@@ -54,7 +57,7 @@ check and `absent.yml`.
 | Assert `clone is changed` | a VMID collision returns `changed=False` and the *template's* VMID |
 | Record VMID | `when: not proxmox_vm_exists` |
 | Tag the new VM | its own call, straight after the clone — see [§8](convergence.md) |
-| Apply hardware + cloud-init | `when: proxmox_vm_needs_configuration`; to `proxmox_vm_found_node`, the node the lookup found the VM on, as is every call after the clone — a migrated VM is no longer on `proxmox_vm_node` |
+| Apply hardware + cloud-init | cores, memory and its minimum (`balloon`, from `proxmox_vm_memory_min_mb`, equal to the memory unless set: Proxmox reads 0 as no balloon device, which would also stop the VM reporting its memory use); `when: proxmox_vm_needs_configuration`; to `proxmox_vm_found_node`, the node the lookup found the VM on, as is every call after the clone — a migrated VM is no longer on `proxmox_vm_node` |
 | Resize root disk | same condition; `proxmox_disk` no-ops when already the right size |
 | Start | `when: needs_configuration or proxmox_vm_start_existing` |
 | Mark finished | removes `claude-on-proxmox-unfinished`, which the settings call added — see [§8](convergence.md) |
@@ -80,9 +83,11 @@ clear: the project has no fact cache ([§13](toolchain.md)).
 
 ## 5.3 `common` — OS baseline
 
-apt cache refresh → optional safe upgrade → baseline packages (~26, including `qemu-guest-agent`
-and `python3-debian`) → timezone → hostname → user, groups and passwordless sudo → authorised keys
-→ sshd hardening → `~/.local/bin` on PATH for login shells → enable services.
+apt deletes each package it downloads once installed → apt cache refresh → optional safe upgrade →
+baseline packages (~26, including `qemu-guest-agent` and `python3-debian`) → empty apt's download
+cache of what was left → timezone → hostname → user, groups and passwordless sudo → authorised keys
+→ sshd hardening → `~/.local/bin` on PATH for login shells → enable services → mask the units a
+headless VM has no use for.
 
 Notable choices:
 
@@ -95,6 +100,24 @@ Notable choices:
   fresh container.
 - **`lock_timeout: 600`** on every apt call: fresh cloud images run `unattended-upgrades` right after
   first boot, and the module's 60-second default is not enough.
+- **apt keeps no package it downloads** (`common_apt_keep_downloads: false`). apt-get keeps every one -
+  only the interactive `apt` deletes them - and a VM just deployed held 414 MB of them, cached in its
+  memory as well. A drop-in in `/etc/apt/apt.conf.d` sets `APT::Keep-Downloaded-Packages "false"` before
+  the role's first apt call, so every apt-get after it, the later roles' too, deletes each package once
+  installed, and `APT::Periodic::CleanInterval "1"` empties the cache daily of what `unattended-upgrades`
+  leaves, which installs through python-apt and keeps them regardless. What a first boot left goes once,
+  through `apt-get clean` for its lock, after the installs: the clean makes apt's lock file in
+  `/var/lib/apt/lists`, which dates lists that are not there as fresh, so before the refresh it made the
+  refresh skip them.
+- **Units are masked, not removed** (`common_masked_units`). A masked unit stops, and no socket, timer or
+  D-Bus activation starts it again. Removing the packages is not safe: `multipath-tools` is a dependency
+  of `ubuntu-server`, so removing it takes the metapackage too, and `apt autoremove` then what came with
+  it. Only the units the VM has are masked, so the minimal image, which has snapd alone of them, gets no
+  masks for the rest; and snapd only while no snap is installed, since a snap installed by hand stops
+  working without it. Each is stopped before it is masked, timers and sockets before the services they
+  start: `systemd_service` masks before it stops, a timer masked while it waits fails ("Unit to trigger
+  vanished"), and the stop then skips it, leaving the VM `degraded`. A unit among them left failed is
+  cleared with `systemctl reset-failed`.
 - Host-level settings are skipped under `common_container_virt_types`.
 
 ## 5.4 `dev_tools` — developer tooling

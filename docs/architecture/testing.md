@@ -137,13 +137,24 @@ still works, and turning Tailscale off removes what the failed run left. Verify 
 file (searched for with the needle on stdin, since sudo logs a command's environment), no connection of
 `tailscaled`'s, and the hand-installed VM as it was.
 
+`common`'s prepare installs stand-ins for four of the units `common_masked_units` names - a running
+service and a waiting timer, a listening socket and its service, and snapd with no snap installed - takes
+away the image's own apt cleanup (`docker-clean`), and leaves a package in apt's download cache. Verify
+finds the stand-ins masked and stopped, none of them failed, no mask made for the two units the container
+never had, and no package left in the cache, `sl`, which converge installs, included. The side effect
+finds nothing in the timer's journal about a failure (converge stopped it before it masked it), masks the
+timer while it waits, which fails it, gives snapd a snap and runs the masking again: the timer is cleared
+and snapd is left running.
+
 `proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
 came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —
 `192.0.2.51`, not `172.17.0.1`, which would mean the docker bridge was picked up. It asserts the
 exact clone, config, resize, start, shutdown and delete requests, the deletes in a destroy pass of
 its side effect. That side effect also proves the ownership guards: an untagged VM and the template are refused by both provisioning and
 deletion without a single config write reaching either, and a VM left tagged but unconfigured — what
-an interrupted run leaves — is repaired. `proxmox_template`'s side effect runs the role against a
+an interrupted run leaves — is repaired; and a minimum memory of 0, or one above the memory, is refused
+before any request is made, while converge's 2048 reaches the settings call as `balloon`.
+`proxmox_template`'s side effect runs the role against a
 VMID the fake `/etc/pve/.vmlist` places on a second node and asserts the refusal names that node and
 that no build started.
 

@@ -94,6 +94,7 @@
           - proxmox_vm_verify_after_start[0].params.keys() | sort == ['name', 'tags']
           - proxmox_vm_verify_cfg.cores == '4'
           - proxmox_vm_verify_cfg.memory == '8192'
+          - proxmox_vm_verify_cfg.balloon == '2048'
           - proxmox_vm_verify_cfg.onboot == '1'
           - proxmox_vm_verify_cfg.agent == 'enabled=1'
           - proxmox_vm_verify_cfg.ciuser == 'dev'

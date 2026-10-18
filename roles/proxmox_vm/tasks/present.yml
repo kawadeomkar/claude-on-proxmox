@@ -73,6 +73,7 @@
     update: true
     cores: "{{ proxmox_vm_cores }}"
     memory: "{{ proxmox_vm_memory_mb }}"
+    balloon: "{{ proxmox_vm_memory_min_mb }}"
     onboot: "{{ proxmox_vm_onboot }}"
     agent: enabled=1
     # Written with the cloud-init user, in the same call, and removed below

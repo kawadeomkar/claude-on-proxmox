@@ -2,10 +2,15 @@
 proxmox_template_vmid: 9000
 proxmox_template_name: ubuntu-24.04-cloudinit
 
-# Ubuntu Noble cloud image. The checksum URL points at Ubuntu's SHA256SUMS
+# Ubuntu Noble's minimal cloud image: 288 packages to the server image's 426,
+# without multipathd, fwupd, ModemManager, udisks2, polkit or rsyslog - what a
+# headless VM has no use for - and a 260 MB download to 620 MB. The roles
+# install what a development VM needs on top (common_packages). Like Ubuntu's
+# other minimal images it leaves out manual pages and documentation, which
+# `sudo unminimize` puts back. The checksum URL points at Ubuntu's SHA256SUMS
 # file; get_url looks up the image filename inside it.
-proxmox_template_image_url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
-proxmox_template_image_checksum: sha256:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS
+proxmox_template_image_url: https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64.img
+proxmox_template_image_checksum: sha256:https://cloud-images.ubuntu.com/minimal/releases/noble/release/SHA256SUMS
 # Where the download is kept on the node. Not a content directory of the
 # `local` storage (template/iso, say): Proxmox lists whatever it finds there in
 # the UI, so the pristine image showed up as an ISO. The customised copy that
