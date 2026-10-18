@@ -293,21 +293,21 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Remove the files of an earlier run | `ansible.builtin.file` |  |
 | Start gh's device flow in the background | `ansible.builtin.shell` |  |
 | Show the code, wait for the approval, and clean up whatever happened | block |  |
-| &amp;emsp;Wait for gh to show the code | `ansible.builtin.wait_for` |  |
-| &amp;emsp;Read what gh printed | `ansible.builtin.slurp` |  |
-| &amp;emsp;Fail when gh did not start the device flow | `ansible.builtin.fail` | <code>github_projects_login_code &#124; length == 0</code> |
-| &amp;emsp;Say the code and the page | `ansible.builtin.debug` |  |
-| &amp;emsp;Look for a browser opener and a clipboard on this machine | `ansible.builtin.command` | <code>github_projects_login_desktop &#124; bool</code> |
-| &amp;emsp;Open the page in your browser | `ansible.builtin.command` | <code>github_projects_login_desktop &#124; bool and github_projects_login_opener &#124; length > 0</code> |
-| &amp;emsp;Copy the code to your clipboard | `ansible.builtin.command` | <code>github_projects_login_desktop &#124; bool and github_projects_login_found &#124; intersect(['pbcopy', 'wl-copy', 'xclip']) &#124; length > 0</code> |
-| &amp;emsp;Wait for the approval | `ansible.builtin.wait_for` |  |
-| &amp;emsp;*always:* | | |
-| &amp;emsp;&amp;emsp;Give gh a moment to finish | `ansible.builtin.async_status` |  |
-| &amp;emsp;&amp;emsp;End gh if it still runs | `ansible.builtin.command` | <code>github_projects_login_finished.finished &#124; default(0) &#124; int != 1</code> |
-| &amp;emsp;&amp;emsp;Collect gh's result | `ansible.builtin.async_status` |  |
-| &amp;emsp;&amp;emsp;Clean up gh's job | `ansible.builtin.async_status` |  |
-| &amp;emsp;&amp;emsp;Read what gh printed, now it has finished | `ansible.builtin.slurp` |  |
-| &amp;emsp;&amp;emsp;Remove gh's files | `ansible.builtin.file` |  |
+| &emsp;Wait for gh to show the code | `ansible.builtin.wait_for` |  |
+| &emsp;Read what gh printed | `ansible.builtin.slurp` |  |
+| &emsp;Fail when gh did not start the device flow | `ansible.builtin.fail` | <code>github_projects_login_code &#124; length == 0</code> |
+| &emsp;Say the code and the page | `ansible.builtin.debug` |  |
+| &emsp;Look for a browser opener and a clipboard on this machine | `ansible.builtin.command` | <code>github_projects_login_desktop &#124; bool</code> |
+| &emsp;Open the page in your browser | `ansible.builtin.command` | <code>github_projects_login_desktop &#124; bool and github_projects_login_opener &#124; length > 0</code> |
+| &emsp;Copy the code to your clipboard | `ansible.builtin.command` | <code>github_projects_login_desktop &#124; bool and github_projects_login_found &#124; intersect(['pbcopy', 'wl-copy', 'xclip']) &#124; length > 0</code> |
+| &emsp;Wait for the approval | `ansible.builtin.wait_for` |  |
+| &emsp;*always:* | | |
+| &emsp;&emsp;Give gh a moment to finish | `ansible.builtin.async_status` |  |
+| &emsp;&emsp;End gh if it still runs | `ansible.builtin.command` | <code>github_projects_login_finished.finished &#124; default(0) &#124; int != 1</code> |
+| &emsp;&emsp;Collect gh's result | `ansible.builtin.async_status` |  |
+| &emsp;&emsp;Clean up gh's job | `ansible.builtin.async_status` |  |
+| &emsp;&emsp;Read what gh printed, now it has finished | `ansible.builtin.slurp` |  |
+| &emsp;&emsp;Remove gh's files | `ansible.builtin.file` |  |
 | Read gh's login state again | `ansible.builtin.include_tasks` |  |
 | Fail when the code was not approved | `ansible.builtin.fail` | <code>not github_projects_signed_in &#124; bool</code> |
 | Record that this run signed the VM in | `ansible.builtin.set_fact` |  |

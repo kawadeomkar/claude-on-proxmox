@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 988 tests. By file:
+pytest over `tests/unit/`: 989 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -104,13 +104,14 @@ pytest over `tests/unit/`: 988 tests. By file:
   else is, and `logs-clean` deletes only run logs; and every target that runs Ansible runs
   `collections-check` first, which asks `ansible-galaxy --offline` about `requirements.yml` and stops a
   run, naming `make deps`, at collections that are not the pins.
-- **The wiki** (`test_docs.py` 19): the generated reference sections are up to date, and every setting
+- **The wiki** (`test_docs.py` 20): the generated reference sections are up to date, and every setting
   and role default is documented; the site builds strictly from the pages git knows, every heading
   reaches its built page, and every page renders the same on GitHub as on the site, its diagrams
-  included; no page repeats a heading or holds a closing tag in a code span; the navigation lists every
-  page and only pages; no relative link leaves `docs/`; the root files' links, the pages the repository
-  names and the architecture sections it cites all exist, a section cited from another page is a link,
-  and the README's quick start matches the wiki.
+  included; no page repeats a heading, holds a closing tag in a code span or shows a character reference
+  such as `&emsp;` as text outside code; the navigation lists every page and only pages; no relative link
+  leaves `docs/`; the root files' links, the pages the repository names and the architecture sections it
+  cites all exist, a section cited from another page is a link, and the README's quick start matches the
+  wiki.
 
 ## 11.2 Role scenarios — `make molecule MOLECULE_ROLES="..."`
 

@@ -192,16 +192,16 @@ classDef rescue stroke:#665352,stroke-width:2px;
 |---|---|---|
 | Leave a Tailscale installed outside this project alone | `ansible.builtin.debug` | <code>tailscale_installed &#124; bool and not tailscale_installed_marker.stat.exists</code> |
 | Remove what this role installed | block | <code>tailscale_installed_marker.stat.exists</code> |
-| &amp;emsp;Look for tailscaled's unit | `ansible.builtin.stat` |  |
-| &amp;emsp;Start tailscaled, so that its login can be ended | `ansible.builtin.systemd_service` | <code>tailscale_package_present &#124; bool and tailscale_unit.stat.exists</code> |
-| &amp;emsp;Read whether a login is there to end | `ansible.builtin.command` | <code>tailscale_package_present &#124; bool</code> |
-| &amp;emsp;Log the node out | `ansible.builtin.command` | <code>tailscale_package_present &#124; bool and tailscale_absent_status.rc &#124; default(1) == 0 and (tailscale_absent_status.stdout &#124; from_json).HaveNodeKey &#124; default(false) &#124; bool</code> |
-| &amp;emsp;Delete the node's device from the tailnet | `ansible.builtin.include_tasks` |  |
-| &amp;emsp;Stop tailscaled | `ansible.builtin.systemd_service` | <code>tailscale_unit.stat.exists</code> |
-| &amp;emsp;Remove the package | `ansible.builtin.apt` | <code>tailscale_package_present &#124; bool</code> |
-| &amp;emsp;Remove the repository | `ansible.builtin.deb822_repository` |  |
-| &amp;emsp;Remove the log switch and the markers | `ansible.builtin.file` |  |
-| &amp;emsp;Say what is gone, and what stays in the tailnet | `ansible.builtin.debug` |  |
+| &emsp;Look for tailscaled's unit | `ansible.builtin.stat` |  |
+| &emsp;Start tailscaled, so that its login can be ended | `ansible.builtin.systemd_service` | <code>tailscale_package_present &#124; bool and tailscale_unit.stat.exists</code> |
+| &emsp;Read whether a login is there to end | `ansible.builtin.command` | <code>tailscale_package_present &#124; bool</code> |
+| &emsp;Log the node out | `ansible.builtin.command` | <code>tailscale_package_present &#124; bool and tailscale_absent_status.rc &#124; default(1) == 0 and (tailscale_absent_status.stdout &#124; from_json).HaveNodeKey &#124; default(false) &#124; bool</code> |
+| &emsp;Delete the node's device from the tailnet | `ansible.builtin.include_tasks` |  |
+| &emsp;Stop tailscaled | `ansible.builtin.systemd_service` | <code>tailscale_unit.stat.exists</code> |
+| &emsp;Remove the package | `ansible.builtin.apt` | <code>tailscale_package_present &#124; bool</code> |
+| &emsp;Remove the repository | `ansible.builtin.deb822_repository` |  |
+| &emsp;Remove the log switch and the markers | `ansible.builtin.file` |  |
+| &emsp;Say what is gone, and what stays in the tailnet | `ansible.builtin.debug` |  |
 
 ```mermaid
 flowchart TD
@@ -307,12 +307,12 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Remove the source list Tailscale's own instructions write | `ansible.builtin.file` |  |
 | Install what managing an apt repository needs | `ansible.builtin.apt` |  |
 | Install Tailscale from its repository | block |  |
-| &amp;emsp;Add Tailscale's apt repository | `ansible.builtin.deb822_repository` |  |
-| &amp;emsp;Install Tailscale | `ansible.builtin.apt` | <code>not (tailscale_check_without_package &#124; bool)</code> |
-| &amp;emsp;*rescue:* | | |
-| &amp;emsp;&amp;emsp;Ask dpkg whether the install got as far as the package | `ansible.builtin.command` |  |
-| &amp;emsp;&amp;emsp;Take the repository back out while there is no package | `ansible.builtin.deb822_repository` | <code>tailscale_dpkg_after.stdout &#124; default('') != 'installed'</code> |
-| &amp;emsp;&amp;emsp;Install Tailscale | `ansible.builtin.fail` |  |
+| &emsp;Add Tailscale's apt repository | `ansible.builtin.deb822_repository` |  |
+| &emsp;Install Tailscale | `ansible.builtin.apt` | <code>not (tailscale_check_without_package &#124; bool)</code> |
+| &emsp;*rescue:* | | |
+| &emsp;&emsp;Ask dpkg whether the install got as far as the package | `ansible.builtin.command` |  |
+| &emsp;&emsp;Take the repository back out while there is no package | `ansible.builtin.deb822_repository` | <code>tailscale_dpkg_after.stdout &#124; default('') != 'installed'</code> |
+| &emsp;&emsp;Install Tailscale | `ansible.builtin.fail` |  |
 | Hand tailscaled its extra flags | `ansible.builtin.lineinfile` | <code>not (tailscale_check_without_package &#124; bool)</code> |
 | Reload systemd for the changed drop-in | `ansible.builtin.systemd_service` | <code>tailscale_dropin_on is changed or tailscale_dropin_off is changed</code> |
 | Start tailscaled, and keep it enabled | `ansible.builtin.systemd_service` | <code>not (tailscale_check_without_package &#124; bool)</code> |
@@ -450,8 +450,8 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Task | Module | When |
 |---|---|---|
 | Report how this VM is on Tailscale, and keep what is left to do | block |  |
-| &amp;emsp;Say how this VM is on Tailscale | `ansible.builtin.debug` |  |
-| &amp;emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` |  |
+| &emsp;Say how this VM is on Tailscale | `ansible.builtin.debug` |  |
+| &emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` |  |
 
 ```mermaid
 flowchart TD

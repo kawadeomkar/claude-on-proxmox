@@ -104,10 +104,10 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | List which of the units to mask the VM has | `ansible.builtin.command` |  |
 | Look for installed snaps | `ansible.builtin.find` | <code>common_masked_units_listed.stdout is search('^snapd[.]', multiline=True)</code> |
 | Stop and mask the units | block | <code>common_masked_units_doomed &#124; length > 0</code> |
-| &amp;emsp;Stop each unit, timers, sockets and paths first | `ansible.builtin.systemd_service` |  |
-| &amp;emsp;Mask each unit | `ansible.builtin.systemd_service` |  |
-| &amp;emsp;Read which of the units failed | `ansible.builtin.command` |  |
-| &amp;emsp;Clear the failed state a unit was left in | `ansible.builtin.command` | <code>common_masked_units_failed &#124; length > 0</code> |
+| &emsp;Stop each unit, timers, sockets and paths first | `ansible.builtin.systemd_service` |  |
+| &emsp;Mask each unit | `ansible.builtin.systemd_service` |  |
+| &emsp;Read which of the units failed | `ansible.builtin.command` |  |
+| &emsp;Clear the failed state a unit was left in | `ansible.builtin.command` | <code>common_masked_units_failed &#124; length > 0</code> |
 
 ```mermaid
 flowchart TD

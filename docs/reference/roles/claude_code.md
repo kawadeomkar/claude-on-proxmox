@@ -149,9 +149,9 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Look for the path unit an earlier run installed | `ansible.builtin.stat` | <code>not (claude_code_remote_control_wanted &#124; bool)</code> |
 | Remove the path unit that would start Remote Control | `ansible.builtin.include_tasks` | <code>not (claude_code_remote_control_wanted &#124; bool) and claude_code_remote_control_bridge_leftover.stat.exists</code> |
 | Remove Remote Control | block | <code>not (claude_code_remote_control_wanted &#124; bool) and claude_code_remote_control_leftover.stat.exists</code> |
-| &amp;emsp;Stop and disable the Remote Control service | `ansible.builtin.systemd_service` |  |
-| &amp;emsp;Remove the Remote Control unit | `ansible.builtin.file` |  |
-| &amp;emsp;Make systemd forget the removed unit | `ansible.builtin.systemd_service` |  |
+| &emsp;Stop and disable the Remote Control service | `ansible.builtin.systemd_service` |  |
+| &emsp;Remove the Remote Control unit | `ansible.builtin.file` |  |
+| &emsp;Make systemd forget the removed unit | `ansible.builtin.systemd_service` |  |
 | Explain why Remote Control was skipped | `ansible.builtin.debug` | <code>claude_code_remote_control &#124; bool and claude_code_anthropic_api_key &#124; length > 0</code> |
 
 ```mermaid
@@ -225,38 +225,38 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Make the pipe claude reads the code from | `ansible.builtin.command` |  |
 | Start the sign-in in the background | `ansible.builtin.shell` |  |
 | Sign in, then clean up whatever happened | block |  |
-| &amp;emsp;Wait for claude to show the sign-in page | `ansible.builtin.wait_for` |  |
-| &amp;emsp;Read what claude printed | `ansible.builtin.slurp` |  |
-| &amp;emsp;Fail when claude did not start the sign-in | `ansible.builtin.fail` | <code>claude_code_login_url &#124; length == 0</code> |
-| &amp;emsp;Wait for the page claude handed its browser | `ansible.builtin.wait_for` | <code>claude_code_login_redirect &#124; bool</code> |
-| &amp;emsp;Read the page claude handed its browser | `ansible.builtin.slurp` | <code>claude_code_login_redirect &#124; bool</code> |
-| &amp;emsp;Look for a browser opener on this machine | `ansible.builtin.command` | <code>claude_code_login_desktop &#124; bool</code> |
-| &amp;emsp;Forward the sign-in's callback from this machine to the VM | `ansible.builtin.command` | <code>claude_code_login_redirect_ready &#124; bool</code> |
-| &amp;emsp;Say the page and what happens next | `ansible.builtin.debug` |  |
-| &amp;emsp;Open the sign-in page in your browser | `ansible.builtin.command` | <code>claude_code_login_desktop &#124; bool and claude_code_login_redirecting &#124; bool or claude_code_login_page_trusted &#124; bool and claude_code_login_opener &#124; length > 0</code> |
-| &amp;emsp;Paste the code the browser shows for {{ inventory_hostname }} | `ansible.builtin.pause` | <code>claude_code_login_code &#124; length == 0 and not (claude_code_login_redirecting &#124; bool)</code> |
-| &amp;emsp;Wait for your browser to come back | `ansible.builtin.async_status` | <code>claude_code_login_redirecting &#124; bool</code> |
-| &amp;emsp;Remember whether someone answered for this VM | `ansible.builtin.set_fact` |  |
-| &amp;emsp;Say that no code was entered | `ansible.builtin.debug` | <code>not (claude_code_login_redirecting &#124; bool) and claude_code_login_entered &#124; length == 0</code> |
-| &amp;emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` | <code>not (claude_code_login_redirecting &#124; bool) and claude_code_login_entered &#124; length == 0</code> |
-| &amp;emsp;Say that the browser did not come back | `ansible.builtin.debug` | <code>claude_code_login_redirecting &#124; bool and not (claude_code_login_responded &#124; bool)</code> |
-| &amp;emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` | <code>claude_code_login_redirecting &#124; bool and not (claude_code_login_responded &#124; bool)</code> |
-| &amp;emsp;Check that the sign-in is still waiting | `ansible.builtin.async_status` | <code>claude_code_login_entered &#124; length > 0</code> |
-| &amp;emsp;Fail when the sign-in ended before the code came | `ansible.builtin.fail` | <code>claude_code_login_entered &#124; length > 0 and claude_code_login_still.finished &#124; default(0) &#124; int == 1</code> |
-| &amp;emsp;Hand the code to claude | `ansible.builtin.command` | <code>claude_code_login_entered &#124; length > 0</code> |
-| &amp;emsp;Wait for claude's answer | `ansible.builtin.wait_for` | <code>claude_code_login_entered &#124; length > 0</code> |
-| &amp;emsp;Read claude's answer | `ansible.builtin.slurp` | <code>claude_code_login_entered &#124; length > 0</code> |
-| &amp;emsp;Paste the whole code the browser shows, what follows # included, for {{ inventory_hostname }} | `ansible.builtin.pause` | <code>claude_code_login_code &#124; length == 0 and claude_code_login_answer is search('Invalid code')</code> |
-| &amp;emsp;Hand the whole code to claude | `ansible.builtin.command` | <code>claude_code_login_answer is search('Invalid code') and claude_code_login_entered_again &#124; length > 0</code> |
-| &amp;emsp;Wait for claude to finish with the whole code | `ansible.builtin.async_status` | <code>claude_code_login_answer is search('Invalid code') and claude_code_login_entered_again &#124; length > 0</code> |
-| &amp;emsp;*always:* | | |
-| &amp;emsp;&amp;emsp;Give claude a moment to finish | `ansible.builtin.async_status` | <code>claude_code_login_entered &#124; length > 0</code> |
-| &amp;emsp;&amp;emsp;End the sign-in if claude still waits | `ansible.builtin.command` | <code>claude_code_login_finished.finished &#124; default(0) &#124; int != 1 and claude_code_login_landed.finished &#124; default(0) &#124; int != 1</code> |
-| &amp;emsp;&amp;emsp;Close the forward | `ansible.builtin.command` | <code>(claude_code_login_forward.rc &#124; default(1)) == 0</code> |
-| &amp;emsp;&amp;emsp;Collect claude's result | `ansible.builtin.async_status` |  |
-| &amp;emsp;&amp;emsp;Clean up claude's job | `ansible.builtin.async_status` |  |
-| &amp;emsp;&amp;emsp;Read what claude printed, now it has finished | `ansible.builtin.slurp` |  |
-| &amp;emsp;&amp;emsp;Remove the sign-in's files | `ansible.builtin.file` |  |
+| &emsp;Wait for claude to show the sign-in page | `ansible.builtin.wait_for` |  |
+| &emsp;Read what claude printed | `ansible.builtin.slurp` |  |
+| &emsp;Fail when claude did not start the sign-in | `ansible.builtin.fail` | <code>claude_code_login_url &#124; length == 0</code> |
+| &emsp;Wait for the page claude handed its browser | `ansible.builtin.wait_for` | <code>claude_code_login_redirect &#124; bool</code> |
+| &emsp;Read the page claude handed its browser | `ansible.builtin.slurp` | <code>claude_code_login_redirect &#124; bool</code> |
+| &emsp;Look for a browser opener on this machine | `ansible.builtin.command` | <code>claude_code_login_desktop &#124; bool</code> |
+| &emsp;Forward the sign-in's callback from this machine to the VM | `ansible.builtin.command` | <code>claude_code_login_redirect_ready &#124; bool</code> |
+| &emsp;Say the page and what happens next | `ansible.builtin.debug` |  |
+| &emsp;Open the sign-in page in your browser | `ansible.builtin.command` | <code>claude_code_login_desktop &#124; bool and claude_code_login_redirecting &#124; bool or claude_code_login_page_trusted &#124; bool and claude_code_login_opener &#124; length > 0</code> |
+| &emsp;Paste the code the browser shows for {{ inventory_hostname }} | `ansible.builtin.pause` | <code>claude_code_login_code &#124; length == 0 and not (claude_code_login_redirecting &#124; bool)</code> |
+| &emsp;Wait for your browser to come back | `ansible.builtin.async_status` | <code>claude_code_login_redirecting &#124; bool</code> |
+| &emsp;Remember whether someone answered for this VM | `ansible.builtin.set_fact` |  |
+| &emsp;Say that no code was entered | `ansible.builtin.debug` | <code>not (claude_code_login_redirecting &#124; bool) and claude_code_login_entered &#124; length == 0</code> |
+| &emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` | <code>not (claude_code_login_redirecting &#124; bool) and claude_code_login_entered &#124; length == 0</code> |
+| &emsp;Say that the browser did not come back | `ansible.builtin.debug` | <code>claude_code_login_redirecting &#124; bool and not (claude_code_login_responded &#124; bool)</code> |
+| &emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` | <code>claude_code_login_redirecting &#124; bool and not (claude_code_login_responded &#124; bool)</code> |
+| &emsp;Check that the sign-in is still waiting | `ansible.builtin.async_status` | <code>claude_code_login_entered &#124; length > 0</code> |
+| &emsp;Fail when the sign-in ended before the code came | `ansible.builtin.fail` | <code>claude_code_login_entered &#124; length > 0 and claude_code_login_still.finished &#124; default(0) &#124; int == 1</code> |
+| &emsp;Hand the code to claude | `ansible.builtin.command` | <code>claude_code_login_entered &#124; length > 0</code> |
+| &emsp;Wait for claude's answer | `ansible.builtin.wait_for` | <code>claude_code_login_entered &#124; length > 0</code> |
+| &emsp;Read claude's answer | `ansible.builtin.slurp` | <code>claude_code_login_entered &#124; length > 0</code> |
+| &emsp;Paste the whole code the browser shows, what follows # included, for {{ inventory_hostname }} | `ansible.builtin.pause` | <code>claude_code_login_code &#124; length == 0 and claude_code_login_answer is search('Invalid code')</code> |
+| &emsp;Hand the whole code to claude | `ansible.builtin.command` | <code>claude_code_login_answer is search('Invalid code') and claude_code_login_entered_again &#124; length > 0</code> |
+| &emsp;Wait for claude to finish with the whole code | `ansible.builtin.async_status` | <code>claude_code_login_answer is search('Invalid code') and claude_code_login_entered_again &#124; length > 0</code> |
+| &emsp;*always:* | | |
+| &emsp;&emsp;Give claude a moment to finish | `ansible.builtin.async_status` | <code>claude_code_login_entered &#124; length > 0</code> |
+| &emsp;&emsp;End the sign-in if claude still waits | `ansible.builtin.command` | <code>claude_code_login_finished.finished &#124; default(0) &#124; int != 1 and claude_code_login_landed.finished &#124; default(0) &#124; int != 1</code> |
+| &emsp;&emsp;Close the forward | `ansible.builtin.command` | <code>(claude_code_login_forward.rc &#124; default(1)) == 0</code> |
+| &emsp;&emsp;Collect claude's result | `ansible.builtin.async_status` |  |
+| &emsp;&emsp;Clean up claude's job | `ansible.builtin.async_status` |  |
+| &emsp;&emsp;Read what claude printed, now it has finished | `ansible.builtin.slurp` |  |
+| &emsp;&emsp;Remove the sign-in's files | `ansible.builtin.file` |  |
 | Check the login again | `ansible.builtin.command` |  |
 | Fail when the sign-in did not complete | `ansible.builtin.fail` | <code>claude_code_login_responded &#124; bool and not (claude_code_remote_control_status.loggedIn &#124; default(false)) &#124; bool</code> |
 | Record that this run signed the VM in | `ansible.builtin.set_fact` | <code>claude_code_login_responded &#124; bool</code> |
@@ -321,11 +321,11 @@ classDef rescue stroke:#665352,stroke-width:2px;
 |---|---|---|
 | Check installed version | `ansible.builtin.command` |  |
 | Install Claude Code {{ claude_code_version }} | block | <code>claude_code_current.rc != 0 or (claude_code_version is match('^[0-9]+\.[0-9]+\.[0-9]+')     and claude_code_version not in claude_code_current.stdout)</code> |
-| &amp;emsp;Create download directory | `ansible.builtin.tempfile` |  |
-| &amp;emsp;Download installer script | `ansible.builtin.get_url` |  |
-| &amp;emsp;Run installer | `ansible.builtin.command` |  |
-| &amp;emsp;*always:* | | |
-| &amp;emsp;&amp;emsp;Remove download directory | `ansible.builtin.file` | <code>claude_code_tmp.path is defined</code> |
+| &emsp;Create download directory | `ansible.builtin.tempfile` |  |
+| &emsp;Download installer script | `ansible.builtin.get_url` |  |
+| &emsp;Run installer | `ansible.builtin.command` |  |
+| &emsp;*always:* | | |
+| &emsp;&emsp;Remove download directory | `ansible.builtin.file` | <code>claude_code_tmp.path is defined</code> |
 
 ```mermaid
 flowchart TD
@@ -478,27 +478,27 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Install the systemd unit | `ansible.builtin.template` |  |
 | Look for the unit the service needs | `ansible.builtin.stat` |  |
 | Require a git repository for worktree spawn | block | <code>claude_code_remote_control_eligible &#124; bool and claude_code_remote_control_spawn == 'worktree'</code> |
-| &amp;emsp;Look for a git repository in the session directory | `ansible.builtin.stat` |  |
-| &amp;emsp;Fail when worktree spawn has no git repository | `ansible.builtin.assert` |  |
+| &emsp;Look for a git repository in the session directory | `ansible.builtin.stat` |  |
+| &emsp;Fail when worktree spawn has no git repository | `ansible.builtin.assert` |  |
 | Look for the unit that starts Remote Control when a login lands | `ansible.builtin.stat` |  |
 | Remove the unit that waited for the login | `ansible.builtin.include_tasks` | <code>not (claude_code_remote_control_bridge_wanted &#124; bool) and claude_code_remote_control_bridge.stat.exists</code> |
 | Start Remote Control | block | <code>claude_code_remote_control_eligible &#124; bool and claude_code_remote_control_unit_file.stat.exists</code> |
-| &amp;emsp;Read the service state | `ansible.builtin.systemd_service` |  |
-| &amp;emsp;Enable and start the service | `ansible.builtin.systemd_service` |  |
-| &amp;emsp;Confirm the session stayed up | block | <code>not ansible_check_mode and claude_code_remote_control_start is changed</code> |
-| &amp;emsp;&amp;emsp;Record the server process just started | `ansible.builtin.systemd_service` |  |
-| &amp;emsp;&amp;emsp;Give the server time to fail | `ansible.builtin.wait_for` |  |
-| &amp;emsp;&amp;emsp;Read the server process again | `ansible.builtin.systemd_service` |  |
-| &amp;emsp;&amp;emsp;Fail when the session did not stay up | `ansible.builtin.assert` |  |
-| &amp;emsp;Report where to reach the session | `ansible.builtin.debug` | <code>not ansible_check_mode</code> |
-| &amp;emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` | <code>not ansible_check_mode</code> |
+| &emsp;Read the service state | `ansible.builtin.systemd_service` |  |
+| &emsp;Enable and start the service | `ansible.builtin.systemd_service` |  |
+| &emsp;Confirm the session stayed up | block | <code>not ansible_check_mode and claude_code_remote_control_start is changed</code> |
+| &emsp;&emsp;Record the server process just started | `ansible.builtin.systemd_service` |  |
+| &emsp;&emsp;Give the server time to fail | `ansible.builtin.wait_for` |  |
+| &emsp;&emsp;Read the server process again | `ansible.builtin.systemd_service` |  |
+| &emsp;&emsp;Fail when the session did not stay up | `ansible.builtin.assert` |  |
+| &emsp;Report where to reach the session | `ansible.builtin.debug` | <code>not ansible_check_mode</code> |
+| &emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` | <code>not ansible_check_mode</code> |
 | Install the unit that starts Remote Control when a login lands | `ansible.builtin.template` | <code>claude_code_remote_control_bridge_wanted &#124; bool</code> |
 | Look again for the unit that starts Remote Control when a login lands | `ansible.builtin.stat` | <code>claude_code_remote_control_bridge_wanted &#124; bool</code> |
 | Watch for the login | `ansible.builtin.systemd_service` | <code>claude_code_remote_control_bridge_wanted &#124; bool and claude_code_remote_control_bridge_now.stat.exists</code> |
 | Explain the one step that cannot be automated | block | <code>not (claude_code_remote_control_eligible &#124; bool)</code> |
-| &amp;emsp;Leave the service stopped until the login exists | `ansible.builtin.systemd_service` | <code>claude_code_remote_control_unit_file.stat.exists</code> |
-| &amp;emsp;Say exactly what to run | `ansible.builtin.debug` |  |
-| &amp;emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` |  |
+| &emsp;Leave the service stopped until the login exists | `ansible.builtin.systemd_service` | <code>claude_code_remote_control_unit_file.stat.exists</code> |
+| &emsp;Say exactly what to run | `ansible.builtin.debug` |  |
+| &emsp;Keep what is left to do for the end of the run | `ansible.builtin.set_stats` |  |
 
 ```mermaid
 flowchart TD
@@ -559,14 +559,14 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Build managed settings | `ansible.builtin.set_fact` |  |
 | Read existing settings | `ansible.builtin.slurp` |  |
 | Parse the settings on disk when they are needed | block | <code>claude_code_managed_settings &#124; length > 0 or 'ANTHROPIC_API_KEY' in claude_code_settings_existing_text</code> |
-| &amp;emsp;Parse the settings on disk | `ansible.builtin.set_fact` |  |
-| &amp;emsp;Require a JSON object | `ansible.builtin.assert` |  |
-| &amp;emsp;*rescue:* | | |
-| &amp;emsp;&amp;emsp;Fail naming the file that could not be parsed | `ansible.builtin.fail` |  |
+| &emsp;Parse the settings on disk | `ansible.builtin.set_fact` |  |
+| &emsp;Require a JSON object | `ansible.builtin.assert` |  |
+| &emsp;*rescue:* | | |
+| &emsp;&emsp;Fail naming the file that could not be parsed | `ansible.builtin.fail` |  |
 | Look for a key an earlier run left behind | `ansible.builtin.set_fact` |  |
 | Manage ~/.claude/settings.json | block | <code>claude_code_managed_settings &#124; length > 0 or claude_code_settings_stale_key &#124; bool</code> |
-| &amp;emsp;Merge managed settings over existing ones | `ansible.builtin.set_fact` |  |
-| &amp;emsp;Write settings.json | `ansible.builtin.copy` |  |
+| &emsp;Merge managed settings over existing ones | `ansible.builtin.set_fact` |  |
+| &emsp;Write settings.json | `ansible.builtin.copy` |  |
 
 ```mermaid
 flowchart TD

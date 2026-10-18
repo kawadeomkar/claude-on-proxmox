@@ -92,15 +92,15 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Validate the minimum memory | `ansible.builtin.assert` |  |
 | Validate the VM ID | `ansible.builtin.assert` |  |
 | Manage the VM | block |  |
-| &amp;emsp;Look up Proxmox VM {{ proxmox_vm_name }} | `community.proxmox.proxmox_vm_info` |  |
-| &amp;emsp;Refuse to act on a duplicated VM name | `ansible.builtin.assert` |  |
-| &amp;emsp;Record whether the VM already exists | `ansible.builtin.set_fact` |  |
-| &amp;emsp;Refuse to configure a template | `ansible.builtin.assert` | <code>proxmox_vm_state == 'present' and proxmox_vm_exists</code> |
-| &amp;emsp;Refuse to change a VM this project does not own | `ansible.builtin.assert` | <code>proxmox_vm_state == 'present' and proxmox_vm_exists</code> |
-| &amp;emsp;Create the VM | `ansible.builtin.include_tasks` | <code>proxmox_vm_state == 'present'</code> |
-| &amp;emsp;Refuse to delete a template | `ansible.builtin.assert` | <code>proxmox_vm_state == 'absent' and proxmox_vm_exists</code> |
-| &amp;emsp;Refuse to delete a VM this project does not own | `ansible.builtin.assert` | <code>proxmox_vm_state == 'absent' and proxmox_vm_exists and not (proxmox_vm_allow_untagged_delete &#124; bool)</code> |
-| &amp;emsp;Delete the VM | `ansible.builtin.include_tasks` | <code>proxmox_vm_state == 'absent'</code> |
+| &emsp;Look up Proxmox VM {{ proxmox_vm_name }} | `community.proxmox.proxmox_vm_info` |  |
+| &emsp;Refuse to act on a duplicated VM name | `ansible.builtin.assert` |  |
+| &emsp;Record whether the VM already exists | `ansible.builtin.set_fact` |  |
+| &emsp;Refuse to configure a template | `ansible.builtin.assert` | <code>proxmox_vm_state == 'present' and proxmox_vm_exists</code> |
+| &emsp;Refuse to change a VM this project does not own | `ansible.builtin.assert` | <code>proxmox_vm_state == 'present' and proxmox_vm_exists</code> |
+| &emsp;Create the VM | `ansible.builtin.include_tasks` | <code>proxmox_vm_state == 'present'</code> |
+| &emsp;Refuse to delete a template | `ansible.builtin.assert` | <code>proxmox_vm_state == 'absent' and proxmox_vm_exists</code> |
+| &emsp;Refuse to delete a VM this project does not own | `ansible.builtin.assert` | <code>proxmox_vm_state == 'absent' and proxmox_vm_exists and not (proxmox_vm_allow_untagged_delete &#124; bool)</code> |
+| &emsp;Delete the VM | `ansible.builtin.include_tasks` | <code>proxmox_vm_state == 'absent'</code> |
 
 ```mermaid
 flowchart TD
