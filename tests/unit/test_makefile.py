@@ -56,12 +56,14 @@ NAME_ERROR = "VM_NAME may contain only letters, digits and . _ - ,"
 pytestmark = pytest.mark.skipif(MAKE is None, reason="make is not installed")
 
 
-def _make(*args: str) -> subprocess.CompletedProcess[str]:
+def _make(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     # A clean environment: a developer's own VM_NAME or TAGS would leak into
     # the Makefile's `?=` defaults, and the locale must not be what makes the
-    # non-ASCII case pass or fail.
-    env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/"), "LANG": "en_US.UTF-8"}
-    return subprocess.run([MAKE, *args], cwd=REPO, env=env, capture_output=True, text=True, check=False, timeout=60)
+    # non-ASCII case pass or fail. env adds to it.
+    clean = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/"), "LANG": "en_US.UTF-8"}
+    return subprocess.run(
+        [MAKE, *args], cwd=REPO, env=clean | (env or {}), capture_output=True, text=True, check=False, timeout=60
+    )
 
 
 VAULT_HEADER = "$ANSIBLE_VAULT;1.1;AES256\n"
@@ -206,6 +208,122 @@ def test_provision_runs_the_name_check_before_the_playbook(tmp_path: Path) -> No
     assert result.returncode != 0
     assert NAME_ERROR in output
     assert "ansible-playbook" not in output
+
+
+# Every target that takes VM_NAME also takes the names after it: make reads
+# each as a goal, which the Makefile answers with a rule that does nothing once
+# it has refused a word that is a target, and hands the words to vm-name-check
+# as VM_NAME. Each target, and the playbook it runs.
+NAMED_TARGETS = {
+    "provision": "playbooks/provision.yml",
+    "list": "playbooks/list.yml",
+    "configure": "playbooks/configure.yml",
+    "deploy": "deploy.yml",
+    "destroy": "playbooks/destroy.yml",
+    "claude-login": "playbooks/claude_login.yml",
+    "github-login": "playbooks/github_login.yml",
+    "tailscale-login": "playbooks/tailscale_login.yml",
+    "check": "playbooks/configure.yml",
+    "ssh-config": "playbooks/ssh_config.yml",
+    "code": "playbooks/code.yml",
+}
+
+
+def _playbook_line(result: subprocess.CompletedProcess[str]) -> str:
+    return next(line for line in result.stdout.splitlines() if "ansible-playbook" in line)
+
+
+def test_every_target_that_takes_vm_name_takes_the_names_after_it() -> None:
+    listed = re.search(r"(?m)^NAMED_TARGETS := ((?:.*\\\n)*.*)$", MAKEFILE.read_text()).group(1)
+    takes_vm_name = [target for target in PLAYBOOK_TARGETS if "vm-name-check" in _prerequisites(target)]
+    assert listed.replace("\\\n", " ").split() == takes_vm_name == list(NAMED_TARGETS)
+
+
+@pytest.mark.parametrize("target", NAMED_TARGETS)
+@pytest.mark.parametrize(
+    ("words", "names"),
+    [(["roam"], "roam"), (["alpha", "beta"], "alpha,beta"), (["alpha,beta"], "alpha,beta")],
+)
+def test_a_target_takes_the_names_after_it_as_vm_name(target: str, words: list[str], names: str) -> None:
+    after = _make("-n", target, *words)
+    given = _make("-n", target, f"VM_NAME={names}")
+    assert after.returncode == 0, after.stdout + after.stderr
+    assert f"""-e '{{"vm_name": "{names}"}}'""" in _playbook_line(after)
+    assert _playbook_line(after).endswith(NAMED_TARGETS[target])
+    assert _playbook_line(after) == _playbook_line(given)
+
+
+@pytest.mark.parametrize("target", NAMED_TARGETS)
+def test_a_target_without_names_after_it_passes_no_vm_name_at_all(target: str) -> None:
+    result = _make("-n", target)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "vm_name" not in _playbook_line(result)
+
+
+# make would run such a word's target after the first - `make destroy test`
+# the whole test suite once the default VM is gone - so the run is refused
+# before anything starts.
+@pytest.mark.parametrize("target", NAMED_TARGETS)
+@pytest.mark.parametrize("words", [["test"], ["roam", "list"], ["deploy", "lint"]])
+def test_a_target_refuses_a_name_that_is_a_make_target(tmp_path: Path, target: str, words: list[str]) -> None:
+    result = _make(target, *words, *_safe_overrides(tmp_path))
+    assert result.returncode != 0
+    assert "among the VM names:" in result.stderr
+    assert f"make {target} VM_NAME={','.join(w for w in words if w != 'roam')}" in result.stderr
+    assert result.stdout == ""
+
+
+def test_code_refuses_several_names_after_it(tmp_path: Path) -> None:
+    result = _make("code", "alpha", "beta", *_safe_overrides(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "code opens one VM at a time, not [alpha,beta]" in output
+    assert "ansible-playbook" not in output
+
+
+# Chaining a second target says so, VM_NAME given or not.
+@pytest.mark.parametrize("target", NAMED_TARGETS)
+def test_a_target_followed_by_another_is_refused_as_such(tmp_path: Path, target: str) -> None:
+    result = _make(target, "list", "VM_NAME=alpha", *_safe_overrides(tmp_path))
+    assert result.returncode != 0
+    assert "among the VM names: list. Run one target at a time" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("target", NAMED_TARGETS)
+@pytest.mark.parametrize(
+    ("args", "env"),
+    [
+        pytest.param(["VM_NAME=alpha", "beta"], {}, id="command-line"),
+        pytest.param(["beta"], {"VM_NAME": "alpha"}, id="environment"),
+    ],
+)
+def test_a_target_refuses_names_given_both_ways(
+    tmp_path: Path, target: str, args: list[str], env: dict[str, str]
+) -> None:
+    result = _make(target, *args, *_safe_overrides(tmp_path), env=env)
+    assert result.returncode != 0
+    assert f"give the VM names one way: make {target} <name>..." in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("target", NAMED_TARGETS)
+@pytest.mark.parametrize("word", ["a;b", "a'b", "$(x)", "a%", "a:b"])
+def test_a_target_runs_the_name_check_on_the_names_after_it(tmp_path: Path, target: str, word: str) -> None:
+    result = _make(target, word, *_safe_overrides(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert NAME_ERROR in output
+    assert "ansible-playbook" not in output
+
+
+@pytest.mark.parametrize("target", NAMED_TARGETS)
+def test_a_name_after_a_target_is_never_expanded_by_make(tmp_path: Path, target: str) -> None:
+    ran = tmp_path / "ran"
+    result = _make(target, f"$(shell touch {ran})", *_safe_overrides(tmp_path))
+    assert result.returncode != 0
+    assert NAME_ERROR in result.stdout + result.stderr
+    assert not ran.exists()
 
 
 def test_deploy_refuses_tags(tmp_path: Path) -> None:

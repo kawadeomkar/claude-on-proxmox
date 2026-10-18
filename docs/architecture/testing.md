@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make unit`
 
-pytest over `tests/unit/`: 989 tests. By file:
+pytest over `tests/unit/`: 1167 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -93,17 +93,19 @@ pytest over `tests/unit/`: 989 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 94): `vm-name-check` accepts DNS-like names and refuses
+- **The Makefile** (`test_makefile.py` 272): `vm-name-check` accepts DNS-like names and refuses
   whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision`,
   `ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the check before the
-  playbook; `deploy` refuses `TAGS`; `code` refuses no name and several, and passes `PROJECT` as its own
-  JSON extra-var after `project-name-check` has accepted real repository names and refused `/`, `.`,
-  `..`, quotes, shell syntax, a newline, non-ASCII and more than 100 characters; a run with no terminal
-  turns the desktop steps off; every playbook target exports its own `ANSIBLE_LOG_PATH` (never named
-  after `VM_NAME`) into a `0700` directory, `LOG_DIR=` turns it off, old run logs are pruned and nothing
-  else is, and `logs-clean` deletes only run logs; and every target that runs Ansible runs
-  `collections-check` first, which asks `ansible-galaxy --offline` about `requirements.yml` and stops a
-  run, naming `make deps`, at collections that are not the pins.
+  playbook; every target that takes `VM_NAME` passes the names after it exactly as `VM_NAME`, runs the
+  check on them without make expanding them, and refuses a word that is a make target, or names given
+  both ways, before anything runs; `deploy` refuses `TAGS`; `code` refuses no name and several, and
+  passes `PROJECT` as its own JSON extra-var after `project-name-check` has accepted real repository
+  names and refused `/`, `.`, `..`, quotes, shell syntax, a newline, non-ASCII and more than 100
+  characters; a run with no terminal turns the desktop steps off; every playbook target exports its own
+  `ANSIBLE_LOG_PATH` (never named after `VM_NAME`) into a `0700` directory, `LOG_DIR=` turns it off, old
+  run logs are pruned and nothing else is, and `logs-clean` deletes only run logs; and every target that
+  runs Ansible runs `collections-check` first, which asks `ansible-galaxy --offline` about
+  `requirements.yml` and stops a run, naming `make deps`, at collections that are not the pins.
 - **The wiki** (`test_docs.py` 20): the generated reference sections are up to date, and every setting
   and role default is documented; the site builds strictly from the pages git knows, every heading
   reaches its built page, and every page renders the same on GitHub as on the site, its diagrams

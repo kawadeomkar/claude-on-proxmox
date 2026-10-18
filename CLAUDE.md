@@ -25,8 +25,8 @@ make unit            # pytest, tests/unit/
 make molecule MOLECULE_ROLES="proxmox_vm"      # one role scenario
 make molecule-scenario SCENARIO=provision      # one playbook scenario
 make test            # everything, including pre-commit — the CI gate
-make deploy          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent
-make destroy VM_NAME=alpha        # release the VM from Claude, GitHub and Tailscale, then delete it
+make deploy          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (make deploy alpha: that VM)
+make destroy VM_NAME=alpha        # release the VM from Claude, GitHub and Tailscale, then delete it (or: make destroy alpha)
 make claude-login VM_NAME=alpha   # sign Claude in by the browser (page opens here, comes back over an SSH forward), start Remote Control
 make github-login VM_NAME=alpha   # sign gh in to GitHub by the device flow (page opens here, code on the clipboard), then clone private repos
 make tailscale-login VM_NAME=alpha   # sign the VM in to Tailscale by its web login (page opens here), one VM after another
@@ -458,11 +458,15 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   `claude_ssh_vms: <the prune list>` and `state: absent`. The fact won, and the prune removed the
   aliases it had just refreshed. Pass the task file's inputs only through `vars:` on the import;
   `tests/unit/test_ssh_config.py` fails if a playbook sets them as facts.
-- **Every value typed on the `make` line is checked before a shell sees it.** `VM_NAME` and
-  `PROJECT` each have a `*-name-check` target that reads the value through the environment with
-  `$(value ...)` and refuses anything outside its character set with a shell `case`, then the value
-  travels to Ansible as JSON. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused
-  as well, and `code.yml` repeats the check for a direct `ansible-playbook` run.
+- **Every value typed on the `make` line is checked before a shell sees it.** `VM_NAME` and `PROJECT`
+  each have a `*-name-check` target that reads the value through the environment with `$(value ...)`
+  and refuses anything outside its character set with a shell `case`, then the value travels to Ansible
+  as JSON. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused as well, and
+  `code.yml` repeats the check for a direct `ansible-playbook` run. The targets in `NAMED_TARGETS`,
+  every one that takes `VM_NAME`, also take the names as the words after them, which make reads as
+  goals: they become `VM_NAME` and go into no rule's syntax and no `$(shell)` before `vm-name-check` (a
+  `%:` rule that does nothing answers each), and a word the Makefile has a rule for is refused while
+  the Makefile is read, or make would run that target after the first, or beside it under `-j`.
 - **There is deliberately no `LIMIT`.** `--limit` is applied before the plays run, and these VMs
   only enter the inventory once discovery has found them, so it could never match.
 - **`gitleaks --staged` scans the index**, which equals HEAD in a CI checkout — i.e. nothing. CI

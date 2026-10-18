@@ -16,7 +16,8 @@ VAULT_PASS := .vault_pass
 VAULT_ARGS := $(if $(wildcard $(VAULT_PASS)),--vault-password-file $(VAULT_PASS),)
 ANSIBLE_ARGS ?=
 # Name(s) of the VM(s) to act on, comma-separated. Given, it narrows every
-# target to those names, so `make configure VM_NAME=alpha` touches only alpha.
+# target to those names, so `make configure VM_NAME=alpha` touches only alpha
+# (as does `make configure alpha`: the names may also follow the target).
 # Left out, what it means depends on the target:
 #   deploy, provision, destroy            -> claude-on-proxmox-default
 #                                            (claude_vm_default_name, in
@@ -29,6 +30,37 @@ ANSIBLE_ARGS ?=
 # these VMs only enter the inventory once discovery has found them, so it could
 # never match.
 VM_NAME    ?=
+# Every target that takes VM_NAME also takes the names after it, as listed
+# in NAMED_TARGETS: `make deploy alpha beta` is `make deploy VM_NAME=alpha,beta`
+# and `make configure alpha` is `make configure VM_NAME=alpha`. make reads each
+# of those words as a goal of its own, so a rule that does nothing answers
+# each, and a word that is a target here is refused before anything runs:
+# `make destroy test` would otherwise delete the default VM and then run the
+# tests, and `make configure list` configure every VM and list them - one
+# target at a time, then. So are names given both ways. make never expands
+# what MAKECMDGOALS holds, and the words go into no rule and no shell before
+# vm-name-check, which refuses them as it would the same text in VM_NAME=.
+NAMED_TARGETS := provision list configure deploy destroy claude-login github-login tailscale-login check \
+                 ssh-config code
+comma      := ,
+empty      :=
+space      := $(empty) $(empty)
+NAMED_GOAL := $(filter $(NAMED_TARGETS),$(firstword $(MAKECMDGOALS)))
+ifneq ($(NAMED_GOAL),)
+GOAL_NAMES := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+ifneq ($(GOAL_NAMES),)
+GOAL_TARGETS := $(sort $(filter $(shell sed -n 's/^\([A-Za-z][A-Za-z0-9_-]*\):.*/\1/p' $(firstword $(MAKEFILE_LIST))),$(GOAL_NAMES)))
+ifneq ($(GOAL_TARGETS),)
+$(error make target$(if $(word 2,$(GOAL_TARGETS)),s) among the VM names: $(GOAL_TARGETS). Run one target at a time, and name a VM so with make $(NAMED_GOAL) VM_NAME=$(subst $(space),$(comma),$(GOAL_TARGETS)))
+endif
+ifneq ($(filter command environment%,$(origin VM_NAME)),)
+$(error give the VM names one way: make $(NAMED_GOAL) <name>... or make $(NAMED_GOAL) VM_NAME=<name>,..., not both)
+endif
+VM_NAME    := $(subst $(space),$(comma),$(GOAL_NAMES))
+%:
+	@:
+endif
+endif
 # Passed as JSON, not key=value. Ansible's key=value parser splits extra-vars
 # on whitespace, so VM_NAME="alpha beta" silently became just alpha and only
 # half the fleet was created. As JSON the value arrives whole and reaches the
@@ -99,6 +131,7 @@ endif
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@printf '\n  A target that takes VM_NAME also takes the names after it: make deploy alpha beta\n'
 
 # ---------------------------------------------------------------- setup ----
 .PHONY: venv

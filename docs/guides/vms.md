@@ -11,6 +11,12 @@ make configure VM_NAME=alpha       # later, just one of them
 make destroy VM_NAME=beta
 ```
 
+Every target that takes `VM_NAME` also takes the names after the target: `make deploy alpha beta gamma` is
+`make deploy VM_NAME=alpha,beta,gamma`, and `make configure alpha` is `make configure VM_NAME=alpha`. A name
+that is also a make target, as in `make deploy test` or `make configure list`, is refused before anything
+runs, since make would run that target too: run one target at a time, and name such a VM with `VM_NAME=`.
+So are names given both ways at once.
+
 Given, `VM_NAME` narrows every target to those names. Left out, what it means depends on the target:
 
 | Target | Without `VM_NAME` |
