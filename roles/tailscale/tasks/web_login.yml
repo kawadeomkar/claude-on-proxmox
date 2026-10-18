@@ -88,7 +88,8 @@
          ~ "'s sign-in page, so it is not opened here: check where it leads before you follow it. " }}
     tailscale_web_untagged: >-
       {{ (' Joined this way, ' ~ inventory_hostname ~ " is your own device, which your tailnet's policy lets reach the"
-          ~ ' devices your other ones can: README, "Reaching a VM over Tailscale", says how to tag it.')
+          ~ ' devices your other ones can: "Keeping an agent VM off your other devices" in'
+          ~ ' docs/guides/tailscale.md says how to tag it.')
          if tailscale_advertise_tags | length == 0 else '' }}
   ansible.builtin.debug:
     msg: >-

@@ -29,14 +29,13 @@
 # vscode_session_notes (the default) it also holds a "Session notes" task,
 # run beside the Claude task, which opens a page about the VM beside the
 # terminal each time the window opens, its "Signed in" section read from the
-# VM then (README, "Session notes"). The workspace file and those notes are
+# VM then (docs/guides/vscode.md). The workspace file and those notes are
 # all that is written on the VM, in a directory of its own beside the projects
 # (<projects>/.claude-on-proxmox/), never in a repository; cloud-init placed
 # the key at provisioning, so nothing else needs changing. VS Code runs the
 # tasks only in a window the user has trusted, and only once they have
 # allowed automatic tasks; this playbook reads their VS Code settings to say
-# which of those to expect, and never writes them (README, "A Claude session
-# in the window").
+# which of those to expect, and never writes them (docs/guides/vscode.md).
 #
 # vm_project (PROJECT) is one folder name, as a GitHub repository is named,
 # and is checked again here so that a direct ansible-playbook run cannot point
@@ -73,7 +72,7 @@
     # notes' directory is a second folder only where this window's own folder
     # contains it: VS Code stores the folders a user trusted, not their parents,
     # so a folder added beside them would put a window trusted before back in
-    # Restricted Mode, without the Claude terminal (ARCHITECTURE.md §4.9).
+    # Restricted Mode, without the Claude terminal (docs/architecture/lifecycle.md §4.9).
     code_workspace_file:
       folders: >-
         {{ [{'path': code_target}]
@@ -493,8 +492,7 @@
     # names, which the inventory wires to github_auth and github_auth_method,
     # so that an override of either reaches the role and this alike. The
     # private repositories are listed with the token gh just stored, so they
-    # take one more configure run (README, "Private repositories, and pushing
-    # from the VM").
+    # take one more configure run (docs/guides/github.md).
     code_github_signed_in: >-
       {{ ('Signed in to GitHub. To clone your private repositories here too, run on your machine: '
           ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=github_projects')

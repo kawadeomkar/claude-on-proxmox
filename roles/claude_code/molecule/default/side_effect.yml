@@ -314,7 +314,7 @@
         quiet: true
 
     # ------------------------------ 4b. a re-run against the live server --
-    # The fleet-wide re-run the README encourages. Unchanged inputs must leave
+    # The fleet-wide re-run the docs encourage. Unchanged inputs must leave
     # the running server alone: a restart here kills every live session
     # (KillSignal=SIGINT), and the stay-up check compares a PID recorded after
     # the start with itself, so it could never tell. The server's own PID and

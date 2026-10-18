@@ -434,7 +434,7 @@ def test_only_a_refused_token_and_an_old_gh_fail_and_say_why(configured):
     assert "GitHub refused the token" in failures["refused-token"]
     assert "Bad credentials" in failures["refused-token"]
     assert "make github-login VM_NAME=refused-token" in failures["refused-token"]
-    assert '"Private repositories, and pushing from the VM"' in failures["refused-token"]
+    assert '(docs/guides/github.md, "Private repositories, and pushing from the VM")' in failures["refused-token"]
     # Not "signed out", which would print the sign-in command on every run
     # and never configure the helper: the flag the role needs, by version.
     assert "needs gh 2.81.0 or newer" in failures["old-gh"]

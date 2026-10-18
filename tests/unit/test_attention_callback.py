@@ -42,7 +42,7 @@ WAITS = {
     "web_login | Wait for the page to be approved",
 }
 # Every report that says what is left to do after the run, each followed by the
-# task that records it for NEXT STEPS (ARCHITECTURE.md §7.5).
+# task that records it for NEXT STEPS (docs/architecture/custom-code.md §7.5).
 REPORTS = {
     "roles/claude_code/tasks/login.yml": ["login | Report the login state and what to do about it"],
     "roles/claude_code/tasks/browser_login.yml": [

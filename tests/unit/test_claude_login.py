@@ -6,8 +6,8 @@ sign-in page, takes the code the page shows from a prompt on the controller,
 hands it to claude through a named pipe and waits for its answer. Here every
 host is the controller itself, over the local connection, through the harness
 in harness.py, with the stand-in claude of tests/molecule/fake_claude.sh first
-on PATH, which behaves the way Claude Code 2.1.296 was probed to (ARCHITECTURE
-§5.5): a line without "#" is an invalid code and it reads again, a rejected
+on PATH, which behaves the way Claude Code 2.1.296 was probed to
+(docs/architecture/roles.md §5.5): a line without "#" is an invalid code and it reads again, a rejected
 code exits 1, an accepted one writes .credentials.json and exits 0 - and, on
 request, refuses in other words, fails before its page, or is gone before the
 code comes.
@@ -972,7 +972,7 @@ def test_a_sign_in_then_starts_remote_control_as_root():
 def test_nothing_decides_from_a_terminal_probe():
     # Ansible runs a lookup in a worker detached from the terminal, so a
     # /dev/tty probe says "no terminal" even on make deploy at one; whether the
-    # run is attended is learnt from the prompt alone (ARCHITECTURE §5.5).
+    # run is attended is learnt from the prompt alone (docs/architecture/roles.md §5.5).
     for path in (
         ROLE / "tasks" / "browser_login.yml",
         REPO / "deploy.yml",

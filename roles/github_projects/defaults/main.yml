@@ -9,8 +9,7 @@ github_projects_username: ""
 # signed in by this role - so the same token clones them and pushes. A login
 # made by hand stays, and the token then only lists. Without one, gh is signed
 # in once by the device flow (make github-login) and the listing uses the token
-# gh stored from then on. The permissions it needs are in the README, "Private
-# repositories, and pushing from the VM".
+# gh stored from then on. The permissions it needs are in docs/guides/github.md.
 github_projects_token: ""
 github_projects_api_url: https://api.github.com
 

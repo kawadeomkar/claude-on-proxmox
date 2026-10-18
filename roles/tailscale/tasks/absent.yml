@@ -76,7 +76,7 @@
     # the unit with it, and the package's postinst enables tailscaled again on a
     # reinstall only when the link its first install made is still there. A
     # disable took that link away, so a Tailscale installed again later - by
-    # hand, as the README invites - came up disabled and never started (probed
+    # hand, as the docs invite - came up disabled and never started (probed
     # against 1.104.1). A unit with no package behind it is disabled as well.
     - name: absent | Stop tailscaled
       ansible.builtin.systemd_service:

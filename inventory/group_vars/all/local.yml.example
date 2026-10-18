@@ -4,19 +4,42 @@
 # so that future default changes still flow through.
 #
 #   cp inventory/group_vars/all/local.yml.example inventory/group_vars/all/local.yml
+#
+# Every setting below is in docs/reference/settings.md, with its default and the
+# role variable it sets; that page is generated from this file (make docs).
 
+# ---------------------------------------------------------------- Proxmox ---
 # Proxmox node name as shown in the PVE UI, and the storage for VM disks.
 # proxmox_node: pve
 # proxmox_storage: local-lvm
-# Set to true after trusting the PVE CA on the controller (README).
+# The bridge the template's NIC is attached to, which every clone inherits. Set
+# it before the template is built, and grant the token SDN.Use on it.
+# proxmox_bridge: vmbr0
+# The API user and token the pveum commands in
+# docs/getting-started/proxmox-access.md create, and the API's port.
+# proxmox_api_user: ansible@pve
+# proxmox_api_token_id: ansible
+# proxmox_api_port: 8006
+# Set to true after trusting the PVE CA on the controller
+# (docs/getting-started/proxmox-access.md).
 # proxmox_validate_certs: true
+# The template every VM is cloned from. On a cluster, build one per node with a
+# VMID and a name of its own (docs/getting-started/requirements.md).
+# proxmox_template_vmid: 9000
+# proxmox_template_name: ubuntu-24.04-cloudinit
 # Which NIC of the template carries the LAN address: its MAC is how a VM's own
 # address is told apart from bridges the guest grows later (docker0). Change it
 # only if the template was built with something other than a single net0.
 # proxmox_nic: net0
 
+# -------------------------------------------------------------------- VMs ---
 # Login user on the VM.
 # vm_user: dev
+# Public keys cloud-init installs for that user. Default: this machine's
+# ~/.ssh/id_ed25519.pub; list your own here if yours is another key.
+# vm_ssh_public_keys: ["ssh-ed25519 AAAA... you@example.com"]
+# The VM a target acts on when VM_NAME is not given.
+# claude_vm_default_name: claude-on-proxmox-default
 
 # VM sizing. These apply to every VM a run creates - VMs are no longer listed
 # in hosts.yml, so there is no per-VM override. Provision fleets that need
@@ -25,6 +48,8 @@
 # vm_memory_mb: 4096
 # vm_disk_size: 32G
 # vm_nameservers: [1.1.1.1, 8.8.8.8]
+# The DNS search domain cloud-init gives the VMs. Empty leaves it out.
+# vm_searchdomain: lan
 
 # Addressing is DHCP by default and the guest agent reports back what it got.
 # To pin an address instead, set the cloud-init ipconfig line directly. This is
@@ -33,6 +58,7 @@
 # DHCP reservation is no substitute across rebuilds - every clone gets a new MAC.)
 # proxmox_vm_ipconfig: "ip=192.0.2.60/24,gw=192.0.2.1"
 
+# ----------------------------------------------------------------- GitHub ---
 # Which of your GitHub repositories to clone. The username itself lives in vault.yml.
 # Leave github_projects empty to clone every repository of that user; list names
 # to clone only those.
@@ -50,12 +76,15 @@
 # github_auth_method: auto
 # make deploy starts the device flow by itself; false asks first, VM by VM.
 # github_login_auto_start: true
+# Scopes the device flow asks for on top of gh's own (repo, read:org, gist);
+# workflow lets a push change .github/workflows/.
 # github_login_scopes: [workflow]
 # The git identity on each VM. Empty: your GitHub display name (or login) and
 # GitHub's noreply address for your account.
 # git_user_name: ""
 # git_user_email: ""
 
+# ----------------------------------------------------- Packages and tools ---
 # Packages/tools installed on the VM. See roles/*/defaults/main.yml for the full lists.
 # common_extra_packages: [postgresql-client]
 # dev_tools_install_docker: true
@@ -64,23 +93,29 @@
 # dev_tools_install_gh: true
 # dev_tools_node_major: 22
 
-# VS Code over SSH (README, "Using VS Code on the VM"). On the VM: an sshd
+# -------------------------------------------------------- VS Code and SSH ---
+# VS Code over SSH (docs/guides/vscode.md). On the VM: an sshd
 # drop-in with forwarding and keepalives, checked against what sshd runs
 # with, and a higher inotify limit. Set false to remove both files.
 # vscode_remote: true
 # On this machine: an SSH alias per VM in ~/.ssh/claude-on-proxmox.conf,
 # included from the top of ~/.ssh/config, so `ssh alpha` and VS Code's host
-# picker follow the VM's address. Set false to keep out of ~/.ssh entirely;
-# claude_ssh_config_include: false writes the file but not the Include line.
+# picker follow the VM's address. Set false to keep out of ~/.ssh entirely,
+# or claude_ssh_config_include false to write the file but not the Include line.
 # claude_ssh_config: true
 # claude_ssh_config_include: true
 # Point aliases at <name>.<domain> instead of the address, on a network whose
 # DNS resolves VM names; then a lease that moves no longer matters.
 # claude_ssh_host_domain: lan
+# The key each alias names (IdentityFile). Empty lets ssh pick, which finds the
+# default key vm_ssh_public_keys reads.
 # claude_ssh_identity_file: ~/.ssh/id_ed25519
 # Off on purpose: the VM user is root-equivalent and runs Claude Code, and
 # agent forwarding hands them every key in your agent.
 # claude_ssh_forward_agent: false
+# Extra "Key value" lines written into each alias, as they are.
+# ServerAliveInterval keeps a VS Code connection from going stale behind a NAT
+# or a laptop that slept.
 # claude_ssh_options:
 #   ServerAliveInterval: "30"
 # Where the code lives on the VM: cloned into, opened by Remote Control, and
@@ -103,6 +138,7 @@
 # for Insiders, VSCodium, or a VS Code on Windows driven from WSL.
 # vscode_user_settings_file: ""
 
+# ------------------------------------------------------------ Claude Code ---
 # Claude Code release channel: stable, latest, or an exact version like 2.1.41
 # (the oldest with `claude auth`, which the Claude terminal relies on)
 # claude_code_version: stable
@@ -113,7 +149,7 @@
 
 # Remote Control: put each VM's Claude Code session in the list at claude.ai/code
 # and in the mobile app. On by default, and derived from the credentials on the
-# VM (README, "Reaching a VM from your phone"). Set false to turn it off - also
+# VM (docs/guides/remote-control.md). Set false to turn it off - also
 # the answer when claude_code_settings.env carries a privacy setting such as
 # DISABLE_TELEMETRY or DO_NOT_TRACK on purpose: those disable Remote Control,
 # so the role leaves the service stopped and says so until one or the other goes.
@@ -137,6 +173,7 @@
 # session and reject further connections.
 # claude_code_remote_control_spawn: same-dir
 
+# ------------------------------------------------ Sign-ins and teardown ---
 # make deploy ends with the VM signed in to Claude, GitHub and Tailscale and
 # open in VS Code; the sign-ins each open a page and wait for you, one VM at a
 # time. false leaves them to make claude-login, github-login and tailscale-login.
@@ -151,9 +188,10 @@
 # only prints them, for a controller with no desktop.
 # login_desktop: true
 
-# Tailscale: each VM joins your tailnet (README, "Reaching a VM over
-# Tailscale"). On by default; false turns it off again where this project
-# installed it, and leaves a Tailscale installed by hand alone.
+# -------------------------------------------------------------- Tailscale ---
+# Tailscale: each VM joins your tailnet (docs/guides/tailscale.md). On by
+# default; false turns it off again where this project installed it, and
+# leaves a Tailscale installed by hand alone.
 # tailscale_enabled: true
 # How a VM joins: auto is vault_tailscale_auth_key when set, else the web login;
 # key is the key only; web is the web login only.
@@ -168,6 +206,7 @@
 # tailscale_api_auth_method: auto
 # Tailscale SSH on the tailnet address (needs an ssh rule in your tailnet policy).
 # tailscale_ssh: false
+# Use the subnet routes other devices on your tailnet advertise.
 # tailscale_accept_routes: false
 # Let your tailnet's DNS settings change the VM's resolver.
 # tailscale_accept_dns: false

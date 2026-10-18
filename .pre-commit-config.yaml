@@ -44,3 +44,20 @@ repos:
         entry: .venv/bin/ruff format
         language: system
         types: [python]
+      # The wiki's reference pages are generated from these files; a commit
+      # that changes one rewrites the pages, and the hook fails until they
+      # are added too, as a formatter does.
+      - id: docs
+        name: wiki reference pages (make docs)
+        entry: .venv/bin/python tools/docs.py
+        language: system
+        pass_filenames: false
+        files: |
+          (?x)^(
+            Makefile|
+            roles/[^/]+/(meta/argument_specs|defaults/main|vars/main)\.yml|
+            roles/[^/]+/tasks/.*|
+            inventory/group_vars/all/(defaults\.yml|[^/]+\.example)|
+            tools/.*|
+            docs/reference/.*
+          )$

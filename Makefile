@@ -49,8 +49,8 @@ NO_TTY_ARGS = $$([ -t 0 ] || printf '%s' '-e {"login_desktop":false,"deploy_sign
 PROJECT    ?=
 PROJECT_ARGS := $(if $(PROJECT),-e '{"vm_project": "$(PROJECT)"}',)
 # Re-run part of configure: make configure VM_NAME=alpha TAGS=claude_code
-# Role tags are common, vscode_server, dev_tools, claude_code and
-# github_projects. Discovery is
+# Role tags are common, vscode_server, dev_tools, claude_code, github_projects
+# and tailscale. Discovery is
 # tagged "always", so it runs whichever of these you pick. Only configure and
 # check take TAGS. deploy refuses it: nothing that builds the template or
 # creates a VM is tagged, so --tags would skip all of that and exit 0 having
@@ -224,11 +224,11 @@ list: vault-check vm-name-check log-setup ## Show the VMs this project created, 
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/list.yml
 
 .PHONY: configure
-configure: vault-check vm-name-check log-setup ## Configure the VM(s): packages, tools, Claude Code, GitHub projects (every tagged VM, unless VM_NAME)
+configure: vault-check vm-name-check log-setup ## Configure the VM(s): packages, tools, Claude Code, GitHub projects, Tailscale (every tagged VM, unless VM_NAME)
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(TAG_ARGS) $(ANSIBLE_ARGS) playbooks/configure.yml
 
 .PHONY: deploy
-deploy: vault-check vm-name-check log-setup ## Everything, for VM_NAME only: template (if missing), provision, configure, sign in to Claude and GitHub, open VS Code (default: claude-on-proxmox-default)
+deploy: vault-check vm-name-check log-setup ## Everything, for VM_NAME only: template (if missing), provision, configure, sign in to Claude, GitHub and Tailscale, open VS Code (default: claude-on-proxmox-default)
 	@test -z "$(TAGS)" || { echo "error: deploy takes no TAGS. To re-run one role: make configure VM_NAME=<name> TAGS=$(TAGS)"; exit 1; }
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(NO_TTY_ARGS) $(ANSIBLE_ARGS) deploy.yml
 
@@ -238,8 +238,9 @@ destroy: vault-check vm-name-check log-setup ## Release the VM(s) from Claude, G
 
 # Remote Control needs a claude.ai login on the VM, and Anthropic supports no
 # non-interactive way to create one. Given VM names, this runs the browser
-# sign-in as far as it goes - the page opens here, and the code it shows is
-# pasted at a prompt - one VM after another, and starts Remote Control. Without
+# sign-in as far as it goes - the page opens here and the browser comes back
+# to the VM, or the code it shows is pasted at a prompt - one VM after another,
+# and starts Remote Control. Without
 # a name it reports every VM's state. make deploy runs it for its VMs.
 .PHONY: claude-login
 claude-login: vault-check vm-name-check log-setup ## Sign Claude Code in on the VM(s) in VM_NAME, one after another, and start Remote Control; without VM_NAME, report every VM
@@ -287,6 +288,22 @@ code: vault-check vm-name-check project-name-check log-setup ## Open a VM in VS 
 	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(PROJECT_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
 
+# --------------------------------------------------------------- docs -----
+# The wiki in docs/ (docs/development/docs.md). Its reference pages are
+# generated from the files they describe, and tests/unit/test_docs.py, part of
+# make unit, fails when one is out of date or a link is broken.
+.PHONY: docs
+docs: ## Regenerate the wiki's reference pages (targets, settings, roles) from the files they describe
+	$(BIN)/python tools/docs.py
+
+.PHONY: docs-serve
+docs-serve: ## Serve the wiki as a site at http://127.0.0.1:8000, rebuilt as you save
+	$(BIN)/zensical serve -a 127.0.0.1:8000
+
+.PHONY: docs-build
+docs-build: ## Build the wiki as a site in site/, failing on a broken link or anchor
+	$(BIN)/zensical build --strict --clean
+
 # ------------------------------------------------------------ quality -----
 .PHONY: lint
 lint: ## Check uv.lock against pyproject.toml, then run yamllint + ansible-lint + ruff
@@ -304,7 +321,7 @@ syntax: ## ansible-playbook --syntax-check on every playbook
 	done
 
 .PHONY: unit
-unit: ## pytest over tests/unit/: filters, github_repos module, tracked-file guard, configure tags, Remote Control, both sign-ins, the SSH config, the Claude terminal, Makefile guards
+unit: ## pytest over tests/unit/: the filters, the github_repos module, the playbooks against stand-ins, the guards and the wiki (no network)
 	$(BIN)/pytest
 
 # Molecule resolves ansible-playbook from PATH (and only appends the venv), so
@@ -362,6 +379,6 @@ pre-commit: ## Run all pre-commit hooks against the whole tree
 	$(BIN)/pre-commit run --all-files
 
 .PHONY: clean
-clean: logs-clean ## Remove caches, the virtualenv and the run logs
-	rm -rf $(VENV) .cache .pytest_cache .ruff_cache .ansible .molecule collections
+clean: logs-clean ## Remove caches, the virtualenv, the run logs and the built site
+	rm -rf $(VENV) .cache .pytest_cache .ruff_cache .ansible .molecule collections site
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

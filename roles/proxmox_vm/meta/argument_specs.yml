@@ -26,41 +26,52 @@ argument_specs:
       proxmox_vm_api_port:
         type: int
         default: 8006
+        description: Port of the Proxmox VE API. Set through proxmox_api_port in local.yml.
       proxmox_vm_api_user:
         type: str
         default: ansible@pve
+        description: Proxmox user the API token belongs to, realm included. Set through proxmox_api_user in local.yml.
       proxmox_vm_api_token_id:
         type: str
         default: ansible
+        description: Name of the API token, the part after the ! in user!token. Set through proxmox_api_token_id in local.yml.
       proxmox_vm_api_token_secret:
         type: str
         no_log: true
         description:
-          - API token secret. Keep it in an ansible-vault file.
-          - Asserted by the role rather than marked required, for the same
-            reason as proxmox_vm_api_host.
+          - API token secret. Keep it in an ansible-vault file. Asserted by the role rather than marked required, for the
+            same reason as proxmox_vm_api_host. Set through vault_proxmox_api_token_secret in vault.yml.
       proxmox_vm_validate_certs:
         type: bool
         default: false
+        description: Verify the API's TLS certificate. Turn it on once the controller trusts the Proxmox CA. Set through proxmox_validate_certs in local.yml.
       proxmox_vm_node:
         type: str
         default: pve
+        description: Node that holds the template, where new VMs are cloned. Set through proxmox_node in local.yml.
       proxmox_vm_storage:
         type: str
         default: local-lvm
+        description: Storage a full clone's disks are created on. Set through proxmox_storage in local.yml.
       proxmox_vm_template_name:
         type: str
         default: ubuntu-24.04-cloudinit
+        description: Name of the template VMs are cloned from. Set through proxmox_template_name in local.yml.
       proxmox_vm_full_clone:
         type: bool
         default: true
+        description: Make a full clone, independent of the template. false makes a linked clone, which keeps depending on the template's disk.
       proxmox_vm_timeout:
         type: int
         default: 600
+        description: Seconds the clone, start, stop and delete calls may each take.
       proxmox_vm_state:
         type: str
         choices: [present, absent]
         default: present
+        description:
+          - present clones and configures the VM where it is missing or unfinished, and starts it; an existing, finished
+            VM is left as it is, a stopped one stopped. absent stops and deletes it.
       proxmox_vm_start_existing:
         type: bool
         default: false
@@ -73,14 +84,18 @@ argument_specs:
         type: str
         default: net0
         description:
-          - Which NIC of the template carries the LAN address; its MAC is what
-            the guest agent's reply is matched against.
+          - Which NIC of the template carries the LAN address; its MAC is what the guest agent's reply is matched against.
+            Set through proxmox_nic in local.yml.
       proxmox_vm_lookup_retries:
         type: int
         default: 6
+        description:
+          - How many more times a just-cloned VM's configuration is read, after the first, before giving up, since the
+            cluster listing can lag behind a clone.
       proxmox_vm_lookup_delay:
         type: int
         default: 5
+        description: Seconds between reads of a just-cloned VM's configuration.
       proxmox_vm_allow_untagged_delete:
         type: bool
         default: false
@@ -92,9 +107,9 @@ argument_specs:
         type: str
         default: ""
         description:
-          - The DNS domain SSH reaches the VMs by on this machine, when not their
-            address (claude_ssh_host_domain). state=absent forgets the host key
-            recorded under <name>.<domain> too, besides the one under the address.
+          - The DNS domain SSH reaches the VMs by on this machine, when not their address (claude_ssh_host_domain).
+            state=absent forgets the host key recorded under <name>.<domain> too, besides the one under the address. Set
+            through claude_ssh_host_domain in local.yml.
       proxmox_vm_name:
         type: str
         description: VM name in Proxmox. Defaults to the inventory hostname.
@@ -112,25 +127,26 @@ argument_specs:
       proxmox_vm_cores:
         type: int
         default: 2
-        description: Defaults to the vm_cores host var, else 2.
+        description: Defaults to the vm_cores host var, else 2. Set through vm_cores in local.yml.
       proxmox_vm_memory_mb:
         type: int
         default: 4096
-        description: Defaults to the vm_memory_mb host var, else 4096.
+        description: Defaults to the vm_memory_mb host var, else 4096. Set through vm_memory_mb in local.yml.
       proxmox_vm_disk:
         type: str
         default: scsi0
+        description: The root disk, as the template names it, resized to proxmox_vm_disk_size.
       proxmox_vm_disk_size:
         type: str
         default: 32G
         description:
-          - Absolute root disk size with unit suffix (K, M, G, T). Applied when the VM is
-            created or an unfinished one is repaired, and with proxmox_vm_force_update.
-            Proxmox cannot shrink a disk, so a size below the current one fails.
-          - Defaults to the vm_disk_size host var, else 32G.
+          - Absolute root disk size with unit suffix (K, M, G, T). Applied when the VM is created or an unfinished one is
+            repaired, and with proxmox_vm_force_update. Proxmox cannot shrink a disk, so a size below the current one
+            fails. Defaults to the vm_disk_size host var, else 32G. Set through vm_disk_size in local.yml.
       proxmox_vm_onboot:
         type: bool
         default: true
+        description: Start the VM when its Proxmox node boots.
       proxmox_vm_tags:
         type: list
         elements: str
@@ -142,17 +158,21 @@ argument_specs:
       proxmox_vm_user:
         type: str
         default: dev
+        description: Cloud-init user created on the VM. The playbooks also log in as it. Set through vm_user in local.yml.
       proxmox_vm_password:
         type: str
         default: ""
         no_log: true
         description:
-          - Optional cloud-init password for the user (vm_password host var). Key-based login is the default.
-          - Either this or proxmox_vm_ssh_public_keys must be set.
+          - Optional cloud-init password for the user (vm_password host var). Key-based login is the default. Either this
+            or proxmox_vm_ssh_public_keys must be set. Set through vm_password in local.yml.
       proxmox_vm_ssh_public_keys:
         type: list
         elements: str
         default: []
+        description:
+          - Public keys cloud-init authorises for proxmox_vm_user. These or proxmox_vm_password must be set. Set through
+            vm_ssh_public_keys in local.yml.
       proxmox_vm_ipconfig:
         type: str
         default: ip=dhcp
@@ -166,11 +186,11 @@ argument_specs:
         type: list
         elements: str
         default: []
-        description: Defaults to the vm_nameservers host var.
+        description: Defaults to the vm_nameservers host var. Set through vm_nameservers in local.yml.
       proxmox_vm_searchdomain:
         type: str
         default: ""
-        description: Defaults to the vm_searchdomain host var.
+        description: Defaults to the vm_searchdomain host var. Set through vm_searchdomain in local.yml.
       proxmox_vm_agent_retries:
         type: int
         default: 60

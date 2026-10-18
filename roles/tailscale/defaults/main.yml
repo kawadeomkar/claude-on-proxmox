@@ -2,8 +2,8 @@
 # Tailscale on the VM: installed from Tailscale's apt repository, joined to the
 # tailnet, and kept as configured - or, with tailscale_enabled false, removed
 # again. Only what this role made is ever touched: a Tailscale installed or
-# signed in by hand is reported and left as it is (ARCHITECTURE.md, the
-# tailscale role).
+# signed in by hand is reported and left as it is (docs/architecture/roles.md
+# §5.8).
 
 # The feature. false turns it off again on a VM where this role installed it:
 # logged out, stopped, and the package and repository removed.
