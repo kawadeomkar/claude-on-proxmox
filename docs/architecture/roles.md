@@ -13,9 +13,12 @@ a sibling node looks free to it; before building, the role reads pmxcfs's cluste
 ran to `qm create` - after the download and `virt-customize` - and died there with
 `VM 9000 already exists on node 'pve2'`.
 
-1. Download the Ubuntu Noble cloud image, checksummed against Ubuntu's published `SHA256SUMS`, into
+1. Download Ubuntu Noble's minimal cloud image, checksummed against Ubuntu's published `SHA256SUMS`, into
    `proxmox_template_image_dir` (`/var/lib/vz/claude-on-proxmox`, created `0755`). Not a content
-   directory of the `local` storage: under `template/iso` Proxmox listed the image as an ISO.
+   directory of the `local` storage: under `template/iso` Proxmox listed the image as an ISO. The
+   minimal image has 288 packages to the server image's 426: no multipathd, fwupd, ModemManager,
+   udisks2, polkit or rsyslog, which a headless VM has no use for, and the same kernel package. What a
+   development VM needs on top, `common` installs.
 2. If `proxmox_template_install_guest_agent` (default true), **copy** the image and run
    `virt-customize --install qemu-guest-agent --truncate /etc/machine-id` on the copy. The pristine
    download is left untouched so `get_url` stays idempotent.

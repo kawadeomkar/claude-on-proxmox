@@ -19,11 +19,11 @@ argument_specs:
         description: Template name. VMs are cloned from it by name, and a finished template at the VMID is recognised by it.
       proxmox_template_image_url:
         type: str
-        default: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+        default: https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64.img
         description: Cloud image downloaded and imported as the template's root disk.
       proxmox_template_image_checksum:
         type: str
-        default: sha256:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS
+        default: sha256:https://cloud-images.ubuntu.com/minimal/releases/noble/release/SHA256SUMS
         description: get_url checksum spec. Set to an empty string to skip verification.
       proxmox_template_image_dir:
         type: path

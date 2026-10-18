@@ -17,8 +17,8 @@ Runs on the PVE node over SSH. Downloads a cloud image, creates a VM with `qm`, 
 |---|---|---|---|
 | `proxmox_template_vmid` | int | `9000` | VMID the template is built under. Anything but the finished template there, on this node or another, fails the run. |
 | `proxmox_template_name` | str | `ubuntu-24.04-cloudinit` | Template name. VMs are cloned from it by name, and a finished template at the VMID is recognised by it. |
-| `proxmox_template_image_url` | str | `https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img` | Cloud image downloaded and imported as the template's root disk. |
-| `proxmox_template_image_checksum` | str | `sha256:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS` | get_url checksum spec. Set to an empty string to skip verification. |
+| `proxmox_template_image_url` | str | `https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64.img` | Cloud image downloaded and imported as the template's root disk. |
+| `proxmox_template_image_checksum` | str | `sha256:https://cloud-images.ubuntu.com/minimal/releases/noble/release/SHA256SUMS` | get_url checksum spec. Set to an empty string to skip verification. |
 | `proxmox_template_image_dir` | path | `/var/lib/vz/claude-on-proxmox` | Directory on the node that keeps the pristine download. Created if missing. Keep it outside the content directories of a storage, or Proxmox lists the image in the UI (under template/iso it appeared as an ISO). |
 | `proxmox_template_storage` | str | `local-lvm` | Proxmox storage the root disk and the cloud-init drive are created on. Set through proxmox_storage in local.yml. |
 | `proxmox_template_bridge` | str | `vmbr0` | Bridge the template's net0 is attached to, and so every clone's. Set through proxmox_bridge in local.yml. |
