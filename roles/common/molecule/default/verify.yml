@@ -75,3 +75,26 @@
       register: common_verify_groups
       changed_when: false
       failed_when: "'sudo' not in common_verify_groups.stdout.split()"
+
+    # common_apt_keep_downloads: false - apt deletes what it installed (sl and
+    # the baseline came through it), and what was left before is gone too.
+    - name: Read apt's settings
+      ansible.builtin.command:
+        argv: [apt-config, dump]
+      register: common_verify_apt_config
+      changed_when: false
+
+    - name: Look for packages in apt's download cache
+      ansible.builtin.find:
+        paths: /var/cache/apt/archives
+        patterns: "*.deb"
+      register: common_verify_downloads
+
+    - name: Assert apt keeps no package it downloads
+      ansible.builtin.assert:
+        that:
+          - common_verify_apt_config.stdout is search('^APT::Keep-Downloaded-Packages "false";$', multiline=True)
+          - common_verify_apt_config.stdout is search('^APT::Periodic::CleanInterval "1";$', multiline=True)
+          - common_verify_downloads.matched == 0
+        fail_msg: "left in /var/cache/apt/archives: {{ common_verify_downloads.files | map(attribute='path') | list }}"
+        quiet: true

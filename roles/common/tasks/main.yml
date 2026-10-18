@@ -1,4 +1,27 @@
 ---
+# First, so that every apt-get after it - this role's and the later roles' -
+# deletes what it downloads once it is installed. Kept, a VM just deployed held
+# 414 MB of packages, cached in its memory too. The daily clean is for
+# unattended-upgrades, which installs through python-apt rather than apt-get
+# and keeps them regardless.
+- name: Delete each package apt downloads once it is installed
+  ansible.builtin.copy:
+    content: |
+      // claude-on-proxmox (common_apt_keep_downloads: false)
+      APT::Keep-Downloaded-Packages "false";
+      APT::Periodic::CleanInterval "1";
+    dest: /etc/apt/apt.conf.d/90claude-on-proxmox-downloads
+    owner: root
+    group: root
+    mode: "0644"
+  when: not common_apt_keep_downloads
+
+- name: Let apt keep the packages it downloads
+  ansible.builtin.file:
+    path: /etc/apt/apt.conf.d/90claude-on-proxmox-downloads
+    state: absent
+  when: common_apt_keep_downloads
+
 - name: Refresh apt cache
   ansible.builtin.apt:
     update_cache: true
@@ -16,6 +39,26 @@
     name: "{{ common_packages + common_extra_packages }}"
     state: present
     lock_timeout: "{{ common_apt_lock_timeout }}"
+
+# What a first boot's upgrade left. apt-get clean, and not a file task, for its
+# lock: unattended-upgrades can still be installing from that directory on a
+# VM just booted. After the installs, not before the refresh: the clean makes
+# apt's lock file in /var/lib/apt/lists, which dates the lists as fresh where
+# there were none, and the refresh then skipped them. The module reports a
+# change whenever it cleans, so only when a package is there.
+- name: Look for packages left in apt's download cache
+  ansible.builtin.find:
+    paths: /var/cache/apt/archives
+    patterns: "*.deb"
+  register: common_apt_downloads
+
+- name: Empty apt's download cache
+  ansible.builtin.apt:
+    clean: true
+    lock_timeout: "{{ common_apt_lock_timeout }}"
+  when:
+    - not common_apt_keep_downloads
+    - common_apt_downloads.matched > 0
 
 # Timezone is set through the files rather than community.general.timezone so
 # it also works in containers without timedatectl/dbus.

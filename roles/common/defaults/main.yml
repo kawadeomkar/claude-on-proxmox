@@ -20,6 +20,12 @@ common_apt_cache_valid_time: 3600
 # Fresh cloud images run unattended-upgrades right after first boot; wait for
 # the apt lock rather than failing after the 60 s module default.
 common_apt_lock_timeout: 600
+# apt-get keeps every package it downloads - only the interactive apt command
+# deletes them - so a first boot's upgrade and each configure left hundreds of
+# MB in /var/cache/apt/archives, on disk and in the VM's memory as cache. false
+# deletes each package once it is installed and empties that cache daily;
+# true leaves apt as it was.
+common_apt_keep_downloads: false
 
 # Virtualisation types under which the hostname is left alone: a container's
 # belongs to its runtime. (Services are started on a KVM guest only.)

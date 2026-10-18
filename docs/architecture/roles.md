@@ -83,8 +83,9 @@ clear: the project has no fact cache ([§13](toolchain.md)).
 
 ## 5.3 `common` — OS baseline
 
-apt cache refresh → optional safe upgrade → baseline packages (~26, including `qemu-guest-agent`
-and `python3-debian`) → timezone → hostname → user, groups and passwordless sudo → authorised keys
+apt deletes each package it downloads once installed → apt cache refresh → optional safe upgrade →
+baseline packages (~26, including `qemu-guest-agent` and `python3-debian`) → empty apt's download
+cache of what was left → timezone → hostname → user, groups and passwordless sudo → authorised keys
 → sshd hardening → `~/.local/bin` on PATH for login shells → enable services.
 
 Notable choices:
@@ -98,6 +99,15 @@ Notable choices:
   fresh container.
 - **`lock_timeout: 600`** on every apt call: fresh cloud images run `unattended-upgrades` right after
   first boot, and the module's 60-second default is not enough.
+- **apt keeps no package it downloads** (`common_apt_keep_downloads: false`). apt-get keeps every one -
+  only the interactive `apt` deletes them - and a VM just deployed held 414 MB of them, cached in its
+  memory as well. A drop-in in `/etc/apt/apt.conf.d` sets `APT::Keep-Downloaded-Packages "false"` before
+  the role's first apt call, so every apt-get after it, the later roles' too, deletes each package once
+  installed, and `APT::Periodic::CleanInterval "1"` empties the cache daily of what `unattended-upgrades`
+  leaves, which installs through python-apt and keeps them regardless. What a first boot left goes once,
+  through `apt-get clean` for its lock, after the installs: the clean makes apt's lock file in
+  `/var/lib/apt/lists`, which dates lists that are not there as fresh, so before the refresh it made the
+  refresh skip them.
 - Host-level settings are skipped under `common_container_virt_types`.
 
 ## 5.4 `dev_tools` — developer tooling

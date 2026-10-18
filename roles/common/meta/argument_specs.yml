@@ -52,6 +52,12 @@ argument_specs:
         type: int
         default: 600
         description: Seconds each apt task waits for the apt lock, which unattended-upgrades holds on a fresh cloud image after first boot.
+      common_apt_keep_downloads:
+        type: bool
+        default: false
+        description:
+          - false deletes each package apt downloads once it is installed, empties apt's download cache daily, and
+            empties it once of what was left there. true keeps them, as apt-get does by default.
       common_container_virt_types:
         type: list
         elements: str

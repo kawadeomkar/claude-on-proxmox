@@ -1,0 +1,21 @@
+---
+# The image's own docker-clean deletes every downloaded package after apt runs,
+# so it goes, and only the role's setting keeps apt's download cache empty. A
+# package left there stands for what a first boot's upgrade leaves behind.
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Remove the image's own apt cleanup
+      ansible.builtin.file:
+        path: /etc/apt/apt.conf.d/docker-clean
+        state: absent
+
+    - name: Leave a package in apt's download cache
+      ansible.builtin.copy:
+        content: "a package a first boot downloaded\n"
+        dest: /var/cache/apt/archives/claude-on-proxmox-leftover_1.0_all.deb
+        owner: root
+        group: root
+        mode: "0644"

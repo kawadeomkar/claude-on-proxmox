@@ -25,6 +25,7 @@ What those defaults mean for the VM: [What the VM trusts](../../guides/what-the-
 | `common_apt_upgrade` | bool | `true` | Upgrade the installed packages (apt safe upgrade) on every run. |
 | `common_apt_cache_valid_time` | int | `3600` | Seconds the apt cache counts as fresh. An older one is refreshed at the start of the role. |
 | `common_apt_lock_timeout` | int | `600` | Seconds each apt task waits for the apt lock, which unattended-upgrades holds on a fresh cloud image after first boot. |
+| `common_apt_keep_downloads` | bool | `false` | false deletes each package apt downloads once it is installed, empties apt's download cache daily, and empties it once of what was left there. true keeps them, as apt-get does by default. |
 | `common_container_virt_types` | list of `str` | `["docker", "container", "containerd", "podman", "lxc"]` | Virtualisation types under which the hostname is not set, because the host is a container. |
 | `common_packages` | list of `str` | `[apt-transport-https, bash-completion, build-essential, ca-certificates, curl, fd-find, git, gnupg, htop, jq, less, openssh-server, python3, python3-pip, python3-debian, python3-venv, qemu-guest-agent, ripgrep, rsync, tmux, tree, unzip, vim, wget, zip, zstd]` | Baseline packages every VM gets. Setting it replaces the baseline; add packages with common_extra_packages instead. |
 | `common_extra_packages` | list of `str` | `[]` | More packages to install on top of common_packages. |
@@ -39,9 +40,13 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 
 | Task | Module | When |
 |---|---|---|
+| Delete each package apt downloads once it is installed | `ansible.builtin.copy` | <code>not common_apt_keep_downloads</code> |
+| Let apt keep the packages it downloads | `ansible.builtin.file` | <code>common_apt_keep_downloads</code> |
 | Refresh apt cache | `ansible.builtin.apt` |  |
 | Upgrade installed packages | `ansible.builtin.apt` | <code>common_apt_upgrade</code> |
 | Install baseline packages | `ansible.builtin.apt` |  |
+| Look for packages left in apt's download cache | `ansible.builtin.find` |  |
+| Empty apt's download cache | `ansible.builtin.apt` | <code>not common_apt_keep_downloads and common_apt_downloads.matched > 0</code> |
 | Set timezone | `ansible.builtin.file` |  |
 | Record timezone name | `ansible.builtin.copy` |  |
 | Set hostname | `ansible.builtin.hostname` | <code>common_manage_hostname and ansible_facts['virtualization_type'] not in common_container_virt_types</code> |
@@ -67,22 +72,26 @@ classDef importRole stroke:#699ba7,stroke-width:2px;
 classDef includeVars stroke:#8e44ad,stroke-width:2px;
 classDef rescue stroke:#665352,stroke-width:2px;
 
-  Start-->|Task| Refresh_apt_cache0[refresh apt cache]:::task
-  Refresh_apt_cache0-->|Task| Upgrade_installed_packages1[upgrade installed packages<br>When: **common apt upgrade**]:::task
-  Upgrade_installed_packages1-->|Task| Install_baseline_packages2[install baseline packages]:::task
-  Install_baseline_packages2-->|Task| Set_timezone3[set timezone]:::task
-  Set_timezone3-->|Task| Record_timezone_name4[record timezone name]:::task
-  Record_timezone_name4-->|Task| Set_hostname5[set hostname<br>When: **common manage hostname and ansible facts <br>virtualization type   not in common container virt<br>types**]:::task
-  Set_hostname5-->|Task| Create_user_common_user6[create user common user]:::task
-  Create_user_common_user6-->|Task| Grant_passwordless_sudo7[grant passwordless sudo<br>When: **common user passwordless sudo**]:::task
-  Grant_passwordless_sudo7-->|Task| Revoke_passwordless_sudo8[revoke passwordless sudo<br>When: **not common user passwordless sudo**]:::task
-  Revoke_passwordless_sudo8-->|Task| Authorise_SSH_keys9[authorise ssh keys]:::task
-  Authorise_SSH_keys9-->|Task| Ensure_sshd_privilege_separation_directory_exists10[ensure sshd privilege separation directory exists<br>When: **common harden ssh**]:::task
-  Ensure_sshd_privilege_separation_directory_exists10-->|Task| Harden_sshd11[harden sshd<br>When: **common harden ssh**]:::task
-  Harden_sshd11-->|Task| Remove_sshd_hardening12[remove sshd hardening<br>When: **not common harden ssh**]:::task
-  Remove_sshd_hardening12-->|Task| Put____local_bin_on_PATH_for_all_users13[put    local bin on path for all users]:::task
-  Put____local_bin_on_PATH_for_all_users13-->|Task| Enable_services14[enable services<br>When: **ansible facts  service mgr       systemd**]:::task
-  Enable_services14-->End
+  Start-->|Task| Delete_each_package_apt_downloads_once_it_is_installed0[delete each package apt downloads once it is<br>installed<br>When: **not common apt keep downloads**]:::task
+  Delete_each_package_apt_downloads_once_it_is_installed0-->|Task| Let_apt_keep_the_packages_it_downloads1[let apt keep the packages it downloads<br>When: **common apt keep downloads**]:::task
+  Let_apt_keep_the_packages_it_downloads1-->|Task| Refresh_apt_cache2[refresh apt cache]:::task
+  Refresh_apt_cache2-->|Task| Upgrade_installed_packages3[upgrade installed packages<br>When: **common apt upgrade**]:::task
+  Upgrade_installed_packages3-->|Task| Install_baseline_packages4[install baseline packages]:::task
+  Install_baseline_packages4-->|Task| Look_for_packages_left_in_apt_s_download_cache5[look for packages left in apt s download cache]:::task
+  Look_for_packages_left_in_apt_s_download_cache5-->|Task| Empty_apt_s_download_cache6[empty apt s download cache<br>When: **not common apt keep downloads and common apt<br>downloads matched   0**]:::task
+  Empty_apt_s_download_cache6-->|Task| Set_timezone7[set timezone]:::task
+  Set_timezone7-->|Task| Record_timezone_name8[record timezone name]:::task
+  Record_timezone_name8-->|Task| Set_hostname9[set hostname<br>When: **common manage hostname and ansible facts <br>virtualization type   not in common container virt<br>types**]:::task
+  Set_hostname9-->|Task| Create_user_common_user10[create user common user]:::task
+  Create_user_common_user10-->|Task| Grant_passwordless_sudo11[grant passwordless sudo<br>When: **common user passwordless sudo**]:::task
+  Grant_passwordless_sudo11-->|Task| Revoke_passwordless_sudo12[revoke passwordless sudo<br>When: **not common user passwordless sudo**]:::task
+  Revoke_passwordless_sudo12-->|Task| Authorise_SSH_keys13[authorise ssh keys]:::task
+  Authorise_SSH_keys13-->|Task| Ensure_sshd_privilege_separation_directory_exists14[ensure sshd privilege separation directory exists<br>When: **common harden ssh**]:::task
+  Ensure_sshd_privilege_separation_directory_exists14-->|Task| Harden_sshd15[harden sshd<br>When: **common harden ssh**]:::task
+  Harden_sshd15-->|Task| Remove_sshd_hardening16[remove sshd hardening<br>When: **not common harden ssh**]:::task
+  Remove_sshd_hardening16-->|Task| Put____local_bin_on_PATH_for_all_users17[put    local bin on path for all users]:::task
+  Put____local_bin_on_PATH_for_all_users17-->|Task| Enable_services18[enable services<br>When: **ansible facts  service mgr       systemd**]:::task
+  Enable_services18-->End
 ```
 
 <!-- END_GENERATED: role -->

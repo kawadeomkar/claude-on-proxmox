@@ -137,6 +137,9 @@ still works, and turning Tailscale off removes what the failed run left. Verify 
 file (searched for with the needle on stdin, since sudo logs a command's environment), no connection of
 `tailscaled`'s, and the hand-installed VM as it was.
 
+`common`'s prepare takes away the image's own apt cleanup (`docker-clean`) and leaves a package in apt's
+download cache. Verify finds no package left in the cache, `sl`, which converge installs, included.
+
 `proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
 came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —
 `192.0.2.51`, not `172.17.0.1`, which would mean the docker bridge was picked up. It asserts the
