@@ -9,8 +9,9 @@ Two values are typed on the `make` line, and both are checked before a shell see
 
 - `VM_NAME` - the VM or VMs to act on, comma-separated. Without it, `deploy`, `provision` and
   `destroy` act on `claude-on-proxmox-default`, `code` refuses to run, `template` has no use for it,
-  and the targets that act on VMs act on every VM this project created; see
-  [Naming and multiple VMs](../guides/vms.md#naming-and-multiple-vms).
+  and the targets that act on VMs act on every VM this project created. Every target that takes it
+  also takes the names after the target, so `make deploy alpha beta` is `make deploy VM_NAME=alpha,beta`;
+  see [Naming and multiple VMs](../guides/vms.md#naming-and-multiple-vms).
 - `PROJECT` - for `make code` only, one repository folder in the VM's projects directory.
 
 Three more tune a run: `TAGS` narrows `configure` and `check` to one role

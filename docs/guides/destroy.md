@@ -3,7 +3,11 @@
 ```bash
 make destroy                      # claude-on-proxmox-default
 make destroy VM_NAME=alpha,beta   # several at once; they are deleted in parallel
+make destroy alpha beta           # the same, the names after the target
 ```
+
+The names after the target are `VM_NAME` by another spelling, as
+[Naming and multiple VMs](vms.md#naming-and-multiple-vms) says.
 
 It prompts for confirmation, then releases each VM from what it signed in to, then stops it and deletes it
 with its disks, a disk that still carries its VMID but that its configuration no longer lists included.
