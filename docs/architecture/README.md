@@ -23,7 +23,7 @@ sections 1 to 3 are on this page, and each later section is a page of its own.
 12. [CI](ci.md)
 13. [Toolchain](toolchain.md)
 14. [File map](file-map.md)
-15. [Open design questions](open-questions.md)
+15. [Design decisions](decisions.md)
 
 ---
 

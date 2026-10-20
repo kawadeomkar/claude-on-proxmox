@@ -397,8 +397,11 @@ command, and "make deploy signs it in next" names one with nothing to do. A new 
 `tests/unit/test_attention_callback.py` fails without it. Tests never load the callback (an
 `ansible.cfg` holding only `inject_facts_as_vars = false`, and the JSON callback); the harness shows custom stats, and `_left_to_do` reads the records.
 
-**Discovery is a playbook, not the `community.proxmox` inventory plugin.** The header of
-`discover.yml` records the trade-offs; the swap is a live design question, not an oversight.
+**Discovery is a playbook, not the `community.proxmox` inventory plugin.** Decided, not open: the plugin
+turns an unreachable API or a refused token into a warning and an exit 0, merges two VMs of one name, calls
+Proxmox on every `ansible*` command (`--syntax-check` and ansible-lint included), and would replace only
+`discover.yml`, since five playbooks read the cluster through `tasks/` anyway. See
+docs/architecture/decisions.md §15.1.
 
 **Fleet listings read `/cluster/resources`, never an unfiltered `proxmox_vm_info`.** Unfiltered, the
 module asks every node that owns a VM for its VM list and fails on any error, so one node that is
