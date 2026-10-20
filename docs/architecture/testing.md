@@ -149,6 +149,12 @@ finds nothing in the timer's journal about a failure (converge stopped it before
 timer while it waits, which fails it, gives snapd a snap and runs the masking again: the timer is cleared
 and snapd is left running.
 
+The same scenario installs a stand-in for a service a user adds to `common_enabled_services`, and one
+for `qemu-guest-agent` in `/etc/systemd/system`, not bound to the guest-agent port as the package's unit
+is. Converge starts the first and, with no port in the container, leaves the agent stopped; the side
+effect finds it stopped, gives the role a stand-in for the port and runs its services again, and verify
+finds both running.
+
 `proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
 came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —
 `192.0.2.51`, not `172.17.0.1`, which would mean the docker bridge was picked up. It asserts the

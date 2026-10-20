@@ -62,7 +62,8 @@ common_packages:
 # Add your own without replacing the baseline.
 common_extra_packages: []
 
-# Services to enable at boot. qemu-guest-agent only starts on real VMs.
+# Services enabled at boot and started, where systemd runs. qemu-guest-agent
+# is started only on a VM that has its port: a Proxmox VM with its agent on.
 common_enabled_services:
   - qemu-guest-agent
 

@@ -6,6 +6,12 @@
 # snap installed, so it is masked too. ModemManager and udisks2 stay absent,
 # which is the minimal image's case for them: nothing is masked there.
 #
+# common_enabled_services gets a stand-in for a service a user adds, left
+# stopped for converge to start, and qemu-guest-agent gets one in /etc, where
+# it outranks the package's unit. The package's unit is bound to the port's
+# device, which a container never has, so starting it would wait 90 s and
+# fail; the stand-in is not bound, and shows whether the role started it.
+#
 # The image's own docker-clean deletes every downloaded package after apt runs,
 # so it goes, and only the role's setting keeps apt's download cache empty. A
 # package left there stands for what a first boot's upgrade leaves behind.
@@ -61,6 +67,13 @@
         ListenStream=/run/snapd-stand-in.socket
         [Install]
         WantedBy=sockets.target
+      claude-on-proxmox-stand-in.service: |
+        [Unit]
+        Description=Stand-in for a service a user adds (common scenario)
+        [Service]
+        ExecStart=/bin/sleep infinity
+        [Install]
+        WantedBy=multi-user.target
   tasks:
     # Where a package puts its units: /etc/systemd/system is the admin's, and
     # a mask is a link to /dev/null that systemctl makes there.
@@ -74,6 +87,19 @@
       loop: "{{ common_prepare_units | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
+
+    # Static, as the package's unit is: udev starts the agent, nothing enables it.
+    - name: Install the guest agent's stand-in
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Stand-in for qemu-guest-agent, not bound to a port (common scenario)
+          [Service]
+          ExecStart=/bin/sleep infinity
+        dest: /etc/systemd/system/qemu-guest-agent.service
+        owner: root
+        group: root
+        mode: "0644"
 
     - name: Start them
       ansible.builtin.systemd_service:

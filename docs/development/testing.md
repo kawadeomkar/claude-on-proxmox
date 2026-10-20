@@ -29,7 +29,8 @@ install packages download them, so they need internet access
 
 Not covered by Molecule: the npm install method for Claude Code, reinstalling on an exact-version bump,
 and `common_user_passwordless_sudo: false`. The Vagrant target exercises `configure.yml` on a real VM
-including the Docker and qemu-guest-agent services.
+including the Docker service; qemu-guest-agent stays stopped there, since VirtualBox gives the VM no
+port for it.
 
 ## Continuous integration
 

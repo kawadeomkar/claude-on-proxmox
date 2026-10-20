@@ -42,11 +42,24 @@ declared a second time. It is not used, because:
 Its one gain, a `--limit` that works, is not one here: `VM_NAME` selects the VMs, and is checked before
 anything runs.
 
-## 15.2 Open: where `common` starts its services
+## 15.2 The guest agent starts where its port is
 
-`common` starts the services in `common_enabled_services` only where `virtualization_type` is `kvm`,
-which is meant to say "a VM with a guest agent", and does not. `qemu-guest-agent`, the one entry by
-default, needs the virtio-serial port Proxmox gives a VM while its agent is enabled: its unit is bound to
-that device, and a start without it waits 90 s and fails. ansible-core reports `kvm` on any guest whose
-firmware says QEMU, port or none, and on bare metal with the `kvm` module loaded. VirtualBox reports
-`virtualbox`, so the Vagrant VM starts nothing from the list, a service a user added included.
+*Decided October 2026, against Ubuntu 24.04's `qemu-guest-agent` 8.2.2 and ansible-core 2.21.*
+
+`common` used to start the services in `common_enabled_services` only where `virtualization_type` was
+`kvm`, which was meant to say "a VM with a guest agent", and does not:
+
+- **The agent needs its port, not KVM.** Proxmox gives a VM the virtio-serial port
+  `org.qemu.guest_agent.0` while its agent is enabled, as the default `virtio` type, and the VM's udev
+  links it as `/dev/virtio-ports/org.qemu.guest_agent.0`. The package's unit is static and bound to
+  that device (`BindsTo=`): udev starts the agent when the port appears, and `systemctl start` without
+  the port waits for the device, 90 s by systemd's `DefaultDeviceTimeoutSec`, then fails.
+- **`kvm` is not the port.** ansible-core reports `kvm` on any guest whose firmware says QEMU, port or
+  none, such as a Proxmox VM with its agent off or a cloud VM, and `kvm` with the role `host` on bare
+  metal with the `kvm` module loaded, as it is on most machines with hardware virtualisation. Each of
+  those failed the run after the wait. VirtualBox reports `virtualbox`, so the Vagrant VM started
+  nothing from the list, a service a user added included.
+
+So the agent starts only where its port exists, and every other listed service wherever systemd runs
+([§5.3](roles.md#53-common--os-baseline)). The VMs this project creates always have the port:
+`proxmox_vm` enables the agent.
