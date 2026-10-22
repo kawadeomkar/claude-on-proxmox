@@ -1,7 +1,7 @@
 ---
 # gh on the VM, as github_projects_user: signed in from the vault token when
 # there is one and gh holds no login of the user's own, otherwise left for the
-# one device-flow login the user makes (make github-login, or the terminal
+# one device-flow login the user makes (make login TYPE=github, or the terminal
 # make code opens), and either way made git's credential helper for
 # github.com. The state is read first, and again after a change, so that the
 # listing which follows can use whatever token the VM then holds

@@ -69,9 +69,9 @@ values; should they grow too large to read, the internal values are the part to 
 ## Building the site
 
 ```bash
-make docs          # regenerate the generated sections
-make docs-serve    # the site at http://127.0.0.1:8000, rebuilt as you save
-make docs-build    # the site in site/ (git-ignored), failing on any warning
+make docs              # regenerate the generated sections
+make docs TYPE=serve    # the site at http://127.0.0.1:8000, rebuilt as you save
+make docs TYPE=build    # the site in site/ (git-ignored), failing on any warning
 ```
 
 The site is configured in `zensical.toml`: the navigation, the theme, Mermaid diagrams, and heading
@@ -88,13 +88,13 @@ build - so the pages would build with another generator unchanged.
 `.github/workflows/docs.yml` builds the site strictly and deploys it to GitHub Pages whenever a push
 to `main` changes `docs/`, `zensical.toml`, `pyproject.toml` or `uv.lock`, and on demand from the Actions
 tab. It installs only the `docs` group, at the versions `uv.lock` locks, so the published site is the
-one the tests build. Pull requests need no job of their own: `make unit` builds the site and compares it
+one the tests build. Pull requests need no job of their own: `make test TYPE=unit` builds the site and compares it
 with GitHub's rendering already. The repository's Pages source must be set to GitHub Actions (Settings →
 Pages) for the deploy to run.
 
 ## What the tests hold
 
-`tests/unit/test_docs.py`, part of `make unit` and so of CI, fails when:
+`tests/unit/test_docs.py`, part of `make test TYPE=unit` and so of CI, fails when:
 
 - a generated section is out of date with its source (run `make docs` and commit the result);
 - a setting that ends up in a role is missing from both example files, or a role default from its

@@ -52,7 +52,7 @@ Galaxy collections are pinned to exact versions (a range means every run silentl
 picks up the latest publish, and made the CI cache key useless since it hashes the file). Ansible never
 reads `requirements.yml`, and every checkout on a machine shares `~/.ansible/collections`, so every
 target that runs Ansible runs `collections-check` first: `ansible-galaxy collection install --offline`
-against the pins, which changes nothing when they are installed and fails, naming `make deps`, when one
+against the pins, which changes nothing when they are installed and fails, naming `make install`, when one
 is not. pre-commit hooks are pinned to commit SHAs, not tags, because a tag can be moved. apt signing
 keys are vendored in-repo. The uv release is pinned by version *and* per-architecture SHA-256, stored
 separately from the download. The Molecule base image is pinned by digest, with an unpinned weekly
@@ -99,10 +99,11 @@ window that cannot connect.
 ## Run logs
 
 Every Makefile target that runs Ansible exports `ANSIBLE_LOG_PATH` to
-`.logs/<YYYYMMDD-HHMMSS>-<target>.log`, so Ansible mirrors its output, timestamped, into a file per
+`.logs/<YYYYMMDD-HHMMSS>-<target>[-<TYPE>].log`, so Ansible mirrors its output, timestamped, into a file per
 run while the terminal is untouched (prompts and colours included). `no_log` applies to the file as
 to the screen. The file name never contains `VM_NAME`, because the path is in the environment of a
-recipe that runs before `vm-name-check` has looked at that value. `.logs/` is git-ignored, blocked
+recipe that runs before `vm-name-check` has looked at that value; the `TYPE` in it is one the Makefile
+checked against its fixed list while it was read, before any recipe. `.logs/` is git-ignored, blocked
 by the tracked-file guard (with `*.log`), created `0700`, and pruned of files older than
 `LOG_RETENTION_DAYS` (14) by `log-setup` at the start of each logged run, which deletes only files
 named the way the Makefile names them, and only in `LOG_DIR`. A nested `$(MAKE)` inherits the

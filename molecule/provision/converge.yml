@@ -1,5 +1,5 @@
 ---
-# The real playbook, as `make provision VM_NAME=alpha,beta` runs it. The make
+# The real playbook, as `make deploy VM_NAME=alpha,beta TYPE=provision` runs it. The make
 # target passes vm_name as an extra var; here it is an import var, which is
 # scoped to this import, so verify.yml can still run discovery without it.
 # A VMID in the way. The fleet's VMIDs start at /cluster/nextid and skip

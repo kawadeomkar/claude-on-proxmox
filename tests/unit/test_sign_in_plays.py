@@ -27,8 +27,8 @@ What these guard:
   its end, never said why.
 - What a sign-in leads to is not the sign-in. Remote Control failing to start,
   or a clone failing, after a VM signed in is said with the task, the
-  repository and the make configure command that retries it, after a full
-  stop; make claude-login and make github-login fail on it, and make deploy
+  repository and the make deploy TYPE=configure command that retries it, after a full
+  stop; make login TYPE=claude and make login TYPE=github fail on it, and make deploy
   fails at its end rather than exit 0.
 - make deploy's sign-in wiring, run from deploy.yml itself: with no terminal
   and no code nothing fails; a rejected code fails neither the run nor the VM
@@ -39,6 +39,10 @@ What these guard:
   at once.
 - github_login.yml refuses the two switches it no longer reads, and names the
   one that replaced them.
+- make login (playbooks/login.yml) runs the three in deploy's order and by its
+  rules: GitHub's device flow is not started for a VM whose Claude sign-in
+  nobody answered, a VM whose Claude sign-in failed sits out the sign-ins after
+  it and fails the run, and with no names every step reports, starting nothing.
 """
 
 from __future__ import annotations
@@ -59,6 +63,7 @@ from harness import LOGINS, REPO, STAND_INS, _results, _run, _stand_in_hosts
 
 CLAUDE_LOGIN = REPO / "playbooks" / "claude_login.yml"
 GITHUB_LOGIN = REPO / "playbooks" / "github_login.yml"
+LOGIN = REPO / "playbooks" / "login.yml"
 DEPLOY = REPO / "deploy.yml"
 FAKE_CLAUDE = REPO / "tests" / "molecule" / "fake_claude.sh"
 FAKE_GH = REPO / "tests" / "molecule" / "fake_gh.sh"
@@ -73,6 +78,7 @@ CLAUDE_SIGN_IN = "Sign Claude Code in, or say how each VM is signed in"
 CLAUDE_AFTER = "Start Remote Control on each VM signed in just now"
 GITHUB_SIGN_IN = "Sign gh in to GitHub, or say how each VM is signed in"
 GITHUB_AFTER = "Configure the repositories of each VM signed in"
+TAILSCALE_SIGN_IN = "Sign each VM in to Tailscale, or say how it is on it"
 
 # A code fake_claude.sh accepts, or refuses where the case says so.
 CODE = "fake-code#fake-state"
@@ -355,7 +361,7 @@ def github(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def claude_named(tmp_path_factory):
-    """make claude-login VM_NAME=alpha,beta,gamma: a code claude refuses, a VM that cannot be reached, a sign-in."""
+    """make login alpha beta gamma TYPE=claude: a code claude refuses, a VM that cannot be reached, a sign-in."""
     root = tmp_path_factory.mktemp("claude_named")
     cases = {"alpha": {"code": CODE, "reject": True}, "beta": {"down": True}, "gamma": {"code": CODE}}
     return root, _run(root, CLAUDE_LOGIN, _hosts(root, cases), "-e", _extra(vm_name=",".join(cases)))
@@ -363,7 +369,7 @@ def claude_named(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def github_named(tmp_path_factory, github):
-    """make github-login VM_NAME=alpha,beta,gamma: a code that expires, a VM that cannot be reached, a sign-in."""
+    """make login VM_NAME=alpha,beta,gamma TYPE=github: a code that expires, a VM that cannot be reached, a sign-in."""
     root = tmp_path_factory.mktemp("github_named")
     cases = {"alpha": {"expire": True}, "beta": {"down": True}, "gamma": {}}
     for case in cases.values():
@@ -455,7 +461,7 @@ def test_make_deploy_names_a_vm_it_cannot_reach_in_every_sign_in_and_goes_on(dep
 
 @pytest.fixture(scope="module")
 def after_claude(tmp_path_factory):
-    """make claude-login VM_NAME=epsilon, signed in by its code, whose Remote Control then fails to start."""
+    """make login VM_NAME=epsilon TYPE=claude, signed in by its code, whose Remote Control then fails to start."""
     if os.geteuid() == 0:
         pytest.skip("as root, a change to remote_control.yml could install a unit on this machine")
     root = tmp_path_factory.mktemp("after_claude")
@@ -475,7 +481,7 @@ def deployed_after(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def after_github(tmp_path_factory, github):
-    """make github-login VM_NAME=delta: the device flow signs gh in, then the clone of molecule/gone fails."""
+    """make login VM_NAME=delta TYPE=github: the device flow signs gh in, then the clone of molecule/gone fails."""
     root = tmp_path_factory.mktemp("after_github")
     return root, _run(root, GITHUB_LOGIN, _hosts(root, {"delta": {}}, github), "-e", _extra(vm_name="delta"))
 
@@ -483,7 +489,7 @@ def after_github(tmp_path_factory, github):
 def _remote_control_failed(message: str, host: str) -> None:
     assert f"{host} is signed in to Claude, but starting Remote Control failed at " in message, message
     assert "remote_control | Ensure the session's working directory exists" in message, message
-    assert f"make configure VM_NAME={host} TAGS=claude_code" in message, message
+    assert f"make deploy VM_NAME={host} TAGS=claude_code" in message, message
 
 
 def test_a_failure_after_the_claude_sign_in_is_said_as_such_and_fails_make_claude_login(after_claude):
@@ -533,7 +539,7 @@ def test_a_clone_failure_after_the_device_flow_names_the_repository_and_how_to_r
     assert message.startswith("Fail where the work after the sign-in failed: "), message
     assert 'configuring its GitHub repositories failed at "clone | Clone repositories"' in message, message
     assert f"{USERNAME}/gone" in message and f"{USERNAME}/pub" not in message, message
-    assert "make configure VM_NAME=delta TAGS=github_projects" in message, message
+    assert "make deploy VM_NAME=delta TAGS=github_projects" in message, message
 
 
 @pytest.mark.parametrize("fixture", ["after_claude", "after_github"])
@@ -542,7 +548,7 @@ def test_the_reason_ends_its_sentence_and_the_message_ends_with_the_command_that
     # failed" ran on into "Retry it with".
     _, report = request.getfixturevalue(fixture)
     (message,) = _failed(report).values()
-    assert re.search(r"[.!?] Retry it with: make configure VM_NAME=\S+ TAGS=\w+$", message), message
+    assert re.search(r"[.!?] Retry it with: make deploy VM_NAME=\S+ TAGS=\w+$", message), message
 
 
 # ------------------------------------------------ make deploy's switches
@@ -595,9 +601,132 @@ def test_make_deploy_names_a_refused_code_and_signs_in_the_vm_after_it(deployed)
     said = _said(report, "Say why, and go on with the next VM", "a-rejected")
     assert len(said) == 1, said
     assert "a-rejected: the Claude sign-in did not complete" in said[0]
-    assert "make claude-login VM_NAME=a-rejected again" in said[0]
+    assert "make login VM_NAME=a-rejected TYPE=claude again" in said[0]
     assert not _signed_in(root, "a-rejected")
     assert _signed_in(root, "c-accepted")
+
+
+# --------------------------------------------- make login: all three in turn
+
+
+@pytest.fixture(scope="module")
+def logged_in(tmp_path_factory, github):
+    """make login for a-unanswered (no code), b-accepted, c-rejected (a code claude refuses) and
+    d-after (signed in, then Remote Control fails to start)."""
+    if os.geteuid() == 0:
+        pytest.skip("as root, a change to remote_control.yml could install a unit on this machine")
+    root = tmp_path_factory.mktemp("logged_in")
+    cases = {
+        "a-unanswered": {},
+        "b-accepted": {"code": CODE},
+        "c-rejected": {"code": CODE, "reject": True},
+        "d-after": {"code": CODE, "after_fails": True},
+    }
+    for case in cases.values():
+        case["vars"] = {**case.get("vars", {}), "github_projects_exclude": ["gone"]}
+    hosts = _hosts(root, cases, github)
+    return root, _run(root, LOGIN, hosts, "-e", _extra(vm_name=",".join(cases)))
+
+
+def _device_flow(root: Path, host: str) -> bool:
+    return any(call.startswith("auth login ") and "--web" in call for call in _gh_calls(root, host))
+
+
+def test_make_login_signs_in_to_github_after_claude(logged_in):
+    root, report = logged_in
+    assert _signed_in(root, "b-accepted")
+    assert _device_flow(root, "b-accepted")
+    assert (root / "b-accepted" / "projects" / "pub" / "README.md").exists()
+    # Claude first, then GitHub, then Tailscale, every VM's turn of one before the next.
+    claude, github, tailscale = (
+        _play_positions(report, play) for play in (CLAUDE_SIGN_IN, GITHUB_SIGN_IN, TAILSCALE_SIGN_IN)
+    )
+    assert claude and github and tailscale, (claude, github, tailscale)
+    assert max(claude) < min(github) and max(github) < min(tailscale)
+
+
+def test_make_login_starts_no_device_flow_for_a_vm_whose_claude_sign_in_nobody_answered(logged_in):
+    root, report = logged_in
+    assert not _signed_in(root, "a-unanswered")
+    assert _said(report, "Say that no code was entered", "a-unanswered")
+    assert not any(call.startswith("auth login") for call in _gh_calls(root, "a-unanswered"))
+    # Its GitHub step ran, and only reported.
+    assert _ran(report, "Report the login state, and sign the VM in when asked to", "a-unanswered")
+
+
+def test_make_login_goes_on_past_a_failure_as_deploy_does_and_fails_at_the_end(logged_in):
+    # A refused code, or Remote Control failing to start after a sign-in, is no
+    # reason to leave the VM signed out of GitHub and Tailscale: under make
+    # deploy neither is. Both are raised by login.yml's own last play, once
+    # every VM has had all three turns, with what each step said.
+    root, report = logged_in
+    assert report["rc"] != 0
+    failures = _failed(report)
+    assert set(failures) == {"c-rejected", "d-after"}, failures
+    prefix = "Fail where a sign-in, or the work after one, failed: "
+    assert failures["c-rejected"].startswith(prefix + "c-rejected: "), failures["c-rejected"]
+    assert "starting Remote Control failed" in failures["d-after"], failures["d-after"]
+    assert failures["d-after"].endswith("Retry it with: make deploy VM_NAME=d-after TAGS=claude_code"), failures[
+        "d-after"
+    ]
+    assert not _signed_in(root, "c-rejected") and _signed_in(root, "d-after")
+    for host in ("c-rejected", "d-after"):
+        assert _device_flow(root, host), host
+        assert any(host in batch for batch in _batches(report, TAILSCALE_SIGN_IN)), host
+    # Raised once, at the end, and by no sign-in's own last play.
+    assert _play_positions(report, "Fail each VM whose sign-in, or the work after one, failed") == [
+        len(report["plays"]) - 1
+    ]
+
+
+def test_make_login_without_names_reports_every_vm_and_starts_nothing(tmp_path, github):
+    cases = {"alpha": {"code": CODE}, "beta": {}}
+    for case in cases.values():
+        case["vars"] = {"github_projects_exclude": ["gone"]}
+    report = _run(tmp_path, LOGIN, _hosts(tmp_path, cases, github), "-e", _extra())
+    assert report["rc"] == 0, _failed(report)
+    for play in (CLAUDE_SIGN_IN, GITHUB_SIGN_IN, TAILSCALE_SIGN_IN):
+        assert _batches(report, play) == [["alpha", "beta"]], play
+    for host in cases:
+        assert not _signed_in(tmp_path, host)
+        assert "auth login" not in _claude_calls(tmp_path, host)
+        assert not any(call.startswith("auth login") for call in _gh_calls(tmp_path, host))
+        # The role's work after a sign-in follows only a sign-in, or names.
+        assert not _ran(report, "Run the role now that gh is signed in", host)
+
+
+def test_make_login_imports_the_three_sign_ins_as_they_are():
+    entries = yaml.safe_load(LOGIN.read_text())
+    imported = [
+        entry["ansible.builtin.import_playbook"] for entry in entries if "ansible.builtin.import_playbook" in entry
+    ]
+    assert imported == ["discover.yml", "claude_login.yml", "github_login.yml", "tailscale_login.yml"]
+    for entry in entries[1:4]:
+        assert entry["vars"]["claude_vm_login_raised_later"] is True, entry["name"]
+    assert "hosts" in entries[-1], "login.yml raises what the sign-ins left in a play of its own, last"
+
+
+def _flat(expression: str) -> str:
+    """A Jinja expression as one line, without its braces."""
+    text = " ".join(expression.split())
+    assert text.startswith("{{ ") and text.endswith(" }}"), text
+    return text[3:-3]
+
+
+def _vars_of_import(path: Path, playbook: str) -> dict:
+    """The vars a playbook gives its import of playbook (named relative to the importing file)."""
+    return next(e for e in yaml.safe_load(path.read_text()) if e.get("ansible.builtin.import_playbook") == playbook)[
+        "vars"
+    ]
+
+
+@pytest.mark.parametrize("step", ["github_login.yml", "tailscale_login.yml"])
+@pytest.mark.parametrize("decision", ["claude_vm_login_interactive", "claude_vm_login_ask"])
+def test_make_login_decides_github_and_tailscale_as_make_deploy_does(step, decision):
+    """login.yml's decisions are deploy.yml's own, behind the names given, so the two cannot drift."""
+    deploy = _flat(_vars_of_import(DEPLOY, f"playbooks/{step}")[decision])
+    login = _flat(_vars_of_import(LOGIN, step)[decision])
+    assert login == f"claude_vm_login_named | bool and ({deploy})", (login, deploy)
 
 
 # ------------------------------------------------------------- batches
@@ -605,7 +734,7 @@ def test_make_deploy_names_a_refused_code_and_signs_in_the_vm_after_it(deployed)
 
 @pytest.fixture(scope="module")
 def reports(tmp_path_factory):
-    """Both playbooks with no names, as make claude-login and make github-login report on the fleet."""
+    """Both playbooks with no names, as make login TYPE=claude and make login TYPE=github report on the fleet."""
     out = {}
     for playbook in (CLAUDE_LOGIN, GITHUB_LOGIN):
         root = tmp_path_factory.mktemp("report_" + playbook.stem)

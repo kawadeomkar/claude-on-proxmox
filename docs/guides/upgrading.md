@@ -4,20 +4,20 @@ What to do when you update an install made by an earlier version of this project
 versions yet, so each section names the pull request that brought the change; an install made after it
 needs nothing.
 
-After pulling a new version, run `make deps` before anything else. It syncs the virtualenv to
+After pulling a new version, run `make install` before anything else. It syncs your environment to
 `uv.lock` and installs the Galaxy collections `requirements.yml` pins, and a pull changes neither.
 Every target that runs Ansible compares the installed collections with those pins first and stops,
-naming `make deps`, while one differs. They live in `~/.ansible/collections`, which every checkout
-on the machine shares, so another clone or worktree on a different version needs `make deps` again
+naming `make install`, while one differs. They live in `~/.ansible/collections`, which every checkout
+on the machine shares, so another clone or worktree on a different version needs `make install` again
 when you go back to it.
 
 ## A template built before the guest agent
 
 From PR #6, which finds each VM's address through its guest agent. Provisioning now needs `qemu-guest-agent` **inside** the image: it is what
-reports the VM's DHCP address back. `make template` bakes it in, but a template
-built before this change does not have it, and re-running `make template` will
+reports the VM's DHCP address back. `make deploy TYPE=template` bakes it in, but a template
+built before this change does not have it, and re-running `make deploy TYPE=template` will
 **not** fix that - the role skips the whole build when the VMID already exists.
-A VM cloned from such a template never reports an address, so `make provision`
+A VM cloned from such a template never reports an address, so `make deploy TYPE=provision`
 polls its guest agent 60 times, five seconds apart (`proxmox_vm_agent_retries`,
 `proxmox_vm_agent_delay`), and then fails. That is five minutes of waiting plus
 the time each poll takes, and on a running VM with no agent Proxmox spends a few
@@ -31,7 +31,7 @@ qm destroy 9000        # the template's VMID (proxmox_template_vmid)
 ```
 
 ```bash
-make template          # rebuilds it, this time with the guest agent
+make deploy TYPE=template   # rebuilds it, this time with the guest agent
 ```
 
 The build keeps the pristine download under `/var/lib/vz/claude-on-proxmox` on the node
@@ -48,7 +48,7 @@ Your API token also needs the guest-agent privilege added - see
 From PR #22, which signs `gh` in on the VMs. Earlier versions asked for a token with `repo` alone, used only to list your repositories. This
 version also signs `gh` in with it, and gh refuses a classic token without `read:org`. Such a token
 keeps listing as before: the run says gh stayed signed out and which scopes to add (`read:org`, and
-`workflow` for pushes that change `.github/workflows/`), and the next `make configure` signs gh in once
+`workflow` for pushes that change `.github/workflows/`), and the next `make deploy TYPE=configure` signs gh in once
 they are there. `github_auth_method: web` signs gh in by the device flow instead, the token listing only.
 
 ## A gh login or git identity you set up by hand
@@ -64,24 +64,24 @@ stays too: only a missing one is derived from your GitHub account, while `git_us
 
 From PR #23, which starts Remote Control when a login lands. A VM waiting for its first Claude login now gets a path unit that starts Remote Control the moment a
 login lands, so a sign-in made in the Claude terminal of `make code` starts it by itself. A VM last
-configured by an earlier version has no such unit: run `make configure VM_NAME=alpha TAGS=claude_code`
-once (or `make deploy VM_NAME=alpha`), or sign it in with `make claude-login VM_NAME=alpha`, which
+configured by an earlier version has no such unit: run `make deploy VM_NAME=alpha TAGS=claude_code`
+once (or `make deploy VM_NAME=alpha`), or sign it in with `make login VM_NAME=alpha TYPE=claude`, which
 starts Remote Control itself. The Claude terminal of `make code` tells the two apart, and on such a VM
-names that `make configure` line.
+names that `make deploy TYPE=configure` line.
 
 ## Tailscale on VMs configured by an earlier version
 
-From PR #24, which joins the VMs to a tailnet. Tailscale is on by default, so the next `make configure` installs it on every VM and reports each one
+From PR #24, which joins the VMs to a tailnet. Tailscale is on by default, so the next `make deploy TYPE=configure` installs it on every VM and reports each one
 not signed in - or joins it, with `vault_tailscale_auth_key` set. Set `tailscale_enabled: false` in
-`local.yml` first to keep your VMs as they are, and `make check` beforehand says what would be installed.
+`local.yml` first to keep your VMs as they are, and `make deploy TYPE=check` beforehand says what would be installed.
 A VM where you installed Tailscale yourself is left exactly as it is either way.
 
 ## Adopting VMs created before tagging
 
 From PR #6 as well, which recognises this project's VMs by their tag. This project now recognises its VMs by one Proxmox tag, `claude-on-proxmox`, and
 nothing else. VMs created by an earlier version carry `claude;ansible` instead,
-so `make list`, `make configure` and `make destroy` do not see them, and
-`make provision` refuses to touch a VM of that name rather than take it over.
+so `make list`, `make deploy TYPE=configure` and `make destroy` do not see them, and
+`make deploy TYPE=provision` refuses to touch a VM of that name rather than take it over.
 
 To adopt one, add the tag - in the Proxmox UI (the pencil beside the tags in the
 VM's title bar), or on the Proxmox host:
@@ -104,7 +104,7 @@ make destroy VM_NAME=old-dev ANSIBLE_ARGS="-e proxmox_vm_allow_untagged_delete=t
 ## A template built from Ubuntu's server image
 
 From PR #35, the template is built from Ubuntu's minimal cloud image. A template built before keeps the
-server image, and so do the VMs cloned from it; they work as before, and the next `make configure` masks
+server image, and so do the VMs cloned from it; they work as before, and the next `make deploy TYPE=configure` masks
 the services the minimal image leaves out anyway (fwupd, multipathd, ModemManager, udisks2, and snapd
 while no snap is installed) and empties apt's download cache. To build new VMs from the minimal image,
 rebuild the template once, on the Proxmox host. The VMs you have are full clones, so they do not depend on
@@ -116,12 +116,43 @@ qm destroy 9000        # the template's VMID (proxmox_template_vmid)
 ```
 
 ```bash
-make template          # rebuilds it from the minimal image
+make deploy TYPE=template   # rebuilds it from the minimal image
 ```
 
 The minimum memory a VM may be left with (`vm_memory_min_mb`, from the same PR) is applied when a VM is
 created; `proxmox_vm_force_update: true` applies it to the VMs you have
 ([Re-running](vms.md#re-running)).
+
+## The make targets an earlier version had
+
+Thirty-six targets became sixteen, each of which does all of its job by default and takes `TYPE=` for one
+part of it. A target that is gone stops at once with the command that replaced it, so a script or a habit
+that runs one is told rather than left at make's "No rule to make target":
+
+| Before | Now |
+|---|---|
+| `make venv`, `make deps` | `make install`, into your own virtualenv: see below |
+| `make lock` | `make install TYPE=lock` |
+| `make vault-encrypt`, `make vault-edit` | `make vault`, which encrypts a plaintext vault and edits an encrypted one |
+| `make template`, `make provision` | `make deploy TYPE=template`, `make deploy TYPE=provision` |
+| `make configure`, `make check` | `make deploy TYPE=configure`, `make deploy TYPE=check`; `make deploy TAGS=<role>` is `TYPE=configure` for that role |
+| `make ssh-config` | `make deploy TYPE=ssh-config` |
+| `make claude-login`, `make github-login`, `make tailscale-login` | `make login TYPE=claude`, `TYPE=github`, `TYPE=tailscale`; `make login` alone runs all three in deploy's order |
+| `make syntax`, `make pre-commit` | `make lint TYPE=syntax`, `make lint TYPE=hooks`; `make lint` alone runs both, after the other linters |
+| `make unit` | `make test TYPE=unit` |
+| `make molecule MOLECULE_ROLES=...` | `make test ROLE=...`; `make test TYPE=role` for every role, `TYPE=molecule` for every scenario |
+| `make molecule-integration`, `make molecule-provision`, `make molecule-scenario SCENARIO=...` | `make test TYPE=integration`, `make test TYPE=provision` |
+| `make docs-serve`, `make docs-build` | `make docs TYPE=serve`, `make docs TYPE=build` |
+| `make vagrant-up`, `make vagrant-destroy` | `make vagrant`, `make vagrant TYPE=destroy` |
+| `make logs-clean` | `make clean TYPE=logs` |
+
+What the commands do is unchanged: each `TYPE` runs the playbook its old target ran, with the same
+arguments, and a VM named in `VM_NAME` is acted on as before. One thing moved: the project keeps no
+`.venv` any more. Make a virtualenv of its own for it - `pyenv virtualenv 3.12 claude-on-proxmox && pyenv
+local claude-on-proxmox`, or any other, named with `PYTHON=` - and run `make install`; the old `.venv` can
+then go - `rm .venv` if it is a link to that environment, which leaves the environment itself alone -
+and `make clean` no longer deletes it. The VMs keep nothing of the old names; what
+they print, and their session notes, name the new commands from the next `make deploy` on.
 
 ## See also
 

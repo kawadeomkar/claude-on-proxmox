@@ -24,8 +24,9 @@ a first deploy.
 
 - **A Proxmox VE 8.x or 9.x host** that already runs VMs: `apt` working, a bridge with a DHCP server on
   it, and a storage for VM disks ([what the project assumes](docs/getting-started/requirements.md)).
-- **On your machine** (macOS or Linux): Python 3.12+, [uv](https://docs.astral.sh/uv/getting-started/installation/)
-  0.12+, `make`, an SSH key at `~/.ssh/id_ed25519.pub`, and VS Code with the `code` command (optional).
+- **On your machine** (macOS or Linux): Python 3.12+ in a virtualenv of its own for this project (pyenv's,
+  or any other: `PYTHON=` names it), [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+,
+  `make`, an SSH key at `~/.ssh/id_ed25519.pub`, and VS Code with the `code` command (optional).
 - **Accounts:** a Claude Pro, Max, Team or Enterprise login, which Remote Control needs - on Team and
   Enterprise an Owner turns Remote Control on for the organisation first - or an Anthropic API key, with
   Remote Control off; GitHub; and Tailscale, which is on by default: without an account, set
@@ -37,7 +38,8 @@ a first deploy.
 
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
-make init            # venv + collections + copies the *.example files + pre-commit hook
+pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
+make init            # make install (packages + collections) + copies the *.example files + pre-commit hook
 ```
 
 **2. Give it access to Proxmox.** Install your key for the one root SSH step (the template build):
@@ -82,7 +84,7 @@ Every setting the two files take, with its default, is in the [settings referenc
 
 ```bash
 (umask 077; openssl rand -base64 32 > .vault_pass)
-make vault-encrypt
+make vault
 
 make deploy VM_NAME=alpha
 ```
@@ -103,25 +105,25 @@ one is skipped or fails.
 
 **If a run fails**, it stops and says why, and `make logs` lists the whole run. Fix the cause and run the
 same `make deploy` again: every stage is idempotent, and a VM a failed run left half-built is finished
-rather than skipped. `make vault-edit` changes a secret. The usual first-run snags are in
+rather than skipped. `make vault` changes a secret. The usual first-run snags are in
 [Your first deploy](docs/getting-started/first-deploy.md#if-a-run-fails).
 
 ## Everyday commands
 
 | Command | What it does |
 |---|---|
-| `make deploy VM_NAME=alpha,beta` | Create and configure VMs, and sign them in. Re-run it after changing a setting (VM size applies when a VM is created) |
+| `make deploy alpha beta` | Create and configure VMs and sign them in, then open VS Code on a lone one. Re-run it after changing a setting (VM size applies when a VM is created) |
+| `make code alpha [PROJECT=repo]` | Open a VM, or one repository on it, in VS Code with a Claude terminal |
+| `make login alpha` | Sign the VM in to Claude, GitHub and Tailscale where a sign-in was skipped; `TYPE=claude`, `github` or `tailscale` for one of them |
 | `make list` | The VMs this project created, and their addresses |
-| `make code VM_NAME=alpha [PROJECT=repo]` | Open a VM, or one repository on it, in VS Code with a Claude terminal |
-| `ssh alpha` | The alias `make deploy`, `make configure` and `make code` keep pointed at the VM's address, in `~/.ssh/claude-on-proxmox.conf` (one `Include` line added to `~/.ssh/config`) |
-| `make configure VM_NAME=alpha [TAGS=claude_code]` | Re-apply the configuration, or one role of it |
-| `make claude-login VM_NAME=alpha` | Sign Claude in, if that was skipped, and start Remote Control |
-| `make github-login VM_NAME=alpha` | Sign `gh` in, and clone the private repositories |
-| `make tailscale-login VM_NAME=alpha` | Join your tailnet by Tailscale's web login |
-| `make destroy VM_NAME=alpha` | Sign the VM out of Claude, GitHub and Tailscale, then delete it |
+| `make destroy alpha` | Sign the VM out of Claude, GitHub and Tailscale, then delete it |
 | `make logs` | The log of every run, newest first |
+| `ssh alpha` | The alias `make deploy` and `make code` keep pointed at the VM's address, in `~/.ssh/claude-on-proxmox.conf` (one `Include` line added to `~/.ssh/config`) |
 
-[Every target](docs/reference/make-targets.md) is in the reference.
+`make deploy` does each of its parts on its own too: `make deploy alpha TAGS=claude_code` re-applies one
+role, and `make deploy TYPE=configure` re-applies the whole configuration to every VM, creating none.
+`make help` lists every target and the `TYPE` each one takes, and [the reference](docs/reference/make-targets.md)
+says what each does.
 
 ## Help and contributing
 

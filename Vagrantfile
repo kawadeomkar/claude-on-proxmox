@@ -3,9 +3,9 @@
 # Docker-based Molecule tests cover the roles; this additionally exercises
 # systemd services (docker, qemu-guest-agent) and a full cloud image.
 #
-#   make vagrant-up        # ~10 minutes on first run
+#   make vagrant        # ~10 minutes on first run
 #   vagrant ssh            # then: sudo -iu dev claude
-#   make vagrant-destroy
+#   make vagrant TYPE=destroy
 #
 # Vagrant generates its own inventory, so inventory/group_vars is not loaded;
 # role variables are passed directly. No real credentials are needed. Set
@@ -28,7 +28,14 @@ Vagrant.configure("2") do |config|
 
   config.vm.provision "ansible" do |ansible|
     ansible.compatibility_mode = "2.0"
-    ansible.playbook_command = File.join(__dir__, ".venv", "bin", "ansible-playbook")
+    # The project's own, which make vagrant passes; run without it, the one of
+    # the virtualenv python3 is, found as the Makefile finds it - never one
+    # merely first on PATH. With no virtualenv, a path that says what is missing,
+    # so a provision fails on it rather than on another Ansible.
+    ansible.playbook_command = ENV.fetch("ANSIBLE_PLAYBOOK") do
+      bin = `#{ENV.fetch("PYTHON", "python3")} -c 'import sys, sysconfig; print(sysconfig.get_path("scripts") if sys.prefix != sys.base_prefix else "")' 2>/dev/null`.strip
+      File.join(bin.empty? ? "/no-virtualenv-for-claude-on-proxmox-run-make-install" : bin, "ansible-playbook")
+    end
     ansible.playbook = "playbooks/configure.yml"
     ansible.groups = { "claude_vms" => ["default"] }
     ansible.extra_vars = {

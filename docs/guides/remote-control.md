@@ -16,7 +16,7 @@ use it; on Pro and Max the login is enough.
 
 ## What a run does on each VM
 
-So `make configure` derives what to do from the credentials it finds on the VM:
+So `make deploy TYPE=configure` derives what to do from the credentials it finds on the VM:
 
 | On the VM | What happens |
 |---|---|
@@ -32,10 +32,10 @@ How each of these is decided is in
 ## Signing a VM in
 
 Activating it is therefore: leave the API key empty and sign in once. `make deploy` asks for that
-itself, after configuring the VM; for a VM that exists, `make claude-login` does the same:
+itself, after configuring the VM; for a VM that exists, `make login TYPE=claude` does the same:
 
 ```bash
-make claude-login VM_NAME=alpha  # the sign-in page opens in your browser: authorise,
+make login alpha TYPE=claude     # the sign-in page opens in your browser: authorise,
                                  # and the browser comes back to the VM by itself
                                  # ... and Remote Control starts; the session appears on your phone
 ```
@@ -72,16 +72,16 @@ set, or `claude_remote_control: false` - is reported as such, with nothing to fi
 ## Signing in another way
 
 A sign-in made any other way starts the service by itself too. While a VM waits for its first login,
-`make configure` leaves a systemd path unit, `claude-remote-control.path`, watching for the login file;
-the moment one lands - from `make claude-login`, the Claude terminal of `make code`, or by hand with
-`ssh -t dev@<address> "bash -lc 'claude auth login'"` - it starts the server. The next `make configure`
+`make deploy TYPE=configure` leaves a systemd path unit, `claude-remote-control.path`, watching for the login file;
+the moment one lands - from `make login TYPE=claude`, the Claude terminal of `make code`, or by hand with
+`ssh -t dev@<address> "bash -lc 'claude auth login'"` - it starts the server. The next `make deploy TYPE=configure`
 enables the server for boot, runs the stay-up check below, and removes the path unit, so a server you
 stop later stays stopped ([the path unit](../architecture/roles.md#the-path-unit) says why). By hand, it goes
 through `bash -lc` because only a login shell puts `~/.local/bin`, where the native installer puts
 `claude`, on `PATH`; a command given to `ssh` runs without one, so a bare `claude auth login` is
 `command not found`.
 
-`make claude-login` decides from the same `claude auth status` fields as `make configure`, so a VM
+`make login TYPE=claude` decides from the same `claude auth status` fields as `make deploy TYPE=configure`, so a VM
 signed in another way — a Console account, a `claude setup-token` token, an API key — is told by both
 what is in the way, and never signed in over it.
 
@@ -95,7 +95,7 @@ other roles still run, but the service stays stopped until one or the other chan
 ## Keeping the server running
 
 The first time `claude remote-control` runs, Claude Code explains what Remote Control does and asks
-`Enable Remote Control? (y/n)`. A systemd service has no terminal to answer it, so `make configure`
+`Enable Remote Control? (y/n)`. A systemd service has no terminal to answer it, so `make deploy TYPE=configure`
 records that answer in `~/.claude.json` for you, alongside first-run onboarding and trust for
 `~/projects`: leaving Remote Control on is taken as the yes.
 
@@ -106,14 +106,14 @@ limit: the server comes back on its own after an outage, and an expired login co
 minutes rather than a spin. `systemctl stop` still stops it. The unit's settings, and why each, are in
 [the service unit](../architecture/roles.md#the-service-unit).
 
-On a signed-in VM, `make configure` then waits 20 seconds and fails, with the `journalctl` command to
+On a signed-in VM, `make deploy TYPE=configure` then waits 20 seconds and fails, with the `journalctl` command to
 read why, unless the server process it started is still the one running. That is there to catch a
 server refused at startup, for its login, plan or organisation settings, during the run rather than
 when you reach for your phone. A re-run that changes nothing leaves a running server alone and skips
 the wait; a changed unit (a new permission mode, say) restarts it, once, and waits again. After a
-sign-in, `make claude-login` and `make deploy` run the same check; a server that does not stay up
+sign-in, `make login TYPE=claude` and `make deploy` run the same check; a server that does not stay up
 fails the run at its end - after VS Code has opened, in a deploy - with
-`make configure VM_NAME=alpha TAGS=claude_code` to retry it, while the login itself is kept.
+`make deploy VM_NAME=alpha TAGS=claude_code` to retry it, while the login itself is kept.
 
 ## How much of the VM a remote session can reach
 
@@ -140,7 +140,7 @@ session from the app: it only sets the mode for `claude` you start on the VM you
 SSH. Once a session is open, the app can switch it between Manual, Accept edits and Plan; Auto and
 Bypass permissions cannot be selected there. The value is passed to Claude Code unvalidated, so any
 mode it accepts works; one it does not stops the server at startup, and on a signed-in VM
-`make configure` then fails with the command that shows why.
+`make deploy TYPE=configure` then fails with the command that shows why.
 
 ## An API key instead of a claude.ai login
 
@@ -148,8 +148,8 @@ mode it accepts works; one it does not stops the server at startup, and on a sig
 just that role — no SSH:
 
 ```bash
-make vault-edit                                   # set vault_anthropic_api_key
-make configure VM_NAME=alpha TAGS=claude_code     # writes ~/.claude/settings.json on the VM
+make vault                                 # set vault_anthropic_api_key
+make deploy VM_NAME=alpha TAGS=claude_code   # writes ~/.claude/settings.json on the VM
 ```
 
 That makes `claude` on the VM authenticate against the Anthropic API. It does not start anything: Claude
@@ -165,7 +165,7 @@ want, leave the key empty and sign the VM in, as at the top of this page.
 **Going back** works the same way: clear `vault_anthropic_api_key` and re-run. The role removes the
 `ANTHROPIC_API_KEY` it wrote from `~/.claude/settings.json` and leaves the rest of the file alone. A
 key set through `claude_code_settings.env` is yours, and stays. The VM then needs its claude.ai login:
-`make claude-login VM_NAME=alpha` signs it in and starts Remote Control (`make deploy` does both too).
+`make login VM_NAME=alpha TYPE=claude` signs it in and starts Remote Control (`make deploy` does both too).
 
 ## See also
 

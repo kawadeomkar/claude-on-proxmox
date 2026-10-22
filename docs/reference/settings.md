@@ -135,7 +135,7 @@ Which of your GitHub repositories to clone. The username itself lives in vault.y
 | `github_projects_exclude` | `[]` | Repository names never cloned, even when github_projects_include names them. A variable of [`github_projects`](roles/github_projects.md). |
 | `github_projects_clone_protocol` | `https` | https clones private repositories through gh; ssh needs a key of the user's own on the VM, and trusts GitHub's published host keys. A variable of [`github_projects`](roles/github_projects.md). |
 
-Sign gh in on each VM (from vault_github_token, or by GitHub's device flow, which make deploy and make github-login run for you) and make it git's credential helper, so private repositories clone and git push works. false leaves gh and ~/.gitconfig alone. auto takes the token when there is one, else the device flow; web is the device flow always; token is the token only.
+Sign gh in on each VM (from vault_github_token, or by GitHub's device flow, which make deploy and make login TYPE=github run for you) and make it git's credential helper, so private repositories clone and git push works. false leaves gh and ~/.gitconfig alone. auto takes the token when there is one, else the device flow; web is the device flow always; token is the token only.
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -297,7 +297,7 @@ same-dir: every session shares the directory above. worktree: each session gets 
 
 ### Sign-ins and teardown
 
-make deploy ends with the VM signed in to Claude, GitHub and Tailscale and open in VS Code; the sign-ins each open a page and wait for you, one VM at a time. false leaves them to make claude-login, github-login and tailscale-login.
+make deploy ends with the VM signed in to Claude, GitHub and Tailscale and open in VS Code; the sign-ins each open a page and wait for you, one VM at a time. false leaves them to make login.
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -426,7 +426,7 @@ GitHub account whose repositories get cloned onto the VM.
 |---|---|
 | `vault_github_username` | Sets `github_projects_username` ([`github_projects`](roles/github_projects.md)): GitHub account to list repositories for. |
 
-Optional. With it, private repositories are listed and cloned and gh on each VM is signed in with it, so git push and gh pr create work there. A classic token needs repo, workflow and read:org; a fine-grained one Metadata (read) and Contents, Pull requests and Workflows (read and write) on all repositories. Leave it empty to sign in once per VM by GitHub's device flow instead (make github-login VM_NAME=&lt;name&gt;), with no secret here: that run clones the private repositories too, and later runs list with the token gh stored. [docs/guides/github.md](../guides/github.md).
+Optional. With it, private repositories are listed and cloned and gh on each VM is signed in with it, so git push and gh pr create work there. A classic token needs repo, workflow and read:org; a fine-grained one Metadata (read) and Contents, Pull requests and Workflows (read and write) on all repositories. Leave it empty to sign in once per VM by GitHub's device flow instead (make login VM_NAME=&lt;name&gt; TYPE=github), with no secret here: that run clones the private repositories too, and later runs list with the token gh stored. [docs/guides/github.md](../guides/github.md).
 
 | Secret, in `vault.yml` | Notes |
 |---|---|
@@ -442,7 +442,7 @@ Optional: skip interactive `claude` login on the VM. Billing for Claude Code on 
 
 ### Secrets: Tailscale
 
-Optional: a Tailscale auth key, so each new VM joins your tailnet during configuration with nothing to click. Make it reusable (one key for the whole fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale removes an ephemeral node within the hour of it going offline, and a VM left stopped would be. Leave it empty to sign each VM in by Tailscale's web login instead (make tailscale-login VM_NAME=&lt;name&gt;), with no secret here. Only ever used for a VM's first join. [docs/guides/tailscale.md](../guides/tailscale.md).
+Optional: a Tailscale auth key, so each new VM joins your tailnet during configuration with nothing to click. Make it reusable (one key for the whole fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale removes an ephemeral node within the hour of it going offline, and a VM left stopped would be. Leave it empty to sign each VM in by Tailscale's web login instead (make login VM_NAME=&lt;name&gt; TYPE=tailscale), with no secret here. Only ever used for a VM's first join. [docs/guides/tailscale.md](../guides/tailscale.md).
 
 | Secret, in `vault.yml` | Notes |
 |---|---|

@@ -73,10 +73,10 @@
                ~ '). ' ~ tailscale_configure_command ~ ' tries again' ~ tailscale_report_or_browser) }}
     tailscale_report_said:
       check-no-package: >-
-        Tailscale is not installed, and check mode installs nothing; make configure VM_NAME={{ inventory_hostname }}
+        Tailscale is not installed, and check mode installs nothing; make deploy VM_NAME={{ inventory_hostname }} TYPE=configure
         installs it.
       check-daemon-down: >-
-        tailscaled is not running, and check mode starts nothing; make configure VM_NAME={{ inventory_hostname }}
+        tailscaled is not running, and check mode starts nothing; make deploy VM_NAME={{ inventory_hostname }} TYPE=configure
         starts it.
       not-ours: >-
         {{ ('on Tailscale ' ~ tailscale_report_as ~ '; installed') if tailscale_backend == 'Running'
@@ -114,7 +114,7 @@
            else ('Tailscale is installed but not signed in. ' ~ tailscale_configure_command ~ ' joins it with'
                  ~ ' vault_tailscale_auth_key (tailscale_auth_method: key).') if tailscale_auth_method == 'key'
            else 'Tailscale is installed but not signed in. ' ~ tailscale_login_command ~ ' signs it in from your'
-                ~ ' browser' ~ ('; vault_tailscale_auth_key joins it on the next make configure.'
+                ~ ' browser' ~ ('; vault_tailscale_auth_key joins it on the next make deploy TYPE=configure.'
                                if tailscale_auth_method == 'auto' else '.') }}
   block:
     - name: report | Say how this VM is on Tailscale

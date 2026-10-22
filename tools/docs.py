@@ -1,7 +1,7 @@
 """Generate the reference sections of the wiki in docs/ from the files they describe.
 
-    .venv/bin/python tools/docs.py           # rewrite every generated section (make docs)
-    .venv/bin/python tools/docs.py --check   # exit 1 naming each page that is out of date
+    python tools/docs.py           # rewrite every generated section (make docs), with the project's Python
+    python tools/docs.py --check   # exit 1 naming each page that is out of date
 
 Each generated section sits between two marker lines in a page that is otherwise written by hand,
 so context goes above and below it and survives every run:
@@ -52,6 +52,8 @@ INTERNALS = "@@internals@@"
 # What the role template writes for each level a task sits inside a block: an em space, put in after the
 # escaping, which turned the template's own `&emsp;` into text.
 INDENT = "@@indent@@"
+# How a make target's TYPEs and options sit under it in the make-targets table: an em space in.
+INDENT_CELL = "&emsp;"
 
 
 def roles() -> list[str]:
@@ -88,23 +90,44 @@ def inject(page: Path, text: str, name: str, body: str, source: str) -> str:
 
 
 def make_targets() -> str:
-    """One table per banner section of the Makefile, of every target with a `## ` description."""
-    sections: list[tuple[str, list[tuple[str, str]]]] = []
-    for line in (ROOT / "Makefile").read_text().splitlines():
+    """One table per banner section of the Makefile: every target with a `## ` description, the names it
+    takes, and a row for each `#: KEY=value` line above it - each TYPE it can be narrowed to, and its options.
+    """
+    text = (ROOT / "Makefile").read_text()
+
+    def listed(var: str) -> list[str]:
+        found = re.search(rf"^{var}\s*:=\s*(.*)$", text, flags=re.M)
+        return found.group(1).split() if found else []
+
+    named, one = listed("NAMED_TARGETS"), listed("ONE_NAME_TARGETS")
+    sections: list[tuple[str, list[tuple[str, str, list[tuple[str, str]]]]]] = []
+    options: list[tuple[str, str]] = []
+    for line in text.splitlines():
         banner = BANNER.match(line)
         if banner:
             sections.append((banner.group(1).strip().capitalize(), []))
+            options = []
+            continue
+        option = re.match(r"^#: (\S+)\s+(.+)$", line)
+        if option:
+            options.append((option.group(1), option.group(2)))
             continue
         target = re.match(r"^([a-zA-Z0-9_-]+):(?!=)[^#]*## (.+)$", line)
         # `help` prints this same list; the page says so above the tables.
         if target and sections and target.group(1) != "help":
-            sections[-1][1].append((target.group(1), target.group(2)))
+            name = target.group(1)
+            usage = name + (" <name>" if name in one else " [<name>...]" if name in named else "")
+            sections[-1][1].append((usage, target.group(2), options))
+        if target:
+            options = []
     out = []
     for title, targets in sections:
         if not targets:
             continue
         out += [f"### {title}", "", "| Target | What it does |", "|---|---|"]
-        out += [f"| `make {name}` | {cell(text)} |" for name, text in targets]
+        for usage, said, opts in targets:
+            out.append(f"| `make {usage}` | {cell(said)} |")
+            out += [f"| {INDENT_CELL}`{key}` | {cell(what)} |" for key, what in opts]
         out.append("")
     return "\n".join(out)
 
@@ -371,7 +394,7 @@ def role_page(role: str, page: Path, text: str) -> str:
     """The page with its role section rendered by docsible from roles/<role>/."""
     docsible = Path(sys.executable).parent / "docsible"
     if not docsible.exists():
-        raise SystemExit(f"{docsible} is missing: run make venv")
+        raise SystemExit(f"{docsible} is missing: run make install")
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / f"{role}.md"
         command = [str(docsible), "--role", str(ROOT / "roles" / role), "--md-template", str(ROLE_TEMPLATE)]

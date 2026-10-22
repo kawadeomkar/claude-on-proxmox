@@ -100,16 +100,16 @@ restate them are not treated as vulnerabilities:
   Mode never gets the notes' folder: the project does not change what a window you trusted covers.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
-  once - and `make configure` then sends it your SSH keys, GitHub token and Anthropic API key. The
-  sign-ins hand it more: `make deploy`, `make claude-login` and `make github-login` run `claude auth
-  login` and `gh auth login` there and ask you to authorise what they print, so an impostor that prints
+  once - and the next `make deploy` then sends it your SSH keys, GitHub token and Anthropic API key. The
+  sign-ins hand it more: `make deploy` and `make login` run `claude auth login` and `gh auth login`
+  there and ask you to authorise what they print, so an impostor that prints
   a genuine sign-in page or device code of its own receives a claude.ai login, or a GitHub OAuth token
   with gh's scopes (`repo`, `read:org`, `gist`) and `workflow` that does not expire until revoked - with
   no GitHub token in the vault as much as with one. Authorise only a page or code for a VM you have just
   created or know to be yours. Keeping
   the key instead would only trade this for a failure every time a lease is recycled, so the removal is
   deliberate. On a network where you do not trust every device, put the VMs on a bridge that only
-  trusted devices can reach (`proxmox_bridge`, set before `make template`, since every clone inherits
+  trusted devices can reach (`proxmox_bridge`, set before `make deploy TYPE=template`, since every clone inherits
   the template's NIC). A fixed address from `proxmox_vm_ipconfig`, outside the DHCP pool, keeps the
   address from being leased to anything else, but only for a single VM: that one value applies to every
   VM a run provisions, so a second VM would be given the same address.

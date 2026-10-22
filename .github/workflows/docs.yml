@@ -3,7 +3,7 @@ name: Docs
 
 # Publishes the wiki in docs/ to GitHub Pages, at the site_url zensical.toml
 # names, whenever main changes what it is built from. Pull requests need no
-# job here: `make unit` already builds the site strictly and compares it with
+# job here: `make test TYPE=unit` already builds the site strictly and compares it with
 # how GitHub renders the pages (tests/unit/test_docs.py).
 #
 # Needs Settings -> Pages -> Source set to "GitHub Actions" once; until then
@@ -47,7 +47,7 @@ jobs:
           python-version: "3.12"
 
       # Only pyproject.toml's docs group, at the versions uv.lock locks, so the
-      # published site is the one `make docs-build` and the tests build;
+      # published site is the one `make docs TYPE=build` and the tests build;
       # --locked refuses a lock that no longer matches pyproject.toml.
       - name: Install Zensical
         run: uv sync --locked --only-group docs

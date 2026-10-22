@@ -10,7 +10,9 @@ README.md                         getting started; everything else is in docs/
 docs/                             the wiki (docs/development/docs.md): getting-started/, guides/, reference/
                                   (generated in part), architecture/ (these pages), development/
 zensical.toml                     the wiki as a site: navigation, theme, GitHub-style anchors
+Makefile                          every entry point: few targets, each narrowed to one part by TYPE (make help)
 tools/docs.py                     make docs: the generated reference sections; templates/role.md.j2 for docsible
+tools/env-run                     run a tool from the project's virtualenv, found as the Makefile finds it (the git hooks)
 pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
 
 playbooks/
@@ -21,6 +23,7 @@ playbooks/
   claude_login.yml                sign Claude in by the browser, VM by VM, then start Remote Control; bare, report
   github_login.yml                sign gh in by the device flow, VM by VM, then run github_projects; bare, report
   tailscale_login.yml             sign the VM in to Tailscale by its web login, VM by VM; bare, report
+  login.yml                       make login: discovery, then the three sign-ins above in deploy's order and by its rules
   configure.yml                   discover, then common → vscode_server → dev_tools → claude_code → github_projects,
                                   then tailscale in a rescued block, then an SSH alias per configured VM on the
                                   controller, and a last play failing what the rescue recorded

@@ -1,6 +1,6 @@
 ---
 # Ansible Galaxy collections required by this project.
-# Install with:  make deps   (or: ansible-galaxy collection install -r requirements.yml)
+# Install with:  make init   (or: ansible-galaxy collection install -r requirements.yml)
 #
 # Pinned to exact versions, not ranges. A range means every user and every CI
 # run silently picks up whatever was published most recently, and the weekly

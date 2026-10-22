@@ -1,10 +1,10 @@
 ---
 # Bring the SSH aliases on this machine back in step with the fleet.
 #
-#   make ssh-config                   -> every VM tagged claude-on-proxmox
-#   make ssh-config VM_NAME=alpha     -> only alpha, and nothing pruned
+#   make deploy TYPE=ssh-config                   -> every VM tagged claude-on-proxmox
+#   make deploy VM_NAME=alpha TYPE=ssh-config     -> only alpha, and nothing pruned
 #
-# `make deploy` and `make configure` keep an alias for each VM they touch
+# `make deploy` and `make deploy TYPE=configure` keep an alias for each VM they touch
 # (playbooks/tasks/ssh_config.yml); this is for everything in between: a
 # lease that moved, a VM deleted in the Proxmox UI, a second machine. It
 # refreshes every tagged VM that has an address and, fleet-wide, prunes the
@@ -136,5 +136,5 @@
           Run this again once every node reports.
           {% endif %}
           {% if vm_name is defined %}
-          Only the VMs named in VM_NAME were refreshed; a fleet-wide `make ssh-config` also prunes.
+          Only the VMs named in VM_NAME were refreshed; a fleet-wide `make deploy TYPE=ssh-config` also prunes.
           {% endif %}

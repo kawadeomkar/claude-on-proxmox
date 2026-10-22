@@ -123,7 +123,7 @@ def site(tmp_path_factory) -> tuple[Path, subprocess.CompletedProcess]:
     under the config's directory, and a developer's own working documents are no part of the wiki."""
     zensical = Path(sys.executable).parent / "zensical"
     if not zensical.exists():
-        pytest.fail(f"{zensical} is missing: run make venv")
+        pytest.fail(f"{zensical} is missing: run make init")
     root = tmp_path_factory.mktemp("wiki")
     shutil.copy(REPO / "zensical.toml", root)
     for page in _files("docs"):
@@ -437,5 +437,5 @@ def test_the_quick_start_matches_the_wiki():
     readme = REPO / "README.md"
     started = DOCS / "getting-started"
     assert fragment(readme, "pveum role add") == fragment(started / "proxmox-access.md", "pveum role add")
-    for marker in ("make init", "make vault-encrypt", "| File | Contents |"):
+    for marker in ("make init", "make vault", "| File | Contents |"):
         assert fragment(readme, marker) == fragment(started / "first-deploy.md", marker), marker

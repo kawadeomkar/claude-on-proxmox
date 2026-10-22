@@ -31,7 +31,7 @@ the hypervisor, up to `forks` at a time. A loop over `include_role` would watch 
 
 ```mermaid
 sequenceDiagram
-    participant U as make provision VM_NAME=alpha,beta
+    participant U as make deploy VM_NAME=alpha,beta TYPE=provision
     participant P1 as Play 1 (localhost)
     participant P2 as Play 2 (claude_vm_pending)
     participant PX as Proxmox API
@@ -104,13 +104,13 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
    and the reason. `REQUESTS_CA_BUNDLE` is passed as `ca_path`, so the certificate recipe in
    [Proxmox access](../getting-started/proxmox-access.md#trusting-the-proxmox-certificate)
    covers this request too. It is `check_mode: false`: `uri` does not support check mode, so under
-   `make check` it would skip itself and discovery would find nothing.
+   `make deploy TYPE=check` it would skip itself and discovery would find nothing.
 2. `claude_vm_tagged` (a lazily-evaluated group var) filters to the tagged QEMU VMs. Proxmox omits
    `tags` for an untagged guest, hence its `selectattr('tags', 'defined')`.
 3. `claude_vm_discovered` is `claude_vm_requested`: narrowed to `VM_NAME` when given, else the whole
    fleet. `list.yml` narrows through the same group var.
 4. Assert no duplicate names — Proxmox permits them, and the second `add_host` would silently
-   overwrite the first, so `make configure` would report success having touched one of two,
+   overwrite the first, so `make deploy TYPE=configure` would report success having touched one of two,
    unpredictably.
 5. Per VM, `proxmox_vm_info vmid=...` with `config: current` + `network: true`, which asks only that
    VM's node. A VM that is stopped, whose agent is not up or whose node is down is skipped; a refused
@@ -125,8 +125,8 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
    exist but none match `VM_NAME`", and "tagged VMs exist but none reported an address yet" (stopped,
    still booting, or a token without guest-agent access).
 
-Without `VM_NAME`, step 3 keeps every tagged VM, so `make configure`, `make check`,
-`make claude-login` and `make github-login` are fleet-wide by default.
+Without `VM_NAME`, step 3 keeps every tagged VM, so `make deploy TYPE=configure`, `TYPE=check` and
+`TYPE=ssh-config`, `make login` and `make list` are fleet-wide by default.
 
 ## 4.4 `playbooks/configure.yml`
 
@@ -157,16 +157,16 @@ picker follow the address DHCP gave it. It reads a fact the second play set *las
 role never reaches that `post_task`, so it never gets an alias; and the workspace is the VM user's real
 home rather than a guess, because Ansible's own `user_dir` fact is the *connecting* user's home, which is
 root's under Molecule. Both the lookup and the play are tagged `always`, like discovery, so a
-`make configure TAGS=claude_code` after a lease moved still refreshes the alias. `claude_ssh_config: false`
+`make deploy TAGS=claude_code` after a lease moved still refreshes the alias. `claude_ssh_config: false`
 keeps the whole project out of `~/.ssh`.
 
 Tailscale runs last, from the play's `tasks:` - after `roles:`, before `post_tasks:` - in a block whose
-rescue records a failure in `claude_vm_configure_failures`, with `make configure VM_NAME=<vm>
+rescue records a failure in `claude_vm_configure_failures`, with `make deploy VM_NAME=<vm>
 TAGS=tailscale`, and says it. The VM stays in the play, so it still records its workspace and gets its
 alias, and under `make deploy` its sign-ins and VS Code; a fourth play, tagged `always`, then fails each
 VM with such a failure - skipped when `claude_vm_configure_in_deploy` is set, as `deploy.yml`'s configure
 import sets it, since deploy's own last play raises the same list (§4.7). `import_role`, not
-`include_role`: a static import takes the block's tag, so `make configure TAGS=tailscale` runs the role's
+`include_role`: a static import takes the block's tag, so `make deploy TAGS=tailscale` runs the role's
 tasks, where an include's tag reaches only the include. Tailscale is optional, which is why only it gets
 this treatment: a failure in it is the VM's last, not its first
 ([§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)).
@@ -267,8 +267,8 @@ about which VMs have an address.
 ## 4.7 `deploy.yml`
 
 The whole thing: template, provision, configure, the three sign-ins, the editor - each stage the
-standalone playbook, imported as is, so deploy is the sum of `make template`, `provision`,
-`configure`, `claude-login`, `github-login`, `tailscale-login` and `code` by construction. A first play on localhost asks the API whether a
+standalone playbook, imported as is, so deploy is the sum of `make deploy TYPE=template`, `TYPE=provision`
+and `TYPE=configure`, the three sign-ins `make login` runs and `make code`, by construction. A first play on localhost asks the API whether a
 template named `proxmox_template_name` exists and records it; the template play is imported with a
 `when:` on that fact. The lookup is `proxmox_vm_info name=...`, so only the node holding that name is
 asked for its VM list — unfiltered, one node that is down failed the run before anything was built.
@@ -324,8 +324,13 @@ that retries it - and so does a Tailscale failure during configuration, which `c
 in the same list and, with `claude_vm_configure_in_deploy`, left to this play (§4.4). The configure
 import passes `claude_code_sign_in_follows`, `github_projects_sign_in_follows` and
 `tailscale_sign_in_follows` (`deploy_sign_in`), so configuration says that the sign-ins come next in
-this run rather than naming `make claude-login`, `make github-login` and `make tailscale-login`, and the
-first play's message says up front that the run will stop for them.
+this run rather than naming `make login`, and the first play's message says up front that the run
+will stop for them.
+
+`make deploy TYPE=...` runs one stage's playbook on its own - `template.yml`, `provision.yml`,
+`configure.yml` (`--check --diff` for `TYPE=check`, `--tags` for `TAGS`) or `ssh_config.yml` - with the
+arguments the old stage target passed, so each stays the playbook deploy imports and nothing else. The
+Makefile chooses the playbook while it is read, from a `TYPE` it has checked.
 
 ---
 
@@ -368,7 +373,7 @@ only ever written for a VM the caller found by its tag. Before any of them, a na
 not one plain word is refused: `ssh -G` accepts a well-formed `ProxyCommand`, so it cannot be the
 check for a value the VM chose (see `guest_ipv4`, section 7).
 
-`ssh_config.yml` (`make ssh-config`) is the fleet-wide resync: the cluster listing, the addresses
+`ssh_config.yml` (`make deploy TYPE=ssh-config`) is the fleet-wide resync: the cluster listing, the addresses
 (§4.3 steps 1 and 4), `present` for every tagged VM with an address, keeping a workspace an earlier
 configure recorded, then pruning through `ssh_config_prune`
 ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)). Pruning removes blocks, never VMs, and only a block whose name no VM in the cluster carries any more. A name an untagged VM
@@ -393,7 +398,7 @@ no other playbook does, launching the editor. In order:
    a VM that is not running, whatever its name resolves to.
 3. Add it to `claude_vms` with `add_host`, the way configure reaches it: Ansible's own connection and
    `accept-new`, not the user's ssh config, and the group's connection variables from the inventory
-   (a key, a port) apply as they do to `make configure`.
+   (a key, a port) apply as they do to `make deploy TYPE=configure`.
 4. Read the VM user's home on the VM with `getent`, delegated over SSH, unless `vm_projects_dir`
    says where the code is. Nothing is guessed on the controller, and nothing is read back out of the
    alias: the workspace is `vm_projects_dir` or `<home>/projects`.
@@ -405,7 +410,7 @@ no other playbook does, launching the editor. In order:
    with `stat` on the VM. Read-only. Unreachable, missing and not-a-folder are each their own
    message: a missing project lists what the workspace holds and, for a name that differs only in
    case, suggests the right one, since the VM's paths are case-sensitive; a missing workspace means a
-   VM never configured, and says to run `make configure`. These are there so a typo is said in the
+   VM never configured, and says to run `make deploy TYPE=configure`. These are there so a typo is said in the
    terminal, not in a VS Code window opened on a folder that does not exist.
 7. Check `code` is on `PATH`, and install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
    lacks it.
@@ -436,7 +441,7 @@ the shell on the left because it is listed, and so started, first - and the `Cla
 sign-in ends with, the path unit's file, GitHub's line, the git protocol, the scopes, the VM's name),
 `cwd` the folder, `runOptions.runOn:
 folderOpen`, presented in a dedicated, focused terminal. A login shell, because VS Code starts task
-shells non-login and `claude` is on the login `PATH` only (`make claude-login` uses `bash -lc` for
+shells non-login and `claude` is on the login `PATH` only (`make login TYPE=claude` uses `bash -lc` for
 the same reason). The script checks `claude` is installed, runs `claude auth login` when
 `claude auth status` fails (a failed one says how to retry), signs gh in by the device flow when
 `gh auth status --hostname github.com --active` fails (Ctrl-C skips it: `trap ':' INT`), and then
@@ -450,7 +455,7 @@ Sign-in is not scripted, because it cannot be: it is a browser flow. VS Code Ser
 `browser.sh` helper in `BROWSER` for every terminal it starts, which opens the URL on the client,
 and `claude` shows the URL as well and accepts a pasted code. A login made there starts Remote
 Control through the path unit of [§5.5](roles.md#55-claude_code--install-claude-code) where one
-waits, which the script finds by its file on the VM; elsewhere the terminal names `make configure VM_NAME=<name> TAGS=claude_code`, which starts it through
+waits, which the script finds by its file on the VM; elsewhere the terminal names `make deploy VM_NAME=<name> TAGS=claude_code`, which starts it through
 the role's own eligibility checks. The terminal never starts it itself.
 
 **What VS Code decides, and what this does not touch.** VS Code runs a `folderOpen` task only in a
@@ -475,7 +480,7 @@ user, so every refusal above leaves the VM as it was; a workspace directory that
 every task in `code.yml` to an allowlist - read-only here, or delegated to the VM - and the
 `provision` scenario checks the settings file it planted is byte-for-byte untouched after every
 run. `PROJECT=.claude-on-proxmox`, which names the files' own directory, is refused. Cloud-init placed the key, so a VM that was provisioned but never configured still
-opens once it has a workspace, and its terminal says to run `make configure`.
+opens once it has a workspace, and its terminal says to run `make deploy TYPE=configure`.
 
 **The session notes.** With `vscode_session_notes` (the default, with the terminal), a page about the
 VM opens beside the Claude terminal every time the window opens - from `make code`, *Open Recent*, a
@@ -527,3 +532,19 @@ that re-raises `pause`'s abort and records the failure; and a last play failing 
 skips. The role decides everything ([§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)): a VM
 with Tailscale off, not installed, or installed by hand gets one line and nothing else, a VM signed in already is reported, and only one this role installed that
 is waiting in `NeedsLogin` is asked (under deploy) and signed in by the web login.
+
+## 4.11 `playbooks/login.yml`
+
+`make login` without a `TYPE`: discovery once, then `claude_login.yml`, `github_login.yml` and
+`tailscale_login.yml` imported as they are, with discovery off - so it is their sum and cannot drift from
+them. As under deploy, a VM goes on to its next sign-in after one that failed, or after the work it leads
+to failing (Remote Control's start): each playbook's last play leaves what failed
+(`claude_vm_login_raised_later`), and `login.yml`'s own last play fails each such VM once all three have
+had their turn, with every message. Between them it passes what deploy passes (§4.7), but only where names were given
+(`claude_vm_login_named`, the play var both later sign-in plays keep): GitHub and Tailscale start by
+themselves for a VM whose Claude sign-in was answered, are asked about first with
+`github_login_auto_start` or `tailscale_login_auto_start` off, and are left for one whose Claude sign-in
+nobody answered. Without names every step reports, and nothing starts. `claude_vm_login_in_deploy` is
+not set, so GitHub's follow-on play runs the whole `github_projects` role for each VM named, as
+`make login TYPE=github` does, since no configuration ran just before it. `TYPE=claude`, `github` or
+`tailscale` runs that playbook alone.

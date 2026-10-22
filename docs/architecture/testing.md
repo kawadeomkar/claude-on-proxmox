@@ -4,9 +4,9 @@ Three tiers. **No test ever talks to a real Proxmox, a real GitHub, a real Tails
 hypervisor** - nor this machine's own `tailscale`, which the unit harness stands in for with one that
 fails the test if it is called.
 
-## 11.1 Unit — `make unit`
+## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1167 tests. By file:
+pytest over `tests/unit/`: 1212 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -36,11 +36,15 @@ pytest over `tests/unit/`: 1167 tests. By file:
   credential fill` proving that git itself gets the token through the config written, deploy's GitHub
   step per VM - starting by itself, and asking first with `github_login_auto_start: false` - every task
   that renders a token held to `no_log`, and the whole output searched for every canned token.
-- **The sign-in playbooks** (`test_sign_in_plays.py` 24): `claude_login.yml`, `github_login.yml` and
+- **The sign-in playbooks** (`test_sign_in_plays.py` 33): `claude_login.yml`, `github_login.yml` and
   `deploy.yml`'s own sign-in steps end to end - a VM whose ssh refuses the connection among VMs that
   sign in, a failed sign-in said in its turn, a failure after a sign-in (Remote Control's start, a
   clone) told apart from a failed one and raised at the end of `make deploy`, deploy with no terminal,
-  a refused code and `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts.
+  a refused code and `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts; and
+  `login.yml` - `make login` - running the three in deploy's order and by its rules, held to deploy.yml's
+  own decisions: no device flow for a VM whose Claude sign-in nobody answered, a VM whose code was refused
+  or whose Remote Control failed to start still given its GitHub and Tailscale turns and failed at the
+  end, and a report without names.
 - **Tailscale** (`test_tailscale.py` 67): the role's files from `ownership.yml` on, and
   `tailscale_login.yml` whole, against the stand-in `tailscale`, with stand-ins for `dpkg-query` and
   `getent`: a first join once, with the key on stdin and in no report, argument or file; no key for a node
@@ -93,19 +97,33 @@ pytest over `tests/unit/`: 1167 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 272): `vm-name-check` accepts DNS-like names and refuses
-  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `provision`,
-  `ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the check before the
-  playbook; every target that takes `VM_NAME` passes the names after it exactly as `VM_NAME`, runs the
-  check on them without make expanding them, and refuses a word that is a make target, or names given
-  both ways, before anything runs; `deploy` refuses `TAGS`; `code` refuses no name and several, and
-  passes `PROJECT` as its own JSON extra-var after `project-name-check` has accepted real repository
-  names and refused `/`, `.`, `..`, quotes, shell syntax, a newline, non-ASCII and more than 100
-  characters; a run with no terminal turns the desktop steps off; every playbook target exports its own
-  `ANSIBLE_LOG_PATH` (never named after `VM_NAME`) into a `0700` directory, `LOG_DIR=` turns it off, old
-  run logs are pruned and nothing else is, and `logs-clean` deletes only run logs; and every target that
-  runs Ansible runs `collections-check` first, which asks `ansible-galaxy --offline` about
-  `requirements.yml` and stops a run, naming `make deps`, at collections that are not the pins.
+- **The Makefile** (`test_makefile.py` 307): `vm-name-check` accepts DNS-like names and refuses
+  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `deploy
+  TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
+  check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
+  `VM_NAME`, runs the check on them without make expanding them, and refuses a word that is a make
+  target, one of its own TYPEs, or names given both ways, before anything runs; each `TYPE` of `deploy`
+  and `login` runs the playbook its old target ran, with the same arguments, and every target that runs
+  a playbook is among those checked; a `TYPE` that is not the target's, in two words, on a target that
+  takes none, or written as `$(shell ...)`, is refused unexpanded, and narrows only its own target; `TAGS`
+  means `TYPE=configure` beside names and is refused without them, works with `TYPE=check`, is refused
+  with the other stages and outside the six role names, and `ROLE` likewise for `make test`, while an
+  exported `TYPE`, `TAGS`, `ROLE` or `SKIP`, and a `MOLECULE_ROLES` on the command line, change nothing;
+  every replaced target names its replacement, and is refused among VM names; the
+  `#: TYPE=` lines are the TYPEs each target takes, and `make help` lists them; `make install` syncs the
+  lock into `PYTHON`'s own environment, removing nothing, every target runs that environment's tools and
+  refuses a Python that is not a virtualenv, a `BIN` in the environment is ignored, `make help` starts no
+  Python, and `clean` never touches the environment; `tools/env-run`, which every local git hook runs
+  through, does the same, and `make vagrant` hands the Vagrantfile the environment's `ansible-playbook`; `lint`, `test`, `docs`, `vagrant`, `vault` and `init` run what
+  their `TYPE` says; `code` refuses no name and several, and passes `PROJECT` as its own JSON extra-var
+  after `project-name-check` has accepted real repository names and refused `/`, `.`, `..`, quotes,
+  shell syntax, a newline, non-ASCII and more than 100 characters; a run with no terminal turns the
+  desktop steps off; every playbook target exports its own `ANSIBLE_LOG_PATH`, named after the target
+  and its `TYPE` (never `VM_NAME`), into a `0700` directory, `LOG_DIR=` turns it off, old run logs are
+  pruned and nothing else is, and `clean TYPE=logs` deletes only run logs; and every target that runs
+  Ansible runs `collections-check` first, which asks `ansible-galaxy --offline` about
+  `requirements.yml` and stops a run, naming `make install`, at collections that are not the pins, or an
+  environment without the tools.
 - **The wiki** (`test_docs.py` 20): the generated reference sections are up to date, and every setting
   and role default is documented; the site builds strictly from the pages git knows, every heading
   reaches its built page, and every page renders the same on GitHub as on the site, its diagrams
@@ -115,7 +133,7 @@ pytest over `tests/unit/`: 1167 tests. By file:
   cites all exist, a section cited from another page is a link, and the README's quick start matches the
   wiki.
 
-## 11.2 Role scenarios — `make molecule MOLECULE_ROLES="..."`
+## 11.2 Role scenarios — `make test ROLE=...`
 
 One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting driver and platform
 from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
@@ -132,7 +150,7 @@ converge's keepalive values in effect).
 `tailscale`'s scenario runs two VMs - one that never had Tailscale and one where it was installed and
 signed in by hand - with the real package and daemon, log upload off, and the stand-in `tailscale` in front
 of it from `prepare` on. Molecule's `check` stage runs converge in check mode before converge, as every
-VM meets the first `make check` after the upgrade. The side effect sets back a hostname changed behind the
+VM meets the first `make deploy TYPE=check` after the upgrade. The side effect sets back a hostname changed behind the
 role's back with one `set`, turns Tailscale off twice (removed once, then nothing) and on again, and makes
 `pkgs.tailscale.com` unreachable: the install fails at the package, the repository comes back out, `apt`
 still works, and turning Tailscale off removes what the failed run left. Verify reads the conffile -
@@ -161,11 +179,11 @@ before any request is made, while converge's 2048 reaches the settings call as `
 VMID the fake `/etc/pve/.vmlist` places on a second node and asserts the refusal names that node and
 that no build started.
 
-## 11.3 Playbook scenarios — `make molecule-scenario SCENARIO=...`
+## 11.3 Playbook scenarios — `make test TYPE=...`
 
 | Scenario | What it proves |
 |---|---|
-| `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `make configure` needs nothing stored locally |
+| `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `make deploy TYPE=configure` needs nothing stored locally |
 | `configure` | `configure.yml` end to end against a container standing in for a provisioned VM |
 
 Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scenario inventory, so the
@@ -195,7 +213,7 @@ That unrelated VM on a node that is down is always there (§11.4), so every flee
 Proxmox scenarios runs against a cluster with one unreachable node.
 
 `vm_name` is passed only to converge's import of `provision.yml`, not set in `group_vars`, so
-discovery and the listing each run three times: once without it, as a bare `make configure` or
+discovery and the listing each run three times: once without it, as a bare `make deploy TYPE=configure` or
 `make list` does, where the ownership filter is all that stands between them and every running VM;
 once with it, to prove the narrowing; and once for `netone` with `proxmox_nic: net1`. The fleet-wide
 passes assert that discovery considered exactly `alpha`, `beta`, `commas`, `netone`, `nonic` and
@@ -211,7 +229,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   refusal;
 - re-running `provision.yml` after shutting `beta` down must exit 0, publish `alpha`, report `beta` as
   stopped and leave it stopped;
-- `discover.yml --check`, as `make check` runs it, must still find `alpha`;
+- `discover.yml --check`, as `make deploy TYPE=check` runs it, must still find `alpha`;
 - `deploy.yml` for the stopped `beta` must report the template as built, and with
   `proxmox_template_name` pointing at nothing, as about to be built;
 - `destroy.yml` must refuse without confirmation (the prompt's non-interactive default), refuse
@@ -291,7 +309,7 @@ first start - with the stand-in `tailscale` in front of it, so no test reaches a
 Every scenario and both unit harnesses turn `login_desktop` off, so no test opens this machine's
 browser or touches its clipboard.
 
-## 11.5 Vagrant — `make vagrant-up`
+## 11.5 Vagrant — `make vagrant`
 
 `configure.yml` against a real VirtualBox VM, with `claude_vm_discovery: false`. Not part of CI.
 

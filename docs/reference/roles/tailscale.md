@@ -1,6 +1,6 @@
 # `tailscale`
 
-Joins each VM to your tailnet, by an auth key or Tailscale's web login, and keeps the settings of the login it made. Outside `make destroy` it only touches a Tailscale it installed; `release` logs out whatever Tailscale the VM has, since the VM is about to go. Three entry points: `main`, last in `make configure` (`TAGS=tailscale`), `login` for `make tailscale-login` and the sign-in in `make deploy`, and `release` for `make destroy`.
+Joins each VM to your tailnet, by an auth key or Tailscale's web login, and keeps the settings of the login it made. Outside `make destroy` it only touches a Tailscale it installed; `release` logs out whatever Tailscale the VM has, since the VM is about to go. Three entry points: `main`, last in `make deploy TYPE=configure` (`TAGS=tailscale`), `login` for `make login TYPE=tailscale` and the sign-in in `make deploy`, and `release` for `make destroy`.
 
 Using it: [Tailscale](../../guides/tailscale.md). How it works: [§5.8](../../architecture/roles.md#58-tailscale--join-the-vm-to-a-tailnet).
 
@@ -49,7 +49,7 @@ With tailscale_login_interactive, or the answer to the question tailscale_login_
 |---|---|---|---|
 | `tailscale_login_interactive` | bool | `false` | Sign in; the question below, when asked, takes Enter as yes. |
 | `tailscale_login_ask` | bool | `false` | Ask first, at a prompt here. With no terminal it returns at once with no answer. |
-| `tailscale_auth_method` | str | `auto` | Under key, a VM is joined by make configure with the key, never by the web login. One of `auto`, `key`, `web`. |
+| `tailscale_auth_method` | str | `auto` | Under key, a VM is joined by make deploy TYPE=configure with the key, never by the web login. One of `auto`, `key`, `web`. |
 
 Also takes, as described under `main`: `tailscale_enabled`, `tailscale_login_timeout`, `tailscale_login_desktop`, `tailscale_login_server`, `tailscale_advertise_tags`, `tailscale_marker_dir`.
 
@@ -140,8 +140,8 @@ Set in `roles/tailscale/vars/main.yml`. These are not settings: Ansible ranks a 
 | `tailscale_absent_logout_failed` | <code>{{ (tailscale_logout &#124; default({'skipped': true})) is not skipped and (tailscale_logout.rc &#124; default(0)) != 0 }}</code> |
 | `tailscale_absent_login_left` | <code>{{ tailscale_absent_unasked &#124; bool or tailscale_absent_logout_failed &#124; bool }}</code> |
 | `tailscale_admin_page` | <code>{{ 'your control server' if tailscale_login_server &#124; length > 0 else 'https://login.tailscale.com/admin/machines' }}</code> |
-| `tailscale_configure_command` | `make configure VM_NAME={{ inventory_hostname }} TAGS=tailscale` |
-| `tailscale_login_command` | `make tailscale-login VM_NAME={{ inventory_hostname }}` |
+| `tailscale_configure_command` | `make deploy VM_NAME={{ inventory_hostname }} TAGS=tailscale` |
+| `tailscale_login_command` | `make login VM_NAME={{ inventory_hostname }} TYPE=tailscale` |
 
 ## Tasks
 

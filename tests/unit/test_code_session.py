@@ -58,14 +58,14 @@ from harness import ansible_config
 REPO = Path(__file__).resolve().parents[2]
 CODE = REPO / "playbooks" / "code.yml"
 DEPLOY = REPO / "deploy.yml"
-ANSIBLE_PLAYBOOK = REPO / ".venv" / "bin" / "ansible-playbook"
+ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
 PROVISION_VERIFY = REPO / "molecule" / "provision" / "verify.yml"
 NOT_INSTALLED = "Claude Code is not installed here yet."
 WATCHED = "Signed in; Remote Control starts by itself."
 UNWATCHED = "Signed in; start Remote Control from your machine."
 SIGNING_IN = "Signing in to Claude first. Your browser opens the sign-in page; if it shows a code, paste it here."
 NOT_SIGNED_IN = 'Not signed in to Claude. To try again, reload the window or run "Tasks: Run Task", Claude.'
-GITHUB_SIGNED_IN = "Signed in to GitHub; run make configure to clone the private repositories."
+GITHUB_SIGNED_IN = "Signed in to GitHub; run make deploy TYPE=configure to clone the private repositories."
 GITHUB_SIGNING_IN = (
     "Signing in to GitHub next, so that git push and gh work here; Ctrl-C skips this. "
     "Your browser opens github.com/login/device; enter the code below there."
@@ -73,7 +73,7 @@ GITHUB_SIGNING_IN = (
 GITHUB_STATUS = "gh auth status --hostname github.com --active"
 GITHUB_LOGIN = "gh auth login -h github.com -p https -w -s workflow --skip-ssh-key"
 GITHUB_PAGE = "browser https://github.com/login/device"
-GITHUB_FAILED = "Not signed in to GitHub. From your machine: make github-login VM_NAME=alpha"
+GITHUB_FAILED = "Not signed in to GitHub. From your machine: make login VM_NAME=alpha TYPE=github"
 GITHUB_CODE = "FAKE-C0DE"
 GITHUB_EXPIRED = "failed to authenticate via web browser: This 'device_code' has expired. (expired_token)"
 
@@ -835,15 +835,15 @@ def test_a_real_duplicate_or_a_missing_vm_is_still_refused(windows):
 def test_the_terminal_is_handed_the_lines_for_this_vm(windows):
     run = windows["messages"]
     not_installed, watched, unwatched, watch, github, protocol, scopes, vm = run["shown"]
-    assert "make configure VM_NAME=alpha," in not_installed
+    assert "make deploy VM_NAME=alpha TYPE=configure," in not_installed
     assert watched.startswith("Signed in. Remote Control starts by itself in a moment")
-    assert watched.endswith("run on your machine: make configure VM_NAME=alpha TAGS=claude_code")
+    assert watched.endswith("run on your machine: make deploy VM_NAME=alpha TAGS=claude_code")
     assert unwatched == (
         "Signed in. To reach this VM from the Claude apps too, start Remote Control from your machine: "
-        "make configure VM_NAME=alpha TAGS=claude_code"
+        "make deploy VM_NAME=alpha TAGS=claude_code"
     )
     assert watch == "/etc/systemd/system/claude-remote-control.path"
-    assert github.endswith("run on your machine: make configure VM_NAME=alpha TAGS=github_projects")
+    assert github.endswith("run on your machine: make deploy VM_NAME=alpha TAGS=github_projects")
     assert (protocol, scopes, vm) == ("https", "workflow", "alpha")
     assert "signing in to Claude and to GitHub first if alpha has not been" in run["opened"]
 
@@ -1240,10 +1240,10 @@ def test_the_helper_rewrites_the_live_section_only_and_opens_the_notes(tmp_path)
 def test_a_vm_signed_in_nowhere_names_each_sign_in(tmp_path):
     _, _, after, _, _ = _helper(tmp_path, answers=SIGNED_OUT)
     live = _live(after)
-    assert "| Claude Code | not signed in: make claude-login VM_NAME=alpha on your machine |" in live
+    assert "| Claude Code | not signed in: make login VM_NAME=alpha TYPE=claude on your machine |" in live
     assert "| Remote Control | not running (inactive) |" in live
-    assert "| GitHub (`gh`) | not signed in: make github-login VM_NAME=alpha on your machine |" in live
-    assert "| Tailscale | NeedsLogin: make tailscale-login VM_NAME=alpha signs it in |" in live
+    assert "| GitHub (`gh`) | not signed in: make login VM_NAME=alpha TYPE=github on your machine |" in live
+    assert "| Tailscale | NeedsLogin: make login VM_NAME=alpha TYPE=tailscale signs it in |" in live
 
 
 def test_what_a_tool_prints_is_read_as_utf_8_whatever_the_locale(tmp_path):
@@ -1300,7 +1300,7 @@ def test_the_helper_removes_what_plain_text_removes():
 @pytest.mark.parametrize(
     ("gh", "row"),
     [
-        pytest.param('{"hosts":{"github.com":[]}}', "not signed in: make github-login", id="an empty github.com"),
+        pytest.param('{"hosts":{"github.com":[]}}', "not signed in: make login VM_NAME=", id="an empty github.com"),
         pytest.param("", "unknown (gh auth status gave no status; it needs gh 2.81.0 or newer)", id="no JSON"),
         pytest.param('{"error":"unknown flag"}', "unknown (gh auth status gave no status", id="not gh's JSON"),
     ],

@@ -1,6 +1,6 @@
 # `claude_code`
 
-Installs Claude Code, writes `~/.claude/settings.json`, and runs Remote Control as a systemd service when the VM's credentials allow it. Four entry points: `main` for `make configure` (`TAGS=claude_code`), `login` for `make claude-login` and the sign-in in `make deploy`, `after_login`, which starts Remote Control once every VM has had its sign-in, and `release` for `make destroy`.
+Installs Claude Code, writes `~/.claude/settings.json`, and runs Remote Control as a systemd service when the VM's credentials allow it. Four entry points: `main` for `make deploy TYPE=configure` (`TAGS=claude_code`), `login` for `make login TYPE=claude` and the sign-in in `make deploy`, `after_login`, which starts Remote Control once every VM has had its sign-in, and `release` for `make destroy`.
 
 Using it: [Remote Control](../../guides/remote-control.md). How it works: [§5.5](../../architecture/roles.md#55-claude_code--install-claude-code).
 
@@ -26,7 +26,7 @@ Using it: [Remote Control](../../guides/remote-control.md). How it works: [§5.5
 | `claude_code_remote_control_permission_mode` | str | `default` | Starting permission mode for sessions the server creates, such as acceptEdits or plan. Passed as --permission- mode, which outranks permissions.defaultMode in claude_code_settings, so that setting does not reach these sessions. Deliberately not constrained to a list of choices here. Claude Code validates the mode at startup and prints the ones it accepts, so a mode added upstream works without a change to this role - whereas a hard- coded list would reject it before Claude Code ever saw it. Set through claude_remote_control in local.yml. |
 | `claude_code_remote_control_spawn` | str | `same-dir` | How the server creates sessions. Set through claude_remote_control in local.yml. One of `same-dir`, `worktree`, `session`. |
 | `claude_code_remote_control_service` | str | `claude-remote-control` | Name of the systemd unit installed for the server. Set through claude_remote_control in local.yml. |
-| `claude_code_sign_in_follows` | bool | `false` | Set by make deploy's configure step, whose sign-in comes next in the same run. The message for a VM with no login then says so, rather than naming make claude-login. |
+| `claude_code_sign_in_follows` | bool | `false` | Set by make deploy's configure step, whose sign-in comes next in the same run. The message for a VM with no login then says so, rather than naming make login TYPE=claude. |
 
 ## Entry point `login`
 
@@ -54,7 +54,7 @@ Decides with the same definitions the main entry point starts Remote Control fro
 
 **Start Remote Control on a VM that was signed in just now**
 
-Includes remote_control.yml as root when Remote Control is wanted, as make configure would, now that the login it was waiting for exists.
+Includes remote_control.yml as root when Remote Control is wanted, as make deploy TYPE=configure would, now that the login it was waiting for exists.
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
@@ -103,7 +103,7 @@ Set in `roles/claude_code/vars/main.yml`. These are not settings: Ansible ranks 
 | `claude_code_login_start_seconds` | `30` |
 | `claude_code_login_entered` | <code>{{ claude_code_login_code if claude_code_login_code &#124; length > 0 else ((claude_code_login_prompt &#124; default({})).user_input &#124; default('', true) &#124; trim) }}</code> |
 | `claude_code_login_entered_again` | <code>{{ (claude_code_login_prompt_again &#124; default({})).user_input &#124; default('', true) &#124; trim }}</code> |
-| `claude_code_login_command` | `make claude-login VM_NAME={{ inventory_hostname }}` |
+| `claude_code_login_command` | `make login VM_NAME={{ inventory_hostname }} TYPE=claude` |
 | `claude_code_login_browser` | `{{ claude_code_login_dir }}/claude-login.browser` |
 | `claude_code_login_page_file` | `{{ claude_code_login_dir }}/claude-login.page` |
 | `claude_code_login_forward_pidfile` | `{{ claude_code_login_dir }}/claude-login.forward.pid` |

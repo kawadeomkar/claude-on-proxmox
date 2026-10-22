@@ -34,10 +34,10 @@ caller sweeping the fleet skips that VM. Both playbooks pass `proxmox_nic`; they
 `40[13]` only in proxmoxer's status position (`"<status> <reason>: <detail>"`, after the module's own
 `"...: "` prefix), or the words Proxmox uses for it. The unanchored `40[13]` it replaces also matched
 a VMID in the detail — `500 Internal Server Error: VM 4013 is not running` — which failed
-`make list` and `make configure` for the whole fleet over one stopped VM.
+`make list` and `make deploy TYPE=configure` for the whole fleet over one stopped VM.
 
 **`ssh_config_blocks(content)`** — the alias blocks in the managed file, as `{name}`, in file order. **`ssh_config_prune(blocks, resources,
-tag_pattern)`** — the decision `make ssh-config` makes fleet-wide, as data: `prune` (no VM of that
+tag_pattern)`** — the decision `make deploy TYPE=ssh-config` makes fleet-wide, as data: `prune` (no VM of that
 name anywhere), `untagged` (a VM of that name exists without the tag; left alone), and `nameless`
 (tagged VMs the listing shows without a name, a node that is down), which when non-empty empties
 `prune` into `held`. Pure, so every rule is a unit test rather than a fake-API fixture.
@@ -110,7 +110,7 @@ through it. It subclasses the default callback and carries the
 default's `DOCUMENTATION` fragments (`default_callback`, `result_format_callback`). Without them the
 subclass has no options: every hook fails on its first `get_option`, Ansible only warns, and every task's
 result disappears from the screen and the log in a run that still exits 0. `--syntax-check` loads no
-callback, so `make syntax` would not notice; `tests/unit/test_attention_callback.py` runs real playbooks
+callback, so `make lint TYPE=syntax` would not notice; `tests/unit/test_attention_callback.py` runs real playbooks
 through it and compares its untagged output with the default's, byte for byte.
 
 A run waits for the person in three ways, and each is set apart:

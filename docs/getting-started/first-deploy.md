@@ -7,8 +7,15 @@ and [Requirements](requirements.md) for what the project assumes of the host.
 
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
-make init            # venv + collections + copies the *.example files + pre-commit hook
+pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
+make init            # make install (packages + collections) + copies the *.example files + pre-commit hook
 ```
+
+The project keeps no environment of its own: `make install`, which `make init` runs first, installs the
+locked tools into the Python that `python3` is in this directory - with pyenv, the virtualenv
+`.python-version` names - or into the one `PYTHON=/path/to/python` names, and every target runs them from
+there - never from a Python that is not a virtualenv, which they refuse. It installs the versions
+`uv.lock` pins and removes nothing else. Run `make install` again after a pull.
 
 Edit the three git-ignored files `make init` created:
 
@@ -28,7 +35,7 @@ The `make` targets refuse to run while `vault.yml` is still plaintext.
 
 ```bash
 (umask 077; openssl rand -base64 32 > .vault_pass)
-make vault-encrypt
+make vault
 
 make deploy VM_NAME=alpha
 ```
@@ -59,9 +66,8 @@ With `github_login_auto_start: false` or `tailscale_login_auto_start: false` the
 so a VM can be left for later: Enter signs in a VM whose Claude sign-in you just answered, `y` one that
 needed none (signed in already, or on an API key), and `n` leaves it. A VM whose Claude sign-in nobody
 answered - Enter at its `Code:` prompt, or a browser that never came back - is left out of the other two,
-and a run with no terminal skips all three; either way the deploy finishes, `make claude-login
-VM_NAME=alpha`, `make github-login VM_NAME=alpha` and `make tailscale-login VM_NAME=alpha` do them later,
-and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the command
+and a run with no terminal skips all three; either way the deploy finishes, `make login alpha` does
+them later (`TYPE=claude`, `github` or `tailscale` for one of them), and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the command
 that retries it, and the rest of the deploy goes on. [During a run](../guides/runs.md) shows how
 each of these waits looks.
 
@@ -73,16 +79,15 @@ memory and its minimum, disk — is applied only when the VM is created; changin
 `proxmox_vm_force_update`, see [Re-running](../guides/vms.md#re-running).) It works on the VMs named in `VM_NAME` and
 nothing else: it configures exactly what it has just provisioned, never the rest of your VMs, and
 signs them in one after another. For more than one VM it opens no window, and ends with each VM's
-`make code` line. The stages are available separately when you want them:
+`make code` line. Each stage is also a command of its own, for when you want only that part -
+`make deploy` with a `TYPE`, then `make login` and `make code`:
 
 ```bash
-make template                      # once per Proxmox host   (over SSH, as root)
-make provision VM_NAME=alpha       # create + start a VM     (via the API)
-make configure VM_NAME=alpha       # set it up               (over SSH, as the VM user)
-make claude-login VM_NAME=alpha    # sign Claude in, start Remote Control
-make github-login VM_NAME=alpha    # sign gh in, clone the private repositories
-make tailscale-login VM_NAME=alpha # join your Tailscale network by its web login
-make code VM_NAME=alpha            # open it in VS Code
+make deploy TYPE=template             # once per Proxmox host   (over SSH, as root)
+make deploy alpha TYPE=provision      # create + start a VM     (via the API)
+make deploy alpha TYPE=configure      # set it up               (over SSH, as the VM user)
+make login alpha                      # sign Claude, gh and Tailscale in; TYPE=claude, github or tailscale for one
+make code alpha                       # open it in VS Code
 ```
 
 A second `make deploy` rebuilds nothing. It checks through the API whether the template exists and
@@ -93,7 +98,7 @@ has drifted.
 
 ## What the run reports
 
-`make provision` prints the address each VM was given:
+`make deploy TYPE=provision` prints the address each VM was given:
 
 ```
 alpha is up at 192.0.2.51
@@ -106,13 +111,13 @@ wait for its address, `make deploy` does not configure it, and the run says so:
 gamma is stopped and was left that way, so it is not configured. Start it, or re-run with proxmox_vm_start_existing=true.
 ```
 
-That run exits 0: the job of `make provision` and `make deploy` is that the VMs exist, and a stopped
-VM does, so leaving it alone is a success, reported. `make configure VM_NAME=gamma` for the same VM
+That run exits 0: the job of `make deploy TYPE=provision` and `make deploy` is that the VMs exist, and a stopped
+VM does, so leaving it alone is a success, reported. `make deploy VM_NAME=gamma TYPE=configure` for the same VM
 fails instead — its job is the software on the VM you named, and it cannot do that job on a VM that is
 off, so it stops rather than configure the rest and exit 0 with gamma silently skipped.
 
 `make list` answers the same question later, for everything this project created. It is read-only,
-and unlike the discovery that `make configure` runs, it shows a VM whether or not its guest agent
+and unlike the discovery that `make deploy TYPE=configure` runs, it shows a VM whether or not its guest agent
 is answering:
 
 ```
@@ -122,7 +127,7 @@ beta                        9002  running   192.0.2.52
 gamma                       9003  stopped   -
 
 3 VMs tagged "claude-on-proxmox".
-VS Code: make code VM_NAME=<name> [PROJECT=<repo>] (make ssh-config refreshes the aliases).
+VS Code: make code VM_NAME=<name> [PROJECT=<repo>] (make deploy TYPE=ssh-config refreshes the aliases).
 No address for gamma: the guest agent has not reported one.
 Those VMs may be stopped, still booting, built without the agent, or on a node that is down.
 ```
@@ -135,14 +140,14 @@ after the VM, makes `ssh alpha` work too (see [VS Code](../guides/vscode.md)).
 
 A run that fails stops and says why, and `make logs` lists the log of the whole run. Fix the cause and run
 the same `make deploy` again: every stage is idempotent, and a VM a failed run left half-built is finished
-rather than skipped. `make vault-edit` changes a secret in the encrypted vault. The usual snags on a first
+rather than skipped. `make vault` changes a secret in the encrypted vault. The usual snags on a first
 run:
 
 | What the run says | What to check |
 |---|---|
-| `make template` cannot refresh the package lists | An enterprise repository enabled on the host without a subscription: [Package repositories](requirements.md#package-repositories) |
+| `make deploy TYPE=template` cannot refresh the package lists | An enterprise repository enabled on the host without a subscription: [Package repositories](requirements.md#package-repositories) |
 | The token is refused (401 or 403) | `proxmox_api_user`, `proxmox_api_token_id` and `vault_proxmox_api_token_secret`, and the role's privileges: [Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token) |
 | A VM never reports an address | The token's guest-agent privilege (`VM.Monitor` on 8.x, `VM.GuestAgent.Audit` on 9.x), and a template built with the guest agent: [Upgrading](../guides/upgrading.md) |
-| The VM is created untagged, or `make configure` finds no VM | Datacenter → Options → User Tag Access: [Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token) |
+| The VM is created untagged, or `make deploy TYPE=configure` finds no VM | Datacenter → Options → User Tag Access: [Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token) |
 | The clone fails, or the disk cannot be created | `proxmox_storage` (an install on ZFS has `local-zfs`, not `local-lvm`) and `proxmox_node`, which must be the node that holds the template: [Requirements](requirements.md#storage) |
-| A sign-in fails | The run names the command that retries it - `make claude-login`, `make github-login` or `make tailscale-login` with `VM_NAME` - and the rest of the deploy goes on |
+| A sign-in fails | The run names the command that retries it - `make login` with the VM's name and the sign-in's `TYPE` - and the rest of the deploy goes on |

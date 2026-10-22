@@ -1,6 +1,6 @@
 # `proxmox_vm`
 
-Creates, starts and deletes VMs through the Proxmox API, finding each by name and refusing any it did not tag. `playbooks/provision.yml` runs it for `make provision` and `make deploy`, and `playbooks/destroy.yml` with `proxmox_vm_state: absent`. Most of its variables are set through the shorter names in [Settings](../settings.md#proxmox).
+Creates, starts and deletes VMs through the Proxmox API, finding each by name and refusing any it did not tag. `playbooks/provision.yml` runs it for `make deploy TYPE=provision` and `make deploy`, and `playbooks/destroy.yml` with `proxmox_vm_state: absent`. Most of its variables are set through the shorter names in [Settings](../settings.md#proxmox).
 
 Using it: [VMs and fleets](../../guides/vms.md). How it works: [§5.2](../../architecture/roles.md#52-proxmox_vm--the-core-role).
 

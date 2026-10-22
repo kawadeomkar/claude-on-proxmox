@@ -129,7 +129,7 @@
 
 # Read before the unit is installed, so the "what do I run next" message below
 # reflects the state the user is actually in. vars/main.yml reads the result,
-# as it does for login.yml, which `make claude-login` runs.
+# as it does for login.yml, which `make login TYPE=claude` runs.
 - name: remote_control | Check whether this VM is logged in
   ansible.builtin.command:
     argv: ["{{ claude_code_remote_control_bin }}", auth, status]
@@ -154,7 +154,7 @@
 # In a real run the unit is always there by now. In check mode on a VM that
 # never had it, it is not: the template above writes nothing, and
 # systemd_service fails on a unit that does not exist - check mode included,
-# since ansible-core's missing-unit check does not look at it. So `make check`
+# since ansible-core's missing-unit check does not look at it. So `make deploy TYPE=check`
 # failed on every VM without Remote Control yet. There, the tasks that enable,
 # start or stop the service are skipped, and the template reporting "changed"
 # is what says the unit would be installed.
@@ -172,7 +172,7 @@
 #
 # Before the start block rather than in it, and not gated on the unit file:
 # in check mode on a VM that has no unit yet nothing below would run, and
-# `make check` would pass a configuration whose real run fails here.
+# `make deploy TYPE=check` would pass a configuration whose real run fails here.
 - name: remote_control | Require a git repository for worktree spawn
   when:
     - claude_code_remote_control_eligible | bool
@@ -365,7 +365,7 @@
         daemon_reload: true
       when: claude_code_remote_control_unit_file.stat.exists
 
-    # `make claude-login` decides from the same vars, so what it says next
+    # `make login TYPE=claude` decides from the same vars, so what it says next
     # agrees with this. A settings blocker on a VM that is signed in needs no
     # login step, so none is suggested for it; with one, a sign-in does not
     # start the service either. Inside make deploy the sign-in comes next in
@@ -379,13 +379,13 @@
                    ~ ' on your machine and asks for the code the page shows'
                    ~ (', and starts it.' if claude_code_remote_control_settings_blockers | length == 0 else '.'))
              ~ (' A sign-in made any other way, such as in the Claude terminal of make code, starts it'
-                ~ ' by itself too; "make configure VM_NAME=' ~ inventory_hostname ~ '" then confirms it.'
+                ~ ' by itself too; "make deploy VM_NAME=' ~ inventory_hostname ~ ' TYPE=configure" then confirms it.'
                 if claude_code_remote_control_bridge_wanted | bool else '')
              if not (claude_code_remote_control_status.loggedIn | default(false)) | bool
              else ''
              if claude_code_remote_control_settings_blockers | length > 0
              else '"' ~ claude_code_login_command ~ '" checks again and signs it in if a login'
-                  ~ ' is still needed; then re-run "make configure VM_NAME=' ~ inventory_hostname ~ '" and the service'
+                  ~ ' is still needed; then re-run "make deploy VM_NAME=' ~ inventory_hostname ~ ' TYPE=configure" and the service'
                   ~ ' starts.' }}
       ansible.builtin.debug:
         msg: >-
@@ -397,7 +397,7 @@
     # out, the sign-in is the one thing to do, so the line goes under the
     # sign-in's matter - empty under make deploy, whose sign-in follows
     # (claude_code_sign_in_follows) and whose report, login.yml's, says what
-    # is left. A make configure, or a make deploy with no terminal, runs no
+    # is left. A make deploy TYPE=configure, or a make deploy with no terminal, runs no
     # sign-in, so this is the line that names it. Signed in, that matter is
     # left alone: after_login.yml runs this file after a sign-in, and
     # login.yml's line for a login of the wrong kind stays.

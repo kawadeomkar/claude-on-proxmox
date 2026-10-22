@@ -2,7 +2,7 @@
 
 | Where | What |
 |-------|------|
-| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core), [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+, `make`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `make code` (optional) |
+| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core) in a virtualenv of its own for this project, [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+, `make`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `make code` (optional) |
 | Proxmox VE 8.x or 9.x | Root SSH access (template build only) and an API token, see [Proxmox access](proxmox-access.md) |
 | Testing (optional) | Docker Engine for Molecule; Vagrant + VirtualBox for a full VM test |
 
@@ -16,7 +16,7 @@ VMs with a repository that fails `apt update`, or with static addresses and no D
 
 | Assumption | Why |
 |---|---|
-| `apt` works on the host | `make template` installs `libguestfs-tools` |
+| `apt` works on the host | `make deploy TYPE=template` installs `libguestfs-tools` |
 | The host can run VMs | hardware virtualization is on |
 | A bridge exists, and something on it hands out DHCP leases | every VM takes its address from DHCP |
 | A storage for VM disks, named in `proxmox_storage` | the template and every clone go there |
@@ -29,7 +29,7 @@ the parts of it this project depends on.
 
 ## Package repositories
 
-`make template` installs `libguestfs-tools` on the host to bake the QEMU guest agent into the image,
+`make deploy TYPE=template` installs `libguestfs-tools` on the host to bake the QEMU guest agent into the image,
 and it refreshes the package lists first. That refresh fails if *any* repository does. A fresh install
 enables two enterprise repositories, Proxmox VE's and Ceph's (Ceph's even if you never use Ceph), and
 without a subscription both return `401 Unauthorized`, so one left enabled is enough to stop the build.
@@ -52,7 +52,7 @@ Proxmox:
 
 On the controller side, Ansible works on up to `forks` VMs at a time - 20, set in `ansible.cfg` -
 so a fleet larger than that is cloned, booted and configured in waves. Raise it for one run with
-`make provision ANSIBLE_ARGS="-f 30"`; the hypervisor, not Ansible, is the real limit.
+`make deploy TYPE=provision ANSIBLE_ARGS="-f 30"`; the hypervisor, not Ansible, is the real limit.
 
 Expect a VM's address to change when you rebuild it. A DHCP reservation in your router pins an
 address to a MAC, and that only lasts as long as the VM: Proxmox gives every clone a new random MAC
@@ -91,13 +91,13 @@ reads the template's configuration on the node it is sent to, so a template on a
 to clone. Shared storage does not change that: it only matters to Proxmox's *target node* clone
 option, which this project does not use.
 
-`make template` builds the template on whichever node `inventory/hosts.yml` points at, over SSH, so
+`make deploy TYPE=template` builds the template on whichever node `inventory/hosts.yml` points at, over SSH, so
 point it at the node you create VMs on and set `proxmox_node` to that same node — `make deploy`
 does both in one run. To create VMs on several nodes, build a
 template on each with its own `proxmox_template_vmid` and `proxmox_template_name` (VMIDs are unique
 across the cluster, and cloning by name fails when two templates share one), then set
 `proxmox_node` and `proxmox_template_name` together for each run. Only the clone cares about
 `proxmox_node`: a VM you later migrate to another node is found by name wherever it is, and every
-re-run — `make configure`, a repair, `proxmox_vm_force_update` — addresses the node it is on.
+re-run — `make deploy TYPE=configure`, a repair, `proxmox_vm_force_update` — addresses the node it is on.
 
 See [Cluster Manager](https://pve.proxmox.com/wiki/Cluster_Manager).

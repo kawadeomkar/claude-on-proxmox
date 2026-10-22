@@ -1,8 +1,8 @@
 ---
 name: Set up the Ansible toolchain
 description: >-
-  Install Python and uv, restore the uv and Galaxy caches, then run `make deps`
-  so the job uses exactly the versions locked in uv.lock and pinned in
+  Install Python and uv, make a virtualenv, restore the uv and Galaxy caches,
+  then run `make install` so the job uses exactly the versions locked in uv.lock and pinned in
   requirements.yml.
 
 runs:
@@ -22,9 +22,13 @@ runs:
       with:
         version-file: uv.lock
         python-version: "3.12"
+        # A virtualenv for the job, first on PATH for every step after this
+        # one, so python3 is its Python: make install installs into the
+        # environment python3 is, and refuses one that is not a virtualenv.
+        activate-environment: true
 
     # ansible-galaxy skips collections that are already installed, so a cache
-    # hit turns `make deps` into a no-op for the Galaxy half.
+    # hit turns `make install` into a no-op for the Galaxy half.
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ~/.ansible/collections
@@ -35,5 +39,5 @@ runs:
         key: galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
 
     - name: Install tooling
-      run: make deps
+      run: make install
       shell: bash

@@ -1,6 +1,6 @@
 # `github_projects`
 
-Signs `gh` in to GitHub on the VM - from a token, or by the device flow - makes it git's credential helper, and clones your repositories into the projects directory. Three entry points: `main` for `make configure` (`TAGS=github_projects`), `login` for `make github-login` and the sign-in in `make deploy`, and `release` for `make destroy`.
+Signs `gh` in to GitHub on the VM - from a token, or by the device flow - makes it git's credential helper, and clones your repositories into the projects directory. Three entry points: `main` for `make deploy TYPE=configure` (`TAGS=github_projects`), `login` for `make login TYPE=github` and the sign-in in `make deploy`, and `release` for `make destroy`.
 
 Using it: [GitHub](../../guides/github.md). How it works: [§5.6](../../architecture/roles.md#56-github_projects--sign-in-to-github-clone-an-accounts-repositories).
 
@@ -30,7 +30,7 @@ Using it: [GitHub](../../guides/github.md). How it works: [§5.6](../../architec
 | `github_projects_auth_method` | str | `auto` | auto takes the token when set, else the device flow; web is the device flow always; token is the token only, put over any login gh holds. Set through github_auth_method in local.yml. One of `auto`, `web`, `token`. |
 | `github_projects_login_scopes` | list of `str` | `["workflow"]` | Scopes the device flow asks for on top of gh's own (repo, read:org, gist). Set through github_login_scopes in local.yml. |
 | `github_projects_login_desktop` | bool | `true` | During the device flow, open the page and copy the code on the controller. Off in every test. Set through login_desktop in local.yml. |
-| `github_projects_sign_in_follows` | bool | `false` | The sign-ins come next in this run (make deploy), so the message for a signed-out VM says so rather than naming make github-login. |
+| `github_projects_sign_in_follows` | bool | `false` | The sign-ins come next in this run (make deploy), so the message for a signed-out VM says so rather than naming make login TYPE=github. |
 | `github_projects_git_user_name` | str | `""` | git user.name for github_projects_user, written always. Empty derives it from the GitHub account, and only where ~/.gitconfig has none yet. Set through git_user_name in local.yml. |
 | `github_projects_git_user_email` | str | `""` | git user.email for github_projects_user, written always. Empty uses GitHub's noreply address for the account, and only where ~/.gitconfig has none yet. Set through git_user_email in local.yml. |
 
@@ -112,8 +112,8 @@ Set in `roles/github_projects/vars/main.yml`. These are not settings: Ansible ra
 | `github_projects_git_name` | <code>{{ ((github_projects_listing.user.name &#124; default('', true)) or github_projects_listing.user.login) if github_projects_git_person &#124; bool else '' }}</code> |
 | `github_projects_git_email` | <code>{{ (github_projects_listing.user.id ~ '+' ~ github_projects_listing.user.login ~ '@users.noreply.github.com') if github_projects_git_person &#124; bool else '' }}</code> |
 | `github_projects_git_identity_wanted` | <code>{{ {'user.name': github_projects_git_user_name if github_projects_git_user_name &#124; length > 0 else '' if 'user.name' in github_projects_git_identity_set else github_projects_git_name, 'user.email': github_projects_git_user_email if github_projects_git_user_email &#124; length > 0 else '' if 'user.email' in github_projects_git_identity_set else github_projects_git_email} &#124; dict2items &#124; selectattr('value') &#124; items2dict }}</code> |
-| `github_projects_login_command` | `make github-login VM_NAME={{ inventory_hostname }}` |
-| `github_projects_configure_command` | `make configure VM_NAME={{ inventory_hostname }} TAGS=github_projects` |
+| `github_projects_login_command` | `make login VM_NAME={{ inventory_hostname }} TYPE=github` |
+| `github_projects_configure_command` | `make deploy VM_NAME={{ inventory_hostname }} TAGS=github_projects` |
 | `github_projects_release_token` | <code>{{ github_projects_release_token_raw.stdout &#124; default('') &#124; trim if (github_projects_release_token_raw.rc &#124; default(1)) == 0 else '' }}</code> |
 | `github_projects_device_marker_digest` | <code>{{ (github_projects_device_marker_raw.content &#124; b64decode &#124; trim) if github_projects_device_marker_raw.content is defined else '' }}</code> |
 | `github_projects_release_ours` | <code>{{ github_projects_release_token &#124; length > 0 and github_projects_device_marker_digest &#124; length > 0 and github_projects_device_marker_digest == github_projects_release_token &#124; hash('sha256') and github_projects_release_token != github_projects_token }}</code> |

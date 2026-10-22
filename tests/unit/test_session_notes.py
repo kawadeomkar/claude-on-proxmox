@@ -126,9 +126,9 @@ def test_the_vm_s_facts_and_the_commands_with_its_name(tmp_path):
         "`ssh alpha`",
         "`ssh dev@192.0.2.51`",
         "`make code VM_NAME=alpha`",
-        "`make claude-login VM_NAME=alpha`",
-        "`make github-login VM_NAME=alpha`",
-        "`make tailscale-login VM_NAME=alpha`",
+        "`make login VM_NAME=alpha TYPE=claude`",
+        "`make login VM_NAME=alpha TYPE=github`",
+        "`make login VM_NAME=alpha TYPE=tailscale`",
         "`make destroy VM_NAME=alpha`",
         "`ssh-keygen -R 192.0.2.51`",
         "`systemctl status claude-remote-control`",
@@ -143,7 +143,7 @@ def test_switched_off_parts_are_left_out(tmp_path):
     text = _render(tmp_path, tailscale_enabled=False, claude_code_remote_control=False, github_auth=False)
     assert "Tailscale" not in _outside(text)
     assert "Remote Control" not in text and "claude-remote-control" not in text
-    assert "make github-login" not in text
+    assert "TYPE=github" not in text
 
 
 def test_a_listing_without_the_vm_s_sizes_leaves_the_machine_row_out(tmp_path):

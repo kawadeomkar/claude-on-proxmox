@@ -50,7 +50,7 @@ There is no project named parkbnb in /home/dev/projects on alpha. Did you mean P
 ```
 
 The same check catches a VM that was never configured, which has no `~/projects` yet; the message
-says to run `make configure` first.
+says to run `make deploy TYPE=configure` first.
 
 ## Where the alias lives
 
@@ -81,16 +81,16 @@ Host alpha
 
 ## Keeping it current
 
-`make deploy` and `make configure` write the alias of each VM they finish,
+`make deploy` and `make deploy TYPE=configure` write the alias of each VM they finish,
 `make destroy` removes it with the VM (as it already forgets the host key; a VM whose deletion
-fails keeps its alias, since it is still there), and `make ssh-config`
+fails keeps its alias, since it is still there), and `make deploy TYPE=ssh-config`
 brings the whole fleet back in step at any time: a lease that moved, a VM deleted in the Proxmox UI,
 a second machine. Fleet-wide it also prunes the aliases of VMs that no longer exist. Pruning only
 ever removes blocks from the managed file, never VMs, and a block is only ever written for a VM
 tagged `claude-on-proxmox`, so a VM you run outside this project cannot be affected. Two cases are
 left alone and reported instead: a name that an *untagged* VM still carries (not this project's to
 reason about, exactly as `make destroy` refuses it), and anything at all while a tagged VM is listed
-without a name, which is what a node that is down looks like. `make ssh-config VM_NAME=alpha`
+without a name, which is what a node that is down looks like. `make deploy VM_NAME=alpha TYPE=ssh-config`
 refreshes one VM and never prunes.
 
 On a network whose DNS resolves VM names (a router that registers DHCP leases, or avahi with
@@ -99,8 +99,8 @@ address; a lease that moves then never matters.
 
 **Agent forwarding is off**, and should stay off: the VM user has passwordless sudo and runs Claude
 Code, and `ForwardAgent yes` would hand every key in your agent to both for the life of the
-connection. Pushes go through `gh`, signed in on the VM itself - by `make configure` from a vault
-token, or by `make deploy` and `make github-login` through GitHub's device flow (see
+connection. Pushes go through `gh`, signed in on the VM itself - by `make deploy TYPE=configure` from a vault
+token, or by `make deploy` and `make login TYPE=github` through GitHub's device flow (see
 [Private repositories, and pushing from the VM](github.md#private-repositories-and-pushing-from-the-vm)).
 `claude_ssh_forward_agent: true` turns it on if you have decided otherwise.
 
@@ -141,12 +141,12 @@ yet, the terminal runs `claude auth login` first. The sign-in page opens in the 
 machine - VS Code Server sends every URL a terminal opens there - and if the page shows a code, paste
 it into the terminal. Remote Control then starts by itself where the `claude_code` role left a unit
 waiting for the login; on a VM configured before that unit existed, or whose settings block Remote
-Control, the terminal names `make configure VM_NAME=alpha TAGS=claude_code` instead. A sign-in that
+Control, the terminal names `make deploy VM_NAME=alpha TAGS=claude_code` instead. A sign-in that
 fails says how to try again: *Tasks: Run Task*, *Claude*, or a window reload. Then GitHub the same
 way, on a VM where `gh` is not signed in yet: the terminal shows a one-time code and opens the page to
 enter it on, and `gh` becomes git's credential helper, so a push from that terminal works at once;
 Ctrl-C skips GitHub, and Claude starts. The
-private repositories follow on the next `make configure` (see
+private repositories follow on the next `make deploy TYPE=configure` (see
 [Private repositories, and pushing from the VM](github.md#private-repositories-and-pushing-from-the-vm));
 `github_auth: false`, or `github_auth_method: token`, leaves GitHub out of the terminal too.
 
@@ -193,7 +193,7 @@ name, and `github_projects` would clone it there, so leave it out of `github_pro
 ### After the first sign-in
 
 [Remote Control](remote-control.md)
-waits for exactly that login. The terminal says it starts by itself, and `make configure VM_NAME=alpha
+waits for exactly that login. The terminal says it starts by itself, and `make deploy VM_NAME=alpha
 TAGS=claude_code` keeps it on across reboots; where nothing waits for the login, it says that same
 command starts it. A VM configured with an API key is already signed in, and goes straight to `claude`.
 

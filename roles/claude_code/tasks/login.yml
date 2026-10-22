@@ -1,5 +1,5 @@
 ---
-# Entry point for playbooks/claude_login.yml (`make claude-login`, and the
+# Entry point for playbooks/claude_login.yml (`make login TYPE=claude`, and the
 # sign-in step of `make deploy`): say whether this VM can already run Remote
 # Control, and if not, what to do about it - or, with
 # claude_code_login_interactive, sign a VM that has no login in by the browser
@@ -11,7 +11,7 @@
 # same vars/main.yml definitions remote_control.yml does. Deciding separately,
 # the playbook took any login for a claude.ai one, and a VM signed in with a
 # Console account, a `claude setup-token` token or an API key was sent back and
-# forth between `make claude-login` and `make configure`.
+# forth between `make login TYPE=claude` and `make deploy TYPE=configure`.
 
 # This entry point never runs main.yml, which resolves the home for everything
 # else; the sign-in keeps its files there, and the settings are read from it.
@@ -65,7 +65,7 @@
 # closing quote is pasted along with it and ends up in the remote command.
 # Remote Control off on purpose - an API key from the vault, or
 # claude_remote_control: false - is said as such, not as something to fix;
-# make configure is named only where it is what starts Remote Control, after a
+# make deploy TYPE=configure is named only where it is what starts Remote Control, after a
 # login fixed by hand, for which no path unit waits. The text is built in vars
 # so the message is one line.
 - name: login | Report the login state and what to do about it
@@ -88,7 +88,7 @@
                  if claude_code_anthropic_api_key | length > 0 else 'claude_remote_control is false.')
          if not claude_code_remote_control_wanted | bool
          else 'signed in, but not in a way Remote Control can use: ' ~ claude_code_remote_control_blocker
-              ~ ' Then make configure VM_NAME=' ~ inventory_hostname ~ ' TAGS=claude_code starts it. If that'
+              ~ ' Then make deploy VM_NAME=' ~ inventory_hostname ~ ' TAGS=claude_code starts it. If that'
               ~ ' leaves the VM logged out, log in with the claude.ai account first: '
               ~ claude_code_remote_control_login_command }}
   ansible.builtin.debug:

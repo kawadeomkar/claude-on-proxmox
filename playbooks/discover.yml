@@ -1,8 +1,8 @@
 ---
 # Find the VMs this project created and make them reachable.
 #
-#   make configure                    -> every VM tagged claude-on-proxmox
-#   make configure VM_NAME=alpha,beta -> only those
+#   make deploy TYPE=configure                    -> every VM tagged claude-on-proxmox
+#   make deploy VM_NAME=alpha,beta TYPE=configure -> only those
 #
 # Every VM the proxmox_vm role creates carries the claude-on-proxmox tag, so
 # Proxmox itself is the register of what exists - nothing is tracked locally
@@ -36,7 +36,7 @@
         claude_vm_discovered: "{{ claude_vm_requested }}"
 
     # Proxmox permits duplicate names. The role refuses to act on one; here the
-    # second add_host would silently overwrite the first, so `make configure`
+    # second add_host would silently overwrite the first, so `make deploy TYPE=configure`
     # would report success having touched only one of them, unpredictably.
     - name: Refuse to continue with duplicated VM names
       vars:
@@ -109,7 +109,7 @@
       ansible.builtin.debug:
         msg: >-
           No VMs to configure.
-          {{ 'Proxmox has no VM tagged ' ~ claude_vm_tag ~ '; run make provision first.'
+          {{ 'Proxmox has no VM tagged ' ~ claude_vm_tag ~ '; run make deploy first.'
              if claude_vm_tagged | length == 0
              else (claude_vm_discovered | length == 0)
                   | ternary('Tagged VMs exist (' ~ (claude_vm_tagged | map(attribute='name', default='(no name)') | join(', '))

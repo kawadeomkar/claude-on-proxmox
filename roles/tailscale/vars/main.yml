@@ -313,5 +313,5 @@ tailscale_absent_login_left: "{{ tailscale_absent_unasked | bool or tailscale_ab
 # --- Where to fix what the report names ---
 tailscale_admin_page: >-
   {{ 'your control server' if tailscale_login_server | length > 0 else 'https://login.tailscale.com/admin/machines' }}
-tailscale_configure_command: make configure VM_NAME={{ inventory_hostname }} TAGS=tailscale
-tailscale_login_command: make tailscale-login VM_NAME={{ inventory_hostname }}
+tailscale_configure_command: make deploy VM_NAME={{ inventory_hostname }} TAGS=tailscale
+tailscale_login_command: make login VM_NAME={{ inventory_hostname }} TYPE=tailscale

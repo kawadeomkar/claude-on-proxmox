@@ -5,7 +5,7 @@
 #   make destroy VM_NAME=alpha,beta
 #
 # Without VM_NAME this targets claude-on-proxmox-default, the same name
-# `make provision` uses when none is given. The confirmation prompt runs first,
+# `make deploy TYPE=provision` uses when none is given. The confirmation prompt runs first,
 # since it is a play-level vars_prompt; the task right after it then checks that
 # every VM asked for actually exists, so a wrong name fails loudly rather than
 # being "deleted" silently once confirmed.

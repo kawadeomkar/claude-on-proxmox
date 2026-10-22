@@ -4,7 +4,7 @@
 #   cp inventory/hosts.yml.example inventory/hosts.yml
 #
 # The Proxmox host's address is the only address you have to supply. VMs are
-# created by name (make provision VM_NAME=alpha), Proxmox assigns their VMIDs,
+# created by name (make deploy alpha), Proxmox assigns their VMIDs,
 # your DHCP server assigns their addresses, and the QEMU guest agent reports
 # those back - so VMs are never listed here.
 all:
