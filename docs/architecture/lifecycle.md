@@ -596,7 +596,8 @@ given values but still lacks the address, the secret or the username fails, nami
 
 ## 4.13 `playbooks/init_check.yml`
 
-`make init`'s second step, a second `ansible-playbook` run with the project's inventory and the vault - the
+`make init`'s second step, a second `ansible-playbook` run with the project's inventory and the vault (and
+`init_ask` and `init_given`, as the first had) - the
 password looked for when the recipe runs, since the questions may have just made `.vault_pass` - so it sees
 the settings exactly as `make deploy` will. The Makefile skips it, with one line, when the vault is
 encrypted and neither `.vault_pass` nor `ANSIBLE_VAULT_PASSWORD_FILE` can open it. One play on `localhost`,
@@ -623,8 +624,30 @@ every task a read (held by `tests/unit/test_init_check.py`):
    and reads the host's short name, its node name (`init_ssh_node`), which must be `proxmox_node`, since the
    template is built there. No host in the group is a problem too. `accept-new` may add its host key to
    `~/.ssh/known_hosts`, one of the two files the project writes there.
-7. **A key for the VMs**: `vm_ssh_public_keys`. `vm_password` alone is a problem - it is for the Proxmox
+7. **The node**, worked out, never chosen: the template's node; without a template, the only node there is,
+   or the node root SSH said the host is. Equal to `proxmox_node`, it is `ok`. While `proxmox_node` is the
+   default, the node is written into `local.yml` in place of its commented line - at a terminal only, with no
+   question, since there is nothing to choose - and set there, a node that differs is a problem naming both.
+   A node SSH named that the cluster does not list, or several nodes and no SSH, is a problem too.
+8. **The storage and the bridge**, on that node, through `tasks/init_choose.yml`: the storages for VM disks
+   (`GET /nodes/<node>/storage?content=images&enabled=1`) and, while there is no template, the bridges
+   (`GET /nodes/<node>/network?type=any_local_bridge`), both filtered by Proxmox to what the token may see,
+   each with its own permission read (`Datastore.AllocateSpace` and `Datastore.Audit` on `/storage/<name>`,
+   `SDN.Use` on `/sdn/zones/localnetwork/<name>`, by the `init_candidates` filter). The value in effect, listed
+   and usable, is `ok`; set in `local.yml` and not listed, or lacking a privilege, a problem; the default, not
+   listed, a question at a terminal - y or n for one usable candidate, a number for several, the unusable
+   shown with what they lack, or `inactive` (listed, but not reachable) - whose answer is written. With a
+   template, the bridge is its `net0`'s and only `SDN.Use` on it is checked; a template with none on `net0` is
+   a problem. A token that sees no candidate at all is told which privileges make Proxmox list one, with the
+   `pveum aclmod` line. Bridges are the local zone's: an SDN VNet is neither listed nor checked. Until the node
+   is known, nothing is listed, asked or written for either, and each is noted as not checked; a listing
+   Proxmox refuses is a problem. `STORAGE` and `BRIDGE` given are held to the same lists before anything is
+   written, written whenever the token can use them, and refused while they cannot be checked; `BRIDGE` beside
+   a template is nothing to do when it is the template's own, and refused otherwise.
+9. **A key for the VMs**: `vm_ssh_public_keys`. `vm_password` alone is a problem - it is for the Proxmox
    console, and deploy configures the VMs over SSH, which takes a key; with neither, the public keys in
    `~/.ssh` are listed and the `local.yml` line suggested.
 
 Each result is `ok` or `!!` with its fix, printed together at the end, and the run fails when any is `!!`.
+It writes `local.yml` alone, through `tasks/init_local_setting.yml`, and only at a terminal or for a value
+given; without either, it reports.

@@ -54,14 +54,22 @@ each problem `!!` with its fix; `make init` then fails, so a scripted one exits 
 | `the token lacks ... on /vms` | the role is missing a privilege, often the guest agent's after an upgrade from 8.x: the `pveum role modify` line it prints |
 | `the token holds no privilege on /vms at all` | a token made with privilege separation, which has none of its user's: `--privsep 0`, or an ACL for the token |
 | `... on /vms but not on the VMs under it` | the ACL on `/vms` has Propagate off: `pveum aclmod /vms ... -propagate 1` |
-| `the template ... is on node X, but proxmox_node is Y` | VMs are cloned on the node that holds the template: `proxmox_node: X` |
+| `the template is on X, but proxmox_node is Y` | VMs are cloned on the node that holds the template: `proxmox_node: X` (`make init` at a terminal writes it while `proxmox_node` is the default) |
 | `VMID ..., where make deploy would build it, is taken` | `proxmox_template_vmid` names a guest that is not the template: a free VMID, or `proxmox_template_name` of the template there |
 | `root SSH to ... failed` | the template is not built yet, and is built over root SSH: `ssh-copy-id root@<host>` |
-| `root SSH ... works, but it is node X` | the template is built on the host `hosts.yml` reaches and cloned on `proxmox_node`: `proxmox_node: X` |
+| `<host> is node X, but proxmox_node is Y` | the template is built on the host `hosts.yml` reaches and cloned on `proxmox_node`: `proxmox_node: X` |
+| `which node <host> is cannot be told` | several nodes, and root SSH failed: fix SSH, and `make init` works it out |
+| `storage X is not on <node>` | the default `local-lvm` is not there (a ZFS install has `local-zfs`): pick one `make init` lists, or set `proxmox_storage` |
+| `storage X: the token lacks ...` | the role is not granted on `/storage/X`: the `pveum aclmod` line it prints |
+| `... the token can use no other there. Proxmox lists one only to a token that holds ...` | the token sees no storage for VM disks at all, often a ZFS host where the role was granted on `/storage/local-lvm`: grant it on yours |
+| `storage X is inactive` | Proxmox lists it but cannot reach it (an NFS share that is down) |
+| `the template's net0 has no bridge` | every clone inherits that NIC: rebuild the template with `proxmox_bridge` set |
+| `--   ... is not checked` | not a problem in itself: what stopped it (the node, the API) is said on its own line |
+| `bridge X, the template's ... lacks SDN.Use` | every clone inherits the template's NIC: grant `SDN.Use` on that bridge |
 | `the VMs would get no SSH key`, or only `vm_password` | `vm_ssh_public_keys` in `local.yml`: deploy configures the VMs over SSH, which takes a key |
 
-Storage and bridge are not checked here: a default `local-lvm` on a ZFS host would read as a missing
-privilege when the real problem is the name.
+Storage and bridge are checked on the node worked out, among what it lists: a default `local-lvm` on a ZFS
+host is a name to replace, which `make init` offers, not a missing privilege.
 
 ## Duplicate names
 

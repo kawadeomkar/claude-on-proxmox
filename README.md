@@ -78,7 +78,7 @@ the vault encrypted, with its password in `.vault_pass`: keep that file.
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `make init` asks for. VMs are **not** listed here |
 | `inventory/group_vars/all/vault.yml` | Encrypted: the token secret and your GitHub username, which `make init` asks for. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `make vault` |
-| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a token not named `ansible@pve!ansible` (`make init` asks), a storage or bridge that is not `local-lvm` or `vmbr0`, a node not named `pve`, `tailscale_enabled: false` without a Tailscale account, VM size, which repositories to clone |
+| `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone, `tailscale_enabled: false` without a Tailscale account - and what `make init` writes there: a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
 Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md),
 and `make vault` edits the vault. [Your first deploy](docs/getting-started/first-deploy.md) has the same

@@ -1084,6 +1084,9 @@ def test_init_asks_only_at_a_terminal(tmp_path: Path) -> None:
     result, recorded = _at_a_terminal(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert recorded[recorded.index(ASK) - 1] == "-e", recorded
+    # The checks ask too, for a storage or a bridge.
+    checks = _playbook_runs(tmp_path)[1]
+    assert checks[checks.index(ASK) - 1] == "-e", checks
     # Copied once, said once.
     assert "Created" not in result.stdout
 
@@ -1101,9 +1104,12 @@ def test_init_logs_its_run(tmp_path: Path) -> None:
 
 def test_the_values_given_reach_the_playbook_as_one_json_extra_var(tmp_path: Path) -> None:
     given = ["HOST=pve.lan", "TOKEN_USER=deploy@pam", "TOKEN_NAME=claude", "GITHUB_USER=octo-cat", "TAILSCALE=off"]
+    given += ["STORAGE=local-zfs", "BRIDGE=vmbr1"]
     result, recorded = _init_run(tmp_path, *given, "TOKEN_SECRET_FILE=~/.config/pve-token")
     assert result.returncode == 0, result.stdout + result.stderr
     passed = [json.loads(arg) for arg in recorded if arg.startswith('{"init_given"')]
+    # The checks, which settle the storage and the bridge, are given the same.
+    assert [json.loads(arg) for arg in _playbook_runs(tmp_path)[1] if arg.startswith('{"init_given"')] == passed
     assert passed == [
         {
             "init_given": {
@@ -1112,6 +1118,8 @@ def test_the_values_given_reach_the_playbook_as_one_json_extra_var(tmp_path: Pat
                 "token_name": "claude",
                 "token_secret_file": "~/.config/pve-token",
                 "github_user": "octo-cat",
+                "storage": "local-zfs",
+                "bridge": "vmbr1",
                 "tailscale": "off",
             }
         }
@@ -1130,7 +1138,9 @@ def test_an_exported_value_is_not_given(tmp_path: Path) -> None:
     assert not any("exported" in arg for arg in recorded), recorded
 
 
-@pytest.mark.parametrize("name", ["HOST", "TOKEN_USER", "TOKEN_NAME", "TOKEN_SECRET_FILE", "GITHUB_USER"])
+@pytest.mark.parametrize(
+    "name", ["HOST", "TOKEN_USER", "TOKEN_NAME", "TOKEN_SECRET_FILE", "GITHUB_USER", "STORAGE", "BRIDGE"]
+)
 @pytest.mark.parametrize("value", ["a'b", 'a"b', "a b", "$(x)", "a`b", "a;b", "a\nb", "ålpha"])
 def test_a_given_value_outside_its_characters_is_refused_before_anything_runs(
     tmp_path: Path, name: str, value: str

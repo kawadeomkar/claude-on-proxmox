@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1427 tests. By file:
+pytest over `tests/unit/`: 1470 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -82,7 +82,7 @@ pytest over `tests/unit/`: 1427 tests. By file:
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
-- **`make init`'s questions** (`test_init_settings.py` 60, `test_settings_filter.py` 71):
+- **`make init`'s questions** (`test_init_settings.py` 60, `test_settings_filter.py` 73):
   `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
   which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
   a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
@@ -99,7 +99,7 @@ pytest over `tests/unit/`: 1427 tests. By file:
   and the log at `-vvv`; statically, every write under `init_ask` and every task that renders the secret
   or the vault's text `no_log`. The filter: each kind's accepted answers in their normal form, and what
   each refuses.
-- **`make init`'s checks** (`test_init_check.py` 26): `init_check.yml` against the fake Proxmox on a
+- **`make init`'s checks** (`test_init_check.py` 51): `init_check.yml` against the fake Proxmox on a
   loopback port, in an inventory of the test's own with the project's `defaults.yml`: nothing asked of
   Proxmox while a value is the example's; every check `ok` on a host with its template, on 8.x and on 9.x,
   and no SSH then; a wrong secret, a closed port (an IPv6 address said bracketed), a missing privilege on
@@ -108,8 +108,18 @@ pytest over `tests/unit/`: 1427 tests. By file:
   taken by a VM, a template of another name, a container or a guest on a node that is down; without the
   template, root SSH to a stand-in host that reads its node name, one that is another node, and one whose
   `ssh` is refused; no key, and a password alone; a plaintext vault; and the secret nowhere in the output or
-  the `-vvv` log. Statically: every task a read (a `uri` a GET that saves nothing), every `uri` with the CA
-  path and `no_log`, the privileges checked the role's in the docs, and no run reaching a real `ssh`. Running
+  the `-vvv` log. The node, storage and bridge: every default fitting and nothing written; the template's
+  node written in place of the default at a terminal and reported without one; two nodes taking the one SSH
+  reaches, or none without SSH; a storage chosen by number among those the token can use, an Audit-only one
+  shown and not offered, one offered y or n, Enter leaving it, none written without a terminal, one set
+  that is not listed; the template's bridge without `SDN.Use`; a bridge offered before the template; and
+  `STORAGE` and `BRIDGE` given - written even where the default fits, refused when the token cannot use
+  them or they differ from what is set, or while the node is unknown, `BRIDGE` refused beside a template
+  unless it is the template's own, before anything is written. Also: nothing asked or written while the node
+  is unknown, a token that sees no storage told what lists one, an inactive storage, a template without a
+  bridge, no host in the `proxmox` group, and the playbook loading with duplicate keys made fatal. Statically: every task a read (a `uri` a GET that saves nothing), every `uri` with the CA
+  path and `no_log`, the settings written only through `tasks/init_local_setting.yml` at a terminal or as
+  given, the privileges checked the role's in the docs, and no run reaching a real `ssh`. Running
   a fake on a loopback port, the fake Proxmox's certificate and `_pve` live in `tests/unit/harness.py`, shared
   with `test_release.py`; each file keeps its own `fake_pve` fixture.
 - **The managed SSH config** (`test_ssh_config.py` 29): `tasks/ssh_config.yml` for real against a
@@ -127,7 +137,7 @@ pytest over `tests/unit/`: 1427 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 363): `vm-name-check` accepts DNS-like names and refuses
+- **The Makefile** (`test_makefile.py` 379): `vm-name-check` accepts DNS-like names and refuses
   whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
@@ -334,6 +344,11 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   can be shown to recover.
 - A config write carrying `fake-verbatim-tags` keeps its tags as sent, for the comma-joined fixture.
   It is not a PVE parameter.
+- Each node lists its storages for VM disks and its bridges, each only where the token may see it -
+  `Datastore.Audit` or `AllocateSpace`, `SDN.Audit` or `Use` - as Proxmox filters them: `local-lvm` and
+  `vmbr0` on `pve` until `PUT /api2/json/fake/storages?node=&storages=<name>:<type>,...` or
+  `/fake/bridges?node=&bridges=` replaces them, and `PUT /api2/json/fake/vm-node?vmid=&node=` moves a VM, the
+  template included, to `pve2` once it is up; per-VM requests are served on the node the VM is on.
 - `GET /access/permissions` answers each token's privileges by path, the privilege's name as the key and
   its propagate flag as the value, as Proxmox does: what `PUT /api2/json/fake/privileges?token=&path=&privs=`
   set (`VM.Clone:0` granted without Propagate), else the whole role `docs/getting-started/proxmox-access.md`

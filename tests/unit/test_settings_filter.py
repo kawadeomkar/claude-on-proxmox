@@ -17,6 +17,8 @@ RULES = _module.RULES
 init_answer = _module.init_answer
 init_answer_rule = _module.init_answer_rule
 with_setting = _module.with_setting
+init_candidates = _module.init_candidates
+init_choose_rows = _module.init_choose_rows
 
 ACCEPTED = {
     "host": [
@@ -124,3 +126,54 @@ def test_a_value_written_is_read_back_whole() -> None:
     # JSON is YAML: what make init writes reads back as the same value.
     for value in ("pve.lan", "fd00::1", "ansible@pve", "0123abcd-4567-89ef-0123-456789abcdef", True):
         assert yaml.safe_load(with_setting("", "key", value)) == {"key": value}
+
+
+STORAGE = ["Datastore.AllocateSpace", "Datastore.Audit"]
+
+
+def _read(name: str, privileges: dict | None, status: int = 200, **entry) -> dict:
+    """One permission read of a looped uri, as init_check.yml registers it."""
+    data = {f"/storage/{name}": privileges} if privileges is not None else {}
+    return {"item": {"storage": name, **entry}, "status": status, "json": {"data": data}}
+
+
+def test_init_candidates_says_what_the_token_lacks_on_each() -> None:
+    reads = [
+        _read("local-zfs", {"Datastore.AllocateSpace": 1, "Datastore.Audit": 1}, type="zfspool", avail=412 * 1024**3),
+        _read("local", {"Datastore.Audit": 1}, type="dir", avail=5 * 1024**3),
+        _read("tank", None, type="nfs"),
+        _read("gone", {"Datastore.Audit": 1}, status=403, type="nfs"),
+    ]
+    assert init_candidates(reads, "storage", "/storage/", STORAGE) == [
+        {"name": "local-zfs", "type": "zfspool", "free": "412 GiB free", "lacks": [], "inactive": False},
+        {
+            "name": "local",
+            "type": "dir",
+            "free": "5.0 GiB free",
+            "lacks": ["Datastore.AllocateSpace"],
+            "inactive": False,
+        },
+        {"name": "tank", "type": "nfs", "free": "", "lacks": STORAGE, "inactive": False},
+        # A read that failed holds nothing.
+        {"name": "gone", "type": "nfs", "free": "", "lacks": STORAGE, "inactive": False},
+    ]
+    down = _read("nas", {"Datastore.AllocateSpace": 1, "Datastore.Audit": 1}, type="nfs", active=0)
+    assert init_candidates([down], "storage", "/storage/", STORAGE)[0]["inactive"] is True
+    assert init_candidates(None, "storage", "/storage/", STORAGE) == []
+
+
+def test_init_choose_rows_numbers_the_usable_and_shows_the_rest_with_what_they_lack() -> None:
+    candidates = [
+        {"name": "local-zfs", "type": "zfspool", "free": "412 GiB free", "lacks": []},
+        {"name": "tank-vms", "type": "nfs", "free": "1.8 TiB free", "lacks": []},
+        {"name": "local", "type": "dir", "free": "5.0 GiB free", "lacks": ["Datastore.AllocateSpace"]},
+        {"name": "nas", "type": "nfs", "free": "", "lacks": [], "inactive": True},
+    ]
+    assert init_choose_rows(candidates, "/storage/") == [
+        "  1) local-zfs   zfspool   412 GiB free",
+        "  2) tank-vms    nfs       1.8 TiB free",
+        "  -  local       dir       the token lacks Datastore.AllocateSpace on /storage/local",
+        "  -  nas         nfs       inactive",
+    ]
+    # One usable candidate is asked y or n, so it gets no number.
+    assert init_choose_rows(candidates[:1], "/storage/") == ["  -  local-zfs   zfspool   412 GiB free"]

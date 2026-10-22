@@ -42,6 +42,8 @@ and `LOG_DIR` moves the run logs or, empty, turns them off.
 | &emsp;`TOKEN_NAME=<name>` | The API token's name, when it is not ansible |
 | &emsp;`TOKEN_SECRET_FILE=<file>` | A file holding the token's secret (or CLAUDE_ON_PROXMOX_TOKEN_SECRET in the environment; never on the command line) |
 | &emsp;`GITHUB_USER=<login>` | The GitHub account whose repositories are cloned |
+| &emsp;`STORAGE=<id>` | The storage for VM disks, for local.yml: written when the token can use it there |
+| &emsp;`BRIDGE=<name>` | The bridge the template is built on, for local.yml (before the template exists) |
 | &emsp;`TAILSCALE=on` | Each VM joins your tailnet, the default: writes tailscale_enabled: true in local.yml |
 | &emsp;`TAILSCALE=off` | No Tailscale, for a setup without a Tailscale account: tailscale_enabled: false |
 | &emsp;`PROMPT=no` | Ask nothing, even at a terminal |

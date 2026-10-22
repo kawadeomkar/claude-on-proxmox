@@ -128,6 +128,69 @@ def with_setting(text, key, value, placeholder=""):
     return written
 
 
+def _size(value):
+    """Bytes as the Proxmox UI writes them: 412 GiB, 1.8 TiB."""
+    size = float(value or 0)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB", "PiB"):
+        if size < 1024 or unit == "PiB":
+            return f"{size:.0f} {unit}" if size >= 10 or unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return ""
+
+
+def init_candidates(results, key, prefix, required):
+    """What the token can use among a node's storages or bridges, from the permission reads made for each.
+
+    ``results`` are the results of a looped ``uri`` of /access/permissions,
+    one per listing entry, each with the entry as its ``item``. ``key`` names
+    the entry's name (``storage``, ``iface``), ``prefix`` its permission path
+    (``/storage/``), and ``required`` the privileges it takes. Each candidate
+    is ``{"name", "type", "free", "lacks", "inactive"}``, in the listing's
+    order: ``lacks`` lists the required privileges the token does not hold
+    there, and ``inactive`` is a storage Proxmox lists but cannot reach (an NFS
+    share that is down). A candidate is usable with neither. A permission read
+    that failed lacks everything.
+    """
+    candidates = []
+    for result in results or []:
+        entry = result.get("item") or {}
+        name = str(entry.get(key, ""))
+        data = (result.get("json") or {}).get("data") or {}
+        held = data.get(prefix + name) or {} if result.get("status") == 200 else {}
+        candidates.append(
+            {
+                "name": name,
+                "type": str(entry.get("type", "")),
+                "free": _size(entry["avail"]) + " free" if "avail" in entry else "",
+                "lacks": [privilege for privilege in required if privilege not in held],
+                "inactive": str(entry.get("active", 1)) == "0",
+            }
+        )
+    return candidates
+
+
+def init_choose_rows(candidates, path):
+    """The lines a choice shows: the usable candidates numbered, then the others with what the token lacks."""
+    usable = [c for c in candidates if not c["lacks"] and not c.get("inactive")]
+    unusable = [c for c in candidates if c["lacks"] or c.get("inactive")]
+    name = max((len(c["name"]) for c in candidates), default=0)
+    kind = max((len(c["type"]) for c in candidates), default=0)
+    lines = []
+    for number, c in enumerate(usable, 1):
+        prefix = f"{number}) " if len(usable) > 1 else "-  "
+        lines.append(f"  {prefix}{c['name']:<{name}}   {c['type']:<{kind}}   {c['free']}".rstrip())
+    for c in unusable:
+        why = f"the token lacks {', '.join(c['lacks'])} on {path}{c['name']}" if c["lacks"] else "inactive"
+        lines.append(f"  -  {c['name']:<{name}}   {c['type']:<{kind}}   {why}")
+    return lines
+
+
 class FilterModule:
     def filters(self):
-        return {"init_answer": init_answer, "init_answer_rule": init_answer_rule, "with_setting": with_setting}
+        return {
+            "init_answer": init_answer,
+            "init_answer_rule": init_answer_rule,
+            "with_setting": with_setting,
+            "init_candidates": init_candidates,
+            "init_choose_rows": init_choose_rows,
+        }

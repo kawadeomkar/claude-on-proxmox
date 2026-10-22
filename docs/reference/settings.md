@@ -36,7 +36,7 @@ other values.
 
 ### Proxmox
 
-Proxmox node name as shown in the PVE UI, and the storage for VM disks.
+make init writes the node, the storage and the bridge here, in place of their lines below, when the defaults do not fit the host. Proxmox node name as shown in the PVE UI, and the storage for VM disks.
 
 | Setting | Default | Notes |
 |---|---|---|

@@ -32,17 +32,21 @@ answer that cannot be right (a URL for the address, a secret that is not one) is
 What you answered is never asked again. The vault is written encrypted, and its password, which
 `make init` makes, is in `.vault_pass`: keep that file, since the vault cannot be opened without it.
 
-Then `make init` checks, without changing anything, what `make deploy` will need of Proxmox: that the API
-answers and takes the token, that the token holds every privilege the project uses on `/vms`, that the
-template exists or, while it does not, that root SSH to the host works, and that the VMs will get an SSH
-key. Each check prints `ok`, or `!!` with what to fix, and `make init` fails when one finds a problem, so
-run it again once it is fixed. While the address or the secret is still the example's, nothing is checked.
+Then `make init` checks what `make deploy` will need of Proxmox: that the API answers and takes the token,
+that the token holds every privilege the project uses on `/vms`, that the template exists or, while it does
+not, that root SSH to the host works, and that the VMs will get an SSH key. It works out the node - the one
+that holds the template, the only one, or the one `inventory/hosts.yml` reaches - and lists the storages for
+VM disks and the bridges the token can use there. Where a default does not fit (`pve`, `local-lvm`,
+`vmbr0`), it writes the node, and asks which storage or bridge to use, into `local.yml`; the ones the token
+cannot use are shown with what it lacks. Each check prints `ok`, or `!!` with what to fix, and `make init`
+fails when one finds a problem, so run it again once it is fixed. While the address or the secret is still
+the example's, nothing is checked.
 
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `make init` asks for. VMs are **not** listed here |
 | `inventory/group_vars/all/vault.yml` | Encrypted: the token secret and your GitHub username, which `make init` asks for. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `make vault` |
-| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a token not named `ansible@pve!ansible` (`make init` asks), a storage or bridge that is not `local-lvm` or `vmbr0`, a node not named `pve`, `tailscale_enabled: false` without a Tailscale account, VM size, which repositories to clone |
+| `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone, `tailscale_enabled: false` without a Tailscale account - and what `make init` writes there: a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
 Every setting the two files take, with its default, is in the [settings reference](../reference/settings.md),
 and `make vault` opens the vault in your editor. Tailscale is on by default: without a Tailscale account,
@@ -68,6 +72,8 @@ $ make init HOST=pve.lan GITHUB_USER=octocat TOKEN_SECRET_FILE=~/.config/pve-tok
 | `TOKEN_USER`, `TOKEN_NAME` | The token's user (`ansible@pve`) and name (`ansible`), each only when it differs |
 | `TOKEN_SECRET_FILE` | A file holding the token's secret; or `CLAUDE_ON_PROXMOX_TOKEN_SECRET` exported in the environment, from a CI secret or `read -rs`, never typed into a command |
 | `GITHUB_USER` | Your GitHub username |
+| `STORAGE` | The storage for VM disks: written whenever the token can use it, the default's fitting or not |
+| `BRIDGE` | The bridge the template is built on, before it is: clones take the template's |
 | `TAILSCALE` | `on` or `off`: `tailscale_enabled`, which is on by default |
 | `PROMPT=no` | Ask nothing, even at a terminal |
 

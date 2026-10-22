@@ -41,7 +41,10 @@ the No-Subscription repository so the host keeps getting updates - see
 
 The installer creates `vmbr0`, bridged to your physical NIC. VMs attached to it sit on your LAN and
 get their addresses from whatever already serves it — normally your router. That is the arrangement
-this project expects, and it is the Proxmox default.
+this project expects, and it is the Proxmox default. The template's NIC is attached to `proxmox_bridge`
+(`vmbr0` unless set) when it is built, and every clone inherits it; before the template exists, `make init`
+lists the bridges your token can use on the node and asks which, when `vmbr0` is not among them, and once
+it exists checks that the token holds `SDN.Use` on the template's.
 
 Two things are worth checking before you create a fleet, and both live in your router, not in
 Proxmox:
@@ -69,8 +72,9 @@ See [Network Configuration](https://pve.proxmox.com/wiki/Network_Configuration).
 ## Storage
 
 A default LVM install gives you two: `local` for ISOs and templates, and `local-lvm` for VM disks.
-**An install on ZFS has no `local-lvm`** — it has `local-zfs` instead. Check *Datacenter → Storage*,
-and if yours is not `local-lvm`, set `proxmox_storage` in `local.yml`.
+**An install on ZFS has no `local-lvm`** — it has `local-zfs` instead. `make init` lists the storages for
+VM disks your token can use on the node, and asks which, when `local-lvm` is not among them; or check
+*Datacenter → Storage* and set `proxmox_storage` in `local.yml` yourself.
 
 The same setting is how a storage of this project's own is handed to it: an admin who provisions a
 dedicated pool for these VMs (on a NAS, say) gives you its id, you put it in `proxmox_storage` and
@@ -93,7 +97,8 @@ option, which this project does not use.
 
 `make deploy TYPE=template` builds the template on whichever node `inventory/hosts.yml` points at, over SSH, so
 point it at the node you create VMs on and set `proxmox_node` to that same node — `make deploy`
-does both in one run. To create VMs on several nodes, build a
+does both in one run. `make init` sets `proxmox_node` for you while it is the default: to the node that
+holds the template, or before there is one, to the node `inventory/hosts.yml` reaches. To create VMs on several nodes, build a
 template on each with its own `proxmox_template_vmid` and `proxmox_template_name` (VMIDs are unique
 across the cluster, and cloning by name fails when two templates share one), then set
 `proxmox_node` and `proxmox_template_name` together for each run. Only the clone cares about

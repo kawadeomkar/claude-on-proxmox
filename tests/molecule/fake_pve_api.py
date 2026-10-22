@@ -37,6 +37,15 @@ the whole role docs/getting-started/proxmox-access.md makes, its guest-agent
 privilege the one of the version /version reports, which PUT
 /api2/json/fake/version?version= changes (8.2.4 until then).
 
+Each node lists its storages for VM disks (GET /nodes/<node>/storage) and its
+bridges (GET /nodes/<node>/network), each only where the token may see it -
+Datastore.Audit or Datastore.AllocateSpace on /storage/<name>, SDN.Audit or
+SDN.Use on /sdn/zones/localnetwork/<bridge> - as Proxmox filters them: on
+pve, local-lvm (lvmthin) and vmbr0 until a fixture replaces them with PUT
+/api2/json/fake/storages?node=&storages=<name>:<type>[:inactive],... or
+/api2/json/fake/bridges?node=&bridges=<name>,... A fixture moves a VM to
+another node with PUT /api2/json/fake/vm-node?vmid=&node=.
+
 A second token id, "noagent", stands for a token created without the
 guest-agent privilege (VM.Monitor on PVE 8, VM.GuestAgent.Audit on 9): every
 request is accepted except the agent's, which is refused with 403.
@@ -85,6 +94,7 @@ VMS = {
             "memory": 2048,
             "scsi0": "local-lvm:base-9000-disk-0,discard=on,size=3584M",
             "ide2": "local-lvm:vm-9000-cloudinit,media=cdrom",
+            "net0": "virtio=BC:24:11:00:23:28,bridge=vmbr0",
             "template": 1,
         },
     },
@@ -142,6 +152,9 @@ STALE = {}
 # set them: {(token id, path): [privilege, ...]}.
 VERSION = {"version": "8.2.4"}
 PRIVILEGES = {}
+# Each node's storages for VM disks, with their type and free bytes, and its bridges.
+STORAGES = {NODE: [{"storage": "local-lvm", "type": "lvmthin", "avail": 412 * 1024**3}]}
+BRIDGES = {NODE: ["vmbr0"]}
 ROLE = [
     "VM.Allocate",
     "VM.Clone",
@@ -369,14 +382,49 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, entries)
         if parts == ["cluster", "nextid"]:
             return self._reply(200, str(next(i for i in range(NEXTID_LOWER, NEXTID_LOWER + 10000) if i not in VMS)))
+        if parts[:2] == ["fake", "storages"] and method == "PUT":
+            # Not a PVE endpoint: a fixture's storages for VM disks on a node.
+            # <name>:<type>, or <name>:<type>:inactive for one Proxmox cannot reach.
+            entries = [(entry.split(":") + [""])[:3] for entry in params.get("storages", "").split(",") if entry]
+            STORAGES[params["node"]] = [
+                {"storage": n, "type": t, "avail": 100 * 1024**3, "active": 0 if state == "inactive" else 1}
+                for n, t, state in entries
+            ]
+            return self._reply(200, STORAGES[params["node"]])
+        if parts[:2] == ["fake", "bridges"] and method == "PUT":
+            # Not a PVE endpoint: a fixture's bridges on a node.
+            BRIDGES[params["node"]] = [b for b in params.get("bridges", "").split(",") if b]
+            return self._reply(200, BRIDGES[params["node"]])
+        if parts[:2] == ["fake", "vm-node"] and method == "PUT":
+            # Not a PVE endpoint: a fixture's VM, moved to another node.
+            VMS[int(params["vmid"])]["node"] = params["node"]
+            save_state()
+            return self._reply(200, {"vmid": int(params["vmid"]), "node": params["node"]})
         if parts[:2] == ["nodes", DOWN_NODE] and not NODES_ONLINE[DOWN_NODE]:
             return self._reply_empty(595, "No route to host")
-        if parts[:2] != ["nodes", NODE]:
+        if parts[:1] == ["nodes"] and parts[2:] == ["storage"]:
+            # Only the storages the token may see, as Proxmox lists them.
+            sees = {"Datastore.Audit", "Datastore.AllocateSpace"}
+            seen = [
+                {"active": 1, **entry, "content": "images,rootdir", "enabled": 1, "shared": 0}
+                for entry in STORAGES.get(parts[1], [])
+                if sees & set(privileges(token.group(2), "/storage/" + entry["storage"]))
+            ]
+            return self._reply(200, seen)
+        if parts[:1] == ["nodes"] and parts[2:] == ["network"]:
+            seen = [
+                {"iface": bridge, "type": "bridge", "active": 1, "autostart": 1}
+                for bridge in BRIDGES.get(parts[1], [])
+                if {"SDN.Audit", "SDN.Use"} & set(privileges(token.group(2), "/sdn/zones/localnetwork/" + bridge))
+            ]
+            return self._reply(200, seen)
+        # Either node, once up: a VM is served on the node it is on.
+        if parts[:1] != ["nodes"] or len(parts) < 2 or parts[1] not in (NODE, DOWN_NODE):
             return self._reply(404, None)
-        rest = parts[2:]
+        node, rest = parts[1], parts[2:]
         if rest == ["qemu"]:
             return self._reply(
-                200, [resource(vm) for vm in VMS.values() if vm["node"] == NODE and guest_type(vm) == "qemu"]
+                200, [resource(vm) for vm in VMS.values() if vm["node"] == node and guest_type(vm) == "qemu"]
             )
         if rest[:1] == ["tasks"] and rest[2:] == ["status"]:
             return self._reply(200, {"status": "stopped", "exitstatus": "OK", "upid": rest[1]})
@@ -385,8 +433,8 @@ class Handler(BaseHTTPRequestHandler):
         if rest[:1] != ["qemu"] or len(rest) < 2 or not rest[1].isdigit():
             return self._reply(404, None)
         vmid, sub = int(rest[1]), rest[2:]
-        if vmid not in VMS or VMS[vmid]["node"] != NODE or guest_type(VMS[vmid]) != "qemu":
-            return self._reply(500, None, f"Configuration file 'nodes/{NODE}/qemu-server/{vmid}.conf' does not exist")
+        if vmid not in VMS or VMS[vmid]["node"] != node or guest_type(VMS[vmid]) != "qemu":
+            return self._reply(500, None, f"Configuration file 'nodes/{node}/qemu-server/{vmid}.conf' does not exist")
         vm = VMS[vmid]
 
         if method == "DELETE" and not sub:
@@ -424,7 +472,7 @@ class Handler(BaseHTTPRequestHandler):
             VMS[newid] = {
                 "vmid": newid,
                 "name": params.get("name", f"Copy-of-VM-{vmid}"),
-                "node": NODE,
+                "node": node,
                 "status": "stopped",
                 "template": 0,
                 "config": {

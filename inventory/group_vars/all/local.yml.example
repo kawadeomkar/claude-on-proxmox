@@ -9,6 +9,8 @@
 # role variable it sets; that page is generated from this file (make docs).
 
 # ---------------------------------------------------------------- Proxmox ---
+# make init writes the node, the storage and the bridge here, in place of their
+# lines below, when the defaults do not fit the host.
 # Proxmox node name as shown in the PVE UI, and the storage for VM disks.
 # proxmox_node: pve
 # proxmox_storage: local-lvm
