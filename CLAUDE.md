@@ -439,6 +439,12 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   Every Ansible target now runs `collections-check` first (`ansible-galaxy collection install --offline`
   against `requirements.yml`), and refuses, naming `make install`, while a collection differs
   from its pin.
+- **uv writes the environment's path, as it was given, into every command it installs.** `make venv`
+  synced through the checkout's `.venv` link to the environment, so 31 commands started their Python by
+  that link and would have broken with it, and a sync that finds every package current rewrites none.
+  `make install` runs `tools/stale_scripts.py` first and reinstalls each locked package with a command
+  whose first line names a Python outside the environment's `bin`, compared as spelled, never resolved
+  (the link resolves to the right Python), then `--check`s that none is left.
 - **`-e key=value` splits extra-vars on whitespace.** `VM_NAME="alpha beta"` silently provisioned
   half the fleet. The Makefile passes JSON (`-e '{"vm_name": "..."}'`) to keep the value whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them

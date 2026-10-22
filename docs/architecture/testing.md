@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1212 tests. By file:
+pytest over `tests/unit/`: 1216 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -97,7 +97,7 @@ pytest over `tests/unit/`: 1212 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 307): `vm-name-check` accepts DNS-like names and refuses
+- **The Makefile** (`test_makefile.py` 311): `vm-name-check` accepts DNS-like names and refuses
   whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
@@ -111,7 +111,9 @@ pytest over `tests/unit/`: 1212 tests. By file:
   exported `TYPE`, `TAGS`, `ROLE` or `SKIP`, and a `MOLECULE_ROLES` on the command line, change nothing;
   every replaced target names its replacement, and is refused among VM names; the
   `#: TYPE=` lines are the TYPEs each target takes, and `make help` lists them; `make install` syncs the
-  lock into `PYTHON`'s own environment, removing nothing, every target runs that environment's tools and
+  lock into `PYTHON`'s own environment, removing nothing, and reinstalls each locked package whose commands
+  start another Python - one by a link to the environment among them, and never pip's - failing if the
+  reinstall left one, every target runs that environment's tools and
   refuses a Python that is not a virtualenv, a `BIN` in the environment is ignored, `make help` starts no
   Python, and `clean` never touches the environment; `tools/env-run`, which every local git hook runs
   through, does the same, and `make vagrant` hands the Vagrantfile the environment's `ansible-playbook`; `lint`, `test`, `docs`, `vagrant`, `vault` and `init` run what

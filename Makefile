@@ -362,16 +362,24 @@ init: install ## Set up this checkout: make install, the local config files, the
 # another project's in an environment that serves both - stays where it is.
 # A Python that is no virtualenv at all (an installed Python itself) is refused
 # by env-check before uv runs. --python names that environment's interpreter,
-# so uv never swaps it for another. ansible-galaxy installs the collections
-# requirements.yml pins. Both change nothing when they are current, so this is
-# also the command to run after a pull, and what CI runs.
+# so uv never swaps it for another. Before the sync, tools/stale_scripts.py
+# names each locked package with a command that starts a Python outside the
+# environment's bin - uv writes the path the environment was synced by into
+# every command, so a sync through a link into it (the .venv make venv once
+# made) left them naming the link, and a sync that installs nothing rewrites
+# none - and the sync reinstalls those, then checks that none is left: one it
+# could not fix would be reinstalled on every run. ansible-galaxy installs the
+# collections requirements.yml pins. Both change nothing when they are
+# current, so this is also the command to run after a pull, and what CI runs.
 #: TYPE=lock  Update uv.lock after editing a pin in pyproject.toml, installing nothing (uv from PATH)
 .PHONY: install
 install: $(if $(filter lock,$(KIND_install)),,env-check) ## Install the locked Python packages and the Galaxy collections into your environment
 ifeq ($(KIND_install),lock)
 	$(UV_RUN) lock
 else
-	UV_PROJECT_ENVIRONMENT="$(ENV_PREFIX)" $(UV_RUN) sync --locked --inexact --python "$(ENV_PYTHON)"
+	reinstall=$$("$(ENV_PYTHON)" -I tools/stale_scripts.py) || exit 1; \
+	UV_PROJECT_ENVIRONMENT="$(ENV_PREFIX)" $(UV_RUN) sync --locked --inexact --python "$(ENV_PYTHON)" $$reinstall \
+	  && { test -z "$$reinstall" || "$(ENV_PYTHON)" -I tools/stale_scripts.py --check; }
 	$(BIN)/ansible-galaxy collection install -r requirements.yml
 endif
 
