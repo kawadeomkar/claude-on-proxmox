@@ -48,6 +48,23 @@ in a call of its own the moment it is cloned, and refuses any existing VM that i
 the tag. Only a failure in the instant between the clone and the tag leaves an untagged VM of this
 project's, and the refusal says how to claim it: add the tag in the Proxmox UI and re-run.
 
+## A GPU only on a VM's first run
+
+`vm_gpu` (`proxmox_vm_gpu`) gives a VM the GPU mapping `proxmox_gpu_mapping` names, as `hostpci0`, only
+while the VM is on its first run - the same `proxmox_vm_first_run` as above - and stopped
+(`proxmox_vm_gpu_changeable`). A change to a running VM's config stays pending and the lookup never sees
+it, so a VM on its first run that has already started is treated like a finished one; and
+`proxmox_vm_force_update` is no first run. A finished or started VM is never changed: `vm_gpu` asking for
+a GPU it lacks is said, once per run, and nothing else. Off, `vm_gpu` takes `proxmox_gpu_mapping` - the
+mapping the role attaches, never another - off a VM still on its first run and stopped, and says so,
+which is how a VM whose start failed on a GPU another VM holds is finished without it.
+
+Every GPU decision is made before `present.yml` reads a new VM's config after its start, so it reads
+this run's `proxmox_vm_lookup` alone (`proxmox_vm_gpu_config`): `proxmox_vm_found_config` falls back to
+`proxmox_vm_config` for a new VM, a register the previous run of the role, for another VM on the same
+host, leaves behind until this run reads it, and a GPU there would give the next VM a pointless delete and
+the wrong start. The role scenario runs a VM without a GPU straight after one with it to hold that.
+
 ## Related switches
 
 Three related switches:

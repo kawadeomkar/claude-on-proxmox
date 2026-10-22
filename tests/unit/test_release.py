@@ -547,6 +547,9 @@ def test_a_run_that_fails_before_deleting_stops_again_what_it_started():
     assert names.index("Remember which VMs this run started") < names.index(guarded["name"])
     inside = [task["name"] for task in guarded["block"]]
     assert inside == [
+        "Wait for each start to finish",
+        "Record which starts failed",
+        "Say which VMs did not start",
         "Read the configuration of each VM started",
         "Wait for each started VM's guest agent and its NIC's address",
         "List the VMs again, with the ones just started",
@@ -717,16 +720,12 @@ def fake_pve(tmp_path):
         yield base
 
 
-def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_stopped(tmp_path, fake_pve):
-    # Proxmox lists the status it last polled, up to ten seconds old. A VM that
-    # booted within those seconds of destroy's start was listed as stopped
-    # after it, not asked for its address, and deleted without its release.
-    root = tmp_path / "run"
+def _destroy_head(root: Path, port: int) -> Path:
+    """destroy.yml's first play, run from root with the fake Proxmox, then a play saying each VM's address."""
     (root / "group_vars" / "all").mkdir(parents=True)
     (root / "group_vars" / "all" / "defaults.yml").symlink_to(
         REPO / "inventory" / "group_vars" / "all" / "defaults.yml"
     )
-    port = int(fake_pve.rsplit(":", 1)[1])
     (root / "group_vars" / "all" / "fake_api.yml").write_text(
         yaml.safe_dump(
             {
@@ -754,6 +753,38 @@ def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_sto
             ]
         )
     )
+    return playbook
+
+
+def test_a_vm_whose_gpu_another_vm_holds_is_not_waited_on(tmp_path, fake_pve):
+    # Proxmox accepts the start and fails its task before QEMU runs: the VM
+    # never boots, and a wait for its agent would take three minutes.
+    _pve(fake_pve, "PUT", "fake/mapping", id="gpu1", devices="1")
+    for vmid, name in ((9201, "holder"), (9202, "held")):
+        _pve(fake_pve, "POST", "nodes/pve/qemu/9000/clone", newid=vmid, name=name)
+        _pve(fake_pve, "PUT", f"nodes/pve/qemu/{vmid}/config", tags="claude-on-proxmox", hostpci0="mapping=gpu1")
+    _pve(fake_pve, "POST", "nodes/pve/qemu/9201/status/start")
+    root = tmp_path / "run"
+    playbook = _destroy_head(root, int(fake_pve.rsplit(":", 1)[1]))
+    started = time.monotonic()
+    report = _run(root, playbook, {}, "-e", json.dumps({"vm_name": "held", "confirm_destroy": "yes"}), timeout=120)
+    assert report["rc"] == 0, _failures(report)
+    assert time.monotonic() - started < 60
+    said = {
+        host: result.get("claude_vm_release_address") for name, host, result in _results_of(report) if name == "Address"
+    }
+    assert said == {"held": ""}
+    assert "held did not start (Proxmox said: PCI device '0000:01:00.0' already in use by VMID '9201')" in json.dumps(
+        report
+    )
+
+
+def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_stopped(tmp_path, fake_pve):
+    # Proxmox lists the status it last polled, up to ten seconds old. A VM that
+    # booted within those seconds of destroy's start was listed as stopped
+    # after it, not asked for its address, and deleted without its release.
+    root = tmp_path / "run"
+    playbook = _destroy_head(root, int(fake_pve.rsplit(":", 1)[1]))
     report = _run(root, playbook, {}, "-e", json.dumps({"vm_name": "parked", "confirm_destroy": "yes"}), timeout=120)
     assert report["rc"] == 0, _failures(report)
     said = {

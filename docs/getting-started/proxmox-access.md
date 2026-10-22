@@ -69,3 +69,19 @@ export REQUESTS_CA_BUNDLE=~/.config/pve-root-ca.pem
 ```
 
 and set `proxmox_validate_certs: true` in `local.yml`.
+
+## A GPU, by its mapping
+
+Only for [GPU passthrough](../guides/vms.md#gpu-passthrough), which is off unless `vm_gpu` turns it on.
+Once whoever runs the host has made a PCI resource mapping for the GPU (Datacenter, Resource Mappings -
+`claude-gpu` below), the token needs two more privileges: `VM.Config.HWType`, to give a VM a PCI device,
+and `Mapping.Use` on that mapping, which Proxmox's own `PVEMappingUser` role holds:
+
+```bash
+pveum role modify AnsibleVM -append 1 -privs VM.Config.HWType
+pveum aclmod /mapping/pci/claude-gpu -user ansible@pve -role PVEMappingUser
+```
+
+A VM's PCI device is set by the mapping's name alone, never by the device's address, which only root
+may set. Without either privilege the settings call of the VM's first run fails, naming the one
+missing, and the next run, once it is granted, finishes the VM.

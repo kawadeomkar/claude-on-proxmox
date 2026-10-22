@@ -15,6 +15,10 @@
 # The bridge the template's NIC is attached to, which every clone inherits. Set
 # it before the template is built, and grant the token SDN.Use on it.
 # proxmox_bridge: vmbr0
+# The PCI resource mapping that names a GPU (Datacenter, Resource Mappings),
+# for vm_gpu below. The host's owner makes it, and the token needs Mapping.Use
+# on it (docs/guides/vms.md, "GPU passthrough").
+# proxmox_gpu_mapping: claude-gpu
 # The API user and token the pveum commands in
 # docs/getting-started/proxmox-access.md create, and the API's port.
 # proxmox_api_user: ansible@pve
@@ -57,6 +61,11 @@
 # vm_nameservers: [1.1.1.1, 8.8.8.8]
 # The DNS search domain cloud-init gives the VMs. Empty leaves it out.
 # vm_searchdomain: lan
+
+# Give every VM a run creates the GPU proxmox_gpu_mapping names, as hostpci0.
+# Only a VM's first run attaches it; one GPU serves one running VM at a time,
+# so for one VM: make deploy alpha ANSIBLE_ARGS="-e vm_gpu=true".
+# vm_gpu: false
 
 # Addressing is DHCP by default and the guest agent reports back what it got.
 # To pin an address instead, set the cloud-init ipconfig line directly. This is

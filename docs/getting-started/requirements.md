@@ -22,6 +22,7 @@ VMs with a repository that fails `apt update`, or with static addresses and no D
 | A storage for VM disks, named in `proxmox_storage` | the template and every clone go there |
 | Root SSH once, then an API token that can read the guest agent (`VM.Monitor` on 8.x, `VM.GuestAgent.Audit` on 9.x) | [Proxmox access](proxmox-access.md) |
 | VMs may be created, tagged, started and deleted | the token's privileges |
+| A GPU, only if you want one, is passed through by a PCI resource mapping the host's owner made | `vm_gpu` names the mapping, never a device ([GPU passthrough](../guides/vms.md#gpu-passthrough)) |
 
 A freshly installed host needs the ordinary post-install setup first; the
 [Proxmox VE documentation](https://pve.proxmox.com/wiki/Main_Page) covers it. The sections below are

@@ -30,7 +30,17 @@ ten seconds old. /nodes/<node>/qemu/<id>/status/current is never stale.
 
 A second token id, "noagent", stands for a token created without the
 guest-agent privilege (VM.Monitor on PVE 8, VM.GuestAgent.Audit on 9): every
-request is accepted except the agent's, which is refused with 403.
+request is accepted except the agent's, which is refused with 403. A third,
+"nogpu", for one without Mapping.Use: a config write that sets or deletes a
+hostpciN is refused with 403, as Proxmox refuses it.
+
+GPUs are PCI resource mappings (/cluster/mapping/pci), none until a fixture
+makes one with PUT /api2/json/fake/mapping?id=<id>&node=<node>&devices=<n>.
+A hostpciN is accepted only as mapping=<id>, as from any token but root's. A
+VM whose config maps one starts only while the node has a device of it that
+no running VM holds; otherwise the start's task ends at once with Proxmox's
+reason as its exit status (qemu-server 9.2.13, PVE/QemuServer/PCI.pm), and
+the VM stays stopped. Every other task ends "OK".
 
 Usage: fake_pve_api.py <port> <certfile> <keyfile> <state_dir> <expected_token_secret>
 """
@@ -51,6 +61,9 @@ TOKEN_RE = re.compile(r"^PVEAPIToken=([^!]+)!([^=]+)=(.*)$")
 # Accepted everywhere but at the guest agent, like a token whose role lacks
 # the guest-agent privilege.
 NOAGENT_TOKEN_ID = "noagent"
+# Accepted everywhere but at a hostpciN, like a token without Mapping.Use.
+NOGPU_TOKEN_ID = "nogpu"
+HOSTPCI_RE = re.compile(r"hostpci\d+")
 NODE = "pve"
 # Listed by /nodes and /cluster/resources, but every request to it fails the
 # way pveproxy fails one it cannot forward to a node that is powered off.
@@ -129,6 +142,11 @@ AGENT_READY_AFTER = 2
 # listings it has left.
 LISTING_LAG = {"listings": 0}
 STALE = {}
+# The PCI resource mappings, by id: {"description": ..., "map": [entries]},
+# each entry "key=value" pairs in no fixed order, as Proxmox keeps what was
+# typed. And each task's exit status, by UPID.
+MAPPINGS = {}
+TASK_EXIT = {}
 
 
 def normalise_tags(raw):
@@ -220,10 +238,46 @@ def save_state():
     STATE_DIR.joinpath("state.json").write_text(json.dumps(VMS, indent=2, sort_keys=True))
 
 
-def new_task():
+def new_task(exitstatus="OK"):
     global TASKS
     TASKS += 1
-    return f"UPID:{NODE}:0000{TASKS:04X}:00000000:00000000:qmtask:{TASKS}:root@pam!ansible:"
+    upid = f"UPID:{NODE}:0000{TASKS:04X}:00000000:00000000:qmtask:{TASKS}:root@pam!ansible:"
+    TASK_EXIT[upid] = exitstatus
+    return upid
+
+
+def mapping_entry(text):
+    return dict(pair.split("=", 1) for pair in text.split(","))
+
+
+def mapped(config):
+    """{slot: mapping id} for each hostpciN of a VM config that names a mapping."""
+    out = {}
+    for key, value in config.items():
+        if HOSTPCI_RE.fullmatch(key):
+            options = dict(o.split("=", 1) for o in str(value).split(",") if "=" in o)
+            if "mapping" in options:
+                out[key] = options["mapping"]
+    return out
+
+
+def start_refusal(vm):
+    """Why Proxmox would not start vm for want of a free mapped device, or None (PVE/QemuServer/PCI.pm)."""
+    for slot, mapping_id in mapped(vm["config"]).items():
+        entries = [mapping_entry(e) for e in MAPPINGS.get(mapping_id, {}).get("map", [])]
+        devices = [e for e in entries if e.get("node") == vm["node"]]
+        if not devices:
+            return f"PCI device mapping not found for '{mapping_id}'"
+        holders = [
+            other
+            for other in VMS.values()
+            if other is not vm and other["status"] == "running" and mapping_id in mapped(other["config"]).values()
+        ]
+        if len(holders) >= len(devices):
+            if len(devices) == 1:
+                return f"PCI device '{devices[0]['path']}' already in use by VMID '{holders[0]['vmid']}'"
+            return f"could not find a free device for '{slot}'"
+    return None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -281,6 +335,33 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(403, None, f"Permission check failed (/vms/{vmid}, VM.GuestAgent.Audit)")
         if parts == ["version"]:
             return self._reply(200, {"version": "8.2.4", "release": "8.2", "repoid": "fake"})
+        if parts[:2] == ["fake", "mapping"] and method == "PUT":
+            # Not a PVE endpoint: a fixture's mapping of <devices> GPUs on a node,
+            # its entries in both key orders the CLI and the GUI write.
+            node, count = params.get("node", NODE), int(params.get("devices", "1"))
+            entries = []
+            for k in range(1, count + 1):
+                path = f"0000:0{k}:00.0"
+                pairs = [f"node={node}", f"path={path}", "id=10de:2684"]
+                entries.append(",".join(pairs if k % 2 else [pairs[2], pairs[0], pairs[1]]))
+            MAPPINGS[params["id"]] = {"description": params.get("description", "GPU"), "map": entries}
+            return self._reply(200, MAPPINGS[params["id"]])
+        if parts == ["cluster", "mapping", "pci"]:
+            listing = []
+            for mapping_id, mapping in sorted(MAPPINGS.items()):
+                entry = {"id": mapping_id, "type": "pci", **mapping}
+                if params.get("check-node"):
+                    nodes = [mapping_entry(e).get("node") for e in mapping["map"]]
+                    missing = f"No mapping for node {params['check-node']}."
+                    entry["checks"] = (
+                        [] if params["check-node"] in nodes else [{"severity": "warning", "message": missing}]
+                    )
+                listing.append(entry)
+            return self._reply(200, listing)
+        if parts[:3] == ["cluster", "mapping", "pci"] and len(parts) == 4:
+            if parts[3] not in MAPPINGS:
+                return self._reply(500, None, f"PCI mapping '{parts[3]}' does not exist")
+            return self._reply(200, {"id": parts[3], "type": "pci", **MAPPINGS[parts[3]]})
         if parts[:2] == ["fake", "nodes"] and method == "PUT" and len(parts) == 3:
             # Not a PVE endpoint: a fixture's switch for the node that is down.
             NODES_ONLINE[parts[2]] = params.get("status") == "online"
@@ -319,9 +400,10 @@ class Handler(BaseHTTPRequestHandler):
                 200, [resource(vm) for vm in VMS.values() if vm["node"] == NODE and guest_type(vm) == "qemu"]
             )
         if rest[:1] == ["tasks"] and rest[2:] == ["status"]:
-            return self._reply(200, {"status": "stopped", "exitstatus": "OK", "upid": rest[1]})
+            return self._reply(200, {"status": "stopped", "exitstatus": TASK_EXIT.get(rest[1], "OK"), "upid": rest[1]})
         if rest[:1] == ["tasks"] and rest[2:] == ["log"]:
-            return self._reply(200, [])
+            exitstatus = TASK_EXIT.get(rest[1], "OK")
+            return self._reply(200, [] if exitstatus == "OK" else [{"n": 1, "t": f"TASK ERROR: {exitstatus}"}])
         if rest[:1] != ["qemu"] or len(rest) < 2 or not rest[1].isdigit():
             return self._reply(404, None)
         vmid, sub = int(rest[1]), rest[2:]
@@ -340,6 +422,20 @@ class Handler(BaseHTTPRequestHandler):
         if sub == ["config"] and method == "GET":
             return self._reply(200, dict(vm["config"]))
         if sub == ["config"] and method in ("PUT", "POST"):
+            # Setting, changing or deleting a hostpciN needs Mapping.Use on its
+            # mapping (check_hostpci_perm), the value it had as well as the one it
+            # gets; a device named by address, root. A fixture's fake-root, not a
+            # PVE parameter, writes as root would.
+            deleted = [k.strip() for k in params.get("delete", "").split(",")]
+            slots = [k for k in params if HOSTPCI_RE.fullmatch(k)] + [k for k in deleted if HOSTPCI_RE.fullmatch(k)]
+            for key in [] if params.pop("fake-root", None) else slots:
+                for value in {params.get(key), vm["config"].get(key)} - {None}:
+                    options = dict(o.split("=", 1) for o in str(value).split(",") if "=" in o)
+                    if "mapping" not in options:
+                        return self._reply(500, None, f"only root can set '{key}' config for non-mapped devices")
+                    if token.group(2) == NOGPU_TOKEN_ID:
+                        denied = f"Permission check failed (/mapping/pci/{options['mapping']}, Mapping.Use)"
+                        return self._reply(403, None, denied)
             # PVE removes a setting through `delete`, a comma-separated list of
             # keys - not by sending it blank. parse_qs drops blank values, so a
             # fixture that sent `net0=` used to leave the NIC in place and pass
@@ -402,6 +498,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, {"status": vm["status"], "vmid": vmid, "name": vm["name"]})
         if sub[:1] == ["status"] and method == "POST":
             action = sub[1]
+            refusal = start_refusal(vm) if action == "start" and vm["status"] != "running" else None
+            if refusal:
+                # The start's task fails before QEMU runs; the VM stays stopped.
+                return self._reply(200, new_task(refusal))
             if LISTING_LAG["listings"] > 0 and vmid not in STALE:
                 STALE[vmid] = [vm["status"], LISTING_LAG["listings"]]
             vm["status"] = "running" if action in ("start", "reboot", "reset", "resume") else "stopped"

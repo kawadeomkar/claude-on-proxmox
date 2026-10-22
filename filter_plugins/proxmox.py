@@ -238,9 +238,34 @@ def ssh_config_prune(blocks, resources, tag_pattern):
     return result
 
 
+_HOSTPCI_RE = re.compile(r"hostpci\d+")
+
+
+def hostpci_mappings(config):
+    """Return ``{slot: mapping id}`` for every ``hostpciN`` of a VM config, ``""`` for one with no mapping.
+
+    Proxmox stores a mapped device as ``mapping=<id>``, among options in any
+    order (``pcie=1,mapping=gpu``), and an unmapped one as a PCI address -
+    ``host=0000:01:00.0`` or the bare address, several joined by ``;`` - which
+    only root may set. A slot whose value names no mapping maps to ``""``: it
+    is a device, just not one of a mapping's.
+    """
+    if not isinstance(config, dict):
+        return {}
+    slots = {}
+    for key, value in config.items():
+        if _HOSTPCI_RE.fullmatch(str(key)):
+            options = dict(
+                option.split("=", 1) if "=" in option else ("host", option) for option in str(value).split(",")
+            )
+            slots[key] = options.get("mapping", "")
+    return slots
+
+
 class FilterModule:
     def filters(self):
         return {
+            "hostpci_mappings": hostpci_mappings,
             "ssh_config_blocks": ssh_config_blocks,
             "ssh_config_prune": ssh_config_prune,
             "net_mac": net_mac,

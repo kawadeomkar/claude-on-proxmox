@@ -295,6 +295,20 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the `Include` off, the Vagrantfile sets `claude_ssh_config: false`, and
   `tests/unit/test_ssh_config.py` fails if any of them stops.
 
+- **A GPU is attached only on a VM's first run, and only by mapping.** `proxmox_vm` sends `hostpci0:
+  mapping=<proxmox_gpu_mapping>`, never `host=` (root-only, and it names the hardware), in the settings
+  call while the VM is on its first run and stopped (`proxmox_vm_gpu_changeable`), deciding from this
+  run's `proxmox_vm_lookup` alone (`proxmox_vm_gpu_config`), never from the post-start
+  `proxmox_vm_config`, which the previous run of the role leaves behind. It takes `hostpci0` off such a
+  VM when `vm_gpu` is off, only when it is `proxmox_gpu_mapping` (another mapping, or a device by address,
+  is not the role's), and refuses `vm_gpu` over a device attached by address. A finished or started VM is never changed: it is warned about, and only when
+  `vm_gpu` asks for a GPU it lacks. A VM with a GPU starts through the API and reads the task's
+  `exitstatus`, because `proxmox_kvm` waits out `proxmox_vm_timeout` on a failed start, and every such
+  `uri` call passes `proxmox_vm_api_ca_path`, because `uri` ignores `REQUESTS_CA_BUNDLE`
+  (`tests/unit/test_proxmox_vm_gpu.py` holds both); `destroy.yml` reads each start's task too, so a VM
+  whose GPU is held is not waited on. Its balloon equals its memory, because VFIO pins it.
+  The mapping, IOMMU and the token's `Mapping.Use` are the host owner's: nothing here makes or changes them.
+
 ## Architecture, and why it looks like this
 
 **Playbooks own inventory; roles do not.** `add_host` sets `BYPASS_HOST_LOOP`, so it runs *once per

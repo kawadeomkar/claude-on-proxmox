@@ -161,6 +161,51 @@
     # was found. The failure is raised again after that.
     - name: Read where each VM is now, and add each as a host
       block:
+        # A start Proxmox accepts can still fail in its task, before QEMU runs:
+        # a VM with a GPU another VM holds, say. Each task is read to its end,
+        # so such a VM is said, and not waited on for an agent that never comes
+        # up. Stopping it again, as a VM this run started, changes nothing.
+        - name: Wait for each start to finish
+          ansible.builtin.uri:
+            url: >-
+              {{ proxmox_api_url }}/nodes/{{ claude_vm_release_start.claude_vm_item.node }}/tasks/{{
+              claude_vm_release_start.json.data | urlencode }}/status
+            headers: "{{ proxmox_api_headers }}"
+            validate_certs: "{{ proxmox_validate_certs }}"
+            ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+          register: claude_vm_release_tasks
+          until: >-
+            claude_vm_release_tasks.json.data.status | default('') == 'stopped'
+            or claude_vm_release_tasks.status | default(0) >= 400
+          retries: 30
+          delay: 2
+          failed_when: false
+          no_log: true
+          loop: >-
+            {{ claude_vm_release_starts.results | default([]) | selectattr('status', 'defined')
+               | selectattr('status', 'equalto', 200) | list }}
+          loop_control:
+            loop_var: claude_vm_release_start
+            label: "{{ claude_vm_release_start.claude_vm_item.name }}"
+
+        # A task whose end could not be read is taken to have started its VM.
+        - name: Record which starts failed
+          ansible.builtin.set_fact:
+            claude_vm_release_refused: >-
+              {{ claude_vm_release_tasks.results | default([]) | selectattr('json.data.exitstatus', 'defined')
+                 | rejectattr('json.data.exitstatus', 'match', 'OK$|WARNINGS') | list }}
+
+        - name: Say which VMs did not start
+          ansible.builtin.debug:
+            msg: >-
+              {{ claude_vm_refused.claude_vm_release_start.claude_vm_item.name }} did not start (Proxmox said:
+              {{ claude_vm_refused.json.data.exitstatus | plain_text }}), so it is deleted without being released
+              from Claude, GitHub and Tailscale.
+          loop: "{{ claude_vm_release_refused }}"
+          loop_control:
+            loop_var: claude_vm_refused
+            label: "{{ claude_vm_refused.claude_vm_release_start.claude_vm_item.name }}"
+
         # The MAC of each started VM's own NIC (proxmox_nic), so that the wait
         # below is for that NIC's address, which vm_addresses.yml pairs by it:
         # a bridge the guest grows - docker0, tailscale0 - can report one first,
@@ -174,7 +219,9 @@
           register: claude_vm_release_configs
           failed_when: false
           no_log: true
-          loop: "{{ claude_vm_release_started }}"
+          loop: >-
+            {{ claude_vm_release_started | rejectattr('vmid', 'in', claude_vm_release_refused
+               | map(attribute='claude_vm_release_start.claude_vm_item.vmid') | list) | list }}
           loop_control:
             loop_var: claude_vm_item
             label: "{{ claude_vm_item.name }}"

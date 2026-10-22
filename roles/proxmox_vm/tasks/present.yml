@@ -65,6 +65,19 @@
     tags: "{{ proxmox_vm_sent_tags }}"
   when: not proxmox_vm_exists
 
+# Proxmox lets only root change a device attached by its address, and the
+# settings call would put the mapping in its place: said, rather than a 500.
+- name: present | Refuse to put the GPU over a device attached by its address
+  ansible.builtin.assert:
+    that: proxmox_vm_gpu_mappings.hostpci0 | default('mapping') | length > 0
+    fail_msg: >-
+      {{ proxmox_vm_name }}'s hostpci0 is a device attached by its address
+      ({{ proxmox_vm_gpu_config.hostpci0 | default('') }}),
+      which only root may change, and vm_gpu would put {{ proxmox_vm_gpu_mapping }} in its place. Remove that
+      device in Proxmox, or run with vm_gpu off.
+    quiet: true
+  when: proxmox_vm_gpu_set | bool
+
 - name: present | Apply hardware and cloud-init settings
   community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
     node: "{{ proxmox_vm_found_node }}"
@@ -73,7 +86,13 @@
     update: true
     cores: "{{ proxmox_vm_cores }}"
     memory: "{{ proxmox_vm_memory_mb }}"
-    balloon: "{{ proxmox_vm_memory_min_mb }}"
+    # A VM with a GPU keeps all of its memory: VFIO pins it, which turns the
+    # balloon off, so its minimum is its memory. The device stays, and the
+    # VM still reports what it uses.
+    balloon: "{{ proxmox_vm_memory_mb if proxmox_vm_has_gpu | bool else proxmox_vm_memory_min_mb }}"
+    # By mapping only: the host's owner says which device it is, and the
+    # token needs Mapping.Use on it. A PCI address (host=) is root's alone.
+    hostpci: "{{ {'hostpci0': 'mapping=' ~ proxmox_vm_gpu_mapping} if proxmox_vm_gpu_set | bool else omit }}"
     onboot: "{{ proxmox_vm_onboot }}"
     agent: enabled=1
     # Written with the cloud-init user, in the same call, and removed below
@@ -87,6 +106,52 @@
     nameservers: "{{ proxmox_vm_nameservers if proxmox_vm_nameservers else omit }}"
     searchdomains: "{{ proxmox_vm_searchdomain | default(omit, true) }}"
   when: proxmox_vm_needs_configuration | bool
+
+# vm_gpu turned off for a VM whose first run attached a GPU: the way out of a
+# start that failed on a GPU another VM holds. A call of its own, since
+# proxmox_kvm takes `delete` only without `update`, and it reports a change
+# every time, so only when there is a mapping to take off.
+- name: present | Take the GPU off the VM before its first start
+  community.proxmox.proxmox_kvm: # noqa: args[module] - api_* come from module_defaults
+    node: "{{ proxmox_vm_found_node }}"
+    vmid: "{{ proxmox_vm_resolved_id }}"
+    delete: hostpci0
+  when: proxmox_vm_gpu_unset | bool
+
+- name: present | Say that the GPU was taken off
+  ansible.builtin.debug:
+    msg: >-
+      {{ proxmox_vm_name }} had {{ proxmox_vm_gpu_mapping }} from a first run that did not finish, and vm_gpu is
+      off in this run, so it was taken off: {{ proxmox_vm_name }} finishes its first run without a GPU, and later
+      runs do not attach one.
+  register: proxmox_vm_gpu_unset_said
+  when: proxmox_vm_gpu_unset | bool
+
+- name: present | Say that vm_gpu has no effect on the minimum memory of a VM with a GPU
+  ansible.builtin.debug:
+    msg: >-
+      {{ proxmox_vm_name }} has a GPU, so it keeps all {{ proxmox_vm_memory_mb }} MB: VFIO pins a VM's memory,
+      and vm_memory_min_mb ({{ proxmox_vm_memory_min_mb }}) cannot give any of it back.
+  register: proxmox_vm_gpu_memory_said
+  when:
+    - proxmox_vm_needs_configuration | bool
+    - proxmox_vm_has_gpu | bool
+    - proxmox_vm_memory_min_mb | int < proxmox_vm_memory_mb | int
+
+# A GPU is attached only on a VM's first run, while it is stopped: a finished
+# VM, or one that has started, is never changed. Said only when vm_gpu asks for
+# a GPU the VM lacks, and not a NEXT STEPS record: nothing is left to do.
+- name: present | Say that a GPU is attached only to a VM a run creates
+  ansible.builtin.debug:
+    msg: >-
+      {{ proxmox_vm_name }} {{ 'has already started' if proxmox_vm_first_run | bool else 'already exists' }},
+      so vm_gpu did not attach {{ proxmox_vm_gpu_mapping }}: a GPU is attached only to a VM a run creates. To
+      give {{ proxmox_vm_name }} one, recreate it (make destroy {{ proxmox_vm_name }}, then make deploy
+      {{ proxmox_vm_name }} with vm_gpu; everything on the VM is lost), or add {{ proxmox_vm_gpu_mapping }} to it as
+      a PCI device in Proxmox yourself (Hardware, Add, PCI Device, Mapped Device) and restart it. Later runs leave
+      it as it is.
+  register: proxmox_vm_gpu_said
+  when: proxmox_vm_gpu_mismatch | bool
 
 - name: present | Resize the root disk to {{ proxmox_vm_disk_size }}
   community.proxmox.proxmox_disk: # noqa: args[module] - api_* come from module_defaults
@@ -110,7 +175,86 @@
     vmid: "{{ proxmox_vm_resolved_id }}"
     state: started
     timeout: "{{ proxmox_vm_timeout }}"
-  when: proxmox_vm_needs_configuration | bool or proxmox_vm_start_existing | bool
+  when:
+    - proxmox_vm_needs_configuration | bool or proxmox_vm_start_existing | bool
+    - not (proxmox_vm_has_gpu | bool)
+
+# A VM with a GPU starts through the API instead. A start Proxmox cannot make
+# - the GPU held by another running VM, or no device of the mapping on this
+# node - fails before QEMU runs, and its task ends at once with the reason as
+# its exit status; proxmox_kvm only waits for an "OK" that never comes, its
+# whole timeout (600 s), and then reports the task log's first line. So the
+# task is read here, and the reason said, at once. The header carries the token.
+- name: present | Start the VM with its GPU
+  ansible.builtin.uri:
+    url: "{{ proxmox_vm_api_url }}/nodes/{{ proxmox_vm_found_node }}/qemu/{{ proxmox_vm_resolved_id }}/status/start"
+    method: POST
+    headers: "{{ proxmox_vm_api_headers }}"
+    validate_certs: "{{ proxmox_vm_validate_certs }}"
+    ca_path: "{{ proxmox_vm_api_ca_path | default(omit, true) }}"
+  register: proxmox_vm_gpu_start
+  changed_when: proxmox_vm_gpu_start.status | default(0) == 200
+  failed_when: false
+  no_log: true
+  when: proxmox_vm_gpu_starts | bool
+
+- name: present | Wait for the start to finish
+  ansible.builtin.uri:
+    url: >-
+      {{ proxmox_vm_api_url }}/nodes/{{ proxmox_vm_found_node }}/tasks/{{
+      proxmox_vm_gpu_start.json.data | urlencode }}/status
+    headers: "{{ proxmox_vm_api_headers }}"
+    validate_certs: "{{ proxmox_vm_validate_certs }}"
+    ca_path: "{{ proxmox_vm_api_ca_path | default(omit, true) }}"
+  register: proxmox_vm_gpu_task
+  # Or an answer that will not come right: the token refused, the node gone.
+  until: >-
+    proxmox_vm_gpu_task.json.data.status | default('') == 'stopped'
+    or proxmox_vm_gpu_task.status | default(0) >= 400
+  retries: "{{ (proxmox_vm_timeout | int / 2) | round(0, 'ceil') | int }}"
+  delay: 2
+  failed_when: false
+  no_log: true
+  when:
+    - proxmox_vm_gpu_starts | bool
+    - proxmox_vm_gpu_start.status == 200
+
+# A task that ended with warnings started the VM all the same.
+- name: present | Fail when the VM could not start with its GPU
+  ansible.builtin.fail:
+    msg: >-
+      {{ proxmox_vm_name }} did not start with its GPU. Proxmox said: {{ proxmox_vm_gpu_reason | plain_text | trim }}.
+      {{ proxmox_vm_gpu_hint }}
+  vars:
+    proxmox_vm_gpu_reason: >-
+      {{ (proxmox_vm_gpu_start.status ~ ' ' ~ proxmox_vm_gpu_start.msg | default('')) if proxmox_vm_gpu_start.status != 200
+         else 'its task could not be read: ' ~ proxmox_vm_gpu_task.status | default('') ~ ' '
+              ~ proxmox_vm_gpu_task.msg | default('')
+         if proxmox_vm_gpu_task.status | default(0) != 200
+         else 'the start did not finish within ' ~ proxmox_vm_timeout ~ ' seconds'
+         if proxmox_vm_gpu_task.json.data.status | default('') != 'stopped'
+         else proxmox_vm_gpu_task.json.data.exitstatus | default('no exit status', true) }}
+    # A VM still on its first run has the GPU taken off by vm_gpu off; a
+    # finished one never does, so it is told what else there is.
+    proxmox_vm_gpu_busy_hint: >-
+      {{ ('Stop that VM and run make deploy ' ~ proxmox_vm_name ~ ' again with vm_gpu on (ANSIBLE_ARGS="-e vm_gpu=true",'
+          ~ ' unless local.yml sets it: without it, the GPU comes off), or run make deploy ' ~ proxmox_vm_name
+          ~ ' ANSIBLE_ARGS="-e vm_gpu=false": ' ~ proxmox_vm_name
+          ~ ' has not finished its first run, so the GPU comes off it.')
+         if proxmox_vm_first_run | bool else
+         ('Stop that VM and start ' ~ proxmox_vm_name ~ ' again. ' ~ proxmox_vm_name ~ ' has finished its first run,'
+          ~ ' so this project never takes its GPU off: remove its PCI device in Proxmox to start it without one.') }}
+    proxmox_vm_gpu_hint: >-
+      {{ proxmox_vm_gpu_busy_hint
+         if proxmox_vm_gpu_reason is search('already in use|currently reserved|could not find a free device')
+         else (proxmox_vm_gpu_mapping ~ ' has no device on ' ~ proxmox_vm_found_node
+               ~ ": the mapping is the host owner's to extend.")
+         if proxmox_vm_gpu_reason is search('mapping not found') else '' }}
+  when:
+    - proxmox_vm_gpu_starts | bool
+    - >-
+      proxmox_vm_gpu_start.status != 200
+      or proxmox_vm_gpu_task.json.data.exitstatus | default('') is not match('OK$|WARNINGS')
 
 # The VM is configured, resized and running, so it is finished: a later run
 # that finds it stopped leaves it stopped. Until this call it carries

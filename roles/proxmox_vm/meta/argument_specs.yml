@@ -45,6 +45,13 @@ argument_specs:
         type: bool
         default: false
         description: Verify the API's TLS certificate. Turn it on once the controller trusts the Proxmox CA. Set through proxmox_validate_certs in local.yml.
+      proxmox_vm_api_ca_path:
+        type: str
+        default: ""
+        description:
+          - The CA file for the role's own `uri` calls to the API (a VM with a GPU starts through one), which,
+            unlike the modules' HTTP client, do not read REQUESTS_CA_BUNDLE. Empty sends none. Wired from
+            proxmox_api_ca_path, which is REQUESTS_CA_BUNDLE while proxmox_validate_certs is on.
       proxmox_vm_node:
         type: str
         default: pve
@@ -132,6 +139,22 @@ argument_specs:
         type: int
         default: 4096
         description: Defaults to the vm_memory_mb host var, else 4096. Set through vm_memory_mb in local.yml.
+      proxmox_vm_gpu:
+        type: bool
+        default: false
+        description:
+          - Attach the GPU mapping proxmox_vm_gpu_mapping names to a VM this run creates, as hostpci0. Only on the
+            VM's first run, while it is stopped; a VM that has finished, or has started, is never changed, and is
+            warned about when it lacks the mapping. Off, a VM still on its first run has the mapping taken off.
+          - A VM with a GPU starts through the API, so a GPU another VM holds fails the start at once, and keeps all
+            of its memory, which VFIO pins. Defaults to the vm_gpu host var, else false. Set through vm_gpu.
+      proxmox_vm_gpu_mapping:
+        type: str
+        default: ""
+        description:
+          - The PCI resource mapping that names the GPU (Datacenter, Resource Mappings), which the host's owner
+            makes and the token needs Mapping.Use on. Sent as mapping=<id>, never as a PCI address. Set through
+            proxmox_gpu_mapping in local.yml.
       proxmox_vm_memory_min_mb:
         type: int
         description:

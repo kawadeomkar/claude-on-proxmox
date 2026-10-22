@@ -41,9 +41,11 @@ Two non-obvious details, both load-bearing:
 The only role that talks to the Proxmox API. All API parameters come from `module_defaults` on the
 `group/community.proxmox.proxmox` action group, and the whole block is `delegate_to: localhost`.
 
-**`tasks/main.yml`** — four validation asserts, split by condition on purpose (a single catch-all
+**`tasks/main.yml`** — six validation asserts, split by condition on purpose (a single catch-all
 message once sent someone with a mistyped VM name off to check their API token): connection
-settings, VM name, login credentials, VM ID. `proxmox_vm_state` is *not* asserted here because
+settings, VM name, login credentials, minimum memory, VM ID, and with `proxmox_vm_gpu` the GPU
+mapping's name (Proxmox's `pve-configid`, so nothing but one name - never `,host=<address>` - reaches
+the settings call). `proxmox_vm_state` is *not* asserted here because
 `meta/argument_specs.yml` declares its `choices`, validated before the first task runs. Then: look
 the VM up by name (with its config), refuse a duplicated name, record existence, then either refuse
 an existing VM that is a template or lacks the tag and branch to `present.yml`, or run the ownership
@@ -57,9 +59,13 @@ check and `absent.yml`.
 | Assert `clone is changed` | a VMID collision returns `changed=False` and the *template's* VMID |
 | Record VMID | `when: not proxmox_vm_exists` |
 | Tag the new VM | its own call, straight after the clone — see [§8](convergence.md) |
-| Apply hardware + cloud-init | cores, memory and its minimum (`balloon`, from `proxmox_vm_memory_min_mb`, equal to the memory unless set: Proxmox reads 0 as no balloon device, which would also stop the VM reporting its memory use); `when: proxmox_vm_needs_configuration`; to `proxmox_vm_found_node`, the node the lookup found the VM on, as is every call after the clone — a migrated VM is no longer on `proxmox_vm_node` |
+| Apply hardware + cloud-init | cores, memory and its minimum (`balloon`, from `proxmox_vm_memory_min_mb`, equal to the memory unless set: Proxmox reads 0 as no balloon device, which would also stop the VM reporting its memory use; the memory itself for a VM with a GPU, whose memory VFIO pins), and on a VM's first run with `proxmox_vm_gpu` `hostpci0: mapping=<proxmox_vm_gpu_mapping>`, never a device's address (`proxmox_vm_gpu_set`); `when: proxmox_vm_needs_configuration`; to `proxmox_vm_found_node`, the node the lookup found the VM on, as is every call after the clone — a migrated VM is no longer on `proxmox_vm_node` |
+| Refuse a device by address | with `proxmox_vm_gpu_set`, `hostpci0` holding a device attached by its PCI address, which only root may change, fails before the settings call |
+| Take the GPU off | `delete: hostpci0`, a call of its own (`proxmox_kvm` takes no `delete` with `update`), only when `proxmox_vm_gpu_unset`: `vm_gpu` off on a VM still on its first run and stopped whose `hostpci0` is `proxmox_vm_gpu_mapping` - never another mapping - then said |
+| Say a GPU is for new VMs | a `debug`, registered as `proxmox_vm_gpu_said`, when `proxmox_vm_gpu_mismatch`: `vm_gpu` asks for a GPU a finished or started VM lacks; no NEXT STEPS record |
 | Resize root disk | same condition; `proxmox_disk` no-ops when already the right size |
-| Start | `when: needs_configuration or proxmox_vm_start_existing` |
+| Start | `when: needs_configuration or proxmox_vm_start_existing`, and the VM has no PCI device (`proxmox_vm_has_gpu`) |
+| Start with the GPU | through the API (`uri`, `no_log`, `ca_path` from `proxmox_vm_api_ca_path`; `changed` on Proxmox's 200), then the task read until it ends or the read is refused, then a failure with Proxmox's own reason - a GPU another VM holds, no device on the node - and the way out, which differs for a VM on its first run and a finished one, since `proxmox_kvm` would wait out `proxmox_vm_timeout` on a start that failed; a task ending with warnings is a start |
 | Mark finished | removes `claude-on-proxmox-unfinished`, which the settings call added — see [§8](convergence.md) |
 | Read NIC config | only for a VM this run cloned: `until` non-empty, `retries`/`delay`, `failed_when: false`; an existing VM's config is the one the lookup fetched (`proxmox_vm_found_config`); then a dedicated assert |
 | Wait for guest agent | polls until an IPv4 appears, breaking early on 401/403 |
