@@ -36,7 +36,13 @@ and `LOG_DIR` moves the run logs or, empty, turns them off.
 
 | Target | What it does |
 |---|---|
-| `make init` | Set up this checkout: make install, the local config files, the git hook |
+| `make init` | Set up this checkout, then ask for what a first deploy needs |
+| &emsp;`HOST=<address>` | The Proxmox host's address, for inventory/hosts.yml |
+| &emsp;`TOKEN_USER=<user@realm>` | The API token's user, when it is not ansible@pve |
+| &emsp;`TOKEN_NAME=<name>` | The API token's name, when it is not ansible |
+| &emsp;`TOKEN_SECRET_FILE=<file>` | A file holding the token's secret (or CLAUDE_ON_PROXMOX_TOKEN_SECRET in the environment; never on the command line) |
+| &emsp;`GITHUB_USER=<login>` | The GitHub account whose repositories are cloned |
+| &emsp;`PROMPT=no` | Ask nothing, even at a terminal |
 | `make install` | Install the locked Python packages and the Galaxy collections into your environment |
 | &emsp;`TYPE=lock` | Update uv.lock after editing a pin in pyproject.toml, installing nothing (uv from PATH) |
 | `make vault` | Encrypt the vault, or edit it once it is encrypted |

@@ -1,0 +1,18 @@
+---
+# make init's own inventory, for playbooks/init_settings.yml: the controller
+# alone, as inventory/controller.yml has it, and nothing else. No group_vars
+# sit beside it, so none load: that playbook runs before the vault can be
+# opened, while every value is still the example's, and reads what it writes
+# back from the files rather than from the inventory.
+#
+# Here rather than in playbooks/, where the syntax check and ansible-lint
+# would take it for a playbook.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      # The modules reach Python over a pipe rather than as files in
+      # ~/.ansible/tmp, so the vault's text, which the encryption gets on its
+      # stdin, is never written there, not even for a moment.
+      ansible_pipelining: true

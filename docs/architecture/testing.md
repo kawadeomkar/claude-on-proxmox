@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1212 tests. By file:
+pytest over `tests/unit/`: 1388 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -15,7 +15,7 @@ pytest over `tests/unit/`: 1212 tests. By file:
 - **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
-  the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner`,
+  the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `make init`'s two among them),
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
@@ -82,6 +82,21 @@ pytest over `tests/unit/`: 1212 tests. By file:
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
+- **`make init`'s questions** (`test_init_settings.py` 53, `test_settings_filter.py` 71):
+  `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
+  which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
+  a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
+  its rule asked for once more and then left, a set value never asked, an encrypted vault opened with
+  `.vault_pass` and encrypted again, one with no password left alone; the values given on the command line,
+  written, the same command again changing nothing (in another case too), one that differs from a set value
+  failing, one that breaks its rule failing before any file is written, a scripted run still missing a value
+  failing and a run at a terminal not; `ANSIBLE_VAULT_PASSWORD_FILE` alone and beside `.vault_pass`, an
+  encryption that fails said, a host named without an `ansible_host` taken as set, a vault line over several
+  lines left alone, a vault left plaintext said, and a run that keeps the modules' files refused; the vault decrypted to the example with the answered lines replaced,
+  `0600`, and the secret in neither the output nor the log, typed or given, with module arguments injected
+  and the log at `-vvv`; statically, every write under `init_ask` and every task that renders the secret
+  or the vault's text `no_log`. The filter: each kind's accepted answers in their normal form, and what
+  each refuses.
 - **The managed SSH config** (`test_ssh_config.py` 29): `tasks/ssh_config.yml` for real against a
   temporary home, resolved with `ssh -G` - the refusal of a name or address that is not one plain word,
   the guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, that no
@@ -90,14 +105,14 @@ pytest over `tests/unit/`: 1212 tests. By file:
 - **Smaller ones**: `test_configure_tags.py` 2 (`--tags claude_code` still runs discovery and the alias
   play), `test_deploy_report.py` 18 (deploy's opening message, rendered by its own tasks, naming only the
   sign-ins that open a page and the VMs as a list), `test_proxmox_vm_absent.py` 5 (deleting a VM
-  forgets its host key under its address and `<name>.<domain>`), `test_var_names.py` 21 (no task var
+  forgets its host key under its address and `<name>.<domain>`), `test_var_names.py` 23 (no task var
   named like a register or fact, in any playbook or role), `test_cloud_init_wait.py` 3 (a first boot
   that failed is said with what failed and how to build the VM again), `test_gathered_facts.py` 5 (no
   tracked file reads a fact by its top-level name, and every `ansible.cfg` a run reads, the tests' own
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 307): `vm-name-check` accepts DNS-like names and refuses
+- **The Makefile** (`test_makefile.py` 358): `vm-name-check` accepts DNS-like names and refuses
   whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
@@ -118,7 +133,10 @@ pytest over `tests/unit/`: 1212 tests. By file:
   their `TYPE` says; `code` refuses no name and several, and passes `PROJECT` as its own JSON extra-var
   after `project-name-check` has accepted real repository names and refused `/`, `.`, `..`, quotes,
   shell syntax, a newline, non-ASCII and more than 100 characters; a run with no terminal turns the
-  desktop steps off; every playbook target exports its own `ANSIBLE_LOG_PATH`, named after the target
+  desktop steps off, and `make init` asks only at a terminal and never with `PROMPT=no`; `make init`
+  passes the values given as one JSON extra-var after `init-args-check` has refused each outside its
+  characters, ignores the same names exported, and stops at a token secret on its command line, which
+  then reaches no argument from the environment either; every playbook target exports its own `ANSIBLE_LOG_PATH`, named after the target
   and its `TYPE` (never `VM_NAME`), into a `0700` directory, `LOG_DIR=` turns it off, old run logs are
   pruned and nothing else is, and `clean TYPE=logs` deletes only run logs; and every target that runs
   Ansible runs `collections-check` first, which asks `ansible-galaxy --offline` about

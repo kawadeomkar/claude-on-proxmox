@@ -1,0 +1,78 @@
+---
+# One question of make init (playbooks/init_settings.yml), included once per
+# question with its inputs in the include's vars, never as facts: a fact would
+# outrank the next include's vars and answer every later question with this one.
+#
+#   init_ask_name     the answer's key in init_answers (init_hidden_answers when hidden)
+#   init_ask_text     what the value is and where it comes from, above the prompt
+#   init_ask_label    the prompt's last words: Proxmox host address
+#   init_ask_kind     the rule the answer follows: a kind of the init_answer filter
+#                     (filter_plugins/settings.py)
+#   init_ask_choices  for a choice: the items, which the text numbers
+#   init_ask_hidden   true for a secret: not echoed, and every task here no_log
+#   init_ask_given    the value given on make's command line instead, or ""
+#   init_ask_flag     how it was given, for a message: HOST
+#
+# A given value is held to the same rule as a typed one, and one that breaks it
+# fails the run: nobody may be there to ask. Otherwise the question is asked
+# only at a terminal (init_ask). Enter decides later: nothing is kept. An answer
+# that breaks the rule is asked for once more, saying the rule - not by `until`,
+# whose FAILED - RETRYING line reads as an error - and a second one is left, said.
+- name: init_ask | Refuse a value given on the command line that breaks the rule
+  ansible.builtin.fail:
+    msg: >-
+      {{ init_ask_flag }}{{ '' if init_ask_hidden | default(false) else ' (' ~ init_ask_given ~ ')' }} is not
+      {{ init_ask_kind | init_answer_rule }}.
+  when: >-
+    init_ask_given | default('') | length > 0
+    and init_ask_given | init_answer(init_ask_kind, init_ask_choices | default([])) | length == 0
+
+- name: init_ask | Ask for {{ init_ask_label }}
+  ansible.builtin.pause:
+    prompt: "{{ init_ask_text | banner('USER INPUT REQUIRED', topic='make init') ~ init_ask_label }}"
+    echo: "{{ not (init_ask_hidden | default(false)) }}"
+  register: init_ask_typed
+  no_log: "{{ init_ask_hidden | default(false) }}"
+  when: init_ask | bool and init_ask_given | default('') | length == 0
+
+- name: init_ask | Ask once more, saying the rule
+  ansible.builtin.pause:
+    prompt: >-
+      {{ ['That is not ' ~ (init_ask_kind | init_answer_rule) ~ '.', 'Enter to decide later.']
+         | banner('USER INPUT REQUIRED', topic='make init') ~ init_ask_label }}
+    echo: "{{ not (init_ask_hidden | default(false)) }}"
+  register: init_ask_retyped
+  no_log: "{{ init_ask_hidden | default(false) }}"
+  when: >-
+    init_ask_typed is not skipped
+    and init_ask_typed.user_input | trim | length > 0
+    and init_ask_typed.user_input | init_answer(init_ask_kind, init_ask_choices | default([])) | length == 0
+
+- name: init_ask | Say the answer is left for later
+  ansible.builtin.debug:
+    msg: >-
+      That is not {{ init_ask_kind | init_answer_rule }} either, so {{ init_ask_label }} is left as it was:
+      the next make init asks again.
+  when: >-
+    init_ask_retyped is not skipped
+    and init_ask_retyped.user_input | trim | length > 0
+    and init_ask_retyped.user_input | init_answer(init_ask_kind, init_ask_choices | default([])) | length == 0
+
+- name: init_ask | Keep the answer
+  ansible.builtin.set_fact:
+    init_answers: "{{ init_answers | default({}) | combine({init_ask_name: init_ask_value}) }}"
+  vars:
+    init_ask_value: &init_ask_value >-
+      {{ (init_ask_given if init_ask_given | default('') | length > 0
+          else init_ask_retyped.user_input if init_ask_retyped is not skipped
+          else init_ask_typed.user_input | default(''))
+         | init_answer(init_ask_kind, init_ask_choices | default([])) }}
+  when: not (init_ask_hidden | default(false)) and init_ask_value | length > 0
+
+- name: init_ask | Keep the hidden answer
+  ansible.builtin.set_fact:
+    init_hidden_answers: "{{ init_hidden_answers | default({}) | combine({init_ask_name: init_ask_value}) }}"
+  vars:
+    init_ask_value: *init_ask_value
+  no_log: true
+  when: init_ask_hidden | default(false) and init_ask_value | length > 0

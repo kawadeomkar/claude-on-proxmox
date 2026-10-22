@@ -1,0 +1,42 @@
+---
+# Write one setting into local.yml for make init, in place of its commented
+# example line, under that line's explanation; a file without one gets it at
+# its end. Inputs, through the include's vars (never facts):
+#
+#   init_setting_key    the setting: proxmox_api_user
+#   init_setting_value  its value, written as JSON, which is YAML: a string
+#                       stays a string and a boolean a boolean
+#   init_local_file     the file
+#
+# make init writes only what is not set yet, so a key already set on a line of
+# its own fails here: the caller has said so before it got this far, and a
+# second line would silently win over the first.
+- name: init_local_setting | Read local.yml
+  ansible.builtin.slurp:
+    src: "{{ init_local_file }}"
+  register: init_local_setting_read
+
+- name: init_local_setting | Refuse a setting local.yml already has
+  ansible.builtin.assert:
+    that: init_setting_key not in ((init_local_setting_read.content | b64decode | from_yaml) or {})
+    fail_msg: "{{ init_setting_key }} is already set in {{ init_local_file }}, and make init never writes over it."
+    quiet: true
+
+- name: init_local_setting | Write {{ init_setting_key }}
+  ansible.builtin.lineinfile:
+    path: "{{ init_local_file }}"
+    regexp: "^#\\s?{{ init_setting_key }}:"
+    firstmatch: true
+    line: "{{ init_setting_key }}: {{ init_setting_value | to_json }}"
+    validate: "{{ ansible_playbook_python }} -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1]))' %s"
+
+- name: init_local_setting | Read local.yml back
+  ansible.builtin.slurp:
+    src: "{{ init_local_file }}"
+  register: init_local_setting_reread
+
+- name: init_local_setting | Check that local.yml now holds {{ init_setting_key }}
+  ansible.builtin.assert:
+    that: ((init_local_setting_reread.content | b64decode | from_yaml) or {})[init_setting_key] == init_setting_value
+    fail_msg: "{{ init_local_file }} does not read back {{ init_setting_key }}: {{ init_setting_value | to_json }}."
+    quiet: true

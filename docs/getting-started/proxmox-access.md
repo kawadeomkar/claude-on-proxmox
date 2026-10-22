@@ -54,9 +54,10 @@ Either leave the setting at `free`, or add both `claude-on-proxmox` and
 `claude-on-proxmox-unfinished` to the allowed list. The second marks a VM whose first run has not
 finished yet, and is removed once it has started.
 
-Put the printed secret in `vault.yml` as `vault_proxmox_api_token_secret`. The defaults already use
-`ansible@pve` / token ID `ansible`; change `proxmox_api_user` and `proxmox_api_token_id` in `local.yml`
-if you named them differently.
+`make init` asks for the printed secret, and for the token's ID (Enter keeps `ansible@pve!ansible`, the
+name the commands above give it), and writes them: the secret into the encrypted `vault.yml` as
+`vault_proxmox_api_token_secret`, and a token named otherwise into `local.yml` as `proxmox_api_user` and
+`proxmox_api_token_id` ([Your first deploy](first-deploy.md#set-up-the-project)).
 
 ## Trusting the Proxmox certificate
 

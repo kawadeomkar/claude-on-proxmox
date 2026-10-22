@@ -31,6 +31,7 @@ guard under test.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -964,11 +965,152 @@ def test_install_type_lock_only_writes_the_lock() -> None:
     assert "sync" not in result.stdout and "ansible-galaxy" not in result.stdout
 
 
-def test_init_installs_first_then_the_config_and_the_git_hook() -> None:
+def test_init_installs_first_then_the_config_the_git_hook_and_the_questions() -> None:
     result = _make("-n", "init", f"PYTHON={sys.executable}")
     assert result.returncode == 0, result.stdout + result.stderr
-    sync, hook, config = (result.stdout.index(part) for part in ("sync --locked", "pre-commit install", "hosts.yml"))
-    assert sync < hook < config
+    parts = ("sync --locked", "pre-commit install", "hosts.yml", "playbooks/init_settings.yml")
+    sync, hook, config, questions = (result.stdout.index(part) for part in parts)
+    assert sync < hook < config < questions
+    assert "-i playbooks/inventory/init.yml" in result.stdout
+
+
+def test_init_checks_its_values_first_and_never_the_vault() -> None:
+    # The vault is plaintext on a fresh checkout: init encrypts it.
+    prerequisites = _prerequisites("init")
+    assert prerequisites[0] == "init-args-check" and "vault-check" not in prerequisites, prerequisites
+    # The log's directory before install, whose ansible-galaxy writes to the log too.
+    assert prerequisites.index("log-setup") < prerequisites.index("install"), prerequisites
+    assert "init" in re.search(r"(?m)^LOGGED_TARGETS\s*:=(.*)$", MAKEFILE.read_text()).group(1).split()
+
+
+# make init runs for real here, every tool a stand-in that records its
+# arguments: uv, pre-commit, ansible-galaxy and ansible-playbook. INIT_FILES
+# points the copy at files in tmp_path, never the checkout's.
+def _init_run(tmp_path: Path, *args: str, stdin=subprocess.DEVNULL, env: dict | None = None):
+    venv = tmp_path / "venv"
+    record = tmp_path / "args"
+    _stand_in(venv, "ansible-playbook", record)
+    _stand_in(venv, "pre-commit", tmp_path / "pre-commit-args")
+    _stand_in(venv, "uv", tmp_path / "uv-args")
+    _stand_in_galaxy(venv / "bin")
+    copies = []
+    for name in ("hosts.yml", "local.yml", "vault.yml"):
+        (tmp_path / f"{name}.example").write_text(f"# {name}\n")
+        copies.append(str(tmp_path / name))
+    overrides = [f"BIN={venv / 'bin'}", f"UV={venv / 'bin' / 'uv'}", f"INIT_FILES={' '.join(copies)}"]
+    overrides.append(f"LOG_DIR={tmp_path / 'logs'}")
+    clean = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/"), "LANG": "en_US.UTF-8"}
+    result = subprocess.run(
+        [MAKE, "init", *overrides, *args],
+        cwd=REPO,
+        env=clean | (env or {}),
+        stdin=stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    return result, (record.read_text().splitlines() if record.exists() else None)
+
+
+def _at_a_terminal(tmp_path: Path, *args: str, env: dict | None = None):
+    import pty
+
+    primary, secondary = pty.openpty()
+    try:
+        return _init_run(tmp_path, *args, stdin=secondary, env=env)
+    finally:
+        os.close(primary)
+        os.close(secondary)
+
+
+ASK = '{"init_ask":true}'
+
+
+def test_init_asks_only_at_a_terminal(tmp_path: Path) -> None:
+    result, recorded = _init_run(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert recorded[-1] == "playbooks/init_settings.yml" and ASK not in recorded, recorded
+    assert "Created" in result.stdout and all((tmp_path / name).exists() for name in ("hosts.yml", "vault.yml"))
+    result, recorded = _at_a_terminal(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert recorded[recorded.index(ASK) - 1] == "-e", recorded
+    # Copied once, said once.
+    assert "Created" not in result.stdout
+
+
+def test_prompt_no_asks_nothing_even_at_a_terminal(tmp_path: Path) -> None:
+    result, recorded = _at_a_terminal(tmp_path, "PROMPT=no")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ASK not in recorded, recorded
+
+
+def test_init_logs_its_run(tmp_path: Path) -> None:
+    result, _ = _init_run(tmp_path)
+    assert re.search(r"Logging this run to .*/logs/\d{8}-\d{6}-init\.log", result.stdout), result.stdout
+
+
+def test_the_values_given_reach_the_playbook_as_one_json_extra_var(tmp_path: Path) -> None:
+    given = ["HOST=pve.lan", "TOKEN_USER=deploy@pam", "TOKEN_NAME=claude", "GITHUB_USER=octo-cat"]
+    result, recorded = _init_run(tmp_path, *given, "TOKEN_SECRET_FILE=~/.config/pve-token")
+    assert result.returncode == 0, result.stdout + result.stderr
+    passed = [json.loads(arg) for arg in recorded if arg.startswith('{"init_given"')]
+    assert passed == [
+        {
+            "init_given": {
+                "host": "pve.lan",
+                "token_user": "deploy@pam",
+                "token_name": "claude",
+                "token_secret_file": "~/.config/pve-token",
+                "github_user": "octo-cat",
+            }
+        }
+    ]
+
+
+def test_no_value_given_passes_no_init_given(tmp_path: Path) -> None:
+    result, recorded = _init_run(tmp_path, "HOST=")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not any("init_given" in arg for arg in recorded), recorded
+
+
+def test_an_exported_value_is_not_given(tmp_path: Path) -> None:
+    result, recorded = _init_run(tmp_path, env={"HOST": "exported.lan", "GITHUB_USER": "exported"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not any("exported" in arg for arg in recorded), recorded
+
+
+@pytest.mark.parametrize("name", ["HOST", "TOKEN_USER", "TOKEN_NAME", "TOKEN_SECRET_FILE", "GITHUB_USER"])
+@pytest.mark.parametrize("value", ["a'b", 'a"b', "a b", "$(x)", "a`b", "a;b", "a\nb", "ålpha"])
+def test_a_given_value_outside_its_characters_is_refused_before_anything_runs(
+    tmp_path: Path, name: str, value: str
+) -> None:
+    result, recorded = _init_run(tmp_path, f"{name}={value}")
+    assert result.returncode != 0
+    assert f"error: {name} may contain only" in result.stdout
+    assert recorded is None and not (tmp_path / "uv-args").exists()
+
+
+def test_prompt_is_yes_or_no(tmp_path: Path) -> None:
+    result, recorded = _init_run(tmp_path, "PROMPT=maybe")
+    assert result.returncode != 0 and "PROMPT is yes or no" in result.stdout and recorded is None
+
+
+@pytest.mark.parametrize("name", ["TOKEN_SECRET", "CLAUDE_ON_PROXMOX_TOKEN_SECRET"])
+def test_the_token_secret_is_refused_on_the_command_line(tmp_path: Path, name: str) -> None:
+    result, recorded = _init_run(tmp_path, f"{name}=11111111-2222-3333-4444-555555555555")
+    assert result.returncode != 0
+    assert "the token secret never goes on make's command line" in result.stderr
+    assert "11111111-2222" not in result.stdout + result.stderr and recorded is None
+
+
+def test_the_secret_in_the_environment_reaches_no_argument(tmp_path: Path) -> None:
+    secret = "11111111-2222-3333-4444-555555555555"
+    result, recorded = _init_run(tmp_path, "HOST=pve.lan", env={"CLAUDE_ON_PROXMOX_TOKEN_SECRET": secret})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert secret not in "\n".join(recorded) + result.stdout + result.stderr
+    dry = _make("-n", "init", f"PYTHON={sys.executable}", env={"CLAUDE_ON_PROXMOX_TOKEN_SECRET": secret})
+    assert secret not in dry.stdout + dry.stderr
 
 
 def test_install_refuses_a_python_that_is_no_virtualenv(tmp_path: Path) -> None:

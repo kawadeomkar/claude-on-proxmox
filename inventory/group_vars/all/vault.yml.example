@@ -1,5 +1,7 @@
 ---
-# Copy to inventory/group_vars/all/vault.yml (git-ignored), fill in, then encrypt:
+# make init copies this to inventory/group_vars/all/vault.yml (git-ignored), asks
+# for the token secret and the GitHub username, and writes them encrypted, its
+# password in .vault_pass. By hand instead: copy it, fill it in, then encrypt:
 #
 #   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
 #   (umask 077; openssl rand -base64 32 > .vault_pass)

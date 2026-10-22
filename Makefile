@@ -32,6 +32,8 @@ VAULT_FILE := inventory/group_vars/all/vault.yml
 UV         ?= uv
 UV_RUN      = UV_PYTHON_DOWNLOADS=never $(UV)
 VAULT_PASS := .vault_pass
+# What make init copies from its .example beside it, where it is missing.
+INIT_FILES := inventory/hosts.yml inventory/group_vars/all/local.yml $(VAULT_FILE)
 VAULT_ARGS := $(if $(wildcard $(VAULT_PASS)),--vault-password-file $(VAULT_PASS),)
 ANSIBLE_ARGS ?=
 comma      := ,
@@ -240,6 +242,35 @@ NO_TTY_ARGS = $$([ -t 0 ] || printf '%s' '-e {"login_desktop":false,"deploy_sign
 # could break out of the quoting or out of the projects directory.
 PROJECT    ?=
 PROJECT_ARGS := $(if $(PROJECT),-e '{"vm_project": "$(PROJECT)"}',)
+# The answers make init takes on the command line instead of asking for them
+# (docs/getting-started/first-deploy.md, "Without a terminal, or scripted"),
+# each checked by init-args-check and passed on as one JSON extra var,
+# init_given, empty ones left out. From the command line only, like TYPE: a HOST or GITHUB_USER the
+# shell exports for something else never answers make init. The token's secret
+# is never one of them: make copies every variable given on its command line
+# into MAKEFLAGS, which every command a recipe runs inherits, and the line
+# itself stays in the shell's history, the process list and a CI log. make init
+# reads it from TOKEN_SECRET_FILE's file, or from CLAUDE_ON_PROXMOX_TOKEN_SECRET
+# in the environment, inside the playbook.
+HOST              :=
+TOKEN_USER        :=
+TOKEN_NAME        :=
+TOKEN_SECRET_FILE :=
+GITHUB_USER       :=
+PROMPT            :=
+ifneq ($(filter command,$(origin TOKEN_SECRET) $(origin CLAUDE_ON_PROXMOX_TOKEN_SECRET)),)
+$(error the token secret never goes on make's command line, which every command a recipe runs inherits (MAKEFLAGS) and the shell's history keeps: put it in a file only you can read, make init TOKEN_SECRET_FILE=<file>, or export CLAUDE_ON_PROXMOX_TOKEN_SECRET from wherever your secrets live - a CI secret, or read -rs at a prompt - never typed into the command)
+endif
+INIT_GIVEN := host=HOST token_user=TOKEN_USER token_name=TOKEN_NAME token_secret_file=TOKEN_SECRET_FILE github_user=GITHUB_USER
+# "name":"value" for each one given. Read with $(value), never expanded, after
+# init-args-check has refused anything that could leave the single quotes.
+init_given_pair = $(if $(value $(2)),"$(1)":"$(value $(2))")
+INIT_GIVEN_JSON = $(subst $(space),$(comma),$(strip $(foreach entry,$(INIT_GIVEN),$(call init_given_pair,$(firstword $(subst =, ,$(entry))),$(lastword $(subst =, ,$(entry)))))))
+INIT_GIVEN_ARGS = $(if $(INIT_GIVEN_JSON),-e '{"init_given":{$(INIT_GIVEN_JSON)}}')
+# make init asks only at a terminal, and only when PROMPT is not no:
+# init_settings.yml's init_ask is false otherwise, so a run with no terminal, or
+# the playbook run by hand, asks nothing and writes only what was given.
+INIT_TTY_ARGS = $(if $(filter no,$(value PROMPT)),,$$([ -t 0 ] && printf '%s' '-e {"init_ask":true}'))
 # The roles with a Molecule scenario of their own. ROLE=<role>,... narrows
 # make test to some of them, and so is TYPE=role on its own; checked against
 # this list, like TAGS, before a recipe changes into roles/<role>.
@@ -290,7 +321,7 @@ PRE_COMMIT_SKIP := yamllint,ansible-lint,ruff-check,ruff-format,gitleaks
 LOG_DIR            ?= $(CURDIR)/.logs
 LOG_RETENTION_DAYS ?= 14
 LOG_STAMP          := $(shell date +%Y%m%d-%H%M%S)
-LOGGED_TARGETS     := deploy code login list destroy test vagrant
+LOGGED_TARGETS     := init deploy code login list destroy test vagrant
 ifneq ($(LOG_DIR),)
 $(LOGGED_TARGETS): export ANSIBLE_LOG_PATH ?= $(LOG_DIR)/$(LOG_STAMP)-$(firstword $(MAKECMDGOALS) $@)$(if $(KIND_$(GOAL)),-$(KIND_$(GOAL))).log
 endif
@@ -335,25 +366,28 @@ help: ## Show this help
 	@printf 'Every target that runs Ansible takes ANSIBLE_ARGS="..." and LOG_DIR=<dir>.\n'
 
 # ------------------------------------------------------------------ use ----
-# make install, then what a checkout needs once: the local config files,
-# copied from their examples only where they are missing, and said only then,
-# and the git hook.
+# make install, the git hook, the local config files - copied from their
+# examples only where they are missing - and then playbooks/init_settings.yml,
+# which asks, at a terminal, for each value a first deploy needs that is still
+# the example's: the Proxmox host's address, the API token's ID and secret,
+# the GitHub username. Enter leaves one for the next make init, and the vault
+# is written encrypted. Without a terminal it asks nothing, and writes only the
+# values given on the command line (below), so make init can be scripted.
+#: HOST=<address>             The Proxmox host's address, for inventory/hosts.yml
+#: TOKEN_USER=<user@realm>    The API token's user, when it is not ansible@pve
+#: TOKEN_NAME=<name>          The API token's name, when it is not ansible
+#: TOKEN_SECRET_FILE=<file>   A file holding the token's secret (or CLAUDE_ON_PROXMOX_TOKEN_SECRET in the environment; never on the command line)
+#: GITHUB_USER=<login>        The GitHub account whose repositories are cloned
+#: PROMPT=no                  Ask nothing, even at a terminal
 .PHONY: init
-init: install ## Set up this checkout: make install, the local config files, the git hook
+init: init-args-check log-setup install ## Set up this checkout, then ask for what a first deploy needs
 	@$(BIN)/pre-commit install >/dev/null
 	@copied=; \
-	for file in inventory/hosts.yml inventory/group_vars/all/local.yml inventory/group_vars/all/vault.yml; do \
+	for file in $(INIT_FILES); do \
 	  test -f "$$file" || { cp "$$file.example" "$$file" && copied="$$copied $$file"; }; \
 	done; \
-	if [ -n "$$copied" ]; then \
-	  echo ""; \
-	  echo "Now edit these (they are git-ignored):"; \
-	  for file in $$copied; do case "$$file" in \
-	    *hosts.yml) echo "  inventory/hosts.yml                  - the address of your Proxmox host";; \
-	    *local.yml) echo "  inventory/group_vars/all/local.yml   - Proxmox node/storage, package choices, which repos to skip";; \
-	    *vault.yml) echo "  inventory/group_vars/all/vault.yml   - secrets: API token, GitHub username/token; then: make vault";; \
-	  esac; done; \
-	fi
+	if [ -n "$$copied" ]; then echo "Created$$copied from their .example files (git-ignored)."; fi
+	@$(BIN)/ansible-playbook -i playbooks/inventory/init.yml $(INIT_TTY_ARGS) $(INIT_GIVEN_ARGS) $(ANSIBLE_ARGS) playbooks/init_settings.yml
 
 # uv's sync installs the versions the lock pins into PYTHON's environment,
 # after checking the lock still matches pyproject.toml. --inexact: the
@@ -652,6 +686,33 @@ project-name-check:
 	  .|..) echo "error: PROJECT names one project folder, not [$$PROJECT_CHECK]"; exit 1;; \
 	esac
 	@test "$${#PROJECT_CHECK}" -le 100 || { echo "error: PROJECT is longer than the 100 characters a repository name can be"; exit 1; }
+
+# What make init takes on the command line, each read through the environment
+# like VM_NAME and refused, before anything is installed, when it holds a
+# character outside its own set: none lets a quote, a space, a $ or a backtick
+# through, so each sits whole inside the single-quoted JSON of INIT_GIVEN_ARGS.
+# The playbook then holds each to its full rule (filter_plugins/settings.py).
+.PHONY: init-args-check
+init-args-check: export INIT_HOST_CHECK := $(value HOST)
+init-args-check: export INIT_TOKEN_USER_CHECK := $(value TOKEN_USER)
+init-args-check: export INIT_TOKEN_NAME_CHECK := $(value TOKEN_NAME)
+init-args-check: export INIT_TOKEN_SECRET_FILE_CHECK := $(value TOKEN_SECRET_FILE)
+init-args-check: export INIT_GITHUB_USER_CHECK := $(value GITHUB_USER)
+init-args-check: export INIT_PROMPT_CHECK := $(value PROMPT)
+init-args-check: export LC_ALL := C
+init-args-check:
+	@case "$$INIT_HOST_CHECK" in *[!A-Za-z0-9.:-]*) \
+	  echo "error: HOST may contain only letters, digits and . : - (got: [$$INIT_HOST_CHECK])"; exit 1;; esac
+	@case "$$INIT_TOKEN_USER_CHECK" in *[!A-Za-z0-9._@-]*) \
+	  echo "error: TOKEN_USER may contain only letters, digits and . _ - @ (got: [$$INIT_TOKEN_USER_CHECK])"; exit 1;; esac
+	@case "$$INIT_TOKEN_NAME_CHECK" in *[!A-Za-z0-9._-]*) \
+	  echo "error: TOKEN_NAME may contain only letters, digits and . _ - (got: [$$INIT_TOKEN_NAME_CHECK])"; exit 1;; esac
+	@case "$$INIT_TOKEN_SECRET_FILE_CHECK" in *[!A-Za-z0-9._/~+-]*) \
+	  echo "error: TOKEN_SECRET_FILE may contain only letters, digits and . _ - / ~ + (got: [$$INIT_TOKEN_SECRET_FILE_CHECK])"; exit 1;; esac
+	@case "$$INIT_GITHUB_USER_CHECK" in *[!A-Za-z0-9-]*) \
+	  echo "error: GITHUB_USER may contain only letters, digits and - (got: [$$INIT_GITHUB_USER_CHECK])"; exit 1;; esac
+	@case "$$INIT_PROMPT_CHECK" in ''|yes|no) ;; *) \
+	  echo "error: PROMPT is yes or no (got: [$$INIT_PROMPT_CHECK])"; exit 1;; esac
 
 # Make LOG_DIR, private, and prune it. Only files named the way this Makefile
 # names them, and only in LOG_DIR: an ANSIBLE_LOG_PATH of your own pointing

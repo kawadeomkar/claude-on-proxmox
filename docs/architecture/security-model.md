@@ -29,6 +29,19 @@ Secrets live in `inventory/group_vars/all/vault.yml`, ansible-vault encrypted. `
 runs before every playbook target and refuses to run while that file is plaintext. Any variable that
 can hold a secret carries `no_log: true` in its `argument_specs`.
 
+`make init` writes the vault encrypted, never in plaintext: `playbooks/init_settings.yml` puts the token
+secret and the GitHub username into the vault's text in memory and pipes it into `ansible-vault encrypt`'s
+stdin under `no_log`, which shreds the old file and writes the new one `0600`. Nothing renders the secret
+outside `no_log` tasks, and init's inventory turns pipelining on, so even the module arguments that carry
+it never land in `~/.ansible/tmp`; a run with `ANSIBLE_KEEP_REMOTE_FILES`, which turns pipelining off and
+keeps each module's file there, is refused before it reads anything. Its password goes in `.vault_pass`, made only when there is no password
+anywhere (`.vault_pass` or `ANSIBLE_VAULT_PASSWORD_FILE`): `O_EXCL`, `0600`, and never read, rewritten or
+re-moded once it exists. The secret is never taken from `make`'s command line, which `make` copies into
+`MAKEFLAGS` for every command a recipe runs, and which the shell's history, the process list and a CI log
+keep: `TOKEN_SECRET=` or `CLAUDE_ON_PROXMOX_TOKEN_SECRET=` there stops `make` at once. A scripted `make
+init` reads it from `TOKEN_SECRET_FILE`'s file or from `CLAUDE_ON_PROXMOX_TOKEN_SECRET` in the
+environment, inside the playbook, so it is on no command line at all.
+
 ## Nothing environment-specific is committed
 
 Two independent mechanisms:

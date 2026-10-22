@@ -27,7 +27,7 @@ a hand-rolled `molecule test` will not.
 
 ```
 make install         # sync your virtualenv to uv.lock (uv sync --locked) + the Galaxy collections; TYPE=lock after editing a pin
-make init            # once: make install + the local config from the examples + the git hook
+make init            # once: make install + the git hook + the local config, asking for what a first deploy needs
 make vault           # encrypt the vault while it is plaintext, edit it once it is encrypted
 make lint            # uv lock --check, yamllint --strict, ansible-lint (production), ruff, --syntax-check, the other pre-commit hooks
 make lint TYPE=syntax          # one of them: lock, yaml, ansible, python, syntax or hooks
@@ -295,6 +295,23 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the `Include` off, the Vagrantfile sets `claude_ssh_config: false`, and
   `tests/unit/test_ssh_config.py` fails if any of them stops.
 
+- **`make init` writes only what is still a placeholder, only at a terminal or as given, and the vault
+  only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`
+  (the controller alone, pipelining on, no `group_vars`; never in `playbooks/` itself, where the syntax
+  check and ansible-lint take it for a playbook), and asks through `tasks/init_ask.yml` only while a value
+  is the example's or unset; Enter is "later", and an answer is held to its kind by `init_answer`
+  (`filter_plugins/settings.py`). `init_ask` is false unless the Makefile sees a terminal and `PROMPT` is
+  not `no` (`INIT_TTY_ARGS`), and every write is under it or under a value given on the command line
+  (`init_given`), which never overwrites: one that differs from what is set fails the run, naming both.
+  `hosts.yml` and `local.yml` are changed by one validated `lineinfile` each, on the example's own line.
+  The vault is re-encrypted by piping its text into `ansible-vault encrypt`'s stdin under `no_log`, never
+  through `copy`, which decrypts. `.vault_pass` is created `O_EXCL`, 0600, and never rewritten. Every
+  test points the four `init_*_file` vars into its own directory, through `_init` and
+  `_init_at_a_terminal` in `tests/unit/test_init_settings.py`, which holds that statically. The token
+  secret is never taken from the command line (`TOKEN_SECRET=` stops `make`): only from
+  `TOKEN_SECRET_FILE`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
+  argv.
+
 ## Architecture, and why it looks like this
 
 **Playbooks own inventory; roles do not.** `add_host` sets `BYPASS_HOST_LOOP`, so it runs *once per
@@ -474,9 +491,12 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   aliases it had just refreshed. Pass the task file's inputs only through `vars:` on the import;
   `tests/unit/test_ssh_config.py` fails if a playbook sets them as facts.
 - **Every value typed on the `make` line is checked before a shell sees it.** `VM_NAME` and `PROJECT`
-  each have a `*-name-check` target that reads the value through the environment with `$(value ...)`
-  and refuses anything outside its character set with a shell `case`, then the value travels to Ansible
-  as JSON. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused as well, and
+  each have a `*-name-check` target, and `make init`'s `HOST`, `TOKEN_USER`, `TOKEN_NAME`,
+  `TOKEN_SECRET_FILE`, `GITHUB_USER` and `PROMPT` have `init-args-check`, each reading the value through
+  the environment with `$(value ...)` and refusing anything outside its character set with a shell
+  `case`, then the value travels to Ansible as JSON (`INIT_GIVEN_ARGS`). Those init values are assigned
+  empty in the Makefile, so only the command line sets them, never an exported variable; the token
+  secret is refused there outright, since `make` copies the command line into `MAKEFLAGS`. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused as well, and
   `code.yml` repeats the check for a direct `ansible-playbook` run. The targets in `NAMED_TARGETS`,
   every one that takes `VM_NAME`, also take the names as the words after them, which make reads as
   goals: they become `VM_NAME` and go into no rule's syntax and no `$(shell)` before `vm-name-check` (a

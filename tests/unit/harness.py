@@ -339,6 +339,7 @@ def _run_at_a_terminal(
     args: Iterable[str] = (),
     ordered: bool = False,
     timeout: float = 180,
+    env: dict | None = None,
 ) -> tuple[int, str, str]:
     """Run a playbook whose stdin is a pseudo-terminal it controls, and answer its prompts. rc, output, run log.
 
@@ -346,13 +347,14 @@ def _run_at_a_terminal(
     (prompt, keys) or (prompt, keys, seconds), types its keys as they are at
     its prompt's next appearance, that many seconds later. Keys go in once the
     prompt has the terminal in raw mode, and again if it has not taken them
-    within two seconds. args go on the command line, before the playbook.
+    within two seconds. args go on the command line, before the playbook; env
+    sets variables on top of the harness's, as _run's does.
     """
     plan = [(prompt, answer.encode() + b"\n")] if steps is None else list(steps)
     plan = [(step[0], step[1], step[2] if len(step) > 2 else 0) for step in plan]
     inventory = _inventory(root, hosts, ordered)
     log = root / "run.log"
-    env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM="dumb")
+    env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM="dumb", **(env or {}))
     master, slave = pty.openpty()
     process = subprocess.Popen(
         [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, "-e", json.dumps(extra), str(playbook)],

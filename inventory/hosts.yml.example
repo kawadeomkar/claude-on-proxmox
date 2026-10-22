@@ -1,5 +1,6 @@
 ---
-# Copy to inventory/hosts.yml (git-ignored) and fill in your environment.
+# make init copies this to inventory/hosts.yml (git-ignored) and asks for the
+# Proxmox host's address, which it writes in place of 192.0.2.10 below. By hand:
 #
 #   cp inventory/hosts.yml.example inventory/hosts.yml
 #

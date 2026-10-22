@@ -34,15 +34,7 @@ a first deploy.
 
 ## Quick start
 
-**1. Get the project.**
-
-```bash
-git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
-pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
-make init            # make install (packages + collections) + copies the *.example files + pre-commit hook
-```
-
-**2. Give it access to Proxmox.** Install your key for the one root SSH step (the template build):
+**1. Give it access to Proxmox.** Install your key for the one root SSH step (the template build):
 
 ```bash
 ssh-copy-id root@<proxmox-host>
@@ -67,25 +59,34 @@ pveum aclmod /sdn/zones/localnetwork/vmbr0 -user ansible@pve -role AnsibleVM   #
 pveum user token add ansible@pve ansible --privsep 0
 ```
 
+Keep the token's secret, which `pveum` prints once, for the next step.
 [Proxmox access](docs/getting-started/proxmox-access.md) explains the guest-agent privilege, a datacenter
 setting that can block the project's tag, and validating the host's certificate.
 
-**3. Fill in the three git-ignored files** that `make init` created:
+**2. Get the project, and answer `make init`.**
+
+```bash
+git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
+pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
+make init            # installs the tools, then asks for your Proxmox host, its API token and your GitHub username
+```
+
+Enter at a question leaves it for the next `make init`. What you answer goes into three git-ignored files,
+the vault encrypted, with its password in `.vault_pass`: keep that file.
 
 | File | Contents |
 |------|----------|
-| `inventory/hosts.yml` | The address of your Proxmox host. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | `vault_proxmox_api_token_secret`: the token secret `pveum` printed, shown only once; `vault_github_username`. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key` |
-| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a storage or bridge that is not `local-lvm` or `vmbr0`, a node not named `pve`, `tailscale_enabled: false` without a Tailscale account, VM size, which repositories to clone |
+| `inventory/hosts.yml` | The address of your Proxmox host, which `make init` asks for. VMs are **not** listed here |
+| `inventory/group_vars/all/vault.yml` | Encrypted: the token secret and your GitHub username, which `make init` asks for. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `make vault` |
+| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a token not named `ansible@pve!ansible` (`make init` asks), a storage or bridge that is not `local-lvm` or `vmbr0`, a node not named `pve`, `tailscale_enabled: false` without a Tailscale account, VM size, which repositories to clone |
 
-Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md).
+Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md),
+and `make vault` edits the vault. [Your first deploy](docs/getting-started/first-deploy.md) has the same
+setup with no terminal, every answer on `make init`'s command line.
 
-**4. Encrypt the vault and deploy.**
+**3. Deploy.**
 
 ```bash
-(umask 077; openssl rand -base64 32 > .vault_pass)
-make vault
-
 make deploy VM_NAME=alpha
 ```
 

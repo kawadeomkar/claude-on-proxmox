@@ -12,12 +12,13 @@ standalone installer), `make`, and Docker Engine for the tests.
 
 ```bash
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # or any virtualenv: PYTHON=<its python>
-make init     # make install (the locked packages, the Galaxy collections), config from the .example files, git hooks
+make init     # make install (the locked packages, the Galaxy collections), git hooks, the config, asked for
 make test     # lint (syntax and hooks included), unit tests, every Molecule scenario
 ```
 
-`make init` runs `make install`, then copies `inventory/hosts.yml.example` and the two `group_vars`
-examples into place where they are missing and installs the pre-commit hooks. `make install` puts the
+`make init` runs `make install`, installs the pre-commit hooks, copies `inventory/hosts.yml.example`
+and the two `group_vars` examples into place where they are missing, and asks for the values a first
+deploy needs (`make init PROMPT=no` asks nothing; a checkout that only runs the tests needs none). `make install` puts the
 versions locked in `uv.lock` into your environment - the Python `python3` is here, which pyenv takes
 from `.python-version`, or `PYTHON=/path/to/python` - leaving the rest of it alone, and refuses a Python
 that is not a virtualenv; it changes nothing that is current, so it is also the command to run after a

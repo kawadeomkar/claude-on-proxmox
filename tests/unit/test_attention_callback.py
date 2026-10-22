@@ -322,7 +322,14 @@ def _task_lists(node):
 
 
 def _files():
-    return sorted([*REPO.glob("roles/*/tasks/*.yml"), *REPO.glob("playbooks/*.yml"), REPO / "deploy.yml"])
+    return sorted(
+        [
+            *REPO.glob("roles/*/tasks/*.yml"),
+            *REPO.glob("playbooks/*.yml"),
+            *REPO.glob("playbooks/tasks/*.yml"),
+            REPO / "deploy.yml",
+        ]
+    )
 
 
 def _tasks(path: Path):
@@ -348,7 +355,7 @@ def test_every_prompt_is_drawn_by_banner():
             if isinstance(play, dict):
                 prompts += [entry["prompt"] for entry in play.get("vars_prompt") or []]
         prompts += [task["ansible.builtin.pause"]["prompt"] for task in _tasks(path) if "ansible.builtin.pause" in task]
-    assert len(prompts) == 5
+    assert len(prompts) == 7
     assert all("| banner(" in prompt for prompt in prompts), prompts
 
 

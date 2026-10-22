@@ -8,7 +8,7 @@ and [Requirements](requirements.md) for what the project assumes of the host.
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
-make init            # make install (packages + collections) + copies the *.example files + pre-commit hook
+make init            # installs the tools, then asks for your Proxmox host, its API token and your GitHub username
 ```
 
 The project keeps no environment of its own: `make install`, which `make init` runs first, installs the
@@ -17,26 +17,66 @@ locked tools into the Python that `python3` is in this directory - with pyenv, t
 there - never from a Python that is not a virtualenv, which they refuse. It installs the versions
 `uv.lock` pins and removes nothing else. Run `make install` again after a pull.
 
-Edit the three git-ignored files `make init` created:
+`make init` then copies the three git-ignored files below from their examples and asks, at the terminal,
+for each value a first deploy needs that is still the example's:
+
+1. **The Proxmox host's address**, as this machine reaches it: an IP address or a host name, without
+   `https://` or a port.
+2. **The API token's ID**, `user@realm!name`. Enter keeps `ansible@pve!ansible`, the name the `pveum`
+   commands in [Proxmox access](proxmox-access.md) give it.
+3. **The token's secret**, which `pveum` printed once. It is not shown as you type.
+4. **Your GitHub username**, whose repositories are cloned onto each VM.
+
+Enter at a question leaves it for the next `make init`, which asks again for what is still missing; an
+answer that cannot be right (a URL for the address, a secret that is not one) is asked for once more.
+What you answered is never asked again. The vault is written encrypted, and its password, which
+`make init` makes, is in `.vault_pass`: keep that file, since the vault cannot be opened without it.
 
 | File | Contents |
 |------|----------|
-| `inventory/hosts.yml` | The address of your Proxmox host. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | `vault_proxmox_api_token_secret`: the token secret `pveum` printed, shown only once; `vault_github_username`. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key` |
-| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a storage or bridge that is not `local-lvm` or `vmbr0`, a node not named `pve`, `tailscale_enabled: false` without a Tailscale account, VM size, which repositories to clone |
+| `inventory/hosts.yml` | The address of your Proxmox host, which `make init` asks for. VMs are **not** listed here |
+| `inventory/group_vars/all/vault.yml` | Encrypted: the token secret and your GitHub username, which `make init` asks for. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `make vault` |
+| `inventory/group_vars/all/local.yml` | Only what differs from the defaults: a token not named `ansible@pve!ansible` (`make init` asks), a storage or bridge that is not `local-lvm` or `vmbr0`, a node not named `pve`, `tailscale_enabled: false` without a Tailscale account, VM size, which repositories to clone |
 
-Every setting the two files take, with its default, is in the [settings reference](../reference/settings.md).
-Tailscale is on by default: without a Tailscale account, set `tailscale_enabled: false` in `local.yml`,
-or every deploy opens Tailscale's sign-in page and waits for it.
+Every setting the two files take, with its default, is in the [settings reference](../reference/settings.md),
+and `make vault` opens the vault in your editor. Tailscale is on by default: without a Tailscale account,
+set `tailscale_enabled: false` in `local.yml`, or every deploy opens Tailscale's sign-in page and waits
+for it.
 
-## Encrypt the secrets, then deploy
+### Without a terminal, or scripted
 
-The `make` targets refuse to run while `vault.yml` is still plaintext.
+With no terminal, `make init` asks nothing and writes nothing but what its command line gives it, so it
+can be scripted. Each answer is a variable on the command line - `make` takes no `--flags` - and the
+token's secret comes from a file, or from the environment, never from the command line, which `make`
+hands to every command it runs and your shell keeps in its history:
+
+```console
+$ (umask 077; printf %s "$PVE_SECRET" > ~/.config/pve-token)
+$ make init HOST=pve.lan GITHUB_USER=octocat TOKEN_SECRET_FILE=~/.config/pve-token
+```
+
+| Variable | Answers |
+|---|---|
+| `HOST` | The Proxmox host's address |
+| `TOKEN_USER`, `TOKEN_NAME` | The token's user (`ansible@pve`) and name (`ansible`), each only when it differs |
+| `TOKEN_SECRET_FILE` | A file holding the token's secret; or `CLAUDE_ON_PROXMOX_TOKEN_SECRET` exported in the environment, from a CI secret or `read -rs`, never typed into a command |
+| `GITHUB_USER` | Your GitHub username |
+| `PROMPT=no` | Ask nothing, even at a terminal |
+
+A value given is held to the same rules as one typed, and fills only what is still the example's: one
+equal to what is set already changes nothing, so the same command can run again, and one that differs
+fails the run, naming both. The vault it went into is encrypted in the same run, and `.vault_pass`
+made when there is none: keep it, or set `ANSIBLE_VAULT_PASSWORD_FILE` to a password file of your own
+before the first run. A run that was given values but still lacks the address, the secret or the
+username fails, naming what is missing; `PROMPT=no` makes a run at a terminal one of these. At a terminal,
+the values given are taken and the rest asked, Enter still leaving one for later.
+
+Or skip `make init`'s questions and edit the three files yourself, then run `make vault`, which encrypts
+the vault (with the password in `.vault_pass`, if you made one).
+
+## Deploy
 
 ```bash
-(umask 077; openssl rand -base64 32 > .vault_pass)
-make vault
-
 make deploy VM_NAME=alpha
 ```
 

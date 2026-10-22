@@ -548,3 +548,45 @@ nobody answered. Without names every step reports, and nothing starts. `claude_v
 not set, so GitHub's follow-on play runs the whole `github_projects` role for each VM named, as
 `make login TYPE=github` does, since no configuration ran just before it. `TYPE=claude`, `github` or
 `tailscale` runs that playbook alone.
+
+## 4.12 `playbooks/init_settings.yml`
+
+`make init`'s questions, after `make install`, the git hook and the copies of the three example files: one
+play on `localhost`, run with an inventory of its own, `playbooks/inventory/init.yml` - the controller,
+as `inventory/controller.yml` has it, with pipelining on, and a run that keeps the modules' files
+(`ANSIBLE_KEEP_REMOTE_FILES`, which turns pipelining off) refused - so no `group_vars` load. It runs before the
+vault can be opened and while every value is still the example's, and reads what it writes back from the
+files, since a run does not reload `group_vars`. The inventory is not in `playbooks/` itself, where the
+syntax check and ansible-lint would take it for a playbook.
+
+It reads `hosts.yml` and `local.yml`, and the vault: as text when it is plaintext, through `ansible-vault
+decrypt --output -` under `no_log` when it is encrypted and there is a password (`.vault_pass`, or
+`ANSIBLE_VAULT_PASSWORD_FILE`); an encrypted vault with neither is left alone, and said. Then four
+questions, each through `tasks/init_ask.yml` and only while its value is still the example's: the host's
+address (written at once, by one `lineinfile` on the example's `ansible_host: 192.0.2.10` line, comment
+kept, validated as YAML and read back); the token's ID, while there is no secret and `local.yml` names no
+token (only the parts that differ from `ansible@pve!ansible` are written, by `tasks/init_local_setting.yml`,
+in place of their commented example lines); the secret, hidden; the GitHub username. Each answer is held
+to its kind by the `init_answer` filter (`filter_plugins/settings.py`); one that breaks the rule is asked
+for once more, saying it, and Enter leaves the value for the next run. The address in effect is the first
+`proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it.
+
+`init_ask` is false unless the Makefile sees a terminal and `PROMPT` is not `no` (`INIT_TTY_ARGS`), and
+every write is under it, or under a value given on the command line: `init_given`, the JSON
+`init-args-check` let through, and the secret from `TOKEN_SECRET_FILE`'s file or
+`CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read under `no_log`. Every given value is held to its rule before
+anything is written, so a run failed by its last one leaves the files as they were; it fills only what is
+still the example's, and fails the run, naming both, when it differs from what is set (compared in its
+normal form, a name or a GitHub login case-insensitively); equal, it is nothing to do, so the same command
+runs again with nothing changed. The vault is written last and once: the `with_setting` filter puts the
+answers in place of the example's lines in memory, and the text reaches `ansible-vault encrypt --output
+<vault> -` on its stdin under `no_log`, never through `copy`, which decrypts what it writes. A plaintext
+vault is always encrypted at a terminal, since every target refuses one, and a vault a given value went
+into is encrypted whatever the run. The answers go in only where the line holds its value whole; a value
+over several lines, which the filter's read-back catches, is said and left to `make vault`. `.vault_pass` is
+made only when there is no password anywhere: `O_EXCL`, `0600`, by the run's own Python. `ansible-vault` is
+told which password encrypts (`--encrypt-vault-id default`), since with `.vault_pass` and
+`ANSIBLE_VAULT_PASSWORD_FILE` both it has two, and what it says when it fails is said, holding no secret.
+The vault is decrypted again and compared with what was meant. The run ends with what it wrote and what is
+still missing - a vault left plaintext among it - and a run with no terminal (or `PROMPT=no`) that was
+given values but still lacks the address, the secret or the username fails, naming them.
