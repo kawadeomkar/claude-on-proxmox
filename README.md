@@ -30,7 +30,7 @@ a first deploy.
 - **Accounts:** a Claude Pro, Max, Team or Enterprise login, which Remote Control needs - on Team and
   Enterprise an Owner turns Remote Control on for the organisation first - or an Anthropic API key, with
   Remote Control off; GitHub; and Tailscale, which is on by default: without an account, set
-  `tailscale_enabled: false` in `local.yml`.
+  `tailscale_enabled: false` in `local.yml` (`make init` reminds you).
 
 ## Quick start
 

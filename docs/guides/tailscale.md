@@ -3,7 +3,8 @@
 You can reach a VM over [Tailscale](https://tailscale.com): it puts each VM on your tailnet - the private
 network your other devices are on - so `ssh`, VS Code's Remote - SSH and a dev server on any port reach the
 VM from anywhere, not only from the LAN Proxmox sits on. It is on by default; `tailscale_enabled: false` in
-`local.yml` turns it off.
+`local.yml` turns it off. `make init` reminds you until `local.yml` sets it either way, and
+`make init TAILSCALE=off` writes it.
 
 ## Joining a VM to your tailnet
 

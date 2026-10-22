@@ -41,7 +41,8 @@ What you answered is never asked again. The vault is written encrypted, and its 
 Every setting the two files take, with its default, is in the [settings reference](../reference/settings.md),
 and `make vault` opens the vault in your editor. Tailscale is on by default: without a Tailscale account,
 set `tailscale_enabled: false` in `local.yml`, or every deploy opens Tailscale's sign-in page and waits
-for it.
+for it. `make init` reminds you while `local.yml` does not set it either way, and asks nothing about it:
+`make init TAILSCALE=off` writes the setting.
 
 ### Without a terminal, or scripted
 
@@ -61,6 +62,7 @@ $ make init HOST=pve.lan GITHUB_USER=octocat TOKEN_SECRET_FILE=~/.config/pve-tok
 | `TOKEN_USER`, `TOKEN_NAME` | The token's user (`ansible@pve`) and name (`ansible`), each only when it differs |
 | `TOKEN_SECRET_FILE` | A file holding the token's secret; or `CLAUDE_ON_PROXMOX_TOKEN_SECRET` exported in the environment, from a CI secret or `read -rs`, never typed into a command |
 | `GITHUB_USER` | Your GitHub username |
+| `TAILSCALE` | `on` or `off`: `tailscale_enabled`, which is on by default |
 | `PROMPT=no` | Ask nothing, even at a terminal |
 
 A value given is held to the same rules as one typed, and fills only what is still the example's: one

@@ -649,6 +649,71 @@ def test_a_run_that_keeps_the_modules_files_is_refused(tmp_path: Path) -> None:
     assert _snapshot(files) == before
 
 
+# --------------------------------------------------------------- Tailscale ---
+NOTICE_TASK = "Say that Tailscale is on by default"
+
+
+def test_the_tailscale_notice_names_the_sign_in_page_on_a_fresh_checkout(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    before = _snapshot(files)
+    report = _init(tmp_path, files)
+    assert report["rc"] == 0, _failures(report)
+    notice = _said(report, NOTICE_TASK)
+    assert notice.startswith("NOTICE  Tailscale is on by default") and "sign-in page during make deploy" in notice
+    assert "tailscale_enabled: false" in notice
+    assert _snapshot(files) == before
+
+
+def test_the_tailscale_notice_names_the_auth_key_the_vault_holds(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    vault = Path(files["init_vault_file"])
+    vault.write_text(
+        vault.read_text().replace('vault_tailscale_auth_key: ""', 'vault_tailscale_auth_key: "tskey-auth-x"')
+    )
+    report = _init(tmp_path, files)
+    assert report["rc"] == 0, _failures(report)
+    assert "by vault_tailscale_auth_key." in _said(report, NOTICE_TASK)
+    assert "tskey-auth-x" not in json.dumps(report)
+
+
+@pytest.mark.parametrize(("given", "value"), [("off", "false"), ("on", "true")])
+def test_tailscale_given_writes_its_setting_and_ends_the_notice(tmp_path: Path, given: str, value: str) -> None:
+    files = _files(tmp_path)
+    report = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path) | {"tailscale": given}})
+    assert report["rc"] == 0, _failures(report)
+    assert Path(files["init_local_file"]).read_text() == _example("init_local_file").replace(
+        "# tailscale_enabled: true\n", f"tailscale_enabled: {value}\n"
+    )
+    assert not _said(report, NOTICE_TASK)
+    assert f"tailscale_enabled: {value}" in _said(report, "Say what was written, and what is left")
+    again = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path) | {"tailscale": given}})
+    assert again["rc"] == 0, _failures(again)
+    assert _changed(again) == 0
+
+
+@pytest.mark.parametrize("setting", ["true", "false"])
+def test_the_tailscale_notice_is_gone_once_the_setting_is_there(tmp_path: Path, setting: str) -> None:
+    files = _files(tmp_path)
+    local = Path(files["init_local_file"])
+    local.write_text(local.read_text() + f"tailscale_enabled: {setting}\n")
+    report = _init(tmp_path, files)
+    assert report["rc"] == 0, _failures(report)
+    assert not _said(report, NOTICE_TASK)
+
+
+def test_tailscale_given_that_differs_from_the_setting_fails(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    local = Path(files["init_local_file"])
+    local.write_text(local.read_text() + "tailscale_enabled: false\n")
+    before = _snapshot(files)
+    report = _init(tmp_path, files, {"init_given": {"tailscale": "on"}})
+    assert report["rc"] != 0
+    assert "TAILSCALE=on, but inventory/group_vars/all/local.yml already sets tailscale_enabled: false" in (
+        "\n".join(_failures(report).values())
+    )
+    assert _snapshot(files) == before
+
+
 # --------------------------------------------------------------------- static ---
 def _tasks(node):
     for item in node if isinstance(node, list) else []:
@@ -679,7 +744,7 @@ def test_every_write_is_at_a_terminal_or_of_a_given_value():
         writers.append(task["name"])
         # Its first condition: a terminal, or (the rest of it) a value given.
         assert re.match(r"\(?init_ask \| bool or ", str(task.get("when"))), task["name"]
-    assert len(writers) == 4, writers
+    assert len(writers) == 5, writers
 
 
 # Names that hold the secret or the vault's text: a task that renders one, in

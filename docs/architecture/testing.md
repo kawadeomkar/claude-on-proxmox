@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1388 tests. By file:
+pytest over `tests/unit/`: 1396 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -82,7 +82,7 @@ pytest over `tests/unit/`: 1388 tests. By file:
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
-- **`make init`'s questions** (`test_init_settings.py` 53, `test_settings_filter.py` 71):
+- **`make init`'s questions** (`test_init_settings.py` 60, `test_settings_filter.py` 71):
   `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
   which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
   a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
@@ -92,7 +92,9 @@ pytest over `tests/unit/`: 1388 tests. By file:
   failing, one that breaks its rule failing before any file is written, a scripted run still missing a value
   failing and a run at a terminal not; `ANSIBLE_VAULT_PASSWORD_FILE` alone and beside `.vault_pass`, an
   encryption that fails said, a host named without an `ansible_host` taken as set, a vault line over several
-  lines left alone, a vault left plaintext said, and a run that keeps the modules' files refused; the vault decrypted to the example with the answered lines replaced,
+  lines left alone, a vault left plaintext said, and a run that keeps the modules' files refused; the
+  Tailscale notice, naming the auth key or the sign-in page, gone once `tailscale_enabled` is set, and
+  `TAILSCALE` writing it; the vault decrypted to the example with the answered lines replaced,
   `0600`, and the secret in neither the output nor the log, typed or given, with module arguments injected
   and the log at `-vvv`; statically, every write under `init_ask` and every task that renders the secret
   or the vault's text `no_log`. The filter: each kind's accepted answers in their normal form, and what
@@ -112,7 +114,7 @@ pytest over `tests/unit/`: 1388 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 358): `vm-name-check` accepts DNS-like names and refuses
+- **The Makefile** (`test_makefile.py` 359): `vm-name-check` accepts DNS-like names and refuses
   whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as

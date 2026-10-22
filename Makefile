@@ -257,11 +257,12 @@ TOKEN_USER        :=
 TOKEN_NAME        :=
 TOKEN_SECRET_FILE :=
 GITHUB_USER       :=
+TAILSCALE         :=
 PROMPT            :=
 ifneq ($(filter command,$(origin TOKEN_SECRET) $(origin CLAUDE_ON_PROXMOX_TOKEN_SECRET)),)
 $(error the token secret never goes on make's command line, which every command a recipe runs inherits (MAKEFLAGS) and the shell's history keeps: put it in a file only you can read, make init TOKEN_SECRET_FILE=<file>, or export CLAUDE_ON_PROXMOX_TOKEN_SECRET from wherever your secrets live - a CI secret, or read -rs at a prompt - never typed into the command)
 endif
-INIT_GIVEN := host=HOST token_user=TOKEN_USER token_name=TOKEN_NAME token_secret_file=TOKEN_SECRET_FILE github_user=GITHUB_USER
+INIT_GIVEN := host=HOST token_user=TOKEN_USER token_name=TOKEN_NAME token_secret_file=TOKEN_SECRET_FILE github_user=GITHUB_USER tailscale=TAILSCALE
 # "name":"value" for each one given. Read with $(value), never expanded, after
 # init-args-check has refused anything that could leave the single quotes.
 init_given_pair = $(if $(value $(2)),"$(1)":"$(value $(2))")
@@ -378,6 +379,8 @@ help: ## Show this help
 #: TOKEN_NAME=<name>          The API token's name, when it is not ansible
 #: TOKEN_SECRET_FILE=<file>   A file holding the token's secret (or CLAUDE_ON_PROXMOX_TOKEN_SECRET in the environment; never on the command line)
 #: GITHUB_USER=<login>        The GitHub account whose repositories are cloned
+#: TAILSCALE=on              Each VM joins your tailnet, the default: writes tailscale_enabled: true in local.yml
+#: TAILSCALE=off             No Tailscale, for a setup without a Tailscale account: tailscale_enabled: false
 #: PROMPT=no                  Ask nothing, even at a terminal
 .PHONY: init
 init: init-args-check log-setup install ## Set up this checkout, then ask for what a first deploy needs
@@ -698,6 +701,7 @@ init-args-check: export INIT_TOKEN_USER_CHECK := $(value TOKEN_USER)
 init-args-check: export INIT_TOKEN_NAME_CHECK := $(value TOKEN_NAME)
 init-args-check: export INIT_TOKEN_SECRET_FILE_CHECK := $(value TOKEN_SECRET_FILE)
 init-args-check: export INIT_GITHUB_USER_CHECK := $(value GITHUB_USER)
+init-args-check: export INIT_TAILSCALE_CHECK := $(value TAILSCALE)
 init-args-check: export INIT_PROMPT_CHECK := $(value PROMPT)
 init-args-check: export LC_ALL := C
 init-args-check:
@@ -711,6 +715,8 @@ init-args-check:
 	  echo "error: TOKEN_SECRET_FILE may contain only letters, digits and . _ - / ~ + (got: [$$INIT_TOKEN_SECRET_FILE_CHECK])"; exit 1;; esac
 	@case "$$INIT_GITHUB_USER_CHECK" in *[!A-Za-z0-9-]*) \
 	  echo "error: GITHUB_USER may contain only letters, digits and - (got: [$$INIT_GITHUB_USER_CHECK])"; exit 1;; esac
+	@case "$$INIT_TAILSCALE_CHECK" in ''|on|off) ;; *) \
+	  echo "error: TAILSCALE is on or off (got: [$$INIT_TAILSCALE_CHECK])"; exit 1;; esac
 	@case "$$INIT_PROMPT_CHECK" in ''|yes|no) ;; *) \
 	  echo "error: PROMPT is yes or no (got: [$$INIT_PROMPT_CHECK])"; exit 1;; esac
 

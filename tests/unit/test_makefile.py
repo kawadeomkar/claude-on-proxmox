@@ -1051,7 +1051,7 @@ def test_init_logs_its_run(tmp_path: Path) -> None:
 
 
 def test_the_values_given_reach_the_playbook_as_one_json_extra_var(tmp_path: Path) -> None:
-    given = ["HOST=pve.lan", "TOKEN_USER=deploy@pam", "TOKEN_NAME=claude", "GITHUB_USER=octo-cat"]
+    given = ["HOST=pve.lan", "TOKEN_USER=deploy@pam", "TOKEN_NAME=claude", "GITHUB_USER=octo-cat", "TAILSCALE=off"]
     result, recorded = _init_run(tmp_path, *given, "TOKEN_SECRET_FILE=~/.config/pve-token")
     assert result.returncode == 0, result.stdout + result.stderr
     passed = [json.loads(arg) for arg in recorded if arg.startswith('{"init_given"')]
@@ -1063,6 +1063,7 @@ def test_the_values_given_reach_the_playbook_as_one_json_extra_var(tmp_path: Pat
                 "token_name": "claude",
                 "token_secret_file": "~/.config/pve-token",
                 "github_user": "octo-cat",
+                "tailscale": "off",
             }
         }
     ]
@@ -1094,6 +1095,11 @@ def test_a_given_value_outside_its_characters_is_refused_before_anything_runs(
 def test_prompt_is_yes_or_no(tmp_path: Path) -> None:
     result, recorded = _init_run(tmp_path, "PROMPT=maybe")
     assert result.returncode != 0 and "PROMPT is yes or no" in result.stdout and recorded is None
+
+
+def test_tailscale_is_on_or_off(tmp_path: Path) -> None:
+    result, recorded = _init_run(tmp_path, "TAILSCALE=yes")
+    assert result.returncode != 0 and "TAILSCALE is on or off" in result.stdout and recorded is None
 
 
 @pytest.mark.parametrize("name", ["TOKEN_SECRET", "CLAUDE_ON_PROXMOX_TOKEN_SECRET"])

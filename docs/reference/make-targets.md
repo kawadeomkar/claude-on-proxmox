@@ -42,6 +42,8 @@ and `LOG_DIR` moves the run logs or, empty, turns them off.
 | &emsp;`TOKEN_NAME=<name>` | The API token's name, when it is not ansible |
 | &emsp;`TOKEN_SECRET_FILE=<file>` | A file holding the token's secret (or CLAUDE_ON_PROXMOX_TOKEN_SECRET in the environment; never on the command line) |
 | &emsp;`GITHUB_USER=<login>` | The GitHub account whose repositories are cloned |
+| &emsp;`TAILSCALE=on` | Each VM joins your tailnet, the default: writes tailscale_enabled: true in local.yml |
+| &emsp;`TAILSCALE=off` | No Tailscale, for a setup without a Tailscale account: tailscale_enabled: false |
 | &emsp;`PROMPT=no` | Ask nothing, even at a terminal |
 | `make install` | Install the locked Python packages and the Galaxy collections into your environment |
 | &emsp;`TYPE=lock` | Update uv.lock after editing a pin in pyproject.toml, installing nothing (uv from PATH) |

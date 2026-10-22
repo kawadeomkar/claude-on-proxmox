@@ -569,7 +569,10 @@ token (only the parts that differ from `ansible@pve!ansible` are written, by `ta
 in place of their commented example lines); the secret, hidden; the GitHub username. Each answer is held
 to its kind by the `init_answer` filter (`filter_plugins/settings.py`); one that breaks the rule is asked
 for once more, saying it, and Enter leaves the value for the next run. The address in effect is the first
-`proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it.
+`proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it. Tailscale is not asked about:
+while `local.yml` does not set `tailscale_enabled`, a `NOTICE` says it is on, by the vault's auth key or the
+sign-in page, and how to turn it off, writing nothing, so a later change to the default still reaches the
+person; `TAILSCALE=on` or `off` writes the setting, by `tasks/init_local_setting.yml`.
 
 `init_ask` is false unless the Makefile sees a terminal and `PROMPT` is not `no` (`INIT_TTY_ARGS`), and
 every write is under it, or under a value given on the command line: `init_given`, the JSON

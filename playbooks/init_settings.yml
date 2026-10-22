@@ -35,7 +35,7 @@
     # not no. Every write below is under it, or under a value given for it.
     init_ask: false
     # The values given on make's command line, checked by init-args-check:
-    # host, token_user, token_name, token_secret_file, github_user.
+    # host, token_user, token_name, token_secret_file, github_user, tailscale.
     init_given: {}
     init_root: "{{ playbook_dir | dirname }}"
     init_hosts_file: "{{ init_root }}/inventory/hosts.yml"
@@ -66,6 +66,8 @@
     init_host_missing: "{{ init_hosts_current in ['', init_host_placeholder] }}"
 
     init_local_settings: "{{ (init_local_read.content | b64decode | from_yaml) or {} }}"
+    # TAILSCALE=on or off, as the value tailscale_enabled takes.
+    init_tailscale_given: "{{ {'on': true, 'off': false}[init_given.tailscale] if init_given.tailscale is defined else none }}"
     init_token_user: "{{ init_local_settings.proxmox_api_user | default(init_token_user_default) }}"
     init_token_name: "{{ init_local_settings.proxmox_api_token_id | default(init_token_name_default) }}"
     # The token's parts this run writes: those that differ from the defaults,
@@ -122,6 +124,8 @@
       {{ 'the secret in TOKEN_SECRET_FILE (' ~ init_given.token_secret_file ~ ')'
          if init_given.token_secret_file is defined else 'CLAUDE_ON_PROXMOX_TOKEN_SECRET' }}
     init_any_given: "{{ init_given | length > 0 or init_secret_given }}"
+    # This run writes tailscale_enabled: given, and not set.
+    init_tailscale_writes: "{{ init_given.tailscale is defined and init_local_settings.tailscale_enabled is not defined }}"
     # The vault is plaintext at the end of the run: every make target refuses it.
     init_vault_plaintext: "{{ not init_vault_encrypted and not init_vault_wrote }}"
 
@@ -222,6 +226,7 @@
                  | regex_replace('^' ~ init_github_placeholder ~ '$', '') }}
             init_secret_held: >-
               {{ init_vault_settings.vault_proxmox_api_token_secret | default('', true) | string | lower }}
+            init_tailscale_key_set: "{{ init_vault_settings.vault_tailscale_auth_key | default('', true) | length > 0 }}"
           vars:
             init_vault_settings: "{{ ((init_vault_text | from_yaml) or {}) if init_vault_readable else {} }}"
           no_log: true
@@ -292,7 +297,9 @@
                 if init_given.github_user is defined and init_given.github_user | init_answer('github_login')
                    | length == 0 else [])
              + ([init_secret_flag ~ ' is not ' ~ ('uuid' | init_answer_rule) ~ '.']
-                if init_secret_given and not init_secret_valid | bool else []) }}
+                if init_secret_given and not init_secret_valid | bool else [])
+             + (['TAILSCALE (' ~ init_given.tailscale ~ ') is not on or off.']
+                if init_given.tailscale is defined and init_given.tailscale not in ['on', 'off'] else []) }}
       when: init_given_broken | length > 0
 
     - name: Refuse a given value that differs from the one set
@@ -315,7 +322,11 @@
              + (['GITHUB_USER=' ~ init_given.github_user ~ ', but inventory/group_vars/all/vault.yml already sets '
                  ~ init_github_set ~ '.']
                 if init_given.github_user is defined and init_github_set | length > 0
-                   and init_given.github_user | lower != init_github_set | lower else []) }}
+                   and init_given.github_user | lower != init_github_set | lower else [])
+             + (['TAILSCALE=' ~ init_given.tailscale ~ ', but inventory/group_vars/all/local.yml already sets'
+                 ~ ' tailscale_enabled: ' ~ (init_local_settings.tailscale_enabled | to_json) ~ '.']
+                if init_given.tailscale is defined and init_local_settings.tailscale_enabled is defined
+                   and init_local_settings.tailscale_enabled | bool != init_tailscale_given else []) }}
       when: init_given_differs | length > 0
 
     # Neither value is said: only that they differ.
@@ -441,6 +452,29 @@
           - The GitHub account whose repositories are cloned onto each VM. Enter to decide later.
       when: init_vault_readable and init_github_set | length == 0
 
+    # -------------------------------------------------------------- Tailscale ---
+    # Not asked (it is on by default, and the notice says how to turn it off):
+    # TAILSCALE=on or off writes it, which also ends the notice.
+    - name: Write tailscale_enabled into local.yml
+      ansible.builtin.include_tasks: tasks/init_local_setting.yml
+      vars:
+        init_setting_key: tailscale_enabled
+        init_setting_value: "{{ init_tailscale_given }}"
+      when: >-
+        (init_ask | bool or init_given.tailscale is defined)
+        and init_given.tailscale is defined and init_local_settings.tailscale_enabled is not defined
+
+    # Written nothing: the default flows through defaults.yml as before, so a
+    # later change to the project's default still reaches the person.
+    - name: Say that Tailscale is on by default
+      ansible.builtin.debug:
+        msg: >-
+          NOTICE  Tailscale is on by default: each VM joins your tailnet, by
+          {{ 'vault_tailscale_auth_key' if init_tailscale_key_set | default(false) | bool
+             else "Tailscale's sign-in page during make deploy" }}. Without a Tailscale account, turn it off with
+          tailscale_enabled: false in inventory/group_vars/all/local.yml (or make init TAILSCALE=off).
+      when: init_local_settings.tailscale_enabled is not defined and init_given.tailscale is not defined
+
     # --------------------------------------------------------------- the vault ---
     # The answers in place of the example's lines, in memory. A line that does
     # not hold its value whole - a block scalar - cannot be written in place.
@@ -527,7 +561,8 @@
     - name: Say what was written, and what is left
       ansible.builtin.debug:
         msg: |-
-          {% if init_answers.host is defined or init_token_settings | length > 0 or init_vault_wrote %}
+          {% if init_answers.host is defined or init_token_settings | length > 0 or init_vault_wrote
+                or init_tailscale_writes | bool %}
           Wrote:
           {% if init_answers.host is defined %}
             inventory/hosts.yml                  ansible_host: {{ init_answers.host | to_json }}
@@ -535,6 +570,9 @@
           {% for key, value in init_token_settings.items() %}
             inventory/group_vars/all/local.yml   {{ key }}: {{ value | to_json }}
           {% endfor %}
+          {% if init_tailscale_writes | bool %}
+            inventory/group_vars/all/local.yml   tailscale_enabled: {{ init_tailscale_given | to_json }}
+          {% endif %}
           {% if init_vault_wrote %}
             inventory/group_vars/all/vault.yml   {{ ((['the token secret'] if init_secret_answered else [])
                                                      + (['the GitHub username'] if init_answers.github_user is defined else []))
@@ -559,7 +597,7 @@
           vault.yml is still plaintext, which every make target refuses: make vault encrypts it, or make init
           does at a terminal.
           {% elif init_missing | length == 0 and init_answers.host is not defined and init_token_settings | length == 0
-                  and not init_vault_wrote %}
+                  and not init_vault_wrote and not init_tailscale_writes | bool %}
           Every value a first deploy needs is set.
           {% endif %}
           Optional, with make vault: vault_github_token, vault_anthropic_api_key, vault_tailscale_auth_key.
