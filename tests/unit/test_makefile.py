@@ -972,8 +972,8 @@ def test_init_installs_first_then_the_config_and_the_git_hook() -> None:
 
 
 def test_install_refuses_a_python_that_is_no_virtualenv(tmp_path: Path) -> None:
-    # The sync makes the environment match the lock, removing anything else:
-    # never pyenv's own Python, or the system's.
+    # Never into a Python that is no virtualenv - an installed Python itself,
+    # whose scripts directory is a system-wide one.
     not_a_venv = tmp_path / "python3"
     not_a_venv.write_text("#!/bin/sh\nexit 1\n")
     not_a_venv.chmod(0o755)

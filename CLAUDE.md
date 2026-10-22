@@ -9,9 +9,10 @@ get wrong.
 ## Always run tooling through the project's Python environment
 
 Every tool is pinned in `pyproject.toml`, locked with all it pulls in in `uv.lock`, and `make install`
-puts it into the user's own virtualenv for the project - the one `python3` resolves to here (pyenv's,
-from `.python-version`; on this machine the pyenv virtualenv `claude-on-proxmox`) or `PYTHON=` names. The
-project keeps no environment of its own and never assumes a `.venv`. Use `make`, which runs each tool
+puts it into the user's own virtualenv for the project - the one `python3` resolves to here or `PYTHON=`
+names, made with whatever tool they like. The project keeps no environment of its own, never assumes a
+`.venv`, and never assumes pyenv: the README suggests it, but no code, message or test may call it or
+depend on it. Use `make`, which runs each tool
 from that environment's `bin` (`$(BIN)`, asked of `$(PYTHON)` once per run, and empty for a Python that is
 no virtualenv's, which `env-check` - run before every tool - refuses), or `tools/env-run <tool>`, which
 finds it the same way; the git hooks and the Vagrantfile use that. Never a system-wide `ansible`,

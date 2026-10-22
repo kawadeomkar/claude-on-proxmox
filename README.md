@@ -42,6 +42,11 @@ pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a P
 make init            # make install (packages + collections) + copies the *.example files + pre-commit hook
 ```
 
+pyenv, with its pyenv-virtualenv plugin, is the suggestion: `pyenv local` makes that environment this
+directory's `python3` from then on. Any other virtualenv of Python 3.12 or later works -
+`python3 -m venv ~/.virtualenvs/claude-on-proxmox`, then activate it in each shell, or put
+`PYTHON=~/.virtualenvs/claude-on-proxmox/bin/python` on each `make` line.
+
 **2. Give it access to Proxmox.** Install your key for the one root SSH step (the template build):
 
 ```bash

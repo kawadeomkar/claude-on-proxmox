@@ -18,13 +18,14 @@ make test     # lint (syntax and hooks included), unit tests, every Molecule sce
 
 `make init` runs `make install`, then copies `inventory/hosts.yml.example` and the two `group_vars`
 examples into place where they are missing and installs the pre-commit hooks. `make install` puts the
-versions locked in `uv.lock` into your environment - the Python `python3` is here, which pyenv takes
-from `.python-version`, or `PYTHON=/path/to/python` - leaving the rest of it alone, and refuses a Python
-that is not a virtualenv; it changes nothing that is current, so it is also the command to run after a
-pull. The project keeps no `.venv`. Please run the tools through `make`, or `tools/env-run <tool>` as the
-git hooks do, which run them from that environment rather than whatever is first on `PATH`, and refuse
-a Python that is not a virtualenv - Molecule in particular resolves `ansible-playbook` from `PATH` and
-will silently use a different ansible-core if the environment is not first.
+versions locked in `uv.lock` into your environment - the Python `python3` is here (the one you activated,
+or the one `pyenv local` chose), or `PYTHON=/path/to/python` - leaving the rest of it alone, and refuses
+a Python that is not a virtualenv; it changes nothing that is current, so it is also the command to run
+after a pull. The project keeps no `.venv`. Please run the tools through `make`, or
+`tools/env-run <tool>` as the git hooks do, which run them from that environment rather than whatever is
+first on `PATH`, and refuse a Python that is not a virtualenv - Molecule in particular resolves
+`ansible-playbook` from `PATH` and will silently use a different ansible-core if the environment is not
+first.
 
 The pins live in `pyproject.toml`: the playbooks' own in `[project]`, the linters' and tests' in the
 `dev` group. After changing one, run `make install TYPE=lock` and commit `uv.lock` with it; `make lint` fails on a
