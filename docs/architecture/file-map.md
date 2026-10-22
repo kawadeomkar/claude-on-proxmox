@@ -25,6 +25,7 @@ playbooks/
   tailscale_login.yml             sign the VM in to Tailscale by its web login, VM by VM; bare, report
   login.yml                       make login: discovery, then the three sign-ins above in deploy's order and by its rules
   init_settings.yml               make init's questions: the host's address, the token, the GitHub username; the vault encrypted
+  init_check.yml                  make init's read-only checks: the API and token, privileges on /vms, the template or root SSH, a key
   inventory/init.yml              init_settings.yml's own inventory: the controller alone, no group_vars
   configure.yml                   discover, then common → vscode_server → dev_tools → claude_code → github_projects,
                                   then tailscale in a rescued block, then an SSH alias per configured VM on the

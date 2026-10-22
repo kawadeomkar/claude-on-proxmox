@@ -310,7 +310,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `_init_at_a_terminal` in `tests/unit/test_init_settings.py`, which holds that statically. The token
   secret is never taken from the command line (`TOKEN_SECRET=` stops `make`): only from
   `TOKEN_SECRET_FILE`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
-  argv.
+  argv. `playbooks/init_check.yml`, its second run, changes nothing: every task is a read, its one command
+  `hostname -s` over root SSH, and its tests give the Proxmox host a local stand-in or a refusing `ssh`,
+  never a real one (`tests/unit/test_init_check.py` holds both).
 
 ## Architecture, and why it looks like this
 

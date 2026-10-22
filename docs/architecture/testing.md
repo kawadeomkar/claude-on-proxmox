@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1396 tests. By file:
+pytest over `tests/unit/`: 1427 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -99,6 +99,19 @@ pytest over `tests/unit/`: 1396 tests. By file:
   and the log at `-vvv`; statically, every write under `init_ask` and every task that renders the secret
   or the vault's text `no_log`. The filter: each kind's accepted answers in their normal form, and what
   each refuses.
+- **`make init`'s checks** (`test_init_check.py` 26): `init_check.yml` against the fake Proxmox on a
+  loopback port, in an inventory of the test's own with the project's `defaults.yml`: nothing asked of
+  Proxmox while a value is the example's; every check `ok` on a host with its template, on 8.x and on 9.x,
+  and no SSH then; a wrong secret, a closed port (an IPv6 address said bracketed), a missing privilege on
+  8.x and on 9.x, one without Propagate, a token with none at all - each named with its fix and failing the
+  run; the template found by its name as deploy finds it, on another node than `proxmox_node`, and its VMID
+  taken by a VM, a template of another name, a container or a guest on a node that is down; without the
+  template, root SSH to a stand-in host that reads its node name, one that is another node, and one whose
+  `ssh` is refused; no key, and a password alone; a plaintext vault; and the secret nowhere in the output or
+  the `-vvv` log. Statically: every task a read (a `uri` a GET that saves nothing), every `uri` with the CA
+  path and `no_log`, the privileges checked the role's in the docs, and no run reaching a real `ssh`. Running
+  a fake on a loopback port, the fake Proxmox's certificate and `_pve` live in `tests/unit/harness.py`, shared
+  with `test_release.py`; each file keeps its own `fake_pve` fixture.
 - **The managed SSH config** (`test_ssh_config.py` 29): `tasks/ssh_config.yml` for real against a
   temporary home, resolved with `ssh -G` - the refusal of a name or address that is not one plain word,
   the guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, that no
@@ -107,14 +120,14 @@ pytest over `tests/unit/`: 1396 tests. By file:
 - **Smaller ones**: `test_configure_tags.py` 2 (`--tags claude_code` still runs discovery and the alias
   play), `test_deploy_report.py` 18 (deploy's opening message, rendered by its own tasks, naming only the
   sign-ins that open a page and the VMs as a list), `test_proxmox_vm_absent.py` 5 (deleting a VM
-  forgets its host key under its address and `<name>.<domain>`), `test_var_names.py` 23 (no task var
+  forgets its host key under its address and `<name>.<domain>`), `test_var_names.py` 24 (no task var
   named like a register or fact, in any playbook or role), `test_cloud_init_wait.py` 3 (a first boot
   that failed is said with what failed and how to build the VM again), `test_gathered_facts.py` 5 (no
   tracked file reads a fact by its top-level name, and every `ansible.cfg` a run reads, the tests' own
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 359): `vm-name-check` accepts DNS-like names and refuses
+- **The Makefile** (`test_makefile.py` 363): `vm-name-check` accepts DNS-like names and refuses
   whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
@@ -321,6 +334,11 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   can be shown to recover.
 - A config write carrying `fake-verbatim-tags` keeps its tags as sent, for the comma-joined fixture.
   It is not a PVE parameter.
+- `GET /access/permissions` answers each token's privileges by path, the privilege's name as the key and
+  its propagate flag as the value, as Proxmox does: what `PUT /api2/json/fake/privileges?token=&path=&privs=`
+  set (`VM.Clone:0` granted without Propagate), else the whole role `docs/getting-started/proxmox-access.md`
+  makes, with the guest-agent privilege of the version `/version` reports - 8.2.4 until
+  `PUT /api2/json/fake/version?version=` changes it - and for the `noagent` token, without it.
 
 Beside these, the `proxmox_template` scenario serves a "cloud image" locally, with a real `SHA256SUMS`
 file, and a fake `/etc/pve/.vmlist` that places a VMID on a second node. The `tailscale` role scenario

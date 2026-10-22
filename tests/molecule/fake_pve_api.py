@@ -28,6 +28,15 @@ after a start or a stop, the next N listings still report the status from
 before it, the way a real cluster lists the status pvestatd last polled, up to
 ten seconds old. /nodes/<node>/qemu/<id>/status/current is never stale.
 
+GET /access/permissions answers each token's privileges by path, as Proxmox
+does - the privilege's name as the key, 1 or 0 its propagate flag - from a
+table a fixture fills with PUT /api2/json/fake/privileges?token=&path=&privs=
+(a comma-separated list, empty for none; "VM.Clone:0" without Propagate); a
+path the table does not name holds
+the whole role docs/getting-started/proxmox-access.md makes, its guest-agent
+privilege the one of the version /version reports, which PUT
+/api2/json/fake/version?version= changes (8.2.4 until then).
+
 A second token id, "noagent", stands for a token created without the
 guest-agent privilege (VM.Monitor on PVE 8, VM.GuestAgent.Audit on 9): every
 request is accepted except the agent's, which is refused with 403.
@@ -129,6 +138,43 @@ AGENT_READY_AFTER = 2
 # listings it has left.
 LISTING_LAG = {"listings": 0}
 STALE = {}
+# What /version reports, and each token's privileges by path where a fixture
+# set them: {(token id, path): [privilege, ...]}.
+VERSION = {"version": "8.2.4"}
+PRIVILEGES = {}
+ROLE = [
+    "VM.Allocate",
+    "VM.Clone",
+    "VM.Config.CPU",
+    "VM.Config.Cloudinit",
+    "VM.Config.Disk",
+    "VM.Config.Memory",
+    "VM.Config.Network",
+    "VM.Config.Options",
+    "VM.PowerMgmt",
+    "VM.Audit",
+    "Datastore.AllocateSpace",
+    "Datastore.Audit",
+    "SDN.Use",
+]
+
+
+def privileges(token_id, path):
+    """The token's privileges at path, each with its propagate flag: the fixture's, else the whole role.
+
+    The role's guest-agent privilege is this version's, and the noagent token's
+    role lacks it. A fixture's "VM.Clone:0" is granted without Propagate.
+    """
+    if (token_id, path) in PRIVILEGES:
+        listed = PRIVILEGES[(token_id, path)]
+    else:
+        agent = "VM.GuestAgent.Audit" if int(VERSION["version"].split(".")[0]) >= 9 else "VM.Monitor"
+        listed = ROLE + ([] if token_id == NOAGENT_TOKEN_ID else [agent])
+    granted = {}
+    for entry in listed:
+        name, _, flag = entry.partition(":")
+        granted[name] = int(flag or "1")
+    return granted
 
 
 def normalise_tags(raw):
@@ -279,8 +325,22 @@ class Handler(BaseHTTPRequestHandler):
         if token.group(2) == NOAGENT_TOKEN_ID and "agent" in parts:
             vmid = parts[parts.index("agent") - 1]
             return self._reply(403, None, f"Permission check failed (/vms/{vmid}, VM.GuestAgent.Audit)")
+        if parts[:2] == ["fake", "version"] and method == "PUT":
+            # Not a PVE endpoint: a fixture's Proxmox version.
+            VERSION["version"] = params["version"]
+            return self._reply(200, dict(VERSION))
         if parts == ["version"]:
-            return self._reply(200, {"version": "8.2.4", "release": "8.2", "repoid": "fake"})
+            release = ".".join(VERSION["version"].split(".")[:2])
+            return self._reply(200, {"version": VERSION["version"], "release": release, "repoid": "fake"})
+        if parts[:2] == ["fake", "privileges"] and method == "PUT":
+            # Not a PVE endpoint: a fixture's privileges for one token at one path.
+            PRIVILEGES[(params["token"], params["path"])] = [p for p in params.get("privs", "").split(",") if p]
+            return self._reply(200, PRIVILEGES[(params["token"], params["path"])])
+        if parts == ["access", "permissions"]:
+            fixed = [path for token_id, path in PRIVILEGES if token_id == token.group(2)]
+            paths = [params["path"]] if "path" in params else ["/vms", *fixed]
+            granted = {path: privileges(token.group(2), path) for path in paths}
+            return self._reply(200, {path: privs for path, privs in granted.items() if privs})
         if parts[:2] == ["fake", "nodes"] and method == "PUT" and len(parts) == 3:
             # Not a PVE endpoint: a fixture's switch for the node that is down.
             NODES_ONLINE[parts[2]] = params.get("status") == "online"

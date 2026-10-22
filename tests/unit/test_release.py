@@ -28,21 +28,26 @@ What these guard:
 
 from __future__ import annotations
 
-import datetime
 import hashlib
 import json
-import socket
-import ssl
-import subprocess
-import sys
-import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 import pytest
 import yaml
-from harness import REPO, STAND_INS, _failures, _left_to_do, _run, _run_at_a_terminal
+from harness import (
+    PVE_SECRET,
+    REPO,
+    STAND_INS,
+    _certificate,
+    _failures,
+    _left_to_do,
+    _pve,
+    _run,
+    _run_at_a_terminal,
+    _serve,
+)
 
 DESTROY = REPO / "playbooks" / "destroy.yml"
 FAKES = REPO / "tests" / "molecule"
@@ -104,34 +109,6 @@ CASES = {
     # No address: stopped and would not start, or an agent that never answered.
     "unreached": {"address": ""},
 }
-
-
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
-def _serve(script: Path, *args: str):
-    """A fake API on a loopback port, until the fixture ends; yields its base URL."""
-    port = _free_port()
-    command = [sys.executable, str(script), str(port), *args]
-    server = subprocess.Popen(command, stderr=subprocess.PIPE, text=True)
-    try:
-        for _ in range(100):
-            if server.poll() is not None:
-                pytest.fail(f"{script.name} exited: {server.stderr.read()}")
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    break
-            except OSError:
-                time.sleep(0.05)
-        else:
-            pytest.fail(f"{script.name} did not start")
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.terminate()
-        server.wait(timeout=10)
 
 
 def _get(url: str):
@@ -658,51 +635,7 @@ def test_every_api_call_is_made_on_this_machine_and_never_logged():
 
 
 # ------------------------------------- destroy.yml against the fake Proxmox ---
-PVE_SECRET = "unit-test-pve-secret"
 PARKED = 9001
-
-
-def _certificate(directory: Path) -> tuple[Path, Path]:
-    """A self-signed certificate for the fake Proxmox's TLS; returns the certificate's file and the key's."""
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
-    now = datetime.datetime.now(datetime.UTC)
-    certificate = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - datetime.timedelta(minutes=5))
-        .not_valid_after(now + datetime.timedelta(days=1))
-        .sign(key, hashes.SHA256())
-    )
-    cert, key_file = directory / "cert.pem", directory / "key.pem"
-    cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
-    key_file.write_bytes(
-        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-    )
-    return cert, key_file
-
-
-def _pve(base: str, method: str, path: str, **params) -> dict:
-    """One request to the fake Proxmox, as a fixture makes it."""
-    request = urllib.request.Request(
-        f"{base}/api2/json/{path}",
-        data=urllib.parse.urlencode(params).encode() if params else None,
-        method=method,
-        headers={"Authorization": f"PVEAPIToken=ansible@pve!ansible={PVE_SECRET}"},
-    )
-    unverified = ssl.create_default_context()
-    unverified.check_hostname = False
-    unverified.verify_mode = ssl.CERT_NONE
-    with urllib.request.urlopen(request, timeout=10, context=unverified) as answer:
-        return json.loads(answer.read() or b"{}")
 
 
 @pytest.fixture

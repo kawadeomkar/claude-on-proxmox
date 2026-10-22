@@ -32,6 +32,12 @@ answer that cannot be right (a URL for the address, a secret that is not one) is
 What you answered is never asked again. The vault is written encrypted, and its password, which
 `make init` makes, is in `.vault_pass`: keep that file, since the vault cannot be opened without it.
 
+Then `make init` checks, without changing anything, what `make deploy` will need of Proxmox: that the API
+answers and takes the token, that the token holds every privilege the project uses on `/vms`, that the
+template exists or, while it does not, that root SSH to the host works, and that the VMs will get an SSH
+key. Each check prints `ok`, or `!!` with what to fix, and `make init` fails when one finds a problem, so
+run it again once it is fixed. While the address or the secret is still the example's, nothing is checked.
+
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `make init` asks for. VMs are **not** listed here |
@@ -187,6 +193,7 @@ run:
 
 | What the run says | What to check |
 |---|---|
+| `make init` marks a check `!!` | The line says what to fix - an address, the token's name or secret, a privilege for the role, root SSH: [Failure modes](../architecture/failure-modes.md#a-problem-make-init-finds) |
 | `make deploy TYPE=template` cannot refresh the package lists | An enterprise repository enabled on the host without a subscription: [Package repositories](requirements.md#package-repositories) |
 | The token is refused (401 or 403) | `proxmox_api_user`, `proxmox_api_token_id` and `vault_proxmox_api_token_secret`, and the role's privileges: [Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token) |
 | A VM never reports an address | The token's guest-agent privilege (`VM.Monitor` on 8.x, `VM.GuestAgent.Audit` on 9.x), and a template built with the guest agent: [Upgrading](../guides/upgrading.md) |

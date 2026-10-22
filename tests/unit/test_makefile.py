@@ -984,12 +984,26 @@ def test_init_checks_its_values_first_and_never_the_vault() -> None:
 
 
 # make init runs for real here, every tool a stand-in that records its
-# arguments: uv, pre-commit, ansible-galaxy and ansible-playbook. INIT_FILES
-# points the copy at files in tmp_path, never the checkout's.
+# arguments: uv, pre-commit, ansible-galaxy and ansible-playbook, which runs
+# twice - the questions, then the checks - and appends each run's arguments.
+# INIT_FILES, VAULT_FILE and VAULT_PASS point at files in tmp_path, never the
+# checkout's. The first run's arguments are returned; _playbook_runs has both.
+def _playbook_runs(tmp_path: Path) -> list[list[str]]:
+    record = tmp_path / "args"
+    text = record.read_text() if record.exists() else ""
+    return [run.splitlines() for run in text.split("--end--\n") if run]
+
+
 def _init_run(tmp_path: Path, *args: str, stdin=subprocess.DEVNULL, env: dict | None = None):
     venv = tmp_path / "venv"
     record = tmp_path / "args"
-    _stand_in(venv, "ansible-playbook", record)
+    record.unlink(missing_ok=True)
+    (venv / "bin").mkdir(parents=True, exist_ok=True)
+    playbook = venv / "bin" / "ansible-playbook"
+    playbook.write_text(
+        f'#!/bin/sh\nfor arg in "$@"; do printf "%s\\n" "$arg"; done >> {record}\necho --end-- >> {record}\n'
+    )
+    playbook.chmod(0o755)
     _stand_in(venv, "pre-commit", tmp_path / "pre-commit-args")
     _stand_in(venv, "uv", tmp_path / "uv-args")
     _stand_in_galaxy(venv / "bin")
@@ -998,6 +1012,7 @@ def _init_run(tmp_path: Path, *args: str, stdin=subprocess.DEVNULL, env: dict | 
         (tmp_path / f"{name}.example").write_text(f"# {name}\n")
         copies.append(str(tmp_path / name))
     overrides = [f"BIN={venv / 'bin'}", f"UV={venv / 'bin' / 'uv'}", f"INIT_FILES={' '.join(copies)}"]
+    overrides += [f"VAULT_FILE={tmp_path / 'vault.yml'}", f"VAULT_PASS={tmp_path / '.vault_pass'}"]
     overrides.append(f"LOG_DIR={tmp_path / 'logs'}")
     clean = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/"), "LANG": "en_US.UTF-8"}
     result = subprocess.run(
@@ -1010,7 +1025,8 @@ def _init_run(tmp_path: Path, *args: str, stdin=subprocess.DEVNULL, env: dict | 
         check=False,
         timeout=60,
     )
-    return result, (record.read_text().splitlines() if record.exists() else None)
+    runs = _playbook_runs(tmp_path)
+    return result, (runs[0] if runs else None)
 
 
 def _at_a_terminal(tmp_path: Path, *args: str, env: dict | None = None):
@@ -1022,6 +1038,39 @@ def _at_a_terminal(tmp_path: Path, *args: str, env: dict | None = None):
     finally:
         os.close(primary)
         os.close(secondary)
+
+
+def test_init_checks_proxmox_after_its_questions(tmp_path: Path) -> None:
+    result, _ = _init_run(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    runs = _playbook_runs(tmp_path)
+    assert [run[-1] for run in runs] == ["playbooks/init_settings.yml", "playbooks/init_check.yml"]
+    # The checks load the project's inventory: no -i of init's own.
+    assert "-i" not in runs[1]
+
+
+def test_init_opens_the_vault_for_its_checks_with_vault_pass(tmp_path: Path) -> None:
+    (tmp_path / ".vault_pass").write_text("x\n")
+    result, _ = _init_run(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    checks = _playbook_runs(tmp_path)[1]
+    assert checks[checks.index("--vault-password-file") + 1] == str(tmp_path / ".vault_pass")
+
+
+def test_init_checks_with_a_password_file_of_ansibles_own(tmp_path: Path) -> None:
+    (tmp_path / "vault.yml").write_text(VAULT_HEADER)
+    result, _ = _init_run(tmp_path, env={"ANSIBLE_VAULT_PASSWORD_FILE": str(tmp_path / "password")})
+    assert result.returncode == 0, result.stdout + result.stderr
+    checks = _playbook_runs(tmp_path)[1]
+    assert checks[-1] == "playbooks/init_check.yml" and "--vault-password-file" not in checks
+
+
+def test_init_skips_its_checks_when_nothing_opens_the_vault(tmp_path: Path) -> None:
+    (tmp_path / "vault.yml").write_text(VAULT_HEADER)
+    result, _ = _init_run(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [run[-1] for run in _playbook_runs(tmp_path)] == ["playbooks/init_settings.yml"]
+    assert "Proxmox is not checked" in result.stdout
 
 
 ASK = '{"init_ask":true}'

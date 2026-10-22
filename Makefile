@@ -268,6 +268,10 @@ INIT_GIVEN := host=HOST token_user=TOKEN_USER token_name=TOKEN_NAME token_secret
 init_given_pair = $(if $(value $(2)),"$(1)":"$(value $(2))")
 INIT_GIVEN_JSON = $(subst $(space),$(comma),$(strip $(foreach entry,$(INIT_GIVEN),$(call init_given_pair,$(firstword $(subst =, ,$(entry))),$(lastword $(subst =, ,$(entry)))))))
 INIT_GIVEN_ARGS = $(if $(INIT_GIVEN_JSON),-e '{"init_given":{$(INIT_GIVEN_JSON)}}')
+# make init's checks (playbooks/init_check.yml) run with the project's
+# inventory and the vault, so the password is looked for when the recipe runs:
+# the questions may have just made .vault_pass.
+INIT_VAULT_ARGS = $$([ -f $(VAULT_PASS) ] && printf -- '--vault-password-file %s' $(VAULT_PASS))
 # make init asks only at a terminal, and only when PROMPT is not no:
 # init_settings.yml's init_ask is false otherwise, so a run with no terminal, or
 # the playbook run by hand, asks nothing and writes only what was given.
@@ -368,12 +372,15 @@ help: ## Show this help
 
 # ------------------------------------------------------------------ use ----
 # make install, the git hook, the local config files - copied from their
-# examples only where they are missing - and then playbooks/init_settings.yml,
+# examples only where they are missing - then playbooks/init_settings.yml,
 # which asks, at a terminal, for each value a first deploy needs that is still
 # the example's: the Proxmox host's address, the API token's ID and secret,
 # the GitHub username. Enter leaves one for the next make init, and the vault
 # is written encrypted. Without a terminal it asks nothing, and writes only the
-# values given on the command line (below), so make init can be scripted.
+# values given on the command line (below), so make init can be scripted. Then
+# playbooks/init_check.yml checks, read-only, what make deploy will need of
+# Proxmox - the token, its privileges, the template or root SSH, an SSH key -
+# and fails on a problem, so a scripted make init exits non-zero.
 #: HOST=<address>             The Proxmox host's address, for inventory/hosts.yml
 #: TOKEN_USER=<user@realm>    The API token's user, when it is not ansible@pve
 #: TOKEN_NAME=<name>          The API token's name, when it is not ansible
@@ -391,6 +398,11 @@ init: init-args-check log-setup install ## Set up this checkout, then ask for wh
 	done; \
 	if [ -n "$$copied" ]; then echo "Created$$copied from their .example files (git-ignored)."; fi
 	@$(BIN)/ansible-playbook -i playbooks/inventory/init.yml $(INIT_TTY_ARGS) $(INIT_GIVEN_ARGS) $(ANSIBLE_ARGS) playbooks/init_settings.yml
+	@if head -c 14 $(VAULT_FILE) | grep -q '^\$$ANSIBLE_VAULT' && [ ! -f $(VAULT_PASS) ] && [ -z "$$ANSIBLE_VAULT_PASSWORD_FILE" ]; then \
+	  echo "Proxmox is not checked: $(VAULT_FILE) is encrypted, and there is no $(VAULT_PASS) or ANSIBLE_VAULT_PASSWORD_FILE to open it with."; \
+	else \
+	  $(BIN)/ansible-playbook $(INIT_VAULT_ARGS) $(ANSIBLE_ARGS) playbooks/init_check.yml; \
+	fi
 
 # uv's sync installs the versions the lock pins into PYTHON's environment,
 # after checking the lock still matches pyproject.toml. --inexact: the

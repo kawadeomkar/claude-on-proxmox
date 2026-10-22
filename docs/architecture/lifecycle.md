@@ -593,3 +593,38 @@ told which password encrypts (`--encrypt-vault-id default`), since with `.vault_
 The vault is decrypted again and compared with what was meant. The run ends with what it wrote and what is
 still missing - a vault left plaintext among it - and a run with no terminal (or `PROMPT=no`) that was
 given values but still lacks the address, the secret or the username fails, naming them.
+
+## 4.13 `playbooks/init_check.yml`
+
+`make init`'s second step, a second `ansible-playbook` run with the project's inventory and the vault - the
+password looked for when the recipe runs, since the questions may have just made `.vault_pass` - so it sees
+the settings exactly as `make deploy` will. The Makefile skips it, with one line, when the vault is
+encrypted and neither `.vault_pass` nor `ANSIBLE_VAULT_PASSWORD_FILE` can open it. One play on `localhost`,
+every task a read (held by `tests/unit/test_init_check.py`):
+
+1. **Configured yet?** With the address or the secret still the example's, it says what is missing and ends:
+   nothing is checked, and that is no problem.
+2. **The vault** is encrypted: only whether its text starts as a vault does is kept.
+3. **The API**: `GET /version`, `no_log` since the header carries the token, as `tasks/cluster_vms.yml` does,
+   with `ca_path`. 200 is `ok`, with the version; a 401 or 403 names the token; a connection that fails,
+   the address; a certificate error, the CA steps.
+4. **Privileges on `/vms`**: `GET /access/permissions?path=/vms`, against `init_token_privileges.vms` and the
+   guest agent's, by `/version`'s major: `VM.Monitor` on 8, `VM.GuestAgent.Audit` on 9. A privilege is
+   granted when it is listed, and reaches the VMs under `/vms`, where Proxmox checks it, only with 1, its
+   propagate flag: a 0 is said with the `-propagate 1` that fixes it, and a token holding none at all with
+   the privilege separation that usually explains it. Storage and bridge are not checked: their names may
+   still be the defaults, wrong for the host.
+5. **The template**, from the cluster listing, as `deploy.yml` finds it: a VM named `proxmox_template_name`
+   that is a template. Found, it must be on `proxmox_node`, where the clones are made. Missing, deploy builds
+   it at `proxmox_template_vmid`, so a guest there - any, on any node, one that is down included - is a
+   problem naming it. A listing that fails is a problem said with the rest.
+6. **Root SSH**, only while the template is missing (or the listing would not say): `hostname -s`, delegated
+   to the `proxmox` group's host with `ignore_unreachable`, which proves the connection the build will use
+   and reads the host's short name, its node name (`init_ssh_node`), which must be `proxmox_node`, since the
+   template is built there. No host in the group is a problem too. `accept-new` may add its host key to
+   `~/.ssh/known_hosts`, one of the two files the project writes there.
+7. **A key for the VMs**: `vm_ssh_public_keys`. `vm_password` alone is a problem - it is for the Proxmox
+   console, and deploy configures the VMs over SSH, which takes a key; with neither, the public keys in
+   `~/.ssh` are listed and the `local.yml` line suggested.
+
+Each result is `ok` or `!!` with its fix, printed together at the end, and the run fails when any is `!!`.
