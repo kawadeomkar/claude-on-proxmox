@@ -29,8 +29,16 @@ What those defaults mean for the VM: [What the VM trusts](../../guides/what-the-
 | `common_container_virt_types` | list of `str` | `["docker", "container", "containerd", "podman", "lxc"]` | Virtualisation types under which the hostname is not set, because the host is a container. |
 | `common_packages` | list of `str` | `[apt-transport-https, bash-completion, build-essential, ca-certificates, curl, fd-find, git, gnupg, htop, jq, less, openssh-server, python3, python3-pip, python3-debian, python3-venv, qemu-guest-agent, ripgrep, rsync, tmux, tree, unzip, vim, wget, zip, zstd]` | Baseline packages every VM gets. Setting it replaces the baseline; add packages with common_extra_packages instead. |
 | `common_extra_packages` | list of `str` | `[]` | More packages to install on top of common_packages. |
-| `common_enabled_services` | list of `str` | `["qemu-guest-agent"]` | Services enabled at boot where systemd runs, and started on a KVM guest. |
+| `common_enabled_services` | list of `str` | `["qemu-guest-agent"]` | Services enabled at boot and started, where systemd runs. qemu-guest-agent is started only where the VM has its port, /dev/virtio-ports/org.qemu.guest_agent.0, which Proxmox adds while the VM's agent is enabled. |
 | `common_masked_units` | list of `str` | `["fwupd.service", "fwupd-refresh.timer", "multipathd.service", "multipathd.socket", "ModemManager.service", "udisks2.service", "snapd.service", "snapd.socket", "snapd.seeded.service"]` | Units masked and stopped where systemd runs, of those the VM has; snapd's only while no snap is installed. [] masks none, and a unit taken off the list stays masked. |
+
+## Internal values
+
+Set in `roles/common/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect.
+
+| Name | Value |
+|---|---|
+| `common_guest_agent_port` | `/dev/virtio-ports/org.qemu.guest_agent.0` |
 
 ## Tasks
 
@@ -59,7 +67,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Harden sshd | `ansible.builtin.template` | <code>common_harden_ssh</code> |
 | Remove sshd hardening | `ansible.builtin.file` | <code>not common_harden_ssh</code> |
 | Put ~/.local/bin on PATH for all users | `ansible.builtin.template` |  |
-| Enable services | `ansible.builtin.service` | <code>ansible_facts['service_mgr'] == 'systemd'</code> |
+| Enable and start services | `ansible.builtin.include_tasks` | <code>ansible_facts['service_mgr'] == 'systemd'</code> |
 | Mask the services a headless VM has no use for | `ansible.builtin.include_tasks` | <code>ansible_facts['service_mgr'] == 'systemd' and common_masked_units &#124; length > 0</code> |
 
 ```mermaid
@@ -92,8 +100,8 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Ensure_sshd_privilege_separation_directory_exists14-->|Task| Harden_sshd15[harden sshd<br>When: **common harden ssh**]:::task
   Harden_sshd15-->|Task| Remove_sshd_hardening16[remove sshd hardening<br>When: **not common harden ssh**]:::task
   Remove_sshd_hardening16-->|Task| Put____local_bin_on_PATH_for_all_users17[put    local bin on path for all users]:::task
-  Put____local_bin_on_PATH_for_all_users17-->|Task| Enable_services18[enable services<br>When: **ansible facts  service mgr       systemd**]:::task
-  Enable_services18-->|Include task| Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_19[mask the services a headless vm has no use for<br>When: **ansible facts  service mgr       systemd  and<br>common masked units   length   0**<br>include_task: masked units yml]:::includeTasks
+  Put____local_bin_on_PATH_for_all_users17-->|Include task| Enable_and_start_services_services_yml_18[enable and start services<br>When: **ansible facts  service mgr       systemd**<br>include_task: services yml]:::includeTasks
+  Enable_and_start_services_services_yml_18-->|Include task| Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_19[mask the services a headless vm has no use for<br>When: **ansible facts  service mgr       systemd  and<br>common masked units   length   0**<br>include_task: masked units yml]:::includeTasks
   Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_19-->End
 ```
 
@@ -130,6 +138,30 @@ classDef rescue stroke:#665352,stroke-width:2px;
   masked_units___Read_which_of_the_units_failed2-->|Task| masked_units___Clear_the_failed_state_a_unit_was_left_in3[masked units   clear the failed state a unit was<br>left in<br>When: **common masked units failed   length   0**]:::task
   masked_units___Clear_the_failed_state_a_unit_was_left_in3-.->|End of Block| masked_units___Stop_and_mask_the_units2_block_start_0
   masked_units___Clear_the_failed_state_a_unit_was_left_in3-->End
+```
+
+### `services.yml`
+
+| Task | Module | When |
+|---|---|---|
+| Look for the guest agent's port | `ansible.builtin.stat` |  |
+| Enable and start services | `ansible.builtin.service` |  |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| services___Look_for_the_guest_agent_s_port0[services   look for the guest agent s port]:::task
+  services___Look_for_the_guest_agent_s_port0-->|Task| services___Enable_and_start_services1[services   enable and start services]:::task
+  services___Enable_and_start_services1-->End
 ```
 
 <!-- END_GENERATED: role -->

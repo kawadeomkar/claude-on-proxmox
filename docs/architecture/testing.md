@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1216 tests. By file:
+pytest over `tests/unit/`: 1230 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -72,13 +72,15 @@ pytest over `tests/unit/`: 1216 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 113): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 127): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
   exit 0 and the notes opened when its Python raises, hangs or is missing, a read that hangs costing
-  2 s, a symlink neither followed nor opened - the refresh after a sign-in in the terminal, and the
-  workspace each window gets: the notes' folder only where its own folder holds them.
+  2 s, a symlink neither followed nor opened, the time in the zone it is given or in UTC for one it
+  cannot find - the refresh after a sign-in in the terminal, the zone `code.yml` finds (`TZ`, the
+  `/etc/localtime` link on Linux and macOS, `/etc/timezone`, else UTC, shell syntax and paths refused),
+  and the workspace each window gets: the notes' folder only where its own folder holds them.
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
@@ -90,7 +92,7 @@ pytest over `tests/unit/`: 1216 tests. By file:
 - **Smaller ones**: `test_configure_tags.py` 2 (`--tags claude_code` still runs discovery and the alias
   play), `test_deploy_report.py` 18 (deploy's opening message, rendered by its own tasks, naming only the
   sign-ins that open a page and the VMs as a list), `test_proxmox_vm_absent.py` 5 (deleting a VM
-  forgets its host key under its address and `<name>.<domain>`), `test_var_names.py` 21 (no task var
+  forgets its host key under its address and `<name>.<domain>`), `test_var_names.py` 22 (no task var
   named like a register or fact, in any playbook or role), `test_cloud_init_wait.py` 3 (a first boot
   that failed is said with what failed and how to build the VM again), `test_gathered_facts.py` 5 (no
   tracked file reads a fact by its top-level name, and every `ansible.cfg` a run reads, the tests' own
@@ -168,6 +170,12 @@ never had, and no package left in the cache, `sl`, which converge installs, incl
 finds nothing in the timer's journal about a failure (converge stopped it before it masked it), masks the
 timer while it waits, which fails it, gives snapd a snap and runs the masking again: the timer is cleared
 and snapd is left running.
+
+The same scenario installs a stand-in for a service a user adds to `common_enabled_services`, and one
+for `qemu-guest-agent` in `/etc/systemd/system`, not bound to the guest-agent port as the package's unit
+is. Converge starts the first and, with no port in the container, leaves the agent stopped; the side
+effect finds it stopped, gives the role a stand-in for the port and runs its services again, and verify
+finds both running.
 
 `proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
 came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —

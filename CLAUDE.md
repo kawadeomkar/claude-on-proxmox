@@ -262,7 +262,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` tasks
   run `claude` in a terminal and a login shell split to its left (one presentation group); with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
   0700 directory), and a second `folderOpen` task, "Session notes", run beside the Claude task, which
-  rewrites only the notes' section between the live markers each time the window opens and opens them.
+  rewrites only the notes' section between the live markers each time the window opens and opens them,
+  its time in this machine's zone (`code_timezone`, an argument like everything variable; UTC without one).
   Never make it the Claude task's `dependsOn`: VS Code misses a workspace-file task when it looks a
   dependency up and asks every task provider instead (npm, gulp running `gulp`, grunt, jake), which held
   Claude back 7.5 s live; `test_code_session.py` fails on any `dependsOn`. Its bash runs the Python part
@@ -412,8 +413,11 @@ command, and "make deploy signs it in next" names one with nothing to do. A new 
 `tests/unit/test_attention_callback.py` fails without it. Tests never load the callback (an
 `ansible.cfg` holding only `inject_facts_as_vars = false`, and the JSON callback); the harness shows custom stats, and `_left_to_do` reads the records.
 
-**Discovery is a playbook, not the `community.proxmox` inventory plugin.** The header of
-`discover.yml` records the trade-offs; the swap is a live design question, not an oversight.
+**Discovery is a playbook, not the `community.proxmox` inventory plugin.** Decided, not open: the plugin
+turns an unreachable API or a refused token into a warning and an exit 0, merges two VMs of one name, calls
+Proxmox on every `ansible*` command (`--syntax-check` and ansible-lint included), and would replace only
+`discover.yml`, since five playbooks read the cluster through `tasks/` anyway. See
+docs/architecture/decisions.md §15.1.
 
 **Fleet listings read `/cluster/resources`, never an unfiltered `proxmox_vm_info`.** Unfiltered, the
 module asks every node that owns a VM for its VM list and fails on any error, so one node that is
