@@ -11,11 +11,14 @@ pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a P
 make init            # installs the tools, then asks for your Proxmox host, its API token and your GitHub username
 ```
 
-The project keeps no environment of its own: `make install`, which `make init` runs first, installs the
-locked tools into the Python that `python3` is in this directory - with pyenv, the virtualenv
-`.python-version` names - or into the one `PYTHON=/path/to/python` names, and every target runs them from
-there - never from a Python that is not a virtualenv, which they refuse. It installs the versions
-`uv.lock` pins and removes nothing else. Run `make install` again after a pull.
+The project keeps no environment of its own, and needs no particular tool to make one: pyenv, above, is a
+suggestion. Any virtualenv of Python 3.12 or later works -
+`python3 -m venv ~/.virtualenvs/claude-on-proxmox`, then activate it in each shell before `make`, or name
+its Python on each line with `PYTHON=~/.virtualenvs/claude-on-proxmox/bin/python`. `make install`, which
+`make init` runs first, installs the locked tools into the Python that `python3` is in this directory, or
+into the one `PYTHON=` names, and every target runs them from there - never from a Python that is not a
+virtualenv, which they refuse. It installs the versions `uv.lock` pins and removes nothing else. Run
+`make install` again after a pull.
 
 `make init` then copies the three git-ignored files below from their examples and asks, at the terminal,
 for each value a first deploy needs that is still the example's:

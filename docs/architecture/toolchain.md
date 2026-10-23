@@ -2,10 +2,14 @@
 
 Everything is pinned in `pyproject.toml`, locked with every package it pulls in (version and hash) in
 `uv.lock`, and lives in your own virtualenv for the project: the project keeps none. `make install` runs
-`uv sync --locked` into the environment of `$(PYTHON)` (`python3`, which pyenv resolves from
-`.python-version`, unless `PYTHON=` names another), which refuses a lock that no longer matches
+`uv sync --locked` into the environment of `$(PYTHON)` (`python3` as the shell finds it in the
+checkout, unless `PYTHON=` names another), which refuses a lock that no longer matches
 `pyproject.toml`, and `--inexact`, so the versions the lock pins go in and nothing else of the environment
-is removed; Dependabot's uv ecosystem moves the pins and the lock. Every target runs the tools from that
+is removed; Dependabot's uv ecosystem moves the pins and the lock. uv writes the path the environment was
+synced by into the first line of every command it installs, and a sync that installs nothing rewrites
+none, so before the sync `tools/stale_scripts.py` names each locked package with a command that starts a
+Python outside the environment's `bin` - by a `.venv` link into it, as `make venv` left them - and the
+sync reinstalls those, then checks that none is left. Every target runs the tools from that
 environment's `bin`, never from `PATH`, and refuses a Python that is not a virtualenv (`env-check`), whose
 scripts directory would be a system-wide one; the git hooks and the Vagrantfile find it the same way,
 through `tools/env-run`. The playbooks' own pins are `[project]`'s dependencies, the
