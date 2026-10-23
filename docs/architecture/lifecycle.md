@@ -500,8 +500,13 @@ open and VS Code never prints the command line. Python reads `claude auth status
 --json` at once, 2 s each, and rewrites only the section between `<!-- claude-on-proxmox:live -->` and
 its closing marker, atomically, 0600, in a regular file that has them; every value is cleaned as
 `plain_text` cleans, no command it runs prints a token, and the Tailscale row carries the `ssh` command
-over the MagicDNS name, which only the VM knows. The Claude task gets three more arguments - the
-helper, the notes' path, the unit - and after a sign-in that succeeded in its terminal starts the helper
+over the MagicDNS name, which only the VM knows. Its time is in this machine's zone, which is the user's
+where the VM's clock keeps `common_timezone` (UTC): `code_timezone` is `TZ`, then the zone `/etc/localtime`
+links into a zoneinfo directory for (macOS, most Linux), then `/etc/timezone` (Debian, where
+`/etc/localtime` may be a copy), a zone's name only, else UTC, read with `realpath` and lookups since the
+play runs nothing here but `which` and `code`; the helper gets it as an argument and says UTC for a zone
+the VM's tzdata lacks. The Claude task gets four more arguments - the
+helper, the notes' path, the unit, the zone - and after a sign-in that succeeded in its terminal starts the helper
 once more, `refresh-only`, in the background (`shift 8`: `${10}` would be VS Code's to resolve).
 
 `make code` writes the rest from `playbooks/templates/vm_session.md.j2` into

@@ -1,7 +1,8 @@
 # -*- mode: ruby -*-
 # End-to-end test of playbooks/configure.yml on a real Ubuntu VM (VirtualBox).
 # Docker-based Molecule tests cover the roles; this additionally exercises
-# systemd services (docker, qemu-guest-agent) and a full cloud image.
+# the docker service and a full cloud image. qemu-guest-agent stays stopped:
+# VirtualBox gives the VM no guest-agent port.
 #
 #   make vagrant        # ~10 minutes on first run
 #   vagrant ssh            # then: sudo -iu dev claude

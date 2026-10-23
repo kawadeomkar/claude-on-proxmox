@@ -1,0 +1,24 @@
+---
+# Every listed service is enabled and started, qemu-guest-agent only where the
+# VM has its port (common_guest_agent_port). Its unit is bound to the port's
+# device (BindsTo=), so a start without one waits 90 s for the device and
+# fails: on a Proxmox VM with its agent off, under VirtualBox, in a container.
+# The port, not the machine type: virtualization_type is kvm on a KVM guest
+# with no port too, and on bare metal with the kvm module loaded. Where the
+# port is, udev started the agent at boot, and the start finds it running
+# unless something stopped it. Its unit is static, so enabling it changes
+# nothing. It may be listed with or without its .service suffix.
+- name: services | Look for the guest agent's port
+  ansible.builtin.stat:
+    path: "{{ common_guest_agent_port }}"
+  register: common_guest_agent_port_found
+
+- name: services | Enable and start services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: >-
+      {{ omit if item | regex_replace('[.]service$', '') == 'qemu-guest-agent'
+                 and not common_guest_agent_port_found.stat.exists
+         else 'started' }}
+  loop: "{{ common_enabled_services }}"

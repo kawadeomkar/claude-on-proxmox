@@ -9,14 +9,12 @@
 # and a VM deleted in the UI simply stops appearing. Addresses come from the
 # QEMU guest agent, since a DHCP lease is not recorded anywhere else.
 #
-# community.proxmox ships an inventory plugin that does this same job, and it
-# can read a vault-encrypted token through a lookup, so the token would not
-# have to be duplicated. It is not used here because an inventory plugin has
-# no access to group_vars: proxmox_api_host would have to be declared a second
-# time, outside the one file the user edits. It also runs on every ansible
-# invocation, and when the API is unreachable it degrades to "no hosts matched"
-# rather than failing loudly. If those trade-offs stop mattering, replacing
-# this play with an inventory/proxmox.yml is the smaller design.
+# A play rather than community.proxmox's inventory plugin, which could find
+# the same VMs: the plugin turns an unreachable API or a refused token into a
+# warning, merges two VMs of one name, calls Proxmox on every ansible command,
+# and would replace this play alone - provision, list, ssh-config, destroy and
+# code read the cluster through tasks/ anyway. The facts are in
+# docs/architecture/decisions.md §15.1.
 - name: Discover VMs on Proxmox
   hosts: localhost
   gather_facts: false

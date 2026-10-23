@@ -76,7 +76,9 @@ argument_specs:
         type: list
         elements: str
         default: [qemu-guest-agent]
-        description: Services enabled at boot where systemd runs, and started on a KVM guest.
+        description: >-
+          Services enabled at boot and started, where systemd runs. qemu-guest-agent is started only where the VM has its port,
+          /dev/virtio-ports/org.qemu.guest_agent.0, which Proxmox adds while the VM's agent is enabled.
       common_masked_units:
         type: list
         elements: str
