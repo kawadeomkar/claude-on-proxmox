@@ -1420,7 +1420,8 @@
           - verify_shell_task.presentation.group == 'claude'
           # The notes' task, run beside Claude's when the window opens: quietly, its terminal closing when it ends.
           - verify_notes_task.label == 'Session notes'
-          - verify_notes_task.args == ['-lc', verify_notes_script, 'session-notes', verify_notes, 'alpha', 'claude-remote-control']
+          # The time zone last: TZ, as molecule.yml sets it for the run.
+          - verify_notes_task.args == ['-lc', verify_notes_script, 'session-notes', verify_notes, 'alpha', 'claude-remote-control', 'Asia/Kolkata']
           - "verify_notes_task.presentation == {'reveal': 'never', 'focus': false, 'echo': false, 'close': true, 'showReuseMessage': false}"
           - "verify_notes_task.runOptions == {'runOn': 'folderOpen'}"
           - verify_task.dependsOn is not defined
@@ -1429,7 +1430,8 @@
           - verify_task.command == '/bin/bash'
           - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4],
                                  verify_task.args[5], '/etc/systemd/system/claude-remote-control.path', verify_task.args[7],
-                                 'https', 'workflow', 'alpha', verify_notes_script, verify_notes, 'claude-remote-control']
+                                 'https', 'workflow', 'alpha', verify_notes_script, verify_notes, 'claude-remote-control',
+                                 'Asia/Kolkata']
           - verify_task.args[3] is search('make configure VM_NAME=alpha,')
           # What a sign-in there says: Remote Control started by the path unit that watches for the login, or not.
           - verify_task.args[4] is search('starts by itself.* make configure VM_NAME=alpha TAGS=claude_code$')

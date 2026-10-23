@@ -237,9 +237,9 @@ differently.
 Every time the window opens - from `make deploy`, `make code`, *Open Recent*, a restart that restores
 it, or a reload - a page about the VM opens beside the Claude terminal, as a rendered preview:
 
-- **Signed in**, read from the VM as the window opened: the Claude Code account and plan, whether
-  Remote Control is live, the GitHub account `gh` is signed in as, and Tailscale's state with the
-  `ssh` command that reaches the VM over it.
+- **Signed in**, read from the VM as the window opened, at a time given in your machine's time zone:
+  the Claude Code account and plan, whether Remote Control is live, the GitHub account `gh` is signed in
+  as, and Tailscale's state with the `ssh` command that reaches the VM over it.
 - **At a glance**: VMID, node, cores, memory and disk, the user, the projects folder, the LAN
   address, and the SSH alias.
 - **Reach this VM**, **Start here**, **From your machine** (each `make` target with this VM's name),
@@ -252,6 +252,12 @@ it, or a reload - a page about the VM opens beside the Claude terminal, as a ren
 focus to the notes - click the Claude terminal to type. A sign-in made in the Claude terminal refreshes
 the section a few seconds later; *Tasks: Run Task*, *Session notes* refreshes it by hand. Whatever the
 task meets, it opens the notes it has and finishes.
+
+The time in **Signed in** is in the zone of the machine you ran `make code` on, not the VM's clock, which
+keeps UTC: `TZ` when your shell sets it (`TZ=Europe/Berlin make code ...`), otherwise the zone your system
+is set to, and UTC when neither names one, or when the VM does not know the zone. `make code` and `make
+deploy` write it into the window's tasks, so after you change time zone the window keeps the old one until
+the next `make code`.
 
 In the window of the whole projects directory the notes' folder shows in the Explorer as
 **alpha · session**. A one-project window (`PROJECT=`) opens the same file from outside its own
