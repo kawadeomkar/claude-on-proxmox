@@ -162,12 +162,8 @@
     group: root
     mode: "0644"
 
-- name: Enable services
-  ansible.builtin.service:
-    name: "{{ item }}"
-    enabled: true
-    state: "{{ 'started' if ansible_facts['virtualization_type'] == 'kvm' else omit }}"
-  loop: "{{ common_enabled_services }}"
+- name: Enable and start services
+  ansible.builtin.include_tasks: services.yml
   when: ansible_facts['service_mgr'] == 'systemd'
 
 - name: Mask the services a headless VM has no use for

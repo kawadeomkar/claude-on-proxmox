@@ -80,10 +80,20 @@
     # stopped, none of them failed (fwupd's timer, which side_effect.yml left
     # failed, included), the two units the container never had are left
     # without a mask, and snapd, given a snap in side_effect.yml, runs.
+    # common_enabled_services: the service a user adds is enabled and runs,
+    # and the guest agent runs, since side_effect.yml gave it a port.
     - name: Read the state of each unit
       ansible.builtin.command:
         argv: [systemctl, show, --property=UnitFileState, --property=ActiveState, "{{ item }}"]
-      loop: [fwupd.service, fwupd-refresh.timer, multipathd.service, multipathd.socket, snapd.service, snapd.socket]
+      loop:
+        - fwupd.service
+        - fwupd-refresh.timer
+        - multipathd.service
+        - multipathd.socket
+        - snapd.service
+        - snapd.socket
+        - claude-on-proxmox-stand-in.service
+        - qemu-guest-agent.service
       register: common_verify_units
       changed_when: false
 
@@ -109,6 +119,9 @@
           - common_verify_state['multipathd.socket'] is search('ActiveState=inactive')
           - common_verify_state['snapd.service'] is search('UnitFileState=enabled')
           - common_verify_state['snapd.service'] is search('ActiveState=active')
+          - common_verify_state['claude-on-proxmox-stand-in.service'] is search('UnitFileState=enabled')
+          - common_verify_state['claude-on-proxmox-stand-in.service'] is search('ActiveState=active')
+          - common_verify_state['qemu-guest-agent.service'] is search('ActiveState=active')
           - common_verify_absent_units.results | map(attribute='stat.exists') | select | list == []
         quiet: true
 

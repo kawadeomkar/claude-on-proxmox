@@ -1,0 +1,6 @@
+---
+# Where a VM's guest-agent port appears. Proxmox gives the VM a virtio-serial
+# port of this name while its agent is enabled (proxmox_vm sets agent:
+# enabled=1), and the VM's udev links it here at boot. qemu-guest-agent's unit
+# is bound to that device, so it can run only where this path exists.
+common_guest_agent_port: /dev/virtio-ports/org.qemu.guest_agent.0
