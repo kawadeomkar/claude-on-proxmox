@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1396 tests. By file:
+pytest over `tests/unit/`: 1414 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -72,13 +72,15 @@ pytest over `tests/unit/`: 1396 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 113): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 127): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
   exit 0 and the notes opened when its Python raises, hangs or is missing, a read that hangs costing
-  2 s, a symlink neither followed nor opened - the refresh after a sign-in in the terminal, and the
-  workspace each window gets: the notes' folder only where its own folder holds them.
+  2 s, a symlink neither followed nor opened, the time in the zone it is given or in UTC for one it
+  cannot find - the refresh after a sign-in in the terminal, the zone `code.yml` finds (`TZ`, the
+  `/etc/localtime` link on Linux and macOS, `/etc/timezone`, else UTC, shell syntax and paths refused),
+  and the workspace each window gets: the notes' folder only where its own folder holds them.
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
@@ -114,7 +116,7 @@ pytest over `tests/unit/`: 1396 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 359): `vm-name-check` accepts DNS-like names and refuses
+- **The Makefile** (`test_makefile.py` 363): `vm-name-check` accepts DNS-like names and refuses
   whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
@@ -128,7 +130,9 @@ pytest over `tests/unit/`: 1396 tests. By file:
   exported `TYPE`, `TAGS`, `ROLE` or `SKIP`, and a `MOLECULE_ROLES` on the command line, change nothing;
   every replaced target names its replacement, and is refused among VM names; the
   `#: TYPE=` lines are the TYPEs each target takes, and `make help` lists them; `make install` syncs the
-  lock into `PYTHON`'s own environment, removing nothing, every target runs that environment's tools and
+  lock into `PYTHON`'s own environment, removing nothing, and reinstalls each locked package whose commands
+  start another Python - one by a link to the environment among them, and never pip's - failing if the
+  reinstall left one, every target runs that environment's tools and
   refuses a Python that is not a virtualenv, a `BIN` in the environment is ignored, `make help` starts no
   Python, and `clean` never touches the environment; `tools/env-run`, which every local git hook runs
   through, does the same, and `make vagrant` hands the Vagrantfile the environment's `ansible-playbook`; `lint`, `test`, `docs`, `vagrant`, `vault` and `init` run what
@@ -186,6 +190,12 @@ never had, and no package left in the cache, `sl`, which converge installs, incl
 finds nothing in the timer's journal about a failure (converge stopped it before it masked it), masks the
 timer while it waits, which fails it, gives snapd a snap and runs the masking again: the timer is cleared
 and snapd is left running.
+
+The same scenario installs a stand-in for a service a user adds to `common_enabled_services`, and one
+for `qemu-guest-agent` in `/etc/systemd/system`, not bound to the guest-agent port as the package's unit
+is. Converge starts the first and, with no port in the container, leaves the agent stopped; the side
+effect finds it stopped, gives the role a stand-in for the port and runs its services again, and verify
+finds both running.
 
 `proxmox_vm`'s scenario is the interesting one: it runs against the fake PVE API and asserts the VMID
 came from Proxmox (9001, the next free one) and that the address came from the VM's own NIC —

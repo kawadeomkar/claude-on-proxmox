@@ -78,7 +78,7 @@ nav = [
     { "12. CI" = "architecture/ci.md" },
     { "13. Toolchain" = "architecture/toolchain.md" },
     { "14. File map" = "architecture/file-map.md" },
-    { "15. Open design questions" = "architecture/open-questions.md" },
+    { "15. Design decisions" = "architecture/decisions.md" },
   ] },
   { "Development" = [
     { "Testing" = "development/testing.md" },

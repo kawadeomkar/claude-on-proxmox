@@ -22,6 +22,8 @@ provisioner:
   env:
     ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/roles
     ANSIBLE_FILTER_PLUGINS: ${MOLECULE_PROJECT_DIRECTORY}/filter_plugins
+    # The zone code.yml finds first, so the session notes' task is the same whatever this machine's is.
+    TZ: Asia/Kolkata
   inventory:
     # The committed group_vars are symlinked in, so the real variable wiring
     # is exercised; only the endpoint and secrets are overridden per host.

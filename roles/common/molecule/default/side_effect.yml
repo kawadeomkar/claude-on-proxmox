@@ -75,3 +75,33 @@
       ansible.builtin.include_role:
         name: common
         tasks_from: masked_units
+
+# The container has no guest-agent port, so converge left the agent's stand-in
+# stopped and started the other service. Given a port, the same tasks start
+# the agent too, and verify.yml finds it running.
+- name: Start the guest agent once the VM has its port
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read what converge left the agent as
+      ansible.builtin.command:
+        argv: [systemctl, is-active, qemu-guest-agent.service]
+      register: common_side_effect_agent
+      changed_when: false
+      failed_when: common_side_effect_agent.stdout != 'inactive'
+
+    - name: Give the VM a stand-in for the port
+      ansible.builtin.copy:
+        content: ""
+        dest: /run/claude-on-proxmox-guest-agent-port
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Run the role's services again
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: services
+      vars:
+        common_guest_agent_port: /run/claude-on-proxmox-guest-agent-port
