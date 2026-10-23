@@ -82,9 +82,9 @@ argument_specs:
         type: bool
         default: false
         description:
-          - Set by make deploy's configure step, whose sign-in comes next in the
+          - Set by just deploy's configure step, whose sign-in comes next in the
             same run. The message for a VM with no login then says so, rather
-            than naming make login TYPE=claude.
+            than naming just login --only claude.
 
   # tasks_from: login, which playbooks/claude_login.yml runs on VMs this role
   # has configured.
@@ -159,7 +159,7 @@ argument_specs:
     short_description: Start Remote Control on a VM that was signed in just now
     description:
       - Includes remote_control.yml as root when Remote Control is wanted, as
-        make deploy TYPE=configure would, now that the login it was waiting for exists.
+        just deploy --only configure would, now that the login it was waiting for exists.
     options:
       claude_code_remote_control:
         type: bool

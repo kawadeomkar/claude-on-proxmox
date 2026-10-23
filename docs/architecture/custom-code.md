@@ -24,7 +24,7 @@ that parses as one IPv4 address inside `100.64.0.0/10`, else `""`: tailscaled on
 it is held to the same rule as `guest_ipv4`.
 
 **`guest_address(vm_info, nic="net0")`** — the two above, composed the one way discovery and
-`make list` need: given what `proxmox_vm_info` registered for one VM read with `config` and
+`just list` need: given what `proxmox_vm_info` registered for one VM read with `config` and
 `network`, the IPv4 the agent reports on the interface whose MAC is `config[nic]`. Returns `""` —
 never raises — for a failed or skipped call, a stopped VM, a silent agent or a missing NIC, so a
 caller sweeping the fleet skips that VM. Both playbooks pass `proxmox_nic`; they used to read
@@ -34,10 +34,10 @@ caller sweeping the fleet skips that VM. Both playbooks pass `proxmox_nic`; they
 `40[13]` only in proxmoxer's status position (`"<status> <reason>: <detail>"`, after the module's own
 `"...: "` prefix), or the words Proxmox uses for it. The unanchored `40[13]` it replaces also matched
 a VMID in the detail — `500 Internal Server Error: VM 4013 is not running` — which failed
-`make list` and `make deploy TYPE=configure` for the whole fleet over one stopped VM.
+`just list` and `just deploy --only configure` for the whole fleet over one stopped VM.
 
 **`ssh_config_blocks(content)`** — the alias blocks in the managed file, as `{name}`, in file order. **`ssh_config_prune(blocks, resources,
-tag_pattern)`** — the decision `make deploy TYPE=ssh-config` makes fleet-wide, as data: `prune` (no VM of that
+tag_pattern)`** — the decision `just deploy --only ssh-config` makes fleet-wide, as data: `prune` (no VM of that
 name anywhere), `untagged` (a VM of that name exists without the tag; left alone), and `nameless`
 (tagged VMs the listing shows without a name, a node that is down), which when non-empty empties
 `prune` into `held`. Pure, so every rule is a unit test rather than a fake-API fixture.
@@ -90,7 +90,7 @@ character but tab and newline. The VM's user controls what `claude`, `gh` and `s
 ansible-core 2.21 writes a failure's `[ERROR]` line to the terminal and the run log raw; removing only
 the control characters left a clipboard write's base64 or a window title behind as text. Every message
 that quotes the VM's text goes through it: the Claude sign-in's (`claude_code_login_said`), gh's
-(`github_projects_login_text`, `_status_said`, `_token_said`) and `make code`'s SSH failure. Covered by
+(`github_projects_login_text`, `_status_said`, `_token_said`) and `just code`'s SSH failure. Covered by
 `tests/unit/test_text_filter.py`, and by the sign-in tests, which feed both flows escape sequences.
 
 **`banner(body, title, host='', topic='')`** — the `#` block that sets a moment the run waits for the
@@ -110,7 +110,7 @@ through it. It subclasses the default callback and carries the
 default's `DOCUMENTATION` fragments (`default_callback`, `result_format_callback`). Without them the
 subclass has no options: every hook fails on its first `get_option`, Ansible only warns, and every task's
 result disappears from the screen and the log in a run that still exits 0. `--syntax-check` loads no
-callback, so `make lint TYPE=syntax` would not notice; `tests/unit/test_attention_callback.py` runs real playbooks
+callback, so `just lint syntax` would not notice; `tests/unit/test_attention_callback.py` runs real playbooks
 through it and compares its untagged output with the default's, byte for byte.
 
 A run waits for the person in three ways, and each is set apart:
@@ -132,9 +132,9 @@ A run waits for the person in three ways, and each is set apart:
   `github_projects_next`, `tailscale_next`, `claude_vm_next` (provision and destroy) and `code_next` - as
   `{vm: {matter: line}}`: the message itself while something is left, `''` once nothing is. `aggregate`
   merges the records, so the last one of a VM and matter wins across plays: configure's "not signed in"
-  is cleared by the sign-in's own report later in the same `make deploy`. The decision is made in Jinja
+  is cleared by the sign-in's own report later in the same `just deploy`. The decision is made in Jinja
   beside the message, from the same facts, because the text cannot carry it: a stopped Tailscale or a
-  missing workflow scope names no `make` command, and "make deploy signs it in next" names one with
+  missing workflow scope names no `just` command, and "just deploy signs it in next" names one with
   nothing to do. A looped report records each VM in a looped `set_stats` keyed by the loop var, so the
   callback reads no task result for this at all. Printed by VM name, the matters in a fixed order (`vm`,
   `claude`, `remote_control`, `github`, `github_identity`, `tailscale`, `vscode`, `destroy`), each line

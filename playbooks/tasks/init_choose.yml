@@ -1,5 +1,5 @@
 ---
-# One of make init's choices (playbooks/init_check.yml): a setting whose value
+# One of just init's choices (playbooks/init_check.yml): a setting whose value
 # must be one of what the node lists and the token can use - the storage for
 # VM disks, the bridge the template's NIC is on. Inputs, through the include's
 # vars (never facts):
@@ -8,8 +8,8 @@
 #   init_choose_what        the word for one of them in a message: storage
 #   init_choose_value       the value in effect: proxmox_storage
 #   init_choose_set         whether local.yml sets it (else it is the default)
-#   init_choose_given       the value given on make's command line, or ""
-#   init_choose_flag        how it was given: STORAGE
+#   init_choose_given       the value given on just init's command line, or ""
+#   init_choose_flag        how it was given: --storage
 #   init_choose_candidates  what the node lists, from the init_candidates filter
 #   init_choose_path        the permission path before a name: /storage/
 #   init_choose_node        the node they are listed on
@@ -48,7 +48,7 @@
 - name: init_choose | Refuse a value given on the command line that will not do
   ansible.builtin.fail:
     msg: >-
-      {{ init_choose_flag }}={{ init_choose_given }}:
+      {{ init_choose_flag }} {{ init_choose_given }}:
       {{ ('the token cannot see it on ' ~ init_choose_node ~ ' ('
           ~ (init_choose_candidates | map(attribute='name') | join(', ') or 'nothing listed') ~ ')')
          if init_choose_given_row | length == 0 else
@@ -57,7 +57,7 @@
          ('it is inactive on ' ~ init_choose_node ~ ': Proxmox lists it, but cannot reach it')
          if init_choose_given_row.inactive | default(false) else
          ('inventory/group_vars/all/local.yml already sets ' ~ init_choose_setting ~ ': ' ~ init_choose_value
-          ~ ', and make init never writes over a value: edit the file to change it') }}.
+          ~ ', and just init never writes over a value: edit the file to change it') }}.
   vars:
     init_choose_given_row: >-
       {{ init_choose_candidates | selectattr('name', 'equalto', init_choose_given) | first | default({}) }}
@@ -142,5 +142,5 @@
          {'ok': false, 'text': init_choose_what ~ ' ' ~ init_choose_value ~ ' is not on ' ~ init_choose_node
           ~ ': set ' ~ init_choose_setting ~ ' in local.yml to one the token can use - '
           ~ init_choose_usable | join(', ') ~ ' - '
-          ~ ('or answer make init, which asks again' if init_ask | bool else 'or run make init at a terminal, which asks')} }}
+          ~ ('or answer just init, which asks again' if init_ask | bool else 'or run just init at a terminal, which asks')} }}
   when: not init_choose_only_check | default(false) | bool

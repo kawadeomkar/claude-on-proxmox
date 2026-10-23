@@ -1,4 +1,4 @@
-"""`make deploy TAGS=<role>` must still discover the VMs it is meant to configure.
+"""`just deploy --tags <role>` must still discover the VMs it is meant to configure.
 
 VMs only enter the inventory when discovery adds them, and tags propagate to
 the tasks of an imported playbook, so discovery keeps running under --tags only
@@ -59,7 +59,7 @@ def test_a_role_tag_keeps_every_discovery_task(tmp_path):
 
 # The alias play at the end, and the lookup it reads at the end of the
 # configure play, are tagged the same way for the same reason: a
-# `make deploy TAGS=claude_code` after a lease moved must still refresh
+# `just deploy --tags claude_code` after a lease moved must still refresh
 # the alias, or `ssh alpha` keeps pointing at the old address.
 ALIASES = "Keep an SSH alias for each configured VM"
 CONFIGURE = "Configure Claude development VMs"

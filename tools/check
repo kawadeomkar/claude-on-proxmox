@@ -1,0 +1,82 @@
+#!/bin/sh
+# The checks the justfile's recipes run before their work, each saying what
+# to do when it fails. They are lines of each recipe's own script rather than
+# recipes it depends on, since JUST_NO_DEPS or --no-deps would skip a
+# dependency.
+#
+#   tools/check checkout <directory>   just was started there: refuse another checkout
+#   tools/check vault <file>           the vault exists and is encrypted
+#   tools/check collections <bin>      the Galaxy collections are requirements.yml's pins
+#   tools/check names <name>...        VM names: letters, digits and . _ - , only, from a letter or digit
+#   tools/check project <name>         one repository folder's name
+set -eu
+# The character sets below are spelt out rather than written as ranges, so
+# no locale can widen them (a UTF-8 one may collate accented letters into
+# A-Z), and none needs setting: ansible-galaxy refuses one that is not UTF-8.
+
+case "${1:-}" in
+checkout)
+  # just looks for a justfile upward from where it was started and does not
+  # stop at a checkout's .git: started in a worktree of a branch that has no
+  # justfile - an older one, under .claude/worktrees/ - it runs this one, in
+  # this directory, with this checkout's inventory and vault. A subdirectory
+  # of this checkout, or a directory in none, is fine.
+  top=$(git -C "$2" rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -n "$top" ] && [ "$(cd "$top" && pwd -P)" != "$(pwd -P)" ]; then
+    echo "error: just was started in $2, in the checkout $top, which has no justfile of its own;" >&2
+    echo "this justfile is $(pwd -P)'s. Run the commands that checkout has there, or merge main into it." >&2
+    exit 1
+  fi
+  ;;
+vault)
+  # Without vault.yml a playbook dies inside the cluster listing on an
+  # undefined variable; plaintext, it would be used as it is.
+  test -f "$2" || { echo "error: $2 missing. Run: just init" >&2; exit 1; }
+  head -c 14 "$2" | grep -q '^\$ANSIBLE_VAULT' || { echo "error: $2 is not encrypted. Run: just vault" >&2; exit 1; }
+  ;;
+collections)
+  # Every checkout on a machine - a worktree, an older clone - shares
+  # ~/.ansible/collections, so a pull that bumped a pin, or just install in a
+  # checkout pinning an older one, would leave the runs on another version
+  # without a word. --offline resolves against what is installed and contacts
+  # nothing: with every pin installed it changes nothing, and otherwise fails.
+  test -x "$2/ansible-galaxy" || { echo "error: no ansible-galaxy in [$2], the bin of PYTHON's environment. Run: just install" >&2; exit 1; }
+  "$2/ansible-galaxy" collection install -r requirements.yml --offline </dev/null >/dev/null 2>&1 \
+    || { echo "error: the installed Galaxy collections are not the ones requirements.yml pins. Run: just install" >&2; exit 1; }
+  ;;
+names)
+  # just has held each name to its pattern already; this holds the JSON the
+  # names go into whatever the justfile's assignments were overridden to.
+  shift
+  for name in "$@"; do
+    # A name starts as a DNS name does, with a letter or a digit: a word that
+    # starts with - is an option, which a recipe without options takes as a word.
+    case "$name" in
+    '' | [!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._,-]*)
+      echo "error: VM names start with a letter or a digit and may contain only letters, digits and . _ - , (got: [$name])" >&2
+      exit 1
+      ;;
+    esac
+  done
+  ;;
+project)
+  # A GitHub repository name: at most 100 ASCII letters, digits, ".", "-" and
+  # "_". So nothing outside the projects directory and nothing nested, and not
+  # "." or "..", which name the directory itself or its parent.
+  case "$2" in
+  *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*)
+    echo "error: --project may contain only letters, digits and . _ - (got: [$2])" >&2
+    exit 1
+    ;;
+  . | ..)
+    echo "error: --project names one project folder, not [$2]" >&2
+    exit 1
+    ;;
+  esac
+  test "${#2}" -le 100 || { echo "error: --project is longer than the 100 characters a repository name can be" >&2; exit 1; }
+  ;;
+*)
+  echo "usage: tools/check checkout <directory> | vault <file> | collections <bin> | names <name>... | project <name>" >&2
+  exit 2
+  ;;
+esac

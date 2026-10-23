@@ -6,10 +6,10 @@
 #   cp inventory/group_vars/all/local.yml.example inventory/group_vars/all/local.yml
 #
 # Every setting below is in docs/reference/settings.md, with its default and the
-# role variable it sets; that page is generated from this file (make docs).
+# role variable it sets; that page is generated from this file (just docs).
 
 # ---------------------------------------------------------------- Proxmox ---
-# make init writes the node, the storage and the bridge here, in place of their
+# just init writes the node, the storage and the bridge here, in place of their
 # lines below, when the defaults do not fit the host.
 # Proxmox node name as shown in the PVE UI, and the storage for VM disks.
 # proxmox_node: pve
@@ -40,7 +40,7 @@
 # Public keys cloud-init installs for that user. Default: this machine's
 # ~/.ssh/id_ed25519.pub; list your own here if yours is another key.
 # vm_ssh_public_keys: ["ssh-ed25519 AAAA... you@example.com"]
-# The VM a target acts on when VM_NAME is not given.
+# The VM a recipe acts on when no name is given.
 # claude_vm_default_name: claude-on-proxmox-default
 
 # VM sizing. These apply to every VM a run creates - VMs are no longer listed
@@ -77,13 +77,13 @@
 # github_projects_exclude: []
 # github_projects_clone_protocol: https
 # Sign gh in on each VM (from vault_github_token, or by GitHub's device flow,
-# which make deploy and make login TYPE=github run for you) and make it git's
+# which just deploy and just login --only github run for you) and make it git's
 # credential helper, so private repositories clone and git push works. false
 # leaves gh and ~/.gitconfig alone. auto takes the token when there is one, else
 # the device flow; web is the device flow always; token is the token only.
 # github_auth: true
 # github_auth_method: auto
-# make deploy starts the device flow by itself; false asks first, VM by VM.
+# just deploy starts the device flow by itself; false asks first, VM by VM.
 # github_login_auto_start: true
 # Scopes the device flow asks for on top of gh's own (repo, read:org, gist);
 # workflow lets a push change .github/workflows/.
@@ -130,15 +130,15 @@
 # Where the code lives on the VM: cloned into, opened by Remote Control, and
 # what VS Code is pointed at. Empty means ~/projects of the VM user.
 # vm_projects_dir: ""
-# `make code` opens a workspace file that starts claude in a terminal of the
+# `just code` opens a workspace file that starts claude in a terminal of the
 # window, once you have trusted the folder and allowed automatic tasks. Set
 # false to open the bare folder and write nothing on the VM; for one run,
-# make code VM_NAME=alpha ANSIBLE_ARGS="-e vscode_claude_terminal=false".
+# ANSIBLE_ARGS='-e vscode_claude_terminal=false' just code alpha.
 # vscode_claude_terminal: true
 # Where those files go on the VM, as an absolute path of its own. Empty:
 # .claude-on-proxmox in vm_projects_dir.
 # vscode_workspaces_dir: ""
-# A page about the VM - addresses, what is signed in, the make commands - opened
+# A page about the VM - addresses, what is signed in, the just commands - opened
 # beside the Claude terminal each time the window opens, its sign-in status read
 # from the VM then. Needs vscode_claude_terminal.
 # vscode_session_notes: true
@@ -183,13 +183,13 @@
 # claude_code_remote_control_spawn: same-dir
 
 # ------------------------------------------------ Sign-ins and teardown ---
-# make deploy ends with the VM signed in to Claude, GitHub and Tailscale and
+# just deploy ends with the VM signed in to Claude, GitHub and Tailscale and
 # open in VS Code; the sign-ins each open a page and wait for you, one VM at a
-# time. false leaves them to make login.
+# time. false leaves them to just login.
 # deploy_sign_in: true
-# Open the VM in VS Code at the end of a one-VM make deploy.
+# Open the VM in VS Code at the end of a one-VM just deploy.
 # deploy_code: true
-# Before make destroy deletes a VM, sign it out of Claude and of gh, and take it
+# Before just destroy deletes a VM, sign it out of Claude and of gh, and take it
 # off your tailnet. A stopped VM is started for it. false deletes the VMs as
 # they are.
 # destroy_release: true
@@ -205,9 +205,9 @@
 # How a VM joins: auto is vault_tailscale_auth_key when set, else the web login;
 # key is the key only; web is the web login only.
 # tailscale_auth_method: auto
-# make deploy starts the web login by itself; false asks first, VM by VM.
+# just deploy starts the web login by itself; false asks first, VM by VM.
 # tailscale_login_auto_start: true
-# Delete a VM's device from your tailnet when make destroy deletes the VM, or
+# Delete a VM's device from your tailnet when just destroy deletes the VM, or
 # Tailscale is turned off on it. auto uses whichever credential the vault
 # holds - vault_tailscale_api_token first, else vault_tailscale_oauth_client_id
 # and vault_tailscale_oauth_client_secret (devices:core) - and only logs the VM

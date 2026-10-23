@@ -2,11 +2,11 @@
 # Open one VM in VS Code, over SSH: its whole projects directory, or one
 # project in it.
 #
-#   make code VM_NAME=alpha                              -> ~/projects
-#   make code VM_NAME=alpha PROJECT=discord-music-bot    -> ~/projects/discord-music-bot
+#   just code alpha                              -> ~/projects
+#   just code alpha --project discord-music-bot    -> ~/projects/discord-music-bot
 #
-# The quick way to an existing VM: the alias step of `make deploy TYPE=configure` and
-# `make deploy TYPE=ssh-config` for this one VM - its address is read from Proxmox again,
+# The quick way to an existing VM: the alias step of `just deploy --only configure` and
+# `just deploy --only ssh-config` for this one VM - its address is read from Proxmox again,
 # so a lease that moved since the last run is corrected before connecting -
 # followed by the one step those never do, launching the editor. The folder is
 # looked for on the VM first, read-only and over SSH as the VM user, so a
@@ -15,12 +15,12 @@
 # window opened on a folder that does not exist. The Remote - SSH extension is
 # installed first if VS Code does not have it.
 #
-# `make deploy` ends with this playbook (code_in_deploy) for its one VM: the
-# one VM_NAME names, or the default VM of a bare deploy. There, whatever stops
+# `just deploy` ends with this playbook (code_in_deploy) for its one VM: the
+# one vm_name names, or the default VM of a bare deploy. There, whatever stops
 # the window - a VM the deploy left stopped, no alias, no `code` command, an
 # SSH failure, an extension that would not install - is said with the command
 # that opens it later, instead of failing a deploy whose VM is done. A deploy
-# for several VMs opens none: this ends at once with each VM's make code line.
+# for several VMs opens none: this ends at once with each VM's just code line.
 #
 # With vscode_claude_terminal (the default), VS Code is handed a workspace
 # file rather than the folder. It names the folder and holds one task, run when
@@ -41,7 +41,7 @@
 # and is checked again here so that a direct ansible-playbook run cannot point
 # VS Code outside the projects directory either.
 #
-# Every name this playbook sets starts with code_, a prefix no role uses: make
+# Every name this playbook sets starts with code_, a prefix no role uses: just
 # deploy runs the roles in the same run, and a fact or register of theirs
 # would outrank a play var of the same name without a word. What it reads from
 # the inventory keeps its own name (claude_code_remote_control,
@@ -181,7 +181,7 @@
     code_notes_glob: "**/{{ code_ws_dir | basename }}/session/*-session.md"
     code_remote_control_unit: "{{ claude_code_remote_control_service | default('claude-remote-control') }}"
     # The time zone the notes' time is said in: this machine's, the user's, where the VM's clock keeps
-    # common_timezone (UTC). TZ first, as the shell running make has it, then the zone /etc/localtime
+    # common_timezone (UTC). TZ first, as the shell running just has it, then the zone /etc/localtime
     # links into a zoneinfo directory for (macOS, most Linux), then /etc/timezone (Debian, where
     # /etc/localtime may be a copy). Only a zone's name, such as Europe/Berlin, is taken, anything else
     # falls through, and with none it is UTC; the helper says UTC too for a zone the VM's tzdata lacks.
@@ -221,7 +221,7 @@
     # before bash sees them. Ctrl-C skips it: the trap keeps bash alive while
     # gh and the read loop end, and claude starts as after a sign-in that
     # failed. Then gh is made git's credential helper, so a push from this
-    # terminal works at once; the private repositories still take the make
+    # terminal works at once; the private repositories still take the just
     # deploy that $5 names, and a sign-in that fails does not keep Claude
     # from starting. pipefail, so that gh's exit status survives the read
     # loop. After a sign-in that succeeded here, Claude's or gh's, the notes'
@@ -272,7 +272,7 @@
           printf '%s\n' "$5"
           refresh=1
         else
-          printf '%s\n' "Not signed in to GitHub. From your machine: make login VM_NAME=$8 TYPE=github"
+          printf '%s\n' "Not signed in to GitHub. From your machine: just login $8 --only github"
         fi
       fi
       trap - INT
@@ -368,7 +368,7 @@
           if not isinstance(status, dict):
               return "unknown (claude auth status gave no status)"
           if not status.get("loggedIn"):
-              return f"not signed in: make login VM_NAME={vm} TYPE=claude on your machine"
+              return f"not signed in: just login {vm} --only claude on your machine"
           if status.get("apiKeySource") or status.get("authMethod") == "api_key":
               return f"an API key ({clean(status.get('apiKeySource') or 'ANTHROPIC_API_KEY')})"
           plan = status.get("subscriptionType")
@@ -402,9 +402,9 @@
           accounts = hosts.get("github.com") or []
           active = next((account for account in accounts if isinstance(account, dict) and account.get("active")), None)
           if active is None:
-              return f"not signed in: make login VM_NAME={vm} TYPE=github on your machine"
+              return f"not signed in: just login {vm} --only github on your machine"
           if active.get("state") != "success":
-              return f"`{clean(active.get('login') or '?')}`, but its token is refused: make login VM_NAME={vm} TYPE=github"
+              return f"`{clean(active.get('login') or '?')}`, but its token is refused: just login {vm} --only github"
           return f"`{clean(active.get('login') or '?')}` · git over {clean(active.get('gitProtocol') or '?')}"
 
 
@@ -418,7 +418,7 @@
               return "unknown (tailscale status gave no status)"
           backend = clean(status.get("BackendState") or "unknown")
           if backend != "Running":
-              return f"{backend}: make login VM_NAME={vm} TYPE=tailscale signs it in" if backend == "NeedsLogin" else backend
+              return f"{backend}: just login {vm} --only tailscale signs it in" if backend == "NeedsLogin" else backend
           node = status.get("Self") or {}
           name = clean(str(node.get("DNSName") or "").rstrip("."))
           addresses = [clean(address) for address in node.get("TailscaleIPs") or [] if ":" not in str(address)]
@@ -427,7 +427,7 @@
 
 
       def now():
-          # In the zone of the machine make code ran on, the user's; UTC where the VM's tzdata lacks it.
+          # In the zone of the machine just code ran on, the user's; UTC where the VM's tzdata lacks it.
           try:
               from zoneinfo import ZoneInfo
 
@@ -492,7 +492,7 @@
       exit 0
     code_not_installed: >-
       Claude Code is not installed on {{ claude_vm_names[0] }} yet. On your machine, run
-      make deploy VM_NAME={{ claude_vm_names[0] }} TYPE=configure, then "Tasks: Run Task", Claude here.
+      just deploy {{ claude_vm_names[0] }} --only configure, then "Tasks: Run Task", Claude here.
     # Remote Control needs that claude.ai login, which is why it was waiting.
     # On a VM with no login the claude_code role leaves a path unit that starts
     # it once the login lands; the role's next run, which the first line names,
@@ -504,11 +504,11 @@
     code_signed_in_watched: >-
       {{ ('Signed in. Remote Control starts by itself in a moment, putting this VM in the Claude apps too;'
           ~ ' to keep it on across reboots, run on your machine: '
-          ~ 'make deploy VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
+          ~ 'just deploy ' ~ claude_vm_names[0] ~ ' --tags claude_code')
          if claude_code_remote_control | default(true) | bool else '' }}
     code_signed_in_unwatched: >-
       {{ ('Signed in. To reach this VM from the Claude apps too, start Remote Control from your machine: '
-          ~ 'make deploy VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
+          ~ 'just deploy ' ~ claude_vm_names[0] ~ ' --tags claude_code')
          if claude_code_remote_control | default(true) | bool else '' }}
     # The role's own default, unless the inventory names the service otherwise.
     code_login_watch: "/etc/systemd/system/{{ code_remote_control_unit }}.path"
@@ -520,7 +520,7 @@
     # take one more configure run (docs/guides/github.md).
     code_github_signed_in: >-
       {{ ('Signed in to GitHub. To clone your private repositories here too, run on your machine: '
-          ~ 'make deploy VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=github_projects')
+          ~ 'just deploy ' ~ claude_vm_names[0] ~ ' --tags github_projects')
          if github_projects_auth | default(true) | bool and github_projects_auth_method | default('auto') != 'token' else '' }}
 
     # Read on this machine, never written. task.allowAutomaticTasks is an
@@ -553,13 +553,13 @@
          | vscode_setting('task.allowAutomaticTasks', '', unparsable='unparsable') }}
     # The one VM this play opens, among the tagged ones: claude_vm_names[0].
     # Not claude_vm_requested, which narrows by name only when vm_name is
-    # defined and is the whole tagged fleet otherwise - as in a bare make
+    # defined and is the whole tagged fleet otherwise - as in a bare just
     # deploy, whose one VM is the default one.
     code_vm_tagged: >-
       {{ claude_vm_tagged | selectattr('name', 'defined')
          | selectattr('name', 'equalto', claude_vm_names[0]) | list }}
 
-    # What the rescue below says, or raises again outside make deploy: the
+    # What the rescue below says, or raises again outside just deploy: the
     # failed task's own message, or for a command, the command and what it
     # printed, since "non-zero return code" names neither. On one line, which
     # an SSH error need not be, and ending a sentence, as the line after it
@@ -573,17 +573,16 @@
                          else ' with exit code ' ~ ansible_failed_result.rc | default('?')))
          if ansible_failed_result.cmd is defined
          else ansible_failed_result.msg | default('The window step failed', true) | trim }}
-    # What make deploy says when its window step failed: the failure, then the
-    # make code line that opens the window once it is dealt with. A VM found
+    # What just deploy says when its window step failed: the failure, then the
+    # just code line that opens the window once it is dealt with. A VM found
     # stopped is the exception: the deploy left it so, configured nothing on
     # it and signed nothing in, so the next step is the deploy again with the
-    # VM started, which make code alone would not do.
+    # VM started, which just code alone would not do.
     code_later: >-
       {{ claude_vm_names[0] ~ ' is stopped, and this deploy left it so: it was not configured, signed in or opened in'
-         ~ ' VS Code. To start it and finish the deploy: make deploy VM_NAME=' ~ claude_vm_names[0]
-         ~ ' ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"'
+         ~ ' VS Code. To start it and finish the deploy: just deploy ' ~ claude_vm_names[0] ~ ' --start'
          if code_status | default('') == 'stopped'
-         else code_failure ~ ' VS Code was not opened; to open it later: make code VM_NAME=' ~ claude_vm_names[0] }}
+         else code_failure ~ ' VS Code was not opened; to open it later: just code ' ~ claude_vm_names[0] }}
 
   tasks:
     # VS Code opens one VM at a time, so a deploy for several opens none, and
@@ -598,7 +597,7 @@
             msg: >-
               {{ ['VS Code opens one VM at a time, so this deploy for ' ~ claude_vm_names | length
                   ~ ' VMs opened none. To open one:']
-                 + claude_vm_names | map('regex_replace', '^', 'make code VM_NAME=') | list }}
+                 + claude_vm_names | map('regex_replace', '^', 'just code ') | list }}
           register: code_fleet_reported
 
         # NEXT STEPS (callback_plugins/claude_on_proxmox.py): the lines above,
@@ -613,21 +612,21 @@
         - name: Stop before the window
           ansible.builtin.meta: end_play
 
-    # One block, so that in make deploy whatever stops the window - the
+    # One block, so that in just deploy whatever stops the window - the
     # causes expected here, and any other, an SSH failure or an extension that
     # would not install - is said with the line that opens it later, and the
-    # deploy, whose VM is done, goes on. Outside make deploy the failure
+    # deploy, whose VM is done, goes on. Outside just deploy the failure
     # stands. Ansible rescues no unreachable host, which is why the first two
     # connections to the VM ignore that and say it with an assert.
     - name: Open the VM in VS Code
       block:
-        # make deploy may have no VM_NAME: the default VM, one name all the same.
+        # just deploy may have no vm_name: the default VM, one name all the same.
         - name: Refuse anything but one VM
           ansible.builtin.assert:
             that:
               - vm_name is defined or code_in_deploy | default(false) | bool
               - claude_vm_names | length == 1
-            fail_msg: "VS Code opens one VM at a time: make code VM_NAME=<name>."
+            fail_msg: "VS Code opens one VM at a time: just code <name>."
             quiet: true
 
         # A GitHub repository name: ASCII letters, digits, ".", "-" and "_", at
@@ -641,7 +640,7 @@
               - code_asked is match('^[A-Za-z0-9._-]{1,100}$')
               - code_asked not in ['.', '..']
             fail_msg: >-
-              PROJECT names one project folder on the VM, the way a GitHub repository is named: up to 100
+              --project names one project folder on the VM, the way a GitHub repository is named: up to 100
               letters, digits, ".", "-" and "_". "{{ code_asked }}" is not one.
             quiet: true
           when: vm_project | default('', true) | string | length > 0
@@ -670,7 +669,7 @@
             fail_msg: >-
               {{ 'No VM named ' ~ claude_vm_names[0] ~ ' is tagged "' ~ claude_vm_tag ~ '".'
                  ~ (' A VM of that name exists but is not tagged, so it is not this project\'s to open.'
-                    if code_same_name | length > 0 else ' `make list` shows what this project created.')
+                    if code_same_name | length > 0 else ' `just list` shows what this project created.')
                  if code_vm_tagged | length == 0
                  else 'More than one VM tagged "' ~ claude_vm_tag ~ '" is named ' ~ claude_vm_names[0]
                       ~ '; rename or remove the duplicates first.' }}
@@ -702,14 +701,14 @@
               - code_reach | length > 0
             fail_msg: >-
               {{ claude_vm_names[0] }} is {{ code_status }}{{ ' and reported no address' if code_status == 'running' else '' }},
-              so there is nothing to connect to. `make list` shows the fleet; start the VM, or wait for its agent, and run this again.
+              so there is nothing to connect to. `just list` shows the fleet; start the VM, or wait for its agent, and run this again.
             quiet: true
 
         # The connection Ansible makes to configure the VM: its own ssh settings
         # and accept-new, not the user's ssh config, which is VS Code's business.
         # In claude_vms, so connection variables set on that group in the
-        # inventory - a key, a port - apply here as they do to make deploy TYPE=configure.
-        - name: Reach the VM the way make deploy TYPE=configure does
+        # inventory - a key, a port - apply here as they do to just deploy --only configure.
+        - name: Reach the VM the way just deploy --only configure does
           ansible.builtin.add_host:
             name: "{{ claude_vm_names[0] }}"
             groups: claude_vms
@@ -797,7 +796,7 @@
                       ~ ', whose folders are the projects; name a directory of its own.'
                  if code_ws_dir == code_root
                  else code_ws_dir ~ ' on ' ~ claude_vm_names[0]
-                      ~ ' is where make code keeps its VS Code workspace files, not a project.' }}
+                      ~ ' is where just code keeps its VS Code workspace files, not a project.' }}
             quiet: true
           when: code_terminal
 
@@ -864,10 +863,10 @@
                  if code_close else 'The projects there are: ' ~ code_names | join(', ') ~ '.' }}
               {%- elif code_project and code_root_there | bool -%}
               {{ code_root }} on {{ claude_vm_names[0] }} holds no projects yet.
-              `make deploy VM_NAME={{ claude_vm_names[0] }} TYPE=configure` clones your repositories into it.
+              `just deploy {{ claude_vm_names[0] }} --only configure` clones your repositories into it.
               {%- else -%}
               {{ code_root }} does not exist on {{ claude_vm_names[0] }} yet: the VM has not been configured,
-              or vm_projects_dir points somewhere else. `make deploy VM_NAME={{ claude_vm_names[0] }} TYPE=configure` creates it and
+              or vm_projects_dir points somewhere else. `just deploy {{ claude_vm_names[0] }} --only configure` creates it and
               clones your repositories into it.
               {%- endif -%}
             quiet: true
@@ -991,7 +990,7 @@
               {{ '' if not code_ws_dir.startswith(code_root ~ '/')
                  else 'Trusting this window trusts every project in ' ~ code_root ~ '.'
                       if code_project | length == 0
-                 else 'Trusting the window of make code VM_NAME=' ~ claude_vm_names[0] ~ ' instead trusts every project in '
+                 else 'Trusting the window of just code ' ~ claude_vm_names[0] ~ ' instead trusts every project in '
                       ~ code_root ~ ' at once.' }}
             code_settings_note: >-
               {{ 'No VS Code settings file was found where stock VS Code keeps one on this OS, so whether you have'
@@ -1031,7 +1030,7 @@
                        else 'The session notes open beside it each time (' ~ code_notes_file ~ ').')
                       ~ ('' if code_notes_folder | bool
                          else " VS Code may ask once whether to open them, as a file outside this window's folder: Open"
-                              ~ (', or trust the window of make code VM_NAME=' ~ claude_vm_names[0] ~ ', which covers them'
+                              ~ (', or trust the window of just code ' ~ claude_vm_names[0] ~ ', which covers them'
                                  if code_ws_dir.startswith(code_root ~ '/') else '') ~ '.')
                       ~ ' vscode_session_notes: false turns them off.' }}
             code_said:
@@ -1060,9 +1059,9 @@
             per_host: false
 
       rescue:
-        # Outside make deploy the failure stands, said once more: for a
+        # Outside just deploy the failure stands, said once more: for a
         # command, with what it printed.
-        - name: Fail as make code does, outside make deploy
+        - name: Fail as just code does, outside just deploy
           ansible.builtin.fail:
             msg: "{{ code_failure }}"
           when: not (code_in_deploy | default(false) | bool)

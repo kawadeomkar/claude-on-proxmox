@@ -10,22 +10,22 @@ keeps for you.
 ## Opening a VM
 
 ```bash
-make deploy VM_NAME=alpha          # ends by opening alpha in VS Code; configuration printed
-#   alpha: ssh alpha   |   make code VM_NAME=alpha   (opens /home/dev/projects)
-make code VM_NAME=alpha            # later: refresh the alias from Proxmox, then open the VM in VS Code
-make code VM_NAME=alpha PROJECT=discord-music-bot   # just that project, in a window of its own
+just deploy alpha                             # ends by opening alpha in VS Code; configuration printed
+#   alpha: ssh alpha   |   just code alpha   (opens /home/dev/projects)
+just code alpha                               # later: refresh the alias from Proxmox, then open the VM in VS Code
+just code alpha --project discord-music-bot   # just that project, in a window of its own
 ```
 
-`make deploy` runs `make code` itself as its last step, for a run for one VM - the one `VM_NAME`
-names, or the default VM of a bare `make deploy`, whatever other VMs exist (`deploy_code: false`
+`just deploy` runs `just code` itself as its last step, for a run for one VM - the one named,
+or the default VM of a bare `just deploy`, whatever other VMs exist (`deploy_code: false`
 leaves it out). There, whatever keeps the window from opening - no alias, no `code` command, an SSH
-connection refused, a Remote - SSH extension that would not install - is said with the `make code`
+connection refused, a Remote - SSH extension that would not install - is said with the `just code`
 line instead of failing a deploy that is otherwise done; a VM the deploy found stopped, and so did not
 configure or sign in, is said with
-`make deploy VM_NAME=alpha ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"`. A deploy for several VMs
-opens no window and ends with each VM's `make code` line.
+`just deploy alpha --start`. A deploy for several VMs
+opens no window and ends with each VM's `just code` line.
 
-`make code` looks the VM up on Proxmox, rewrites its alias in case the lease moved, checks over SSH
+`just code` looks the VM up on Proxmox, rewrites its alias in case the lease moved, checks over SSH
 that the folder it is about to open is there, installs the Remote - SSH extension if VS Code does
 not have it, and opens the folder with `code --remote ssh-remote+alpha`, by way of a workspace file
 that also starts `claude` in a terminal of the window ([A Claude session in the
@@ -37,7 +37,7 @@ host picker (*Remote-SSH: Connect to Host…*) and open any folder.
 
 ## Opening one project
 
-`PROJECT` opens one folder of `~/projects` instead: the repository's name, as `github_projects`
+`--project` opens one folder of `~/projects` instead: the repository's name, as `github_projects`
 cloned it. A window rooted at the project is what most editor features expect - the source control
 view, search, a debugger's launch configuration and the Claude Code extension all start from the
 repository, where with `~/projects` open they see every repository at once. Names are checked
@@ -50,7 +50,7 @@ There is no project named parkbnb in /home/dev/projects on alpha. Did you mean P
 ```
 
 The same check catches a VM that was never configured, which has no `~/projects` yet; the message
-says to run `make deploy TYPE=configure` first.
+says to run `just deploy --only configure` first.
 
 ## Where the alias lives
 
@@ -81,16 +81,16 @@ Host alpha
 
 ## Keeping it current
 
-`make deploy` and `make deploy TYPE=configure` write the alias of each VM they finish,
-`make destroy` removes it with the VM (as it already forgets the host key; a VM whose deletion
-fails keeps its alias, since it is still there), and `make deploy TYPE=ssh-config`
+`just deploy` and `just deploy --only configure` write the alias of each VM they finish,
+`just destroy` removes it with the VM (as it already forgets the host key; a VM whose deletion
+fails keeps its alias, since it is still there), and `just deploy --only ssh-config`
 brings the whole fleet back in step at any time: a lease that moved, a VM deleted in the Proxmox UI,
 a second machine. Fleet-wide it also prunes the aliases of VMs that no longer exist. Pruning only
 ever removes blocks from the managed file, never VMs, and a block is only ever written for a VM
 tagged `claude-on-proxmox`, so a VM you run outside this project cannot be affected. Two cases are
 left alone and reported instead: a name that an *untagged* VM still carries (not this project's to
-reason about, exactly as `make destroy` refuses it), and anything at all while a tagged VM is listed
-without a name, which is what a node that is down looks like. `make deploy VM_NAME=alpha TYPE=ssh-config`
+reason about, exactly as `just destroy` refuses it), and anything at all while a tagged VM is listed
+without a name, which is what a node that is down looks like. `just deploy alpha --only ssh-config`
 refreshes one VM and never prunes.
 
 On a network whose DNS resolves VM names (a router that registers DHCP leases, or avahi with
@@ -99,8 +99,8 @@ address; a lease that moves then never matters.
 
 **Agent forwarding is off**, and should stay off: the VM user has passwordless sudo and runs Claude
 Code, and `ForwardAgent yes` would hand every key in your agent to both for the life of the
-connection. Pushes go through `gh`, signed in on the VM itself - by `make deploy TYPE=configure` from a vault
-token, or by `make deploy` and `make login TYPE=github` through GitHub's device flow (see
+connection. Pushes go through `gh`, signed in on the VM itself - by `just deploy --only configure` from a vault
+token, or by `just deploy` and `just login --only github` through GitHub's device flow (see
 [Private repositories, and pushing from the VM](github.md#private-repositories-and-pushing-from-the-vm)).
 `claude_ssh_forward_agent: true` turns it on if you have decided otherwise.
 
@@ -124,7 +124,7 @@ installs it on every VM you open.
 
 A connection that hangs or a server that will not start is reset with
 *Remote-SSH: Kill VS Code Server on Host* (or `rm -rf ~/.vscode-server` on the VM); a `HOST KEY
-VERIFICATION FAILED` after a rebuild means a lease was reused by a VM that `make destroy` did not
+VERIFICATION FAILED` after a rebuild means a lease was reused by a VM that `just destroy` did not
 delete, and `ssh-keygen -R <address>` clears it. If Ansible runs somewhere other than the machine
 VS Code is on, copy the managed file and the key there; a VS Code on Windows reads
 `%USERPROFILE%\.ssh\config`, not WSL's, so point `remote.SSH.configFile` at the managed file
@@ -133,20 +133,20 @@ Windows.
 
 ## A Claude session in the window
 
-`make code` does not stop at the window. VS Code is handed a small workspace file that names the
+`just code` does not stop at the window. VS Code is handed a small workspace file that names the
 folder and holds its tasks, so once the window has connected a terminal named **Claude** opens in it
-running `claude` in the folder, split beside a plain **Shell** in the same folder on its left: `make
-deploy` ends in a Claude session in the repository, and so does `make code` later. `make deploy` has signed the VM in already; on a VM that has not signed in to Claude
+running `claude` in the folder, split beside a plain **Shell** in the same folder on its left: `just
+deploy` ends in a Claude session in the repository, and so does `just code` later. `just deploy` has signed the VM in already; on a VM that has not signed in to Claude
 yet, the terminal runs `claude auth login` first. The sign-in page opens in the browser on your
 machine - VS Code Server sends every URL a terminal opens there - and if the page shows a code, paste
 it into the terminal. Remote Control then starts by itself where the `claude_code` role left a unit
 waiting for the login; on a VM configured before that unit existed, or whose settings block Remote
-Control, the terminal names `make deploy VM_NAME=alpha TAGS=claude_code` instead. A sign-in that
+Control, the terminal names `just deploy alpha --tags claude_code` instead. A sign-in that
 fails says how to try again: *Tasks: Run Task*, *Claude*, or a window reload. Then GitHub the same
 way, on a VM where `gh` is not signed in yet: the terminal shows a one-time code and opens the page to
 enter it on, and `gh` becomes git's credential helper, so a push from that terminal works at once;
 Ctrl-C skips GitHub, and Claude starts. The
-private repositories follow on the next `make deploy TYPE=configure` (see
+private repositories follow on the next `just deploy --only configure` (see
 [Private repositories, and pushing from the VM](github.md#private-repositories-and-pushing-from-the-vm));
 `github_auth: false`, or `github_auth_method: token`, leaves GitHub out of the terminal too.
 
@@ -156,8 +156,8 @@ The first time, VS Code waits for two answers that are yours to give, and Claude
 
 1. **Trust.** VS Code opens a folder it has not seen before in Restricted Mode, which starts nothing
    on its own, terminals and tasks included. Choose *Manage* on the banner, then *Trust*, and the
-   terminal starts. Trusting the whole projects directory - the window `make code VM_NAME=alpha`
-   opens, without `PROJECT` - trusts every project on alpha and every workspace file `make code`
+   terminal starts. Trusting the whole projects directory - the window `just code alpha`
+   opens, without `--project` - trusts every project on alpha and every workspace file `just code`
    writes there, at once. VS Code keeps trust by alias (`ssh-remote+alpha`), so a lease that moves
    does not undo it, but a VM you rename is trusted again.
 2. **Automatic tasks.** VS Code then asks whether to allow automatic tasks in trusted workspaces,
@@ -169,7 +169,7 @@ The first time, VS Code waits for two answers that are yours to give, and Claude
    folder it was started in, as it does anywhere; the whole projects directory is pre-trusted on a
    VM with Remote Control, one project's clone is not.
 
-After that, `make code` opens straight into Claude. It reads your VS Code user settings, and never
+After that, `just code` opens straight into Claude. It reads your VS Code user settings, and never
 writes them, to say which of the two VS Code answers to expect; with `task.allowAutomaticTasks` set
 to `"off"` it says the terminal will not start, and *Tasks: Run Task*, *Claude* starts it by hand in
 a trusted window. Where it looks for the settings, and what it says when it cannot read them, is in
@@ -185,16 +185,16 @@ The workspace files live on the VM beside the repositories, never in one, so
 `git status` stays clean: `~/projects/.claude-on-proxmox/<directory's name>.code-workspace` for the
 whole directory (`projects.code-workspace` with the default `vm_projects_dir`) and
 `~/projects/.claude-on-proxmox/project/<repo>.code-workspace` for one project, hidden from the
-explorer. They and the session notes beside them (below) are all `make code` writes on the VM, and only
+explorer. They and the session notes beside them (below) are all `just code` writes on the VM, and only
 when they would change. A
-repository named `.claude-on-proxmox` would land on the same path; `make code` refuses to open that
+repository named `.claude-on-proxmox` would land on the same path; `just code` refuses to open that
 name, and `github_projects` would clone it there, so leave it out of `github_projects`.
 
 ### After the first sign-in
 
 [Remote Control](remote-control.md)
-waits for exactly that login. The terminal says it starts by itself, and `make deploy VM_NAME=alpha
-TAGS=claude_code` keeps it on across reboots; where nothing waits for the login, it says that same
+waits for exactly that login. The terminal says it starts by itself, and `just deploy alpha
+--tags claude_code` keeps it on across reboots; where nothing waits for the login, it says that same
 command starts it. A VM configured with an API key is already signed in, and goes straight to `claude`.
 
 ### Every window picks the folder's conversation up
@@ -210,7 +210,7 @@ session; two windows on one project would share the conversation. Quitting `clau
 ### Switches
 
 `vscode_claude_terminal: false` opens the bare folder, as before, and writes nothing
-on the VM; for one run, `make code VM_NAME=alpha ANSIBLE_ARGS="-e vscode_claude_terminal=false"`.
+on the VM; for one run, `ANSIBLE_ARGS='-e vscode_claude_terminal=false' just code alpha`.
 `vscode_session_notes: false` keeps the terminal and leaves the session notes out.
 `vscode_workspaces_dir` moves the workspace files to an absolute path of its own on the VM (outside
 the projects directory, each window is trusted on its own; a directory that exists keeps its
@@ -234,7 +234,7 @@ differently.
 
 ## Session notes
 
-Every time the window opens - from `make deploy`, `make code`, *Open Recent*, a restart that restores
+Every time the window opens - from `just deploy`, `just code`, *Open Recent*, a restart that restores
 it, or a reload - a page about the VM opens beside the Claude terminal, as a rendered preview:
 
 - **Signed in**, read from the VM as the window opened, at a time given in your machine's time zone:
@@ -242,10 +242,10 @@ it, or a reload - a page about the VM opens beside the Claude terminal, as a ren
   as, and Tailscale's state with the `ssh` command that reaches the VM over it.
 - **At a glance**: VMID, node, cores, memory and disk, the user, the projects folder, the LAN
   address, and the SSH alias.
-- **Reach this VM**, **Start here**, **From your machine** (each `make` target with this VM's name),
+- **Reach this VM**, **Start here**, **From your machine** (each `just` command with this VM's name),
   and **When something is off**.
 
-`make code` writes it as `alpha-session.md` in `~/projects/.claude-on-proxmox/session/` (0600, in a
+`just code` writes it as `alpha-session.md` in `~/projects/.claude-on-proxmox/session/` (0600, in a
 0700 directory: it names the accounts signed in there), never in a repository. The window's
 **Session notes** task runs beside the Claude terminal, never holding it up: it rewrites only the notes'
 **Signed in** section each time, in a second or two, and opens them, which usually moves the keyboard
@@ -253,19 +253,19 @@ focus to the notes - click the Claude terminal to type. A sign-in made in the Cl
 the section a few seconds later; *Tasks: Run Task*, *Session notes* refreshes it by hand. Whatever the
 task meets, it opens the notes it has and finishes.
 
-The time in **Signed in** is in the zone of the machine you ran `make code` on, not the VM's clock, which
-keeps UTC: `TZ` when your shell sets it (`TZ=Europe/Berlin make code ...`), otherwise the zone your system
-is set to, and UTC when neither names one, or when the VM does not know the zone. `make code` and `make
+The time in **Signed in** is in the zone of the machine you ran `just code` on, not the VM's clock, which
+keeps UTC: `TZ` when your shell sets it (`TZ=Europe/Berlin just code ...`), otherwise the zone your system
+is set to, and UTC when neither names one, or when the VM does not know the zone. `just code` and `just
 deploy` write it into the window's tasks, so after you change time zone the window keeps the old one until
-the next `make code`.
+the next `just code`.
 
 In the window of the whole projects directory the notes' folder shows in the Explorer as
-**alpha · session**. A one-project window (`PROJECT=`) opens the same file from outside its own
+**alpha · session**. A one-project window (`--project`) opens the same file from outside its own
 folder, which VS Code asks about once for that window - *Open* is remembered - unless you trusted
 the whole directory's window, which covers it. The folder is not added to the project's window on
 purpose: VS Code trusts a workspace only as far as the folders you trusted, so a folder added later
 would put a window you trusted back in Restricted Mode, without its Claude terminal. Like the
-terminal, the notes need a trusted window and automatic tasks; until then `make code` says where
+terminal, the notes need a trusted window and automatic tasks; until then `just code` says where
 they are. `vscode_session_notes: false` turns them off.
 
 ## See also
@@ -273,6 +273,6 @@ they are. `vscode_session_notes: false` turns them off.
 - Settings: [VS Code and SSH](../reference/settings.md#vs-code-and-ssh)
 - Role: [`vscode_server`](../reference/roles/vscode_server.md)
 - How it works: the aliases in [§4.8](../architecture/lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml),
-  `make code`, its workspace file and the session notes in
+  `just code`, its workspace file and the session notes in
   [§4.9](../architecture/lifecycle.md#49-playbookscodeyml), and the VM's side in
   [§5.7](../architecture/roles.md#57-vscode_server--what-vs-codes-remote---ssh-needs-on-the-host)

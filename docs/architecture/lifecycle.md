@@ -31,7 +31,7 @@ the hypervisor, up to `forks` at a time. A loop over `include_role` would watch 
 
 ```mermaid
 sequenceDiagram
-    participant U as make deploy VM_NAME=alpha,beta TYPE=provision
+    participant U as just deploy alpha,beta --only provision
     participant P1 as Play 1 (localhost)
     participant P2 as Play 2 (claude_vm_pending)
     participant PX as Proxmox API
@@ -104,13 +104,13 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
    and the reason. `REQUESTS_CA_BUNDLE` is passed as `ca_path`, so the certificate recipe in
    [Proxmox access](../getting-started/proxmox-access.md#trusting-the-proxmox-certificate)
    covers this request too. It is `check_mode: false`: `uri` does not support check mode, so under
-   `make deploy TYPE=check` it would skip itself and discovery would find nothing.
+   `just deploy --check` it would skip itself and discovery would find nothing.
 2. `claude_vm_tagged` (a lazily-evaluated group var) filters to the tagged QEMU VMs. Proxmox omits
    `tags` for an untagged guest, hence its `selectattr('tags', 'defined')`.
-3. `claude_vm_discovered` is `claude_vm_requested`: narrowed to `VM_NAME` when given, else the whole
+3. `claude_vm_discovered` is `claude_vm_requested`: narrowed to the names given (`vm_name`), else the whole
    fleet. `list.yml` narrows through the same group var.
 4. Assert no duplicate names — Proxmox permits them, and the second `add_host` would silently
-   overwrite the first, so `make deploy TYPE=configure` would report success having touched one of two,
+   overwrite the first, so `just deploy --only configure` would report success having touched one of two,
    unpredictably.
 5. Per VM, `proxmox_vm_info vmid=...` with `config: current` + `network: true`, which asks only that
    VM's node. A VM that is stopped, whose agent is not up or whose node is down is skipped; a refused
@@ -122,11 +122,11 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
    the VM is skipped rather than guessed at — an address picked without one could be a bridge the
    guest grew later (`docker0`).
 7. If nothing was found, print a diagnostic that distinguishes "no tagged VMs exist", "tagged VMs
-   exist but none match `VM_NAME`", and "tagged VMs exist but none reported an address yet" (stopped,
+   exist but none match the names given", and "tagged VMs exist but none reported an address yet" (stopped,
    still booting, or a token without guest-agent access).
 
-Without `VM_NAME`, step 3 keeps every tagged VM, so `make deploy TYPE=configure`, `TYPE=check` and
-`TYPE=ssh-config`, `make login` and `make list` are fleet-wide by default.
+Without names, step 3 keeps every tagged VM, so `just deploy --only configure`, `--check` and
+`--only ssh-config`, `just login` and `just list` are fleet-wide by default.
 
 ## 4.4 `playbooks/configure.yml`
 
@@ -157,16 +157,16 @@ picker follow the address DHCP gave it. It reads a fact the second play set *las
 role never reaches that `post_task`, so it never gets an alias; and the workspace is the VM user's real
 home rather than a guess, because Ansible's own `user_dir` fact is the *connecting* user's home, which is
 root's under Molecule. Both the lookup and the play are tagged `always`, like discovery, so a
-`make deploy TAGS=claude_code` after a lease moved still refreshes the alias. `claude_ssh_config: false`
+`just deploy alpha --tags claude_code` after a lease moved still refreshes the alias. `claude_ssh_config: false`
 keeps the whole project out of `~/.ssh`.
 
 Tailscale runs last, from the play's `tasks:` - after `roles:`, before `post_tasks:` - in a block whose
-rescue records a failure in `claude_vm_configure_failures`, with `make deploy VM_NAME=<vm>
-TAGS=tailscale`, and says it. The VM stays in the play, so it still records its workspace and gets its
-alias, and under `make deploy` its sign-ins and VS Code; a fourth play, tagged `always`, then fails each
+rescue records a failure in `claude_vm_configure_failures`, with `just deploy <vm>
+--tags tailscale`, and says it. The VM stays in the play, so it still records its workspace and gets its
+alias, and under `just deploy` its sign-ins and VS Code; a fourth play, tagged `always`, then fails each
 VM with such a failure - skipped when `claude_vm_configure_in_deploy` is set, as `deploy.yml`'s configure
 import sets it, since deploy's own last play raises the same list (§4.7). `import_role`, not
-`include_role`: a static import takes the block's tag, so `make deploy TAGS=tailscale` runs the role's
+`include_role`: a static import takes the block's tag, so `just deploy <vm> --tags tailscale` runs the role's
 tasks, where an include's tag reaches only the include. Tailscale is optional, which is why only it gets
 this treatment: a failure in it is the VM's last, not its first
 ([§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)).
@@ -267,16 +267,16 @@ about which VMs have an address.
 ## 4.7 `deploy.yml`
 
 The whole thing: template, provision, configure, the three sign-ins, the editor - each stage the
-standalone playbook, imported as is, so deploy is the sum of `make deploy TYPE=template`, `TYPE=provision`
-and `TYPE=configure`, the three sign-ins `make login` runs and `make code`, by construction. A first play on localhost asks the API whether a
+standalone playbook, imported as is, so deploy is the sum of `just deploy --only template`, `--only provision`
+and `--only configure`, the three sign-ins `just login` runs and `just code`, by construction. A first play on localhost asks the API whether a
 template named `proxmox_template_name` exists and records it; the template play is imported with a
 `when:` on that fact. The lookup is `proxmox_vm_info name=...`, so only the node holding that name is
 asked for its VM list — unfiltered, one node that is down failed the run before anything was built.
 
 `configure.yml` is imported with `vars: {claude_vm_discovery: false}`, so it configures exactly the
 hosts provisioning's play 3 published. Running discovery there would disagree with provisioning
-about what an omitted `VM_NAME` means: `claude_vm_names` falls back to `claude_vm_default_name`, but
-discovery tests `vm_name is defined` and falls back to the whole fleet, so a bare `make deploy`
+about what omitted names mean: `claude_vm_names` falls back to `claude_vm_default_name`, but
+discovery tests `vm_name is defined` and falls back to the whole fleet, so a bare `just deploy`
 created the default VM and then configured every tagged VM. It also repeated, one VM at a time, the
 lookups provisioning had just made. Import `vars:` are play vars of every imported play, including
 the nested `discover.yml` import, whose `when:` therefore sees them.
@@ -289,7 +289,7 @@ everything else, and nothing connects, whether or not the play would have gather
 facts: that saves a pointless gather on the *first* run, when the play does execute. It is not what
 prevents the SSH connection on later runs.
 
-The result is that only the first run needs root SSH to the hypervisor. Every later `make deploy`
+The result is that only the first run needs root SSH to the hypervisor. Every later `just deploy`
 is API and VM traffic only.
 
 After configuration come the sign-ins and the window, for the hosts configuration reached: a VM left
@@ -305,16 +305,16 @@ first (`claude_vm_login_ask`, the role's `github_projects_login_ask`): Enter sig
 sign-in was answered, `y` one that showed none (signed in already, or an API key). `tailscale_login.yml`
 follows the same way with `tailscale_login_auto_start`, and `when: deploy_sign_in | bool and
 tailscale_enabled | default(true) | bool` (§4.10): a VM an auth key joined during configuration is only
-reported. A run with no terminal gets `deploy_sign_in: false` from the Makefile's `NO_TTY_ARGS`: sign-ins
+reported. A run with no terminal gets `deploy_sign_in: false` from the justfile's `no_tty_args`: sign-ins
 that start by themselves would otherwise each wait for a browser nobody watches.
 
 Last, `code.yml` with `code_in_deploy`, when `deploy_code`. For several VMs its first task prints
-each VM's `make code` line and ends the play. For one - the default VM of a bare deploy counts, so the
+each VM's `just code` line and ends the play. For one - the default VM of a bare deploy counts, so the
 one-VM check does not need `vm_name`, and the VM is found by `claude_vm_names[0]` among the tagged
 ones, not through `claude_vm_requested` - every task is in one `block` whose `rescue` says any failure
-with the `make code` line and ends the play, so a deploy whose VM is done exits 0; outside deploy the
-rescue fails again. A VM found stopped is said with `make deploy VM_NAME=<vm> ANSIBLE_ARGS="-e
-proxmox_vm_start_existing=true"`, since the deploy configured nothing on it. Ansible rescues no
+with the `just code` line and ends the play, so a deploy whose VM is done exits 0; outside deploy the
+rescue fails again. A VM found stopped is said with `just deploy <vm>
+--start`, since the deploy configured nothing on it. Ansible rescues no
 unreachable host, so the first two connections `ignore_unreachable` and assert.
 
 What a sign-in leads to - Remote Control's start, the private repositories' clones - runs in the
@@ -324,13 +324,13 @@ that retries it - and so does a Tailscale failure during configuration, which `c
 in the same list and, with `claude_vm_configure_in_deploy`, left to this play (§4.4). The configure
 import passes `claude_code_sign_in_follows`, `github_projects_sign_in_follows` and
 `tailscale_sign_in_follows` (`deploy_sign_in`), so configuration says that the sign-ins come next in
-this run rather than naming `make login`, and the first play's message says up front that the run
+this run rather than naming `just login`, and the first play's message says up front that the run
 will stop for them.
 
-`make deploy TYPE=...` runs one stage's playbook on its own - `template.yml`, `provision.yml`,
-`configure.yml` (`--check --diff` for `TYPE=check`, `--tags` for `TAGS`) or `ssh_config.yml` - with the
-arguments the old stage target passed, so each stays the playbook deploy imports and nothing else. The
-Makefile chooses the playbook while it is read, from a `TYPE` it has checked.
+`just deploy --only ...` runs one stage's playbook on its own - `template.yml`, `provision.yml`,
+`configure.yml` (`--check --diff` for `--check`, `--tags` for `--tags`) or `ssh_config.yml` - with the
+arguments the old stage targets passed, so each stays the playbook deploy imports and nothing else. The
+recipe chooses the playbook from an `--only` its pattern has checked.
 
 ---
 
@@ -373,44 +373,44 @@ only ever written for a VM the caller found by its tag. Before any of them, a na
 not one plain word is refused: `ssh -G` accepts a well-formed `ProxyCommand`, so it cannot be the
 check for a value the VM chose (see `guest_ipv4`, section 7).
 
-`ssh_config.yml` (`make deploy TYPE=ssh-config`) is the fleet-wide resync: the cluster listing, the addresses
+`ssh_config.yml` (`just deploy --only ssh-config`) is the fleet-wide resync: the cluster listing, the addresses
 (§4.3 steps 1 and 4), `present` for every tagged VM with an address, keeping a workspace an earlier
 configure recorded, then pruning through `ssh_config_prune`
 ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)). Pruning removes blocks, never VMs, and only a block whose name no VM in the cluster carries any more. A name an untagged VM
 carries is left alone and reported, as `destroy.yml` refuses such a VM. While any tagged VM is listed
 without a name, which is what a node that is down looks like (§4.3), nothing is pruned, because any
-block could be that VM's. With `VM_NAME`, only those VMs are refreshed and nothing is pruned. Two
+block could be that VM's. With names, only those VMs are refreshed and nothing is pruned. Two
 tagged VMs of one name are refused as discovery refuses them: an alias of that name would point at
 one at random.
 
 ## 4.9 `playbooks/code.yml`
 
-`make code VM_NAME=alpha [PROJECT=discord-music-bot]`: the alias step for one VM, then the one step
+`just code alpha [--project discord-music-bot]`: the alias step for one VM, then the one step
 no other playbook does, launching the editor. In order:
 
-1. Refuse anything but one name, and a `vm_project` (`PROJECT`) that is not one GitHub repository
+1. Refuse anything but one name, and a `vm_project` (`--project`) that is not one GitHub repository
    name - up to 100 ASCII letters, digits, `.`, `-`, `_`, and not `.` or `..` - so nothing outside
-   the projects directory, or nested in it, can be opened. The Makefile's `project-name-check` refuses
-   the same before a shell sees the value; this is for a direct `ansible-playbook` run.
+   the projects directory, or nested in it, can be opened. The justfile's pattern and `tools/check
+   project` refuse the same before a shell sees the value; this is for a direct `ansible-playbook` run.
 2. Find the VM by tag, naming an untagged VM of that name as not this project's; ask its agent for
    the address. Settle where it is reached exactly as the alias's `HostName` does - the address, or
    `<name>.<claude_ssh_host_domain>` - so this run and VS Code connect to the same target, and refuse
    a VM that is not running, whatever its name resolves to.
 3. Add it to `claude_vms` with `add_host`, the way configure reaches it: Ansible's own connection and
    `accept-new`, not the user's ssh config, and the group's connection variables from the inventory
-   (a key, a port) apply as they do to `make deploy TYPE=configure`.
+   (a key, a port) apply as they do to `just deploy --only configure`.
 4. Read the VM user's home on the VM with `getent`, delegated over SSH, unless `vm_projects_dir`
    says where the code is. Nothing is guessed on the controller, and nothing is read back out of the
    alias: the workspace is `vm_projects_dir` or `<home>/projects`.
 5. Refuse a `vm_projects_dir` that is not absolute (VS Code is handed it as written, from this
    machine, so `~` would not expand) and, with the terminal on, a `vscode_workspaces_dir` that is
    not absolute, is the projects directory (its files would sit among the repositories), or is the
-   folder being opened (`PROJECT=.claude-on-proxmox`). Each names the variable it is about.
+   folder being opened (`--project .claude-on-proxmox`). Each names the variable it is about.
 6. Refresh the alias, then look for the folder to open - the workspace, or `<workspace>/<project>` -
    with `stat` on the VM. Read-only. Unreachable, missing and not-a-folder are each their own
    message: a missing project lists what the workspace holds and, for a name that differs only in
    case, suggests the right one, since the VM's paths are case-sensitive; a missing workspace means a
-   VM never configured, and says to run `make deploy TYPE=configure`. These are there so a typo is said in the
+   VM never configured, and says to run `just deploy --only configure`. These are there so a typo is said in the
    terminal, not in a VS Code window opened on a folder that does not exist.
 7. Check `code` is on `PATH`, and install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
    lacks it.
@@ -427,7 +427,7 @@ no other playbook does, launching the editor. In order:
    in a notification that goes quiet after a moment, so the message names *Tasks: Manage Automatic
    Tasks* as well.
 
-In `make deploy` steps 1-9 are one `block` whose `rescue` says what failed with the line that opens
+In `just deploy` steps 1-9 are one `block` whose `rescue` says what failed with the line that opens
 the window later (§4.7); outside it the failure is raised again, a command's with its stderr. Every
 name `code.yml` sets starts with `code_`, a prefix no role uses, since a role's fact or register
 outranks a play var, and no task var shares a fact's name.
@@ -441,7 +441,7 @@ the shell on the left because it is listed, and so started, first - and the `Cla
 sign-in ends with, the path unit's file, GitHub's line, the git protocol, the scopes, the VM's name),
 `cwd` the folder, `runOptions.runOn:
 folderOpen`, presented in a dedicated, focused terminal. A login shell, because VS Code starts task
-shells non-login and `claude` is on the login `PATH` only (`make login TYPE=claude` uses `bash -lc` for
+shells non-login and `claude` is on the login `PATH` only (`just login --only claude` uses `bash -lc` for
 the same reason). The script checks `claude` is installed, runs `claude auth login` when
 `claude auth status` fails (a failed one says how to retry), signs gh in by the device flow when
 `gh auth status --hostname github.com --active` fails (Ctrl-C skips it: `trap ':' INT`), and then
@@ -455,7 +455,7 @@ Sign-in is not scripted, because it cannot be: it is a browser flow. VS Code Ser
 `browser.sh` helper in `BROWSER` for every terminal it starts, which opens the URL on the client,
 and `claude` shows the URL as well and accepts a pasted code. A login made there starts Remote
 Control through the path unit of [§5.5](roles.md#55-claude_code--install-claude-code) where one
-waits, which the script finds by its file on the VM; elsewhere the terminal names `make deploy VM_NAME=<name> TAGS=claude_code`, which starts it through
+waits, which the script finds by its file on the VM; elsewhere the terminal names `just deploy <name> --tags claude_code`, which starts it through
 the role's own eligibility checks. The terminal never starts it itself.
 
 **What VS Code decides, and what this does not touch.** VS Code runs a `folderOpen` task only in a
@@ -472,21 +472,21 @@ false`, no `terminal.integrated.allowInUntrustedWorkspace`, no written setting a
 source: trust is computed over the folders plus the workspace file's own URI, automatic tasks
 include a workspace file's tasks, and a path ending in `.code-workspace` given to `--remote` opens as a
 workspace. The defaults moved twice in 2026 (1.109, 1.126); CI cannot watch the user's editor, so a
-manual run of `make code` is the check when they move again.
+manual run of `just code` is the check when they move again.
 
 The workspace file and the session notes (below) are all that is written on the VM, last, as the VM
 user, so every refusal above leaves the VM as it was; a workspace directory that already exists keeps its mode, since
 `vscode_workspaces_dir` may name one of the user's own. `tests/unit/test_code_session.py` holds
 every task in `code.yml` to an allowlist - read-only here, or delegated to the VM - and the
 `provision` scenario checks the settings file it planted is byte-for-byte untouched after every
-run. `PROJECT=.claude-on-proxmox`, which names the files' own directory, is refused. Cloud-init placed the key, so a VM that was provisioned but never configured still
-opens once it has a workspace, and its terminal says to run `make deploy TYPE=configure`.
+run. `--project .claude-on-proxmox`, which names the files' own directory, is refused. Cloud-init placed the key, so a VM that was provisioned but never configured still
+opens once it has a workspace, and its terminal says to run `just deploy --only configure`.
 
 **The session notes.** With `vscode_session_notes` (the default, with the terminal), a page about the
-VM opens beside the Claude terminal every time the window opens - from `make code`, *Open Recent*, a
+VM opens beside the Claude terminal every time the window opens - from `just code`, *Open Recent*, a
 restart that restores the window, or a reload - as a rendered preview, with its sign-in status read from
 the VM at that moment. VS Code has no workspace setting that opens a file, and a file named in the
-`code --remote` call opens only from `make` and stops the window restoring its editors, so the trigger
+`code --remote` call opens only from `just code` and stops the window restoring its editors, so the trigger
 is a second `folderOpen` task in the workspace file, `Session notes`, run beside the Claude task on the
 same terms (a trusted window, automatic tasks allowed); VS Code's one-time automatic-tasks question lists
 both. Not the Claude task's `dependsOn`, which was the first design: VS Code looks a dependency of a
@@ -509,7 +509,7 @@ the VM's tzdata lacks. The Claude task gets four more arguments - the
 helper, the notes' path, the unit, the zone - and after a sign-in that succeeded in its terminal starts the helper
 once more, `refresh-only`, in the background (`shift 8`: `${10}` would be VS Code's to resolve).
 
-`make code` writes the rest from `playbooks/templates/vm_session.md.j2` into
+`just code` writes the rest from `playbooks/templates/vm_session.md.j2` into
 `<workspaces>/session/<vm>-session.md` (0600; `session/` 0700): the VM's facts from the cluster listing,
 its addresses and alias, and the commands with its name - nothing of one window's, since every window of
 the VM opens the one file, and no time, so an unchanged VM gives an unchanged file. It `slurp`s the
@@ -525,7 +525,7 @@ is untrusted, and the window drops to Restricted Mode without its Claude termina
 and every window under a `vscode_workspaces_dir` outside the projects directory, keep their one folder;
 they open the notes from outside it, which VS Code asks about once per workspace
 (`requestOpenFilesTrust`, remembered on *Open*) unless a trusted folder covers them - the projects
-directory, trusted in its own window - and `make code`'s message says so.
+directory, trusted in its own window - and `just code`'s message says so.
 
 ## 4.10 `playbooks/tailscale_login.yml`
 
@@ -540,7 +540,7 @@ is waiting in `NeedsLogin` is asked (under deploy) and signed in by the web logi
 
 ## 4.11 `playbooks/login.yml`
 
-`make login` without a `TYPE`: discovery once, then `claude_login.yml`, `github_login.yml` and
+`just login` without `--only`: discovery once, then `claude_login.yml`, `github_login.yml` and
 `tailscale_login.yml` imported as they are, with discovery off - so it is their sum and cannot drift from
 them. As under deploy, a VM goes on to its next sign-in after one that failed, or after the work it leads
 to failing (Remote Control's start): each playbook's last play leaves what failed
@@ -551,12 +551,12 @@ themselves for a VM whose Claude sign-in was answered, are asked about first wit
 `github_login_auto_start` or `tailscale_login_auto_start` off, and are left for one whose Claude sign-in
 nobody answered. Without names every step reports, and nothing starts. `claude_vm_login_in_deploy` is
 not set, so GitHub's follow-on play runs the whole `github_projects` role for each VM named, as
-`make login TYPE=github` does, since no configuration ran just before it. `TYPE=claude`, `github` or
+`just login --only github` does, since no configuration ran just before it. `--only claude`, `github` or
 `tailscale` runs that playbook alone.
 
 ## 4.12 `playbooks/init_settings.yml`
 
-`make init`'s questions, after `make install`, the git hook and the copies of the three example files: one
+`just init`'s questions, after `just install`, the git hook and the copies of the three example files: one
 play on `localhost`, run with an inventory of its own, `playbooks/inventory/init.yml` - the controller,
 as `inventory/controller.yml` has it, with pipelining on, and a run that keeps the modules' files
 (`ANSIBLE_KEEP_REMOTE_FILES`, which turns pipelining off) refused - so no `group_vars` load. It runs before the
@@ -577,11 +577,12 @@ for once more, saying it, and Enter leaves the value for the next run. The addre
 `proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it. Tailscale is not asked about:
 while `local.yml` does not set `tailscale_enabled`, a `NOTICE` says it is on, by the vault's auth key or the
 sign-in page, and how to turn it off, writing nothing, so a later change to the default still reaches the
-person; `TAILSCALE=on` or `off` writes the setting, by `tasks/init_local_setting.yml`.
+person; `--tailscale on` or `off` writes the setting, by `tasks/init_local_setting.yml`.
 
-`init_ask` is false unless the Makefile sees a terminal and `PROMPT` is not `no` (`INIT_TTY_ARGS`), and
+`init_ask` is false unless the justfile sees a terminal and was not given `--no-prompt`, and
 every write is under it, or under a value given on the command line: `init_given`, the JSON
-`init-args-check` let through, and the secret from `TOKEN_SECRET_FILE`'s file or
+`just init` built from its options, each held to its characters first, and the secret from
+`--token-secret-file`'s file or
 `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read under `no_log`. Every given value is held to its rule before
 anything is written, so a run failed by its last one leaves the files as they were; it fills only what is
 still the example's, and fails the run, naming both, when it differs from what is set (compared in its
@@ -589,22 +590,22 @@ normal form, a name or a GitHub login case-insensitively); equal, it is nothing 
 runs again with nothing changed. The vault is written last and once: the `with_setting` filter puts the
 answers in place of the example's lines in memory, and the text reaches `ansible-vault encrypt --output
 <vault> -` on its stdin under `no_log`, never through `copy`, which decrypts what it writes. A plaintext
-vault is always encrypted at a terminal, since every target refuses one, and a vault a given value went
+vault is always encrypted at a terminal, since every recipe that opens it refuses one, and a vault a given value went
 into is encrypted whatever the run. The answers go in only where the line holds its value whole; a value
-over several lines, which the filter's read-back catches, is said and left to `make vault`. `.vault_pass` is
+over several lines, which the filter's read-back catches, is said and left to `just vault`. `.vault_pass` is
 made only when there is no password anywhere: `O_EXCL`, `0600`, by the run's own Python. `ansible-vault` is
 told which password encrypts (`--encrypt-vault-id default`), since with `.vault_pass` and
 `ANSIBLE_VAULT_PASSWORD_FILE` both it has two, and what it says when it fails is said, holding no secret.
 The vault is decrypted again and compared with what was meant. The run ends with what it wrote and what is
-still missing - a vault left plaintext among it - and a run with no terminal (or `PROMPT=no`) that was
+still missing - a vault left plaintext among it - and a run with no terminal (or `--no-prompt`) that was
 given values but still lacks the address, the secret or the username fails, naming them.
 
 ## 4.13 `playbooks/init_check.yml`
 
-`make init`'s second step, a second `ansible-playbook` run with the project's inventory and the vault (and
+`just init`'s second step, a second `ansible-playbook` run with the project's inventory and the vault (and
 `init_ask` and `init_given`, as the first had) - the
 password looked for when the recipe runs, since the questions may have just made `.vault_pass` - so it sees
-the settings exactly as `make deploy` will. The Makefile skips it, with one line, when the vault is
+the settings exactly as `just deploy` will. The recipe skips it, with one line, when the vault is
 encrypted and neither `.vault_pass` nor `ANSIBLE_VAULT_PASSWORD_FILE` can open it. One play on `localhost`,
 every task a read (held by `tests/unit/test_init_check.py`):
 
@@ -646,8 +647,8 @@ every task a read (held by `tests/unit/test_init_check.py`):
    a problem. A token that sees no candidate at all is told which privileges make Proxmox list one, with the
    `pveum aclmod` line. Bridges are the local zone's: an SDN VNet is neither listed nor checked. Until the node
    is known, nothing is listed, asked or written for either, and each is noted as not checked; a listing
-   Proxmox refuses is a problem. `STORAGE` and `BRIDGE` given are held to the same lists before anything is
-   written, written whenever the token can use them, and refused while they cannot be checked; `BRIDGE` beside
+   Proxmox refuses is a problem. `--storage` and `--bridge` given are held to the same lists before anything is
+   written, written whenever the token can use them, and refused while they cannot be checked; `--bridge` beside
    a template is nothing to do when it is the template's own, and refused otherwise.
 9. **A key for the VMs**: `vm_ssh_public_keys`. `vm_password` alone is a problem - it is for the Proxmox
    console, and deploy configures the VMs over SSH, which takes a key; with neither, the public keys in

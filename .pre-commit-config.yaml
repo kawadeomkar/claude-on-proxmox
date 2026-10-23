@@ -1,7 +1,7 @@
 ---
-# Install once with:  make init   (or: pre-commit install, from the project's environment)
+# Install once with:  just init   (or: pre-commit install, from the project's environment)
 # The linters run from the project's Python environment, through tools/env-run,
-# which finds it the way the Makefile does - never by name from PATH - so their
+# which finds it the way the justfile does - never by name from PATH - so their
 # versions are pinned in exactly one place (pyproject.toml, locked in uv.lock),
 # whatever shell or editor makes the commit.
 repos:
@@ -50,13 +50,13 @@ repos:
       # that changes one rewrites the pages, and the hook fails until they
       # are added too, as a formatter does.
       - id: docs
-        name: wiki reference pages (make docs)
+        name: wiki reference pages (just docs)
         entry: tools/env-run python tools/docs.py
         language: system
         pass_filenames: false
         files: |
           (?x)^(
-            Makefile|
+            justfile|
             roles/[^/]+/(meta/argument_specs|defaults/main|vars/main)\.yml|
             roles/[^/]+/tasks/.*|
             inventory/group_vars/all/(defaults\.yml|[^/]+\.example)|

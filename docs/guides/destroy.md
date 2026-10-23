@@ -1,13 +1,11 @@
 # Tearing down
 
 ```bash
-make destroy                      # claude-on-proxmox-default
-make destroy VM_NAME=alpha,beta   # several at once; they are deleted in parallel
-make destroy alpha beta           # the same, the names after the target
+just destroy                      # claude-on-proxmox-default
+just destroy alpha beta           # several at once; they are deleted in parallel
 ```
 
-The names after the target are `VM_NAME` by another spelling, as
-[Naming and multiple VMs](vms.md#naming-and-multiple-vms) says.
+The names are given as [Naming and multiple VMs](vms.md#naming-and-multiple-vms) says.
 
 It prompts for confirmation, then releases each VM from what it signed in to, then stops it and deletes it
 with its disks, a disk that still carries its VMID but that its configuration no longer lists included.
@@ -22,10 +20,10 @@ project tagged its VMs, see
 started for it (and stopped again should the run then fail to delete it), and the VMs are released at once,
 as they are deleted:
 
-| Service | What `make destroy` does first | What is left |
+| Service | What `just destroy` does first | What is left |
 |---|---|---|
 | Claude | stops Remote Control and the unit that starts it, then `claude auth logout` | the session stays in the Claude app's list, offline: Anthropic has no way to revoke a Claude Code login from outside |
-| GitHub | `gh auth logout` | the token, valid until you revoke it. Revoking the one this project's sign-in made means revoking GitHub CLI under [Settings → Applications](https://github.com/settings/applications), which signs out every `gh` you have, this machine's included, so `make destroy` does not do it. `vault_github_token`, which every VM shares, is never revoked |
+| GitHub | `gh auth logout` | the token, valid until you revoke it. Revoking the one this project's sign-in made means revoking GitHub CLI under [Settings → Applications](https://github.com/settings/applications), which signs out every `gh` you have, this machine's included, so `just destroy` does not do it. `vault_github_token`, which every VM shares, is never revoked |
 | Tailscale | logs the node out, then deletes its device with the API credential in the vault (see [Removing devices for you](tailscale.md#removing-devices-for-you)) | nothing with a credential; without one, the device, logged out, until you delete it |
 
 Each step is best effort: one that fails is said, and the VM is deleted anyway, as you asked. The run ends

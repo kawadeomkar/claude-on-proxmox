@@ -17,15 +17,15 @@ push or a `gh pr create` later needs the second again. `github_projects` covers 
 on the VM, one of two ways:
 
 - **With `vault_github_token` set**, the token lists your repositories, private ones included, and signs
-  `gh` in on the VM where gh is signed out or signed in by this project, so one `make deploy` ends with
+  `gh` in on the VM where gh is signed out or signed in by this project, so one `just deploy` ends with
   everything cloned and a VM that pushes. A login you made on the VM yourself stays, and the token only
   lists there; each run says so, and `github_auth_method: token` puts the token over it. As a classic
   token it needs `repo`, `workflow` and `read:org` (with `repo` alone it only lists, and the run says which
   scopes to add); as a fine-grained one, Metadata (read), Contents,
   Pull requests and Workflows (read and write) on all repositories - a token limited to selected
   repositories lists and clones only those. The same token serves every VM.
-- **Without one**, `make deploy` signs the VM in itself, with no question first (`github_login_auto_start`;
-  `make login VM_NAME=alpha TYPE=github` does the same for a VM that exists). It runs GitHub's device flow for
+- **Without one**, `just deploy` signs the VM in itself, with no question first (`github_login_auto_start`;
+  `just login alpha --only github` does the same for a VM that exists). It runs GitHub's device flow for
   you, as far as GitHub allows: gh
   starts on the VM in the background, the page github.com/login/device opens in your browser, the
   one-time code is on your clipboard and printed, and the run waits up to fifteen minutes while you paste
@@ -35,25 +35,25 @@ on the VM, one of two ways:
   browser flow for github.com.
 
 ```bash
-make deploy VM_NAME=alpha        # ... the GitHub page opens, the code is on your clipboard: paste,
+just deploy alpha                  # ... the GitHub page opens, the code is on your clipboard: paste,
                                  # authorise, and the private repositories are cloned in the same run
-make login alpha TYPE=github     # the same, later, for a VM configuration left signed out
+just login alpha --only github     # the same, later, for a VM configuration left signed out
 ```
 
 ### Signing VMs in by the device flow
 
-Without a name, `make login TYPE=github` only reports each VM's state; given several, it signs them in one
+Without a name, `just login --only github` only reports each VM's state; given several, it signs them in one
 after another, since the browser takes one sign-in at a time. A code left unapproved expires after
 fifteen minutes and that VM's sign-in fails saying so, after the others have had their turn; run it
-again for a fresh code. `make deploy` starts it for every VM but one whose Claude sign-in nobody
+again for a fresh code. `just deploy` starts it for every VM but one whose Claude sign-in nobody
 answered, and a run with no terminal skips it, as nobody is there to approve it. Once the code is shown
 the run waits until it is approved or expires, and Ctrl-C there ends the whole run; with
-`github_login_auto_start: false` it asks first, and `n` leaves a VM for later. `make deploy TYPE=configure` never
+`github_login_auto_start: false` it asks first, and `n` leaves a VM for later. `just deploy --only configure` never
 runs it. On a controller with no browser or clipboard the run prints the page and the
-code and waits all the same, and `login_desktop: false` makes it never try. The terminal that `make
+code and waits all the same, and `login_desktop: false` makes it never try. The terminal that `just
 code` opens runs the same flow after the Claude sign-in, with the page opening by itself and the code
 printed to copy (a Remote-SSH terminal cannot fill your clipboard); Ctrl-C there skips it and starts
-Claude. The private repositories then take one `make deploy TYPE=configure`, or `make login VM_NAME=alpha TYPE=github`,
+Claude. The private repositories then take one `just deploy --only configure`, or `just login alpha --only github`,
 which on a VM already signed in runs the clone straight away.
 
 ### Choosing the sign-in
@@ -66,7 +66,7 @@ is what the device flow asks for on top of gh's own, `workflow` by default.
 ### Pushing from the VM
 
 Either way `gh` becomes git's credential helper for github.com (`gh auth setup-git`), so the checkouts
-keep their HTTPS remotes and `git push` and `gh pr create` work, in a terminal, in the `make code` window
+keep their HTTPS remotes and `git push` and `gh pr create` work, in a terminal, in the `just code` window
 and in a Remote Control session alike. The token lives in `~/.config/gh/hosts.yml` on the VM, readable by
 the VM user and so by Claude Code (see [What the VM trusts](what-the-vm-trusts.md)). The role marks the login
 it made - a digest of the token, in `~/.config/claude-on-proxmox/` on the VM - and removes only that one

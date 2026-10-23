@@ -1,7 +1,7 @@
 """A gathered fact is read through ansible_facts, never as a top-level ansible_* variable.
 
 ansible-core deprecates injecting facts as top-level variables (INJECT_FACTS_AS_VARS)
-and 2.24 stops: the first `make deploy` of a new VM printed a deprecation for each
+and 2.24 stops: the first `just deploy` of a new VM printed a deprecation for each
 of the ten reads common and dev_tools made that way, and each would have become an
 undefined variable on that upgrade. ansible.cfg and Molecule's shared config turn the
 injection off now, and so does every ansible.cfg these tests write, so a read that

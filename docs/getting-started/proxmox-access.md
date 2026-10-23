@@ -5,7 +5,7 @@ through the API, with a token, for everything after it.
 
 ## Root SSH for the template build
 
-`make deploy TYPE=template` connects to the host over SSH as root, because importing a disk image needs `qm`.
+`just deploy --only template` connects to the host over SSH as root, because importing a disk image needs `qm`.
 Everything after that uses the API token instead. Install your key so the one SSH step is not
 password-prompted:
 
@@ -49,12 +49,12 @@ pveum role modify AnsibleVM -append 1 -privs VM.GuestAgent.Audit   # VM.Monitor 
 One datacenter setting can also block provisioning: if **Datacenter → Options → User Tag Access**
 (a separate option from Tag Style) is set to `list` or `existing` rather than the default `free`, a
 non-root token cannot apply the `claude-on-proxmox` tag. Since that tag is how this project recognises its own
-VMs, provisioning fails or the VMs are created untagged and `make deploy TYPE=configure` then finds nothing.
+VMs, provisioning fails or the VMs are created untagged and `just deploy --only configure` then finds nothing.
 Either leave the setting at `free`, or add both `claude-on-proxmox` and
 `claude-on-proxmox-unfinished` to the allowed list. The second marks a VM whose first run has not
 finished yet, and is removed once it has started.
 
-`make init` checks, read-only, that the token holds every privilege of the role above on `/vms`, naming
+`just init` checks, read-only, that the token holds every privilege of the role above on `/vms`, naming
 any it lacks and the `pveum role modify` line that adds them. It asks for the printed secret, and for the
 token's ID (Enter keeps `ansible@pve!ansible`, the
 name the commands above give it), and writes them: the secret into the encrypted `vault.yml` as

@@ -21,7 +21,7 @@
     fail_msg: >-
       "{{ proxmox_vm_name }}" is not usable as a VM name. Use 1-63 characters,
       letters, digits, dots and hyphens only, starting and ending with a letter
-      or digit - no spaces and no underscores. For example: VM_NAME=alpha
+      or digit - no spaces and no underscores. For example: just deploy alpha
     quiet: true
 
 - name: Validate the login credentials for the VM
@@ -94,14 +94,14 @@
     # A name does not prove ownership on the way in either. Configuring an
     # existing VM rewrites its cores, memory, network, keys and disk and stamps
     # the ownership tag - after which the delete guard below would let
-    # `make destroy` remove it too. So only a VM that already carries the tag is
+    # `just destroy` remove it too. So only a VM that already carries the tag is
     # ever changed, and a template never is.
     - name: Refuse to configure a template
       ansible.builtin.assert:
         that: not (proxmox_vm_lookup.proxmox_vms[0].template | default(false) | bool)
         fail_msg: >-
           "{{ proxmox_vm_name }}" is the name of a template (VMID {{ proxmox_vm_resolved_id }}).
-          Refusing to configure it. Pick a different VM_NAME.
+          Refusing to configure it. Pick a different name.
         quiet: true
       when:
         - proxmox_vm_state == 'present'
@@ -117,7 +117,7 @@
           A VM named "{{ proxmox_vm_name }}" already exists (VMID {{ proxmox_vm_resolved_id }})
           and is not tagged "{{ proxmox_vm_tags[0] }}", so this project did not create it.
           Its tags are: {{ proxmox_vm_found_tags | join(', ') | default('(none)', true) }}.
-          Refusing to change it. Pick a different VM_NAME - or, if this project should
+          Refusing to change it. Pick a different name - or, if this project should
           manage it (a VM created before tagging, or one a run left behind mid-clone),
           add the "{{ proxmox_vm_tags[0] }}" tag to it in the Proxmox UI and run this again.
         quiet: true
@@ -130,7 +130,7 @@
       when: proxmox_vm_state == 'present'
 
     # Deleting is irreversible and the name alone does not prove ownership:
-    # Proxmox lets any VM carry any name, so `make destroy VM_NAME=nas` would
+    # Proxmox lets any VM carry any name, so `just destroy nas` would
     # otherwise match an unrelated VM. The tag is what this project stamps on
     # everything it creates, and a template is never one of them.
     # Separate from the tag check on purpose: proxmox_vm_allow_untagged_delete

@@ -1,4 +1,4 @@
-"""Releasing a VM before make destroy deletes it: destroy.yml's release play and report, run for real.
+"""Releasing a VM before just destroy deletes it: destroy.yml's release play and report, run for real.
 
 Every host is the controller itself, over the local connection (harness.py),
 with the stand-in claude, gh and tailscale of tests/molecule first on its PATH,

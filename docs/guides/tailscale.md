@@ -3,8 +3,8 @@
 You can reach a VM over [Tailscale](https://tailscale.com): it puts each VM on your tailnet - the private
 network your other devices are on - so `ssh`, VS Code's Remote - SSH and a dev server on any port reach the
 VM from anywhere, not only from the LAN Proxmox sits on. It is on by default; `tailscale_enabled: false` in
-`local.yml` turns it off. `make init` reminds you until `local.yml` sets it either way, and
-`make init TAILSCALE=off` writes it.
+`local.yml` turns it off. `just init` reminds you until `local.yml` sets it either way, and
+`just init --tailscale off` writes it.
 
 ## Joining a VM to your tailnet
 
@@ -12,7 +12,7 @@ There are two ways in. `tailscale_auth_method` picks: `auto` (the default) is th
 one and the web login otherwise, `key` is the key only (an empty one fails by name, and no VM is ever sent
 to a browser), and `web` is the web login only, with a key in the vault left unused.
 
-- **An auth key** (`vault_tailscale_auth_key`). Configuration - `make deploy`, or `make deploy TYPE=configure` - joins each new
+- **An auth key** (`vault_tailscale_auth_key`). Configuration - `just deploy`, or `just deploy --only configure` - joins each new
   VM by itself, with nothing to click. Make the key in Tailscale's admin console (Settings, Keys):
   **reusable** for a fleet, or one-off for one VM; **pre-approved** if your tailnet has device approval
   on; and **tagged** (`tag:claude-vm`, below). Never ephemeral: Tailscale removes an ephemeral node within
@@ -20,7 +20,7 @@ to a browser), and `web` is the web login only, with a key in the vault left unu
   join - a VM that has joined keeps working after the key expires - and it reaches the VM on standard
   input, never on a command line or in a file. An OAuth client secret (`tskey-client-...`) works too, with
   `tailscale_advertise_tags` set and `?ephemeral=false` on the secret.
-- **The web login**, with no secret at all. `make login VM_NAME=alpha TYPE=tailscale` - and `make deploy`'s
+- **The web login**, with no secret at all. `just login alpha --only tailscale` - and `just deploy`'s
   step, which starts by itself (`tailscale_login_auto_start`; `false` asks first) - opens Tailscale's
   sign-in page here and waits up to five minutes (`tailscale_login_timeout`) for you to sign in and
   approve the VM. A VM you approve later joins by itself: the page stays valid for 7 days.
@@ -37,7 +37,7 @@ alpha: on Tailscale in the tailnet you@example.com as alpha.tail1234.ts.net (100
 From any device on the tailnet: `ssh dev@alpha.tail1234.ts.net` (or its `100.x` address),
 VS Code's Remote - SSH to the same host, `http://alpha.tail1234.ts.net:3000` for a dev server. It is the
 same sshd and the same keys as on the LAN (`vm_ssh_public_keys`). With `claude_ssh_host_domain:
-tail1234.ts.net`, the aliases this project writes and `make code` use `<VM name>.tail1234.ts.net` in place
+tail1234.ts.net`, the aliases this project writes and `just code` use `<VM name>.tail1234.ts.net` in place
 of the LAN address; the machine running Ansible must be on the tailnet then, and Ansible itself keeps
 using the LAN. That is the VM's tailnet name only when the VM joined under its own name: a VM name that is
 not one DNS label joins under a cleaned-up one (`alpha.lab` as `alpha-lab`), and a name already taken gets
@@ -101,7 +101,7 @@ and remove it the way you installed it; for the package that is `sudo apt purge 
 next install does not start under the old login.
 
 A login you made by hand on a Tailscale this project installed keeps its own settings, and when its key
-expires `make login TYPE=tailscale` and `make deploy` leave it for you to sign in again the way you made it,
+expires `just login --only tailscale` and `just deploy` leave it for you to sign in again the way you made it,
 rather than put this project's settings over it. A sign-in this project started is its own, however late
 it ends - a page you approve after the run, or a join with the key that ran out of time - and so is a
 login made by hand while that page still waits, which cannot be told from it; a join with the key that
@@ -112,13 +112,13 @@ Log upload to Tailscale is on, as Tailscale ships it; `tailscale_upload_logs: fa
 the daemon's first start, which also ends Tailscale's technical support for the VMs.
 
 If installing Tailscale fails - its package site out of reach, say - the VM is configured otherwise and
-keeps its alias, `make deploy` still signs it in and opens it, and the run fails at its end with `make
-deploy VM_NAME=alpha TAGS=tailscale`; Tailscale's repository is taken back out, so `apt` on the VM
+keeps its alias, `just deploy` still signs it in and opens it, and the run fails at its end with `just
+deploy alpha --tags tailscale`; Tailscale's repository is taken back out, so `apt` on the VM
 works as before.
 
 ## Turning it off
 
-`tailscale_enabled: false`, then `make deploy TYPE=configure`: each VM is logged out - a
+`tailscale_enabled: false`, then `just deploy --only configure`: each VM is logged out - a
 `tailscaled` you stopped is started for that - and `tailscaled`, the package and its repository are
 removed. The device stays in your tailnet, expired, until you delete it in the admin console (Machines),
 unless the project can delete it for you (below). A logout that fails - Tailscale's servers out of the VM's
@@ -128,7 +128,7 @@ reach - is said and the rest removed anyway; its login then stays valid until yo
 
 A logged-out device stays in the admin console until it is deleted, and
 holds its name: a VM built again as `alpha` joins as `alpha-1`, for good. With an API credential the
-project deletes the device itself, when `make destroy` deletes the VM and when `tailscale_enabled: false`
+project deletes the device itself, when `just destroy` deletes the VM and when `tailscale_enabled: false`
 takes Tailscale off it. Put either credential below in the vault and that is all: it is used as soon as it
 is there, and every call is made from this machine, so it never reaches a VM.
 
@@ -146,7 +146,7 @@ A deletion Tailscale refuses is said, with the device to delete by hand, and the
 
 ## Rebuilding a VM
 
-Delete the old device first - `make destroy` does with a credential above, and says
+Delete the old device first - `just destroy` does with a credential above, and says
 so otherwise - or the new VM joins as `alpha-1`; a configure that finds the name taken says so.
 
 ## See also

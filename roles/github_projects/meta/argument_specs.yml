@@ -87,8 +87,8 @@ argument_specs:
         type: bool
         default: false
         description:
-          - The sign-ins come next in this run (make deploy), so the message for a signed-out VM says so rather
-            than naming make login TYPE=github.
+          - The sign-ins come next in this run (just deploy), so the message for a signed-out VM says so rather
+            than naming just login --only github.
       github_projects_git_user_name:
         type: str
         default: ""
@@ -114,13 +114,13 @@ argument_specs:
         default: false
         description:
           - Run the device flow for a signed-out VM. Set by
-            playbooks/github_login.yml when names were given, and by make
+            playbooks/github_login.yml when names were given, and by just
             deploy for a VM whose Claude code was entered in the same run.
       github_projects_login_ask:
         type: bool
         default: false
         description:
-          - Ask at a prompt first. make deploy sets it for every VM but one whose
+          - Ask at a prompt first. just deploy sets it for every VM but one whose
             Claude prompt got Enter. For a VM with github_projects_login_interactive,
             Enter runs the device flow and "n" skips it; for any other, "y" runs it
             and Enter skips it. With no terminal the answer is nothing.

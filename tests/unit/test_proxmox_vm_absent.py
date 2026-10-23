@@ -3,7 +3,7 @@
 The task runs for real, delegated to localhost as in destroy.yml, against a
 known_hosts file in a scratch HOME: never the developer's own.
 
-What this guards: with claude_ssh_host_domain set, the SSH aliases and make code
+What this guards: with claude_ssh_host_domain set, the SSH aliases and just code
 connect by <name>.<domain>, so that is a name known_hosts records the key under.
 Deleting the VM forgot only its address, and a VM created again under the same
 name failed its first connection by name with "Host key verification failed".

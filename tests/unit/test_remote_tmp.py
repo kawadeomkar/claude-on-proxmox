@@ -70,7 +70,7 @@ def test_made_first_no_module_warns(tmp_path):
 
 
 def test_it_is_made_where_the_run_puts_remote_tmp(tmp_path):
-    # ANSIBLE_REMOTE_TMP in the shell reaches every make target; the task makes
+    # ANSIBLE_REMOTE_TMP in the shell reaches every recipe; the task makes
     # that directory, not the default one.
     report, home = _fetch(tmp_path, first=True, ANSIBLE_REMOTE_TMP="~/elsewhere/tmp")
     assert not _warnings(report), _warnings(report)

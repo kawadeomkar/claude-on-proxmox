@@ -254,7 +254,7 @@
   ansible.builtin.set_fact:
     github_projects_login_done: true
 
-# The digest of the token this sign-in left gh, never the token: how make
+# The digest of the token this sign-in left gh, never the token: how just
 # destroy's report tells this sign-in's token from others (release.yml).
 - name: device_flow | Remember the token this sign-in made for the VM
   ansible.builtin.copy:

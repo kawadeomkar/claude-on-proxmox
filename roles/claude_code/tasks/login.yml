@@ -1,6 +1,6 @@
 ---
-# Entry point for playbooks/claude_login.yml (`make login TYPE=claude`, and the
-# sign-in step of `make deploy`): say whether this VM can already run Remote
+# Entry point for playbooks/claude_login.yml (`just login --only claude`, and the
+# sign-in step of `just deploy`): say whether this VM can already run Remote
 # Control, and if not, what to do about it - or, with
 # claude_code_login_interactive, sign a VM that has no login in by the browser
 # flow (browser_login.yml). Remote Control then starts from after_login.yml,
@@ -11,7 +11,7 @@
 # same vars/main.yml definitions remote_control.yml does. Deciding separately,
 # the playbook took any login for a claude.ai one, and a VM signed in with a
 # Console account, a `claude setup-token` token or an API key was sent back and
-# forth between `make login TYPE=claude` and `make deploy TYPE=configure`.
+# forth between `just login --only claude` and `just deploy --only configure`.
 
 # This entry point never runs main.yml, which resolves the home for everything
 # else; the sign-in keeps its files there, and the settings are read from it.
@@ -65,7 +65,7 @@
 # closing quote is pasted along with it and ends up in the remote command.
 # Remote Control off on purpose - an API key from the vault, or
 # claude_remote_control: false - is said as such, not as something to fix;
-# make deploy TYPE=configure is named only where it is what starts Remote Control, after a
+# just deploy --only configure is named only where it is what starts Remote Control, after a
 # login fixed by hand, for which no path unit waits. The text is built in vars
 # so the message is one line.
 - name: login | Report the login state and what to do about it
@@ -83,12 +83,12 @@
               ~ ' back: ' ~ claude_code_remote_control_login_command
          if not (claude_code_remote_control_status.loggedIn | default(false)) | bool
          else 'signed in. Remote Control is off on this VM on purpose: '
-              ~ ('Claude Code uses the API key from vault_anthropic_api_key. Clear the key and re-run make deploy'
+              ~ ('Claude Code uses the API key from vault_anthropic_api_key. Clear the key and re-run just deploy'
                  ~ ' to use a claude.ai login and Remote Control instead.'
                  if claude_code_anthropic_api_key | length > 0 else 'claude_remote_control is false.')
          if not claude_code_remote_control_wanted | bool
          else 'signed in, but not in a way Remote Control can use: ' ~ claude_code_remote_control_blocker
-              ~ ' Then make deploy VM_NAME=' ~ inventory_hostname ~ ' TAGS=claude_code starts it. If that'
+              ~ ' Then just deploy ' ~ inventory_hostname ~ ' --tags claude_code starts it. If that'
               ~ ' leaves the VM logged out, log in with the claude.ai account first: '
               ~ claude_code_remote_control_login_command }}
   ansible.builtin.debug:

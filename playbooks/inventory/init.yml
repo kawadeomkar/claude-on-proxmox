@@ -1,5 +1,5 @@
 ---
-# make init's own inventory, for playbooks/init_settings.yml: the controller
+# just init's own inventory, for playbooks/init_settings.yml: the controller
 # alone, as inventory/controller.yml has it, and nothing else. No group_vars
 # sit beside it, so none load: that playbook runs before the vault can be
 # opened, while every value is still the example's, and reads what it writes

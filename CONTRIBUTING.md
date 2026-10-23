@@ -8,28 +8,29 @@ git-ignored file, never in a commit.
 
 You need Python 3.12+ (the pinned ansible-core requires it) in a virtualenv of its own for this project,
 [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12 or newer (`brew install uv`, or its
-standalone installer), `make`, and Docker Engine for the tests.
+standalone installer), [just](https://github.com/casey/just) 1.59 or newer (`brew install just`, or `cargo install
+just`, from its own releases), and Docker Engine for the tests.
 
 ```bash
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # or any virtualenv: PYTHON=<its python>
-make init     # make install (the locked packages, the Galaxy collections), git hooks, the config, asked for
-make test     # lint (syntax and hooks included), unit tests, every Molecule scenario
+just init     # just install (the locked packages, the Galaxy collections), git hooks, the config, asked for
+just test     # lint (syntax and hooks included), unit tests, every Molecule scenario
 ```
 
-`make init` runs `make install`, installs the pre-commit hooks, copies `inventory/hosts.yml.example`
+`just init` runs `just install`, installs the pre-commit hooks, copies `inventory/hosts.yml.example`
 and the two `group_vars` examples into place where they are missing, and asks for the values a first
-deploy needs (`make init PROMPT=no` asks nothing; a checkout that only runs the tests needs none).
-`make install` puts the versions locked in `uv.lock` into your environment - the Python `python3` is
+deploy needs (`just init --no-prompt` asks nothing; a checkout that only runs the tests needs none).
+`just install` puts the versions locked in `uv.lock` into your environment - the Python `python3` is
 here (the one you activated, or the one `pyenv local` chose), or `PYTHON=/path/to/python` - leaving the
 rest of it alone, and refuses a Python that is not a virtualenv; it changes nothing that is current, so
 it is also the command to run after a pull. The project keeps no `.venv`. Please run the tools through
-`make`, or `tools/env-run <tool>` as the git hooks do, which run them from that environment rather than
+`just`, or `tools/env-run <tool>` as the git hooks do, which run them from that environment rather than
 whatever is first on `PATH`, and refuse a Python that is not a virtualenv - Molecule in particular
 resolves `ansible-playbook` from `PATH` and will silently use a different ansible-core if the
 environment is not first.
 
 The pins live in `pyproject.toml`: the playbooks' own in `[project]`, the linters' and tests' in the
-`dev` group. After changing one, run `make install TYPE=lock` and commit `uv.lock` with it; `make lint` fails on a
+`dev` group. After changing one, run `just install --lock` and commit `uv.lock` with it; `just lint` fails on a
 lock that no longer matches. `uv lock --upgrade-package <name>` moves one locked package without
 touching a pin. Dependabot proposes the weekly updates itself.
 
@@ -37,16 +38,16 @@ touching a pin. Dependabot proposes the weekly updates itself.
 
 | Command | What it runs |
 |---------|--------------|
-| `make lint` | every linter: `uv lock --check`, yamllint, ansible-lint (production profile), ruff, `--syntax-check` on every playbook against your `inventory/`, and the pre-commit hooks those do not cover. `TYPE=yaml`, `ansible`, `python`, `syntax`... runs one |
-| `make test` | `make lint`, then everything below but Vagrant: the local quality gate |
-| `make test TYPE=unit` | pytest: the custom filters (the VS Code settings reader, the sign-ins' page opener and `plain_text` among them), the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the Claude sign-in (`claude_login.yml` against a stand-in `claude`, and at a pseudo-terminal: the prompt, a partly copied code, an expired attempt, Ctrl-C then A), the three sign-in playbooks and deploy's sign-in steps end to end, an unreachable VM among them, Tailscale (the role's files, `tailscale_login.yml` and deploy's Tailscale step against a stand-in `tailscale`, check mode, `configure.yml`'s rescue, and the guards that keep every test setup off Tailscale), the GitHub sign-in (`auth.yml`, `clone.yml` and `github_login.yml` against a stand-in `gh` and the fake GitHub API), the managed SSH config (and that no scenario writes into `~/.ssh`), the Claude terminal's script (once at a pseudo-terminal), `code.yml`'s window step in `make deploy` and out of it, and its allowlist, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, the checked `TYPE`, `TAGS` and `ROLE`, `code`'s one name) |
-| `make test ROLE=common,dev_tools` | one or more role scenarios (`TYPE=role` for all of them, `TYPE=molecule` for every scenario) |
-| `make test TYPE=integration` | `playbooks/configure.yml` end to end in a container |
-| `make test TYPE=provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
-| `make vagrant` | `configure.yml` on a real VirtualBox VM |
+| `just lint` | every linter: `uv lock --check`, yamllint, ansible-lint (production profile), ruff, `just --fmt --check`, `--syntax-check` on every playbook against your `inventory/`, and the pre-commit hooks those do not cover. `yaml`, `ansible`, `python`, `just`, `syntax`... runs some |
+| `just test` | `just lint`, then everything below but Vagrant: the local quality gate |
+| `just test unit` | pytest: the custom filters (the VS Code settings reader, the sign-ins' page opener and `plain_text` among them), the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the Claude sign-in (`claude_login.yml` against a stand-in `claude`, and at a pseudo-terminal: the prompt, a partly copied code, an expired attempt, Ctrl-C then A), the three sign-in playbooks and deploy's sign-in steps end to end, an unreachable VM among them, Tailscale (the role's files, `tailscale_login.yml` and deploy's Tailscale step against a stand-in `tailscale`, check mode, `configure.yml`'s rescue, and the guards that keep every test setup off Tailscale), the GitHub sign-in (`auth.yml`, `clone.yml` and `github_login.yml` against a stand-in `gh` and the fake GitHub API), the managed SSH config (and that no scenario writes into `~/.ssh`), the Claude terminal's script (once at a pseudo-terminal), `code.yml`'s window step in `just deploy` and out of it, and its allowlist, and the justfile's guards (every recipe against stand-ins: the names as JSON, the patterns and the rules, the checkout guard, `code`'s one name, `init`'s secret never said) |
+| `just test --role common,dev_tools` | one or more role scenarios (`role` for all of them, `molecule` for every scenario) |
+| `just test integration` | `playbooks/configure.yml` end to end in a container |
+| `just test provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
+| `just vagrant` | `configure.yml` on a real VirtualBox VM |
 
-Every run of these through `make` that uses Ansible, Molecule included, is also written to `.logs/`
-(`make logs` lists them), which is the place to read a failure back once the terminal has scrolled.
+Every run of these through `just` that uses Ansible, Molecule included, is also written to `.logs/`
+(`just logs` lists them), which is the place to read a failure back once the terminal has scrolled.
 The directory is git-ignored and blocked by the tracked-file guard: logs name hosts and addresses.
 
 Every role has a Molecule scenario, and a change to a role should keep its scenario passing - including the
@@ -89,8 +90,8 @@ secret gets a canned value and a place in those searches.
   behaviour it describes. Its reference pages are generated: after changing a role's
   `argument_specs.yml`, `defaults/main.yml`, `vars/main.yml` or task files,
   `inventory/group_vars/all/defaults.yml` (it and the roles' `defaults/main.yml` feed the settings
-  page's Default column), `local.yml.example`, `vault.yml.example` or a Makefile target's `## ` text,
-  run `make docs` and commit the result
+  page's Default column), `local.yml.example`, `vault.yml.example` or a recipe's `[doc]` or `[arg]` help in the `justfile`,
+  run `just docs` and commit the result
   ([docs/development/docs.md](docs/development/docs.md)).
 - **Idempotence** is not optional. A task that reports `changed` on a second run will fail CI.
 - **A moment the run waits for the person is set apart.** A `pause` or `vars_prompt` passes its text
@@ -107,10 +108,10 @@ secret gets a canned value and a place in those searches.
 1. `roles/<name>/` with `defaults/main.yml`, `meta/main.yml`, `meta/argument_specs.yml` and `tasks/`.
 2. A Molecule scenario at `roles/<name>/molecule/default/` - it inherits the driver and platform from
    `.config/molecule/config.yml`, so it only needs what differs.
-3. Add the role to `ROLES` in the `Makefile` and to the matrix in `.github/workflows/ci.yml`. Renaming a
+3. Add the role to `scenario_roles` in the `justfile` and to the matrix in `.github/workflows/ci.yml`. Renaming a
    CI job also means updating the required status checks on `main`, or pull requests can never merge.
 4. Add it to the role table in `docs/reference/roles/README.md` and to the `nav` in `zensical.toml`,
-   and run `make docs`, which writes its reference page from its files.
+   and run `just docs`, which writes its reference page from its files.
 
 ## Pull requests
 
@@ -118,7 +119,7 @@ CI runs lint, unit tests, every Molecule scenario and the integration scenario o
 dependency review. No job uses a secret, so the full suite runs on pull requests from forks - please keep
 it that way and do not add a job that needs one.
 
-Before opening a PR, run `make test` locally, and check that nothing environment-specific slipped in: CI
+Before opening a PR, run `just test` locally, and check that nothing environment-specific slipped in: CI
 fails if a `hosts.yml`, `local.yml`, `vault.yml` or `.vault_pass` is ever committed.
 
 **PR titles** start with a bracketed tag that says what kind of change the PR is, then a short

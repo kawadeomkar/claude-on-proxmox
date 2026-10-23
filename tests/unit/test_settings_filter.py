@@ -1,4 +1,4 @@
-"""filter_plugins/settings.py: what make init accepts as each kind of answer, and how it writes one into a file."""
+"""filter_plugins/settings.py: what just init accepts as each kind of answer, and how it writes one into a file."""
 
 from __future__ import annotations
 
@@ -123,7 +123,7 @@ def test_with_setting_leaves_a_commented_or_indented_key_alone() -> None:
 
 
 def test_a_value_written_is_read_back_whole() -> None:
-    # JSON is YAML: what make init writes reads back as the same value.
+    # JSON is YAML: what just init writes reads back as the same value.
     for value in ("pve.lan", "fd00::1", "ansible@pve", "0123abcd-4567-89ef-0123-456789abcdef", True):
         assert yaml.safe_load(with_setting("", "key", value)) == {"key": value}
 

@@ -13,7 +13,7 @@ and the [security model](../architecture/security-model.md) is how each is enfor
 - A device-flow login keeps nothing in the vault shared by every VM, but the token it leaves on the VM
   does not expire and carries gh's scopes (`repo`, `read:org`, `gist`) plus `workflow`, broader than a
   fine-grained token limited to chosen repositories with an expiry. It is revoked under GitHub's
-  Authorized OAuth Apps, which ends every GitHub CLI sign-in of the account, so `make destroy` leaves
+  Authorized OAuth Apps, which ends every GitHub CLI sign-in of the account, so `just destroy` leaves
   that to you ([Tearing down](destroy.md)).
 - Downloads are verified where the vendor makes that possible: the uv release by a pinned SHA256, the
   Ubuntu cloud image against Ubuntu's `SHA256SUMS`, apt repositories by vendored signing keys. The Claude

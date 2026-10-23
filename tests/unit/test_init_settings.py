@@ -1,11 +1,11 @@
-"""playbooks/init_settings.yml, make init's questions: run against copies of the example files, never the checkout's.
+"""playbooks/init_settings.yml, just init's questions: run against copies of the example files, never the checkout's.
 
 Every run here points the four init_*_file variables into its own temporary
 directory, through _init or _init_at_a_terminal alone, and
 test_no_run_reaches_the_checkouts_files holds that: the playbook's defaults
 are this checkout's own hosts.yml, local.yml, vault.yml and .vault_pass.
 
-A run with stdin /dev/null is make init with no terminal; one at a
+A run with stdin /dev/null is just init with no terminal; one at a
 pseudo-terminal of the harness's own (_run_at_a_terminal) is a person typing.
 The secret every test types or gives is SECRET, and no run may print it or log
 it, at -vvv with every module's arguments in its result.
@@ -64,13 +64,13 @@ def _held(root: Path, files: dict) -> None:
 
 
 def _init(root: Path, files: dict, extra: dict | None = None, *args: str, env: dict | None = None) -> dict:
-    """init_settings.yml with stdin /dev/null, as make init runs it with no terminal; the JSON report."""
+    """init_settings.yml with stdin /dev/null, as just init runs it with no terminal; the JSON report."""
     _held(root, files)
     return _run(root, PLAYBOOK, {}, "-i", str(INVENTORY), "-e", json.dumps(files | (extra or {})), *args, env=env)
 
 
 def _init_at_a_terminal(root: Path, files: dict, steps, extra: dict | None = None, **kwargs) -> tuple[int, str, str]:
-    """init_settings.yml at a pseudo-terminal, as make init runs it at one (init_ask), typing steps; rc, output, log."""
+    """init_settings.yml at a pseudo-terminal, as just init runs it at one (init_ask), typing steps; rc, output, log."""
     _held(root, files)
     return _run_at_a_terminal(
         root,
@@ -329,7 +329,7 @@ def test_an_encrypted_vault_with_no_password_is_left_alone(tmp_path: Path) -> No
     rc, output, _ = _init_at_a_terminal(tmp_path, files, [(HOST_PROMPT, b"\n")])
     assert rc == 0, output
     assert output.count("USER INPUT REQUIRED") == 1
-    assert "make vault opens it" in output
+    assert "just vault opens it" in output
     assert _snapshot(files) == before
 
 
@@ -366,7 +366,7 @@ def test_a_given_value_that_differs_from_a_set_one_fails_and_writes_nothing(tmp_
     report = _init(tmp_path, files, {"init_given": {"host": "pve.lan"}})
     assert report["rc"] != 0
     failure = "\n".join(_failures(report).values())
-    assert "HOST=pve.lan" in failure and "already sets 10.0.0.5" in failure
+    assert "--host pve.lan" in failure and "already sets 10.0.0.5" in failure
     assert _snapshot(files) == before
 
 
@@ -376,7 +376,7 @@ def test_a_given_token_user_that_differs_from_local_yml_fails(tmp_path: Path) ->
     local.write_text(local.read_text() + "proxmox_api_user: deploy@pam\n")
     report = _init(tmp_path, files, {"init_given": {"token_user": "other@pve"}})
     assert report["rc"] != 0
-    assert "TOKEN_USER=other@pve" in "\n".join(_failures(report).values())
+    assert "--token-user other@pve" in "\n".join(_failures(report).values())
 
 
 def test_given_token_parts_are_written_only_where_they_differ_from_the_default(tmp_path: Path) -> None:
@@ -389,7 +389,7 @@ def test_given_token_parts_are_written_only_where_they_differ_from_the_default(t
     # gave values fails, naming them.
     assert report["rc"] != 0
     failure = "\n".join(_failures(report).values())
-    assert "the Proxmox host address (HOST)" in failure and "GITHUB_USER" in failure
+    assert "the Proxmox host address (--host)" in failure and "--github-user" in failure
 
 
 def test_some_values_given_at_a_terminal_ask_only_for_the_rest(tmp_path: Path) -> None:
@@ -406,9 +406,11 @@ def test_some_values_given_at_a_terminal_ask_only_for_the_rest(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("given", "said"),
     [
-        pytest.param({"host": "https://pve.lan"}, "HOST (https://pve.lan) is not", id="host"),
-        pytest.param({"github_user": "octo--cat"}, "GITHUB_USER (octo--cat) is not", id="github"),
-        pytest.param({"token_user": "ansible"}, "TOKEN_USER and TOKEN_NAME (ansible!ansible) are not", id="token-user"),
+        pytest.param({"host": "https://pve.lan"}, "--host (https://pve.lan) is not", id="host"),
+        pytest.param({"github_user": "octo--cat"}, "--github-user (octo--cat) is not", id="github"),
+        pytest.param(
+            {"token_user": "ansible"}, "--token-user and --token-name (ansible!ansible) are not", id="token-user"
+        ),
     ],
 )
 def test_a_given_value_that_breaks_its_rule_fails_without_a_prompt(tmp_path: Path, given: dict, said: str) -> None:
@@ -425,7 +427,7 @@ def test_a_given_secret_that_is_no_secret_fails_without_saying_it(tmp_path: Path
     report = _init(tmp_path, files, {"init_given": {"token_secret_file": str(_secret_file(tmp_path, "not-it\n"))}})
     assert report["rc"] != 0
     failure = "\n".join(_failures(report).values())
-    assert "the secret in TOKEN_SECRET_FILE" in failure and "36-character secret" in failure
+    assert "the secret in --token-secret-file" in failure and "36-character secret" in failure
     assert "not-it" not in json.dumps(report)
 
 
@@ -584,13 +586,13 @@ def test_enter_at_a_terminal_is_later_even_with_values_given(tmp_path: Path) -> 
 
 
 def test_prompt_no_with_values_given_and_one_missing_fails(tmp_path: Path) -> None:
-    # PROMPT=no: the Makefile passes no init_ask, even at a terminal.
+    # --no-prompt: just init passes no init_ask, even at a terminal.
     files = _files(tmp_path)
     rc, output, _ = _run_at_a_terminal(
         tmp_path, PLAYBOOK, {}, files | {"init_given": {"host": "pve.lan"}}, steps=[], args=["-i", str(INVENTORY)]
     )
     assert rc != 0
-    assert "the API token secret (TOKEN_SECRET_FILE or CLAUDE_ON_PROXMOX_TOKEN_SECRET)" in output
+    assert "the API token secret (--token-secret-file or CLAUDE_ON_PROXMOX_TOKEN_SECRET)" in output
 
 
 def test_a_broken_value_given_last_leaves_every_file_as_it_was(tmp_path: Path) -> None:
@@ -599,7 +601,7 @@ def test_a_broken_value_given_last_leaves_every_file_as_it_was(tmp_path: Path) -
     given = {"host": "pve.lan", "token_name": "claude", "github_user": "-octocat"}
     report = _init(tmp_path, files, {"init_given": given})
     assert report["rc"] != 0
-    assert "GITHUB_USER (-octocat) is not" in "\n".join(_failures(report).values())
+    assert "--github-user (-octocat) is not" in "\n".join(_failures(report).values())
     assert _snapshot(files) == before
 
 
@@ -624,7 +626,7 @@ def test_a_vault_left_plaintext_is_said_and_no_deploy_is_suggested(tmp_path: Pat
     report = _init(tmp_path, files, {"init_given": {"host": "pve.lan"}})
     assert report["rc"] == 0, _failures(report)
     summary = _said(report, "Say what was written, and what is left")
-    assert "vault.yml is still plaintext" in summary and "make deploy" not in summary
+    assert "vault.yml is still plaintext" in summary and "just deploy" not in summary
     assert not Path(files["init_vault_file"]).read_text().startswith("$ANSIBLE_VAULT")
 
 
@@ -659,7 +661,7 @@ def test_the_tailscale_notice_names_the_sign_in_page_on_a_fresh_checkout(tmp_pat
     report = _init(tmp_path, files)
     assert report["rc"] == 0, _failures(report)
     notice = _said(report, NOTICE_TASK)
-    assert notice.startswith("NOTICE  Tailscale is on by default") and "sign-in page during make deploy" in notice
+    assert notice.startswith("NOTICE  Tailscale is on by default") and "sign-in page during just deploy" in notice
     assert "tailscale_enabled: false" in notice
     assert _snapshot(files) == before
 
@@ -708,7 +710,7 @@ def test_tailscale_given_that_differs_from_the_setting_fails(tmp_path: Path) -> 
     before = _snapshot(files)
     report = _init(tmp_path, files, {"init_given": {"tailscale": "on"}})
     assert report["rc"] != 0
-    assert "TAILSCALE=on, but inventory/group_vars/all/local.yml already sets tailscale_enabled: false" in (
+    assert "--tailscale on, but inventory/group_vars/all/local.yml already sets tailscale_enabled: false" in (
         "\n".join(_failures(report).values())
     )
     assert _snapshot(files) == before

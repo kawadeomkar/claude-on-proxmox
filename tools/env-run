@@ -1,27 +1,42 @@
 #!/bin/sh
 # Run one of the project's tools from its Python environment - the virtualenv
-# ${PYTHON:-python3} is, found the way the Makefile finds it - and never from
-# PATH or a Python that is no virtualenv's. The git hooks run the linters
-# through this, so a commit made from any shell or editor uses the versions
-# uv.lock pins, or stops and says why.
+# ${PYTHON:-python3} is - and never from PATH or a Python that is no
+# virtualenv's. The git hooks and the Vagrantfile run the linters through
+# this, so a commit made from any shell or editor uses the versions uv.lock
+# pins, or stops and says why. --bin prints that environment's scripts
+# directory instead, which is how every recipe of the justfile finds its tools.
 #
 #   tools/env-run yamllint --strict inventory/group_vars/all/defaults.yml
+#   tools/env-run --bin
 set -eu
 python=${PYTHON:-python3}
 bin=$("$python" -c 'import sys, sysconfig; print(sysconfig.get_path("scripts") if sys.prefix != sys.base_prefix else "")' 2>/dev/null) || bin=
+if [ "${1:-}" = --bin ]; then
+  if [ -z "$bin" ]; then
+    # The scripts directory of a Python that is no virtualenv's would be
+    # /usr/local/bin or the like, where a system-wide Ansible lives.
+    echo "error: [$python] is not the Python of a virtualenv, and this project runs its tools only from" >&2
+    echo "one of its own, never from a system-wide install. Make one of Python 3.12 or later with any tool, e.g." >&2
+    echo "  python3 -m venv ~/.virtualenvs/claude-on-proxmox" >&2
+    echo "then activate it, or export PYTHON=~/.virtualenvs/claude-on-proxmox/bin/python, and run just install." >&2
+    exit 1
+  fi
+  printf '%s\n' "$bin"
+  exit 0
+fi
 if [ -z "$bin" ]; then
   echo "error: [$python] is not the Python of a virtualenv, and this project runs its tools only from one of its" >&2
   echo "own. Commit from a shell where python3 is that environment's (activate it first), or set PYTHON." >&2
   exit 1
 fi
 if [ "$#" -eq 0 ]; then
-  echo "usage: tools/env-run <tool> [argument...]" >&2
+  echo "usage: tools/env-run <tool> [argument...] | --bin" >&2
   exit 2
 fi
 tool=$1
 shift
 if [ ! -x "$bin/$tool" ]; then
-  echo "error: no $tool in [$bin]. Run: make install" >&2
+  echo "error: no $tool in [$bin]. Run: just install" >&2
   exit 1
 fi
 exec "$bin/$tool" "$@"

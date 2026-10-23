@@ -45,7 +45,7 @@ what it stores:
   canned key; the role's Molecule scenario searches the VM for it after the join.
   The Tailscale API credential that deletes a VM's device (`vault_tailscale_api_token`, or
   `vault_tailscale_oauth_client_id` and `_secret`) is used only on this machine, in `uri` calls under
-  `no_log`, and never reaches a VM. When `make destroy` releases a VM, gh signs out there and no GitHub
+  `no_log`, and never reaches a VM. When `just destroy` releases a VM, gh signs out there and no GitHub
   token is revoked: revoking one GitHub CLI token through GitHub's credential revocation endpoint ended
   every GitHub CLI sign-in of the account, the controller's included, so the report says where to revoke
   it. `tests/unit/test_release.py` holds that nothing reaches that endpoint, and greps the release's whole
@@ -85,7 +85,7 @@ restate them are not treated as vulnerabilities:
   defaults to anyway; the VM user can forward ports, as a user with passwordless sudo always could.
   SSH agent forwarding to the VM is off by default and documented as a choice, because the VM user is
   root-equivalent and runs an AI agent.
-- `make code` opens a workspace file whose tasks start `claude` in a terminal, and a shell beside it, when the window opens
+- `just code` opens a workspace file whose tasks start `claude` in a terminal, and a shell beside it, when the window opens
   (`vscode_claude_terminal`, on by default). The file is written by this project beside the
   repositories, never in one, and its command is fixed in `playbooks/code.yml`. VS Code still runs
   it only in a window you have trusted and once you have allowed automatic tasks; the project reads
@@ -100,8 +100,8 @@ restate them are not treated as vulnerabilities:
   Mode never gets the notes' folder: the project does not change what a window you trusted covers.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
-  once - and the next `make deploy` then sends it your SSH keys, GitHub token and Anthropic API key. The
-  sign-ins hand it more: `make deploy` and `make login` run `claude auth login` and `gh auth login`
+  once - and the next `just deploy` then sends it your SSH keys, GitHub token and Anthropic API key. The
+  sign-ins hand it more: `just deploy` and `just login` run `claude auth login` and `gh auth login`
   there and ask you to authorise what they print, so an impostor that prints
   a genuine sign-in page or device code of its own receives a claude.ai login, or a GitHub OAuth token
   with gh's scopes (`repo`, `read:org`, `gist`) and `workflow` that does not expire until revoked - with
@@ -109,7 +109,7 @@ restate them are not treated as vulnerabilities:
   created or know to be yours. Keeping
   the key instead would only trade this for a failure every time a lease is recycled, so the removal is
   deliberate. On a network where you do not trust every device, put the VMs on a bridge that only
-  trusted devices can reach (`proxmox_bridge`, set before `make deploy TYPE=template`, since every clone inherits
+  trusted devices can reach (`proxmox_bridge`, set before `just deploy --only template`, since every clone inherits
   the template's NIC). A fixed address from `proxmox_vm_ipconfig`, outside the DHCP pool, keeps the
   address from being leased to anything else, but only for a single VM: that one value applies to every
   VM a run provisions, so a second VM would be given the same address.
@@ -124,7 +124,7 @@ restate them are not treated as vulnerabilities:
   default the VM keeps its own resolver (`tailscale_accept_dns: false`): a tailnet's DNS settings that
   override local DNS would otherwise answer every lookup on the VM. Tailscale's log upload is on, as
   Tailscale ships it; `tailscale_upload_logs: false` turns it off.
-- **What a destroyed VM tells the controller.** `make destroy` releases a VM before deleting it, from
+- **What a destroyed VM tells the controller.** `just destroy` releases a VM before deleting it, from
   what the VM reports - and the VM runs an agent with sudo. The Tailscale node ID the device is deleted by
   is the VM's to report, and the API credential can delete any device in the tailnet, so the device is
   looked up first and deleted only when its name is the one this project asked the VM to join as

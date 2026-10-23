@@ -25,22 +25,24 @@ since a pending page is readable by every local user on the VM. The VM keeps its
 
 ## Secrets
 
-Secrets live in `inventory/group_vars/all/vault.yml`, ansible-vault encrypted. `make vault-check`
-runs before every playbook target and refuses to run while that file is plaintext. Any variable that
+Secrets live in `inventory/group_vars/all/vault.yml`, ansible-vault encrypted. The vault check (`tools/check vault`)
+runs before every recipe that runs a playbook, and refuses to run while that file is plaintext. Any variable that
 can hold a secret carries `no_log: true` in its `argument_specs`.
 
-`make init` writes the vault encrypted, never in plaintext: `playbooks/init_settings.yml` puts the token
+`just init` writes the vault encrypted, never in plaintext: `playbooks/init_settings.yml` puts the token
 secret and the GitHub username into the vault's text in memory and pipes it into `ansible-vault encrypt`'s
 stdin under `no_log`, which shreds the old file and writes the new one `0600`. Nothing renders the secret
 outside `no_log` tasks, and init's inventory turns pipelining on, so even the module arguments that carry
 it never land in `~/.ansible/tmp`; a run with `ANSIBLE_KEEP_REMOTE_FILES`, which turns pipelining off and
 keeps each module's file there, is refused before it reads anything. Its password goes in `.vault_pass`, made only when there is no password
 anywhere (`.vault_pass` or `ANSIBLE_VAULT_PASSWORD_FILE`): `O_EXCL`, `0600`, and never read, rewritten or
-re-moded once it exists. The secret is never taken from `make`'s command line, which `make` copies into
-`MAKEFLAGS` for every command a recipe runs, and which the shell's history, the process list and a CI log
-keep: `TOKEN_SECRET=` or `CLAUDE_ON_PROXMOX_TOKEN_SECRET=` there stops `make` at once. A scripted `make
-init` reads it from `TOKEN_SECRET_FILE`'s file or from `CLAUDE_ON_PROXMOX_TOKEN_SECRET` in the
-environment, inside the playbook, so it is on no command line at all.
+re-moded once it exists. The secret is never taken from the command line, which the shell's history, the
+process list and a CI log keep: `just init` has no option for it, refuses `--token-secret` as one it does
+not have and `CLAUDE_ON_PROXMOX_TOKEN_SECRET=` before the recipe as a setting it does not have, and catches
+any word after its options - make's spelling, `TOKEN_SECRET=...`, or the bare value - and refuses it with
+a fixed message that never says it (an unknown recipe or a pattern refusal would print the word). A
+scripted `just init` reads it from `--token-secret-file`'s file or from `CLAUDE_ON_PROXMOX_TOKEN_SECRET`
+in the environment, inside the playbook, so it is on no command line at all.
 
 ## Nothing environment-specific is committed
 
@@ -64,8 +66,8 @@ Two independent mechanisms:
 Galaxy collections are pinned to exact versions (a range means every run silently
 picks up the latest publish, and made the CI cache key useless since it hashes the file). Ansible never
 reads `requirements.yml`, and every checkout on a machine shares `~/.ansible/collections`, so every
-target that runs Ansible runs `collections-check` first: `ansible-galaxy collection install --offline`
-against the pins, which changes nothing when they are installed and fails, naming `make install`, when one
+recipe that runs Ansible runs `tools/check collections` first: `ansible-galaxy collection install --offline`
+against the pins, which changes nothing when they are installed and fails, naming `just install`, when one
 is not. pre-commit hooks are pinned to commit SHAs, not tags, because a tag can be moved. apt signing
 keys are vendored in-repo. The uv release is pinned by version *and* per-architecture SHA-256, stored
 separately from the download. The Molecule base image is pinned by digest, with an unpinned weekly
@@ -111,16 +113,15 @@ window that cannot connect.
 
 ## Run logs
 
-Every Makefile target that runs Ansible exports `ANSIBLE_LOG_PATH` to
-`.logs/<YYYYMMDD-HHMMSS>-<target>[-<TYPE>].log`, so Ansible mirrors its output, timestamped, into a file per
+Every recipe that runs Ansible runs it through `tools/run-logged`, which exports `ANSIBLE_LOG_PATH` as
+`.logs/<YYYYMMDD-HHMMSS>-<recipe>[-<part>].log`, so Ansible mirrors its output, timestamped, into a file per
 run while the terminal is untouched (prompts and colours included). `no_log` applies to the file as
-to the screen. The file name never contains `VM_NAME`, because the path is in the environment of a
-recipe that runs before `vm-name-check` has looked at that value; the `TYPE` in it is one the Makefile
-checked against its fixed list while it was read, before any recipe. `.logs/` is git-ignored, blocked
+to the screen. The file name never contains a VM name, or anything else a person typed but a part its
+pattern limits to one listed word: the name is built from the recipe's own. `.logs/` is git-ignored, blocked
 by the tracked-file guard (with `*.log`), created `0700`, and pruned of files older than
-`LOG_RETENTION_DAYS` (14) by `log-setup` at the start of each logged run, which deletes only files
-named the way the Makefile names them, and only in `LOG_DIR`. A nested `$(MAKE)` inherits the
-exported path, so one `make test` is one file.
+`LOG_RETENTION_DAYS` (14) by `tools/run-logged` at the start of each logged run, which deletes only files
+named the way it names them, and only in `LOG_DIR`. Every command of one run shares the run's stamp and
+name, so one `just test` is one file.
 
 ## On the controller
 
@@ -136,7 +137,7 @@ would hand it every key in the user's agent.
 
 ## In the editor
 
-`make code`'s workspace file starts a terminal running `claude` when the window
+`just code`'s workspace file starts a terminal running `claude` when the window
 opens, which is exactly the kind of code-on-open VS Code guards with Workspace Trust and the
 automatic-tasks question. Both stay the user's to answer ([§4.9](lifecycle.md#49-playbookscodeyml)):
 the project reads `task.allowAutomaticTasks` to say what will happen and never writes it, sets no

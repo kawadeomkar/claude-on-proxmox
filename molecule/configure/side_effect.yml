@@ -1,6 +1,6 @@
 ---
 # After converge and idempotence, which left Claude Code and gh both signed out:
-# the two sign-ins make deploy and make login TYPE=claude / make login TYPE=github run,
+# the two sign-ins just deploy and just login --only claude / just login --only github run,
 # against the container, with stand-ins for the two vendors.
 #
 # Claude first. The converge prepared Remote Control and left it stopped, with
@@ -67,13 +67,13 @@
         group: dev
         mode: "0755"
 
-- name: Sign Claude Code in as make login TYPE=claude does, for this one VM
+- name: Sign Claude Code in as just login --only claude does, for this one VM
   ansible.builtin.import_playbook: ../../playbooks/claude_login.yml
   vars:
     vm_name: claude-dev
     claude_code_login_code: fake-code#fake-state
 
-# Then gh, which has no token in this scenario: what make login TYPE=github does for
+# Then gh, which has no token in this scenario: what just login --only github does for
 # one VM, against the container.
 # The stand-in gh prints the code and the page, then approves itself after two
 # seconds, so the device flow runs end to end offline: the role waits on gh's
@@ -95,7 +95,7 @@
         that: side_effect_before.results | map(attribute='stat.exists') | list == [false, false]
         quiet: true
 
-- name: Run the device flow as make login TYPE=github does, for this one VM
+- name: Run the device flow as just login --only github does, for this one VM
   ansible.builtin.import_playbook: ../../playbooks/github_login.yml
   vars:
     vm_name: claude-dev

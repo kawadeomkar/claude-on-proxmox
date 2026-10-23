@@ -1,11 +1,11 @@
 ---
-# make init copies this to inventory/hosts.yml (git-ignored) and asks for the
+# just init copies this to inventory/hosts.yml (git-ignored) and asks for the
 # Proxmox host's address, which it writes in place of 192.0.2.10 below. By hand:
 #
 #   cp inventory/hosts.yml.example inventory/hosts.yml
 #
 # The Proxmox host's address is the only address you have to supply. VMs are
-# created by name (make deploy alpha), Proxmox assigns their VMIDs,
+# created by name (just deploy alpha), Proxmox assigns their VMIDs,
 # your DHCP server assigns their addresses, and the QEMU guest agent reports
 # those back - so VMs are never listed here.
 all:

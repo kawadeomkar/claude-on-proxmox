@@ -10,10 +10,12 @@ README.md                         getting started; everything else is in docs/
 docs/                             the wiki (docs/development/docs.md): getting-started/, guides/, reference/
                                   (generated in part), architecture/ (these pages), development/
 zensical.toml                     the wiki as a site: navigation, theme, GitHub-style anchors
-Makefile                          every entry point: few targets, each narrowed to one part by TYPE (make help)
-tools/docs.py                     make docs: the generated reference sections; templates/role.md.j2 for docsible
-tools/env-run                     run a tool from the project's virtualenv, found as the Makefile finds it (the git hooks)
-tools/stale_scripts.py            make install: the locked packages whose commands start another Python, to reinstall
+justfile                          every entry point: few recipes, each narrowed by an option or a word (just help)
+tools/docs.py                     just docs: the generated reference sections; templates/role.md.j2 for docsible
+tools/env-run                     run a tool from the project's virtualenv (the git hooks), or --bin: its bin (the justfile)
+tools/check                       the justfile's checks: the checkout, the vault, the collections, names, a project
+tools/run-logged                  run a command with its Ansible output logged to .logs/ (every recipe that runs Ansible)
+tools/stale_scripts.py            just install: the locked packages whose commands start another Python, to reinstall
 pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
 
 playbooks/
@@ -24,9 +26,9 @@ playbooks/
   claude_login.yml                sign Claude in by the browser, VM by VM, then start Remote Control; bare, report
   github_login.yml                sign gh in by the device flow, VM by VM, then run github_projects; bare, report
   tailscale_login.yml             sign the VM in to Tailscale by its web login, VM by VM; bare, report
-  login.yml                       make login: discovery, then the three sign-ins above in deploy's order and by its rules
-  init_settings.yml               make init's questions: the host's address, the token, the GitHub username; the vault encrypted
-  init_check.yml                  make init's checks: the API and token, privileges, the template or root SSH, node, storage, bridge, a key
+  login.yml                       just login: discovery, then the three sign-ins above in deploy's order and by its rules
+  init_settings.yml               just init's questions: the host's address, the token, the GitHub username; the vault encrypted
+  init_check.yml                  just init's checks: the API and token, privileges, the template or root SSH, node, storage, bridge, a key
   inventory/init.yml              init_settings.yml's own inventory: the controller alone, no group_vars
   configure.yml                   discover, then common → vscode_server → dev_tools → claude_code → github_projects,
                                   then tailscale in a rescued block, then an SSH alias per configured VM on the
@@ -39,9 +41,9 @@ playbooks/
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
   tasks/ssh_config.yml            one blockinfile block per VM in ~/.ssh/claude-on-proxmox.conf, Include once
   tasks/remote_tmp.yml            root's remote_tmp, made before a module makes it and warns (template, configure)
-  tasks/init_ask.yml              one make init question: a value given, or asked, held to its kind, asked once more
+  tasks/init_ask.yml              one just init question: a value given, or asked, held to its kind, asked once more
   tasks/init_local_setting.yml    one setting written into local.yml in place of its commented example line
-  tasks/init_choose.yml           one of make init's choices: a storage or bridge the node lists and the token can use
+  tasks/init_choose.yml           one of just init's choices: a storage or bridge the node lists and the token can use
 
 roles/                            one role per concern, each with defaults/, meta/argument_specs.yml, molecule/
   proxmox_template/               qm + virt-customize on the PVE node
@@ -64,7 +66,7 @@ filter_plugins/proxmox.py         reading guest agent output: net_mac, guest_ipv
 filter_plugins/vscode.py          vscode_setting (JSONC, read-only): VS Code's settings, never written
 filter_plugins/desktop.py         page_opener, the sign-ins' browser command
 filter_plugins/text.py            plain_text, what a VM printed made safe to quote; banner, the block a prompt is set in
-filter_plugins/settings.py        init_answer, the rule each make init answer follows; with_setting, one written into YAML text;
+filter_plugins/settings.py        init_answer, the rule each just init answer follows; with_setting, one written into YAML text;
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
 inventory/
   hosts.yml.example               the only address anyone supplies
@@ -76,7 +78,7 @@ tests/
   check_no_local_files.sh         tracked-file guard (also runs in CI)
   unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the three
                                   sign-ins and deploy's sign-in steps, Tailscale, destroy's release, the managed SSH
-                                  config, the Claude terminal's script, Makefile guards, the wiki (test_docs.py)
+                                  config, the Claude terminal's script, the justfile, the wiki (test_docs.py)
   molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh, claude, tailscale,
                                   Tailscale API
 molecule/

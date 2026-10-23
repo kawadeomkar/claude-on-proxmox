@@ -90,7 +90,7 @@ This entry point takes no variables.
 ## Tasks
 
 Every task in `roles/{{ role.name }}/tasks/`, file by file, in the order the file lists them, with a flowchart of
-each file. Generated from the task files, so a task added, renamed or removed shows here on the next `make docs`.
+each file. Generated from the task files, so a task added, renamed or removed shows here on the next `just docs`.
 {#- Parameters that are not the task's module, so the first key outside them is. #}
 {%- set known = ['action', 'any_errors_fatal', 'args', 'async', 'become', 'become_exe', 'become_flags',
     'become_method', 'become_user', 'changed_when', 'check_mode', 'collections', 'connection', 'debugger', 'delay',

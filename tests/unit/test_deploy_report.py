@@ -1,4 +1,4 @@
-"""What `make deploy` says before it starts, rendered by deploy.yml's own tasks.
+"""What `just deploy` says before it starts, rendered by deploy.yml's own tasks.
 
 The first play looks the template up through the API; here a canned lookup
 stands in for it, set as a fact, which ranks with the register it replaces.

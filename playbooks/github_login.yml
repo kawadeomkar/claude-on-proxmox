@@ -1,17 +1,17 @@
 ---
 # Sign gh in to GitHub on the VMs, or say how each one is signed in.
 #
-#   make login VM_NAME=alpha TYPE=github        -> signs alpha in, then runs the role (signed in or not)
-#   make login VM_NAME=alpha,beta TYPE=github   -> the same, one VM after the other
-#   make login TYPE=github                      -> reports every VM's state
+#   just login alpha --only github        -> signs alpha in, then runs the role (signed in or not)
+#   just login alpha,beta --only github   -> the same, one VM after the other
+#   just login --only github                      -> reports every VM's state
 #
-# With vault_github_token set, make deploy TYPE=configure signs gh in by itself. Without
+# With vault_github_token set, just deploy --only configure signs gh in by itself. Without
 # one the login is GitHub's device flow, which no run can finish alone: a
 # one-time code has to be entered on a page and authorised. This runs it as
 # far as it goes - gh in the background on the VM, the code read from its
 # output, the page opened and the code copied on this machine (login_desktop),
 # the approval waited for - and then runs the whole github_projects role, so
-# the private repositories arrive in the same run. make deploy imports this
+# the private repositories arrive in the same run. just deploy imports this
 # playbook for the VMs it configured and asks VM by VM first: a VM whose Claude
 # code was entered signs in on Enter, one that showed no Claude prompt on a "y",
 # and one whose Claude prompt got Enter is left - this flow waits up to fifteen
@@ -59,7 +59,7 @@
         msg: "{{ claude_vm_github_login_failure }}"
       when: claude_vm_reach is unreachable
 
-# One VM at a time where a sign-in can prompt - names given, or make deploy -
+# One VM at a time where a sign-in can prompt - names given, or just deploy -
 # since each opens its own page and waits for its own approval; a report reads
 # the fleet at once. A failure is caught here, said, and raised by the last
 # play, unless it is the person aborting at a prompt.
@@ -70,9 +70,9 @@
   vars:
     claude_vm_login_named: >-
       {{ (vm_name | default('', true) | split(',') | map('trim') | select | list | length) > 0 }}
-    # make login VM_NAME=x TYPE=github runs the whole role after this play for each
+    # just login x --only github runs the whole role after this play for each
     # VM named, signed in now or before, so the command that signs gh in is
-    # also the one that clones; make deploy's configure has just run it.
+    # also the one that clones; just deploy's configure has just run it.
     claude_vm_login_role_follows: >-
       {{ claude_vm_login_named | bool and not (claude_vm_login_in_deploy | default(false) | bool) }}
   serial: "{{ 1 if (claude_vm_login_in_deploy | default(false) | bool or claude_vm_login_named | bool) else '100%' }}"
@@ -80,16 +80,16 @@
   tasks:
     - name: Sign this VM in
       block:
-        # The decision is the github_projects role's, so this and `make deploy
-        # TYPE=configure` cannot disagree about whether a VM is signed in, or how.
+        # The decision is the github_projects role's, so this and `just deploy
+        # --only configure` cannot disagree about whether a VM is signed in, or how.
         # tests/unit/test_github_auth.py runs this playbook against canned logins.
         - name: Report the login state, and sign the VM in when asked to
           ansible.builtin.include_role:
             name: github_projects
             tasks_from: login
           vars:
-            # Names given (any number), or make deploy for a VM whose Claude
-            # code was entered: sign in. make deploy asks first.
+            # Names given (any number), or just deploy for a VM whose Claude
+            # code was entered: sign in. just deploy asks first.
             github_projects_login_interactive: "{{ claude_vm_login_interactive | default(claude_vm_login_named) }}"
             github_projects_login_ask: "{{ claude_vm_login_ask | default(false) }}"
             github_projects_login_role_follows: "{{ claude_vm_login_role_follows }}"
@@ -112,10 +112,10 @@
             msg: "{{ claude_vm_github_login_failure }}"
 
 # The rest of the role, after the last approval, for every VM signed in just
-# now, and under make login VM_NAME=x TYPE=github for every VM named: the credential
+# now, and under just login x --only github for every VM named: the credential
 # helper, the listing with the token gh holds, the private repositories - and,
 # with vault_github_token set, the token sign-in itself. A failure here is not
-# a failed sign-in, and is raised even under make deploy, at its end.
+# a failed sign-in, and is raised even under just deploy, at its end.
 - name: Configure the repositories of each VM signed in
   hosts: claude_vms
   become: true
@@ -155,15 +155,15 @@
                     ~ (ansible_failed_task.name | default('a task')) ~ '"'
                     ~ (' (' ~ claude_vm_failed_items | join(', ') ~ ')' if claude_vm_failed_items | length > 0 else '')
                     ~ ': ' ~ claude_vm_failed_why ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.')
-                    ~ ' Retry it with: make deploy VM_NAME=' ~ inventory_hostname ~ ' TAGS=github_projects'] }}
+                    ~ ' Retry it with: just deploy ' ~ inventory_hostname ~ ' --tags github_projects'] }}
 
         - name: Say why
           ansible.builtin.debug:
             msg: "{{ claude_vm_configure_failures | last }}"
 
-# make deploy carries on past a sign-in that failed, and raises the work after
-# a sign-in at its own end; make login TYPE=github exists to sign in, so here the
-# run fails, VM by VM - unless make login runs the three sign-ins
+# just deploy carries on past a sign-in that failed, and raises the work after
+# a sign-in at its own end; just login --only github exists to sign in, so here the
+# run fails, VM by VM - unless just login runs the three sign-ins
 # (claude_vm_login_raised_later), whose own last play raises it.
 - name: Fail each VM whose sign-in, or the work after it, failed
   hosts: claude_vms

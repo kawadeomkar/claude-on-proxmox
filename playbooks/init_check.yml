@@ -1,10 +1,10 @@
 ---
-# make init's second step: check, read-only, what make deploy will need of
-# Proxmox, with the settings exactly as make deploy will read them - this run
+# just init's second step: check, read-only, what just deploy will need of
+# Proxmox, with the settings exactly as just deploy will read them - this run
 # loads the project's inventory and the vault, where init_settings.yml could
 # not.
 #
-#   make init            after its questions, when the vault can be opened
+#   just init            after its questions, when the vault can be opened
 #
 # Configured yet? With the host's address or the token's secret still the
 # example's, nothing is checked, and the run says what is missing. Then: the
@@ -16,21 +16,21 @@
 # reached - and never chosen; and the storage for VM disks and the template's
 # bridge, each listed with what the token can use. Last, the VMs will get an SSH
 # key. Each check reports ok, a problem, or why it was skipped, and the run
-# fails when any found a problem - a scripted make init then exits non-zero -
+# fails when any found a problem - a scripted just init then exits non-zero -
 # though "not configured yet" is none.
 #
 # It writes only local.yml, through tasks/init_local_setting.yml, and only at
-# a terminal (init_ask) or for a value given on the command line (STORAGE,
-# BRIDGE): the node when the default is not it, the storage or bridge chosen.
+# a terminal (init_ask) or for a value given on the command line (--storage,
+# --bridge): the node when the default is not it, the storage or bridge chosen.
 # Everything else is a read (tests/unit/test_init_check.py holds both), and
 # root SSH may add the host's key to ~/.ssh/known_hosts, as the template build
 # would, one of the two files the project writes there. Every name it sets
 # starts with init_, like init_settings.yml's.
-- name: Check what make deploy will need of Proxmox
+- name: Check what just deploy will need of Proxmox
   hosts: localhost
   gather_facts: false
   vars:
-    # As in init_settings.yml: true only when the Makefile sees a terminal, and
+    # As in init_settings.yml: true only when just init sees a terminal, and
     # the values given on the command line - here storage and bridge.
     init_ask: false
     init_given: {}
@@ -80,7 +80,7 @@
       {{ init_privileges_wanted | select('in', init_vms_privileges)
          | select('in', init_vms_privileges | dict2items | selectattr('value', 'equalto', 0) | map(attribute='key') | list)
          | list }}
-    # The template as make deploy finds it: a VM of that name that is a
+    # The template as just deploy finds it: a VM of that name that is a
     # template. Without one, deploy builds it at proxmox_template_vmid, which
     # must then be free.
     init_listing: "{{ claude_vm_all.json.data | default([]) if init_listed | default(false) | bool else [] }}"
@@ -136,7 +136,7 @@
       ansible.builtin.debug:
         msg: >-
           Proxmox is not checked yet: {{ init_missing | join(' and ') }} {{ 'is' if init_missing | length == 1
-          else 'are' }} still the example's. make init asks for {{ 'it' if init_missing | length == 1 else 'them' }}.
+          else 'are' }} still the example's. just init asks for {{ 'it' if init_missing | length == 1 else 'them' }}.
       when: init_missing | length > 0
 
     - name: Stop until there is something to check
@@ -167,7 +167,7 @@
         init_results: >-
           {{ init_results | default([]) + [{'ok': init_vault_encrypted | bool, 'text':
              'vault.yml is encrypted' if init_vault_encrypted | bool
-             else 'vault.yml is not encrypted, and every make target refuses it: make vault encrypts it'}] }}
+             else 'vault.yml is not encrypted, and every recipe refuses it: just vault encrypts it'}] }}
 
     # ---------------------------------------------------------------- the API ---
     # The request carries the token, so it is no_log; what is said comes from
@@ -194,7 +194,7 @@
              if init_api_ok | bool else
              'Proxmox at ' ~ init_endpoint ~ ' refused the token ' ~ init_token ~ ' (' ~ init_version.status ~ '):'
              ~ ' a token named otherwise goes in local.yml as proxmox_api_user and proxmox_api_token_id, and'
-             ~ ' make vault fixes a wrong secret'
+             ~ ' just vault fixes a wrong secret'
              if init_version.status | default(0) in [401, 403] else
              "https://" ~ init_endpoint ~ "'s certificate names another host (" ~ init_api_message ~ '): reach'
              ~ ' Proxmox by a name or address its certificate holds, or leave proxmox_validate_certs off'
@@ -292,24 +292,24 @@
         init_template_result: >-
           {{ {'ok': true,
               'text': 'the template ' ~ proxmox_template_name ~ ' is on ' ~ init_template.node
-                      ~ ', so make deploy needs no root SSH'}
+                      ~ ', so just deploy needs no root SSH'}
              if init_template_built | bool else
              {'ok': false,
               'text': 'there is no template ' ~ proxmox_template_name ~ ' yet, and VMID ' ~ proxmox_template_vmid
-                      ~ ', where make deploy would build it, is taken by '
+                      ~ ', where just deploy would build it, is taken by '
                       ~ (init_vmid_holder.name | default('a ' ~ init_vmid_holder.type | default('guest')))
                       ~ ' on ' ~ init_holder_where ~ ': set proxmox_template_vmid to a free VMID in local.yml, or'
                       ~ ' proxmox_template_name to the template there'}
              if init_vmid_holder | length > 0 else
              {'ok': true,
-              'text': 'there is no template ' ~ proxmox_template_name ~ ' yet: make deploy builds it at VMID '
+              'text': 'there is no template ' ~ proxmox_template_name ~ ' yet: just deploy builds it at VMID '
                       ~ proxmox_template_vmid ~ ', over root SSH'} }}
       when: init_listed | default(false) | bool
 
     - name: Record that no host can build the template
       ansible.builtin.set_fact:
         init_results: >-
-          {{ init_results + [{'ok': false, 'text': 'the template is not built yet, and make deploy builds it over'
+          {{ init_results + [{'ok': false, 'text': 'the template is not built yet, and just deploy builds it over'
              ~ ' SSH to the host of the proxmox group in inventory/hosts.yml, which has none'}] }}
       when: not init_template_built | bool and init_proxmox_host | length == 0
 
@@ -339,7 +339,7 @@
                  else ' (whether the template is built could not be checked)'))
              if init_ssh_ok | bool else
              ('root SSH to ' ~ init_ssh_address ~ ' failed (' ~ (init_ssh.msg | default(init_ssh.stderr | default('')))
-              | plain_text | trim | truncate(300) ~ '): make deploy builds the template over it. Install your key'
+              | plain_text | trim | truncate(300) ~ '): just deploy builds the template over it. Install your key'
               ~ ' with ssh-copy-id root@' ~ init_ssh_address)}] }}
       vars:
         init_ssh_ok: "{{ not (init_ssh.unreachable | default(false)) and init_ssh.rc | default(1) == 0 }}"
@@ -355,14 +355,14 @@
               ~ ' ' ~ init_nodes.msg | default('') | plain_text | trim ~ ')'}
              if init_nodes.status | default(0) != 200 else
              {'ok': false, 'text': 'which node ' ~ init_ssh_address ~ ' is cannot be told until root SSH to it works,'
-              ~ ' and the cluster has ' ~ init_all_nodes | join(', ') ~ ': make deploy builds the template there and'
+              ~ ' and the cluster has ' ~ init_all_nodes | join(', ') ~ ': just deploy builds the template there and'
               ~ ' clones it on proxmox_node (' ~ proxmox_node ~ ')'}
              if init_node_derived | length == 0 else
              {'ok': false, 'text': init_node_why ~ ', but the cluster has no node ' ~ init_node_derived ~ ' ('
               ~ init_all_nodes | join(', ') ~ '): set proxmox_node in local.yml to the node that host is'}
              if init_node_derived not in init_all_nodes else
-             {'ok': true, 'text': 'node ' ~ proxmox_node ~ ': ' ~ ('it holds the template, and make deploy creates the'
-              ~ ' VMs there' if init_template_built | bool else 'make deploy builds the template there, and creates'
+             {'ok': true, 'text': 'node ' ~ proxmox_node ~ ': ' ~ ('it holds the template, and just deploy creates the'
+              ~ ' VMs there' if init_template_built | bool else 'just deploy builds the template there, and creates'
               ~ ' the VMs there')}
              if init_node_derived == proxmox_node else
              {'ok': true, 'text': 'node ' ~ init_node_derived ~ ': written into local.yml as proxmox_node, since '
@@ -371,7 +371,7 @@
              {'ok': false, 'text': init_node_why ~ ', but proxmox_node is ' ~ proxmox_node ~ ', and VMs are cloned on'
               ~ ' the node that holds the template: set proxmox_node: ' ~ init_node_derived ~ ' in local.yml'
               ~ (', or build a template on ' ~ proxmox_node ~ ' with a proxmox_template_name of its own'
-                 if init_node_set | bool else ' (make init at a terminal writes it)')} }}
+                 if init_node_set | bool else ' (just init at a terminal writes it)')} }}
       when: init_listed | default(false) | bool
 
     # ------------------------------------------------------------ the storage ---
@@ -460,26 +460,26 @@
       ansible.builtin.fail:
         msg: >-
           {{ init_given_unchecked | join(' and ') }} cannot be checked yet ({{ init_unchecked_why if not
-          init_node_listable | bool else 'Proxmox would not list them' }}), so make init does not write
+          init_node_listable | bool else 'Proxmox would not list them' }}), so just init does not write
           {{ 'it' if init_given_unchecked | length == 1 else 'them' }}: fix what the lines above say, and run it again.
       vars:
         init_given_unchecked: >-
-          {{ (['STORAGE=' ~ init_given.storage]
+          {{ (['--storage ' ~ init_given.storage]
               if init_given.storage is defined
                  and (not init_node_listable | bool or init_storages.status | default(0) != 200) else [])
-             + (['BRIDGE=' ~ init_given.bridge]
+             + (['--bridge ' ~ init_given.bridge]
                 if init_given.bridge is defined and not init_template_built | bool
                    and (not init_node_listable | bool or init_bridges.status | default(0) != 200) else []) }}
       when: init_given_unchecked | length > 0
 
     # A bridge given while the template exists: the template's own is nothing to
-    # do, so a scripted make init runs again; another cannot apply, clones take
+    # do, so a scripted just init runs again; another cannot apply, clones take
     # the template's NIC.
     - name: Refuse a bridge given that is not the template's
       ansible.builtin.fail:
         msg: >-
-          BRIDGE={{ init_given.bridge }}: the template {{ proxmox_template_name }} is built, and every clone takes
-          its NIC, on {{ init_template_bridge or 'its bridge' }}. BRIDGE matters only before the template is built.
+          --bridge {{ init_given.bridge }}: the template {{ proxmox_template_name }} is built, and every clone takes
+          its NIC, on {{ init_template_bridge or 'its bridge' }}. --bridge matters only before the template is built.
       when: init_given.bridge is defined and init_template_built | bool and init_given.bridge != init_template_bridge
 
     - name: Check the storage given before anything is written
@@ -491,7 +491,7 @@
           init_choose_value: "{{ proxmox_storage }}"
           init_choose_set: "{{ 'proxmox_storage' in init_local_settings }}"
           init_choose_given: "{{ init_given.storage | default('') }}"
-          init_choose_flag: STORAGE
+          init_choose_flag: --storage
           init_choose_candidates: >-
             {{ init_storage_privileges.results | default([])
                | init_candidates('storage', '/storage/', init_token_privileges.storage) }}
@@ -510,7 +510,7 @@
           init_choose_value: "{{ proxmox_bridge }}"
           init_choose_set: "{{ 'proxmox_bridge' in init_local_settings }}"
           init_choose_given: "{{ init_given.bridge | default('') }}"
-          init_choose_flag: BRIDGE
+          init_choose_flag: --bridge
           init_choose_candidates: >-
             {{ init_bridge_privileges.results | default([])
                | init_candidates('iface', '/sdn/zones/localnetwork/', init_token_privileges.bridge) }}
@@ -548,7 +548,7 @@
         init_results: >-
           {{ init_results + [{'ok': init_template_bridge | length > 0 and init_lacks | length == 0, 'text':
              ("the template's net0 has no bridge, or its configuration could not be read: every clone inherits"
-              ~ ' that NIC, so its VMs would be unreachable. Rebuild the template (make deploy TYPE=template, after'
+              ~ ' that NIC, so its VMs would be unreachable. Rebuild the template (just deploy --only template, after'
               ~ ' removing it), with proxmox_bridge set')
              if init_template_bridge | length == 0 else
              ('bridge ' ~ init_template_bridge ~ ", the template's: the token has SDN.Use on it")
@@ -604,7 +604,7 @@
              ('the VMs get only vm_password, which is for the Proxmox console: SSH to them takes a key, and make'
               ~ ' deploy configures them over SSH. Put yours in local.yml as vm_ssh_public_keys')
              if not init_keyless | bool else
-             ('the VMs would get no SSH key, so make deploy refuses them: put yours in local.yml, as'
+             ('the VMs would get no SSH key, so just deploy refuses them: put yours in local.yml, as'
               ~ ' vm_ssh_public_keys: ["<the line in ' ~ (init_public_keys.files | map(attribute='path') | sort | first)
               ~ '>"]')
              if init_public_keys.files | default([]) | length > 0 else
@@ -624,9 +624,9 @@
     - name: Fail when a check found a problem
       ansible.builtin.fail:
         msg: >-
-          make init found {{ init_problems | length }} problem{{ '' if init_problems | length == 1 else 's' }}
-          (the lines marked !! above) for make deploy: fix {{ 'it' if init_problems | length == 1 else 'them' }},
-          then run make init again.
+          just init found {{ init_problems | length }} problem{{ '' if init_problems | length == 1 else 's' }}
+          (the lines marked !! above) for just deploy: fix {{ 'it' if init_problems | length == 1 else 'them' }},
+          then run just init again.
       vars:
         init_problems: "{{ init_results | rejectattr('ok') | rejectattr('skipped', 'defined') | list }}"
       when: init_problems | length > 0

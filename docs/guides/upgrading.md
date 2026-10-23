@@ -4,20 +4,20 @@ What to do when you update an install made by an earlier version of this project
 versions yet, so each section names the pull request that brought the change; an install made after it
 needs nothing.
 
-After pulling a new version, run `make install` before anything else. It syncs your environment to
+After pulling a new version, run `just install` before anything else. It syncs your environment to
 `uv.lock` and installs the Galaxy collections `requirements.yml` pins, and a pull changes neither.
 Every target that runs Ansible compares the installed collections with those pins first and stops,
-naming `make install`, while one differs. They live in `~/.ansible/collections`, which every checkout
-on the machine shares, so another clone or worktree on a different version needs `make install` again
+naming `just install`, while one differs. They live in `~/.ansible/collections`, which every checkout
+on the machine shares, so another clone or worktree on a different version needs `just install` again
 when you go back to it.
 
 ## A template built before the guest agent
 
 From PR #6, which finds each VM's address through its guest agent. Provisioning now needs `qemu-guest-agent` **inside** the image: it is what
-reports the VM's DHCP address back. `make deploy TYPE=template` bakes it in, but a template
-built before this change does not have it, and re-running `make deploy TYPE=template` will
+reports the VM's DHCP address back. `just deploy --only template` bakes it in, but a template
+built before this change does not have it, and re-running `just deploy --only template` will
 **not** fix that - the role skips the whole build when the VMID already exists.
-A VM cloned from such a template never reports an address, so `make deploy TYPE=provision`
+A VM cloned from such a template never reports an address, so `just deploy --only provision`
 polls its guest agent 60 times, five seconds apart (`proxmox_vm_agent_retries`,
 `proxmox_vm_agent_delay`), and then fails. That is five minutes of waiting plus
 the time each poll takes, and on a running VM with no agent Proxmox spends a few
@@ -31,7 +31,7 @@ qm destroy 9000        # the template's VMID (proxmox_template_vmid)
 ```
 
 ```bash
-make deploy TYPE=template   # rebuilds it, this time with the guest agent
+just deploy --only template   # rebuilds it, this time with the guest agent
 ```
 
 The build keeps the pristine download under `/var/lib/vz/claude-on-proxmox` on the node
@@ -48,7 +48,7 @@ Your API token also needs the guest-agent privilege added - see
 From PR #22, which signs `gh` in on the VMs. Earlier versions asked for a token with `repo` alone, used only to list your repositories. This
 version also signs `gh` in with it, and gh refuses a classic token without `read:org`. Such a token
 keeps listing as before: the run says gh stayed signed out and which scopes to add (`read:org`, and
-`workflow` for pushes that change `.github/workflows/`), and the next `make deploy TYPE=configure` signs gh in once
+`workflow` for pushes that change `.github/workflows/`), and the next `just deploy --only configure` signs gh in once
 they are there. `github_auth_method: web` signs gh in by the device flow instead, the token listing only.
 
 ## A gh login or git identity you set up by hand
@@ -63,25 +63,25 @@ stays too: only a missing one is derived from your GitHub account, while `git_us
 ## Remote Control on a VM configured by an earlier version
 
 From PR #23, which starts Remote Control when a login lands. A VM waiting for its first Claude login now gets a path unit that starts Remote Control the moment a
-login lands, so a sign-in made in the Claude terminal of `make code` starts it by itself. A VM last
-configured by an earlier version has no such unit: run `make deploy VM_NAME=alpha TAGS=claude_code`
-once (or `make deploy VM_NAME=alpha`), or sign it in with `make login VM_NAME=alpha TYPE=claude`, which
-starts Remote Control itself. The Claude terminal of `make code` tells the two apart, and on such a VM
-names that `make deploy TYPE=configure` line.
+login lands, so a sign-in made in the Claude terminal of `just code` starts it by itself. A VM last
+configured by an earlier version has no such unit: run `just deploy alpha --tags claude_code`
+once (or `just deploy alpha`), or sign it in with `just login alpha --only claude`, which
+starts Remote Control itself. The Claude terminal of `just code` tells the two apart, and on such a VM
+names that `just deploy --only configure` line.
 
 ## Tailscale on VMs configured by an earlier version
 
-From PR #24, which joins the VMs to a tailnet. Tailscale is on by default, so the next `make deploy TYPE=configure` installs it on every VM and reports each one
+From PR #24, which joins the VMs to a tailnet. Tailscale is on by default, so the next `just deploy --only configure` installs it on every VM and reports each one
 not signed in - or joins it, with `vault_tailscale_auth_key` set. Set `tailscale_enabled: false` in
-`local.yml` first to keep your VMs as they are, and `make deploy TYPE=check` beforehand says what would be installed.
+`local.yml` first to keep your VMs as they are, and `just deploy --check` beforehand says what would be installed.
 A VM where you installed Tailscale yourself is left exactly as it is either way.
 
 ## Adopting VMs created before tagging
 
 From PR #6 as well, which recognises this project's VMs by their tag. This project now recognises its VMs by one Proxmox tag, `claude-on-proxmox`, and
 nothing else. VMs created by an earlier version carry `claude;ansible` instead,
-so `make list`, `make deploy TYPE=configure` and `make destroy` do not see them, and
-`make deploy TYPE=provision` refuses to touch a VM of that name rather than take it over.
+so `just list`, `just deploy --only configure` and `just destroy` do not see them, and
+`just deploy --only provision` refuses to touch a VM of that name rather than take it over.
 
 To adopt one, add the tag - in the Proxmox UI (the pencil beside the tags in the
 VM's title bar), or on the Proxmox host:
@@ -98,13 +98,13 @@ If you only want to delete such a VM, you can skip the tagging and say so
 instead, after checking in the Proxmox UI that the name is the VM you mean:
 
 ```bash
-make destroy VM_NAME=old-dev ANSIBLE_ARGS="-e proxmox_vm_allow_untagged_delete=true"
+ANSIBLE_ARGS='-e proxmox_vm_allow_untagged_delete=true' just destroy old-dev
 ```
 
 ## A template built from Ubuntu's server image
 
 From PR #35, the template is built from Ubuntu's minimal cloud image. A template built before keeps the
-server image, and so do the VMs cloned from it; they work as before, and the next `make deploy TYPE=configure` masks
+server image, and so do the VMs cloned from it; they work as before, and the next `just deploy --only configure` masks
 the services the minimal image leaves out anyway (fwupd, multipathd, ModemManager, udisks2, and snapd
 while no snap is installed) and empties apt's download cache. To build new VMs from the minimal image,
 rebuild the template once, on the Proxmox host. The VMs you have are full clones, so they do not depend on
@@ -116,46 +116,73 @@ qm destroy 9000        # the template's VMID (proxmox_template_vmid)
 ```
 
 ```bash
-make deploy TYPE=template   # rebuilds it from the minimal image
+just deploy --only template   # rebuilds it from the minimal image
 ```
 
 The minimum memory a VM may be left with (`vm_memory_min_mb`, from the same PR) is applied when a VM is
 created; `proxmox_vm_force_update: true` applies it to the VMs you have
 ([Re-running](vms.md#re-running)).
 
-## The make targets an earlier version had
+## make became just
 
-Thirty-six targets became sixteen, each of which does all of its job by default and takes `TYPE=` for one
-part of it. A target that is gone stops at once with the command that replaced it, so a script or a habit
-that runs one is told rather than left at make's "No rule to make target":
+The command line moved from `make` to [`just`](https://github.com/casey/just), for options of each
+command's own: `make` takes no flags of a target's, so the old Makefile read `TYPE=`, `VM_NAME=`, `TAGS=`
+and the rest as variables. Install `just` 1.59.0 or later, as you installed uv ([Requirements](../getting-started/requirements.md)):
+`brew install just`, `cargo install just`, or the release archive from github.com/casey/just, checked
+against its `SHA256SUMS`. The `Makefile` is gone, so `make deploy` now gets make's own "No rule to make
+target"; `just` lists the recipes, and `just help <recipe>` a recipe's options.
+
+What each command does is unchanged; only its spelling moved. Names come after the recipe, options after
+its name, and settings (`ANSIBLE_ARGS`, `LOG_DIR`, `PYTHON`) are exported or go before it:
 
 | Before | Now |
 |---|---|
-| `make venv`, `make deps` | `make install`, into your own virtualenv: see below |
-| `make lock` | `make install TYPE=lock` |
-| `make vault-encrypt`, `make vault-edit` | `make vault`, which encrypts a plaintext vault and edits an encrypted one |
-| `make template`, `make provision` | `make deploy TYPE=template`, `make deploy TYPE=provision` |
-| `make configure`, `make check` | `make deploy TYPE=configure`, `make deploy TYPE=check`; `make deploy TAGS=<role>` is `TYPE=configure` for that role |
-| `make ssh-config` | `make deploy TYPE=ssh-config` |
-| `make claude-login`, `make github-login`, `make tailscale-login` | `make login TYPE=claude`, `TYPE=github`, `TYPE=tailscale`; `make login` alone runs all three in deploy's order |
-| `make syntax`, `make pre-commit` | `make lint TYPE=syntax`, `make lint TYPE=hooks`; `make lint` alone runs both, after the other linters |
-| `make unit` | `make test TYPE=unit` |
-| `make molecule MOLECULE_ROLES=...` | `make test ROLE=...`; `make test TYPE=role` for every role, `TYPE=molecule` for every scenario |
-| `make molecule-integration`, `make molecule-provision`, `make molecule-scenario SCENARIO=...` | `make test TYPE=integration`, `make test TYPE=provision` |
-| `make docs-serve`, `make docs-build` | `make docs TYPE=serve`, `make docs TYPE=build` |
-| `make vagrant-up`, `make vagrant-destroy` | `make vagrant`, `make vagrant TYPE=destroy` |
-| `make logs-clean` | `make clean TYPE=logs` |
+| `make deploy VM_NAME=alpha,beta`, `make deploy alpha beta` | `just deploy alpha beta` |
+| `make deploy TYPE=template`, `TYPE=provision`, `TYPE=configure`, `TYPE=ssh-config` | `just deploy --only template`, `--only provision`, `--only configure`, `--only ssh-config` |
+| `make deploy TYPE=check` | `just deploy --check` |
+| `make deploy alpha TAGS=claude_code` | `just deploy alpha --tags claude_code` (or `-t`) |
+| `make deploy alpha ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"` | `just deploy alpha --start` |
+| `make code alpha PROJECT=repo` | `just code alpha --project repo` |
+| `make login alpha TYPE=github` | `just login alpha --only github` |
+| `make list`, `make destroy alpha`, `make logs`, `make vault` | `just list`, `just destroy alpha`, `just logs`, `just vault` |
+| `make init HOST=pve.lan GITHUB_USER=octocat PROMPT=no` | `just init --host pve.lan --github-user octocat --no-prompt` (each `NAME=` is a `--name`) |
+| `make install TYPE=lock` | `just install --lock` |
+| `make lint TYPE=yaml`, `make test TYPE=unit`, `make docs TYPE=serve` | `just lint yaml`, `just test unit`, `just docs serve` |
+| `make test ROLE=common` | `just test --role common` |
+| `make lint TYPE=hooks SKIP=` | `just lint hooks --all-hooks` |
+| `make vagrant TYPE=destroy`, `make clean TYPE=logs` | `just vagrant destroy`, `just clean logs` |
+| `make deploy alpha ANSIBLE_ARGS="-vvv"` | `ANSIBLE_ARGS=-vvv just deploy alpha` |
 
-What the commands do is unchanged: each `TYPE` runs the playbook its old target ran, with the same
-arguments, and a VM named in `VM_NAME` is acted on as before. One thing moved: the project keeps no
-`.venv` any more. Make a virtualenv of its own for it, with any tool - `README.md` suggests pyenv's, and
-`python3 -m venv <dir>`, activated or named with `PYTHON=<dir>/bin/python`, does as well - and run
-`make install`. If `.venv` was a link to that environment, `make install` also reinstalls, once, each
-package whose commands still start their Python by the link - uv wrote it into every one when `make venv`
-synced through it - so run it first; the old `.venv` can then go - `rm .venv` if it is that link, which
-leaves the environment itself alone - and `make clean` no longer deletes it. The VMs keep nothing of the
-old names; what they print, and their session notes, name the new commands from the next `make deploy`
-on.
+The targets of the version before, thirty-six of them:
+
+| Before | Now |
+|---|---|
+| `make venv`, `make deps` | `just install`, into your own virtualenv: see below |
+| `make lock` | `just install --lock` |
+| `make vault-encrypt`, `make vault-edit` | `just vault`, which encrypts a plaintext vault and edits an encrypted one |
+| `make template`, `make provision` | `just deploy --only template`, `just deploy --only provision` |
+| `make configure`, `make check` | `just deploy --only configure`, `just deploy --check`; `just deploy <name> --tags <role>` is `--only configure` for that role |
+| `make ssh-config` | `just deploy --only ssh-config` |
+| `make claude-login`, `make github-login`, `make tailscale-login` | `just login --only claude`, `--only github`, `--only tailscale`; `just login` alone runs all three in deploy's order |
+| `make syntax`, `make pre-commit` | `just lint syntax`, `just lint hooks`; `just lint` alone runs both, after the other linters |
+| `make unit` | `just test unit` |
+| `make molecule MOLECULE_ROLES=...` | `just test --role ...`; `just test role` for every role, `molecule` for every scenario |
+| `make molecule-integration`, `make molecule-provision`, `make molecule-scenario SCENARIO=...` | `just test integration`, `just test provision` |
+| `make docs-serve`, `make docs-build` | `just docs serve`, `just docs build` |
+| `make vagrant-up`, `make vagrant-destroy` | `just vagrant`, `just vagrant destroy` |
+| `make logs-clean` | `just clean logs` |
+
+The project keeps no `.venv` either. Make a virtualenv of its own for it, with any tool - `README.md`
+suggests pyenv's, and `python3 -m venv <dir>`, activated or named with `PYTHON=<dir>/bin/python`, does as
+well - and run `just install`. If `.venv` was a link to that environment, `just install` also reinstalls,
+once, each package whose commands still start their Python by the link - uv wrote it into every one when
+`make venv` synced through it - so run it first; the old `.venv` can then go - `rm .venv` if it is that
+link, which leaves the environment itself alone - and `just clean` never deletes it. The VMs keep nothing
+of the old names; what they print, and their session notes, name the new commands from the next `just
+deploy` on. So that run, or the next `just code`, reports `changed` once for files that only name a
+command: the VS Code workspace file and the session notes, and, on a VM whose Claude sign-in is still
+missing, Remote Control's path unit, whose comment names `just login --only claude` (systemd is reloaded
+for it). The run after that changes none of them.
 
 ## See also
 
