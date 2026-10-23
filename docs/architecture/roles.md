@@ -92,8 +92,8 @@ clear: the project has no fact cache ([§13](toolchain.md)).
 apt deletes each package it downloads once installed → apt cache refresh → optional safe upgrade →
 baseline packages (~26, including `qemu-guest-agent` and `python3-debian`) → empty apt's download
 cache of what was left → timezone → hostname → user, groups and passwordless sudo → authorised keys
-→ sshd hardening → `~/.local/bin` on PATH for login shells → enable services → mask the units a
-headless VM has no use for.
+→ sshd hardening → `~/.local/bin` on PATH for login shells → enable and start services → mask the
+units a headless VM has no use for.
 
 Notable choices:
 
@@ -124,6 +124,13 @@ Notable choices:
   start: `systemd_service` masks before it stops, a timer masked while it waits fails ("Unit to trigger
   vanished"), and the stop then skips it, leaving the VM `degraded`. A unit among them left failed is
   cleared with `systemctl reset-failed`.
+- **The guest agent starts only where the VM has its port** (`common_guest_agent_port`,
+  `/dev/virtio-ports/org.qemu.guest_agent.0`). Proxmox gives a VM that port while its agent is enabled,
+  and the agent's unit is bound to it (`BindsTo=`), so a start without it waits 90 s for the device and
+  fails. The machine type cannot tell: `virtualization_type` is `kvm` on a KVM guest without the port
+  and on bare metal with the `kvm` module loaded, and not `kvm` under VirtualBox, which has no port. The
+  other `common_enabled_services` start wherever systemd runs, containers included. See
+  [§15.2](decisions.md#152-the-guest-agent-starts-where-its-port-is).
 - Host-level settings are skipped under `common_container_virt_types`.
 
 ## 5.4 `dev_tools` — developer tooling

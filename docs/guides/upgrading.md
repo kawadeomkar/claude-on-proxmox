@@ -148,11 +148,14 @@ that runs one is told rather than left at make's "No rule to make target":
 
 What the commands do is unchanged: each `TYPE` runs the playbook its old target ran, with the same
 arguments, and a VM named in `VM_NAME` is acted on as before. One thing moved: the project keeps no
-`.venv` any more. Make a virtualenv of its own for it - `pyenv virtualenv 3.12 claude-on-proxmox && pyenv
-local claude-on-proxmox`, or any other, named with `PYTHON=` - and run `make install`; the old `.venv` can
-then go - `rm .venv` if it is a link to that environment, which leaves the environment itself alone -
-and `make clean` no longer deletes it. The VMs keep nothing of the old names; what
-they print, and their session notes, name the new commands from the next `make deploy` on.
+`.venv` any more. Make a virtualenv of its own for it, with any tool - `README.md` suggests pyenv's, and
+`python3 -m venv <dir>`, activated or named with `PYTHON=<dir>/bin/python`, does as well - and run
+`make install`. If `.venv` was a link to that environment, `make install` also reinstalls, once, each
+package whose commands still start their Python by the link - uv wrote it into every one when `make venv`
+synced through it - so run it first; the old `.venv` can then go - `rm .venv` if it is that link, which
+leaves the environment itself alone - and `make clean` no longer deletes it. The VMs keep nothing of the
+old names; what they print, and their session notes, name the new commands from the next `make deploy`
+on.
 
 ## See also
 

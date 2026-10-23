@@ -31,6 +31,8 @@ guard under test.
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 import re
 import shutil
@@ -953,6 +955,10 @@ def test_install_syncs_the_lock_into_python_s_own_environment() -> None:
     assert f'UV_PROJECT_ENVIRONMENT="{sys.prefix}"' in result.stdout
     # --inexact: the environment is the user's, and nothing in it the lock does not list is removed.
     assert f'sync --locked --inexact --python "{sys.executable}"' in result.stdout
+    # What would start another Python is asked before the sync, and checked after a reinstall.
+    parts = ("tools/stale_scripts.py)", "sync --locked", "tools/stale_scripts.py --check")
+    asked, sync, checked = (result.stdout.index(part) for part in parts)
+    assert asked < sync < checked
     assert f"{ENVIRONMENT}/ansible-galaxy collection install -r requirements.yml" in result.stdout
     assert "pre-commit install" not in result.stdout
 
@@ -972,8 +978,8 @@ def test_init_installs_first_then_the_config_and_the_git_hook() -> None:
 
 
 def test_install_refuses_a_python_that_is_no_virtualenv(tmp_path: Path) -> None:
-    # The sync makes the environment match the lock, removing anything else:
-    # never pyenv's own Python, or the system's.
+    # Never into a Python that is no virtualenv - an installed Python itself,
+    # whose scripts directory is a system-wide one.
     not_a_venv = tmp_path / "python3"
     not_a_venv.write_text("#!/bin/sh\nexit 1\n")
     not_a_venv.chmod(0o755)
@@ -993,6 +999,147 @@ def test_install_refuses_the_base_python_of_the_tests_virtualenv() -> None:
     refused = _make("install", f"PYTHON={base}", "UV=false")
     assert refused.returncode != 0
     assert "is not the Python of a virtualenv" in refused.stdout
+
+
+# uv writes the path an environment was synced by into the first line of each
+# command it installs, and make venv synced through the checkout's .venv link,
+# so every command named the link and broke when it went; a sync that installs
+# nothing rewrites none. make install reinstalls each locked package with such a
+# command (tools/stale_scripts.py), and only those: pip's own, from making the
+# environment, would be reinstalled on every run and never change.
+STALE_SCRIPTS = REPO / "tools" / "stale_scripts.py"
+
+
+def _stale_scripts():
+    spec = importlib.util.spec_from_file_location("stale_scripts", STALE_SCRIPTS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _installed(site: Path, scripts: Path, package: str, commands: dict[str, str]) -> None:
+    """A package as an installer leaves it: its dist-info in site, and its commands in scripts, each starting with
+    the first line given, listed in its RECORD."""
+    info = site / f"{package}-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {package}\nVersion: 1.0\n")
+    scripts.mkdir(parents=True, exist_ok=True)
+    record = [f"{info.name}/METADATA,,", f"{info.name}/RECORD,,"]
+    for name, first in commands.items():
+        (scripts / name).write_text(f"{first}\nimport sys\n")
+        record.append(f"{os.path.relpath(scripts / name, site)},,")
+    (info / "RECORD").write_text("\n".join(record) + "\n")
+
+
+def _sh(python: str) -> str:
+    """The first lines uv gives a command whose Python's path is too long for one, or has a space in it."""
+    return "#!/bin/sh\n'''exec' " + python + ' "$0" "$@"\n' + "' '''"
+
+
+def test_stale_scripts_names_the_locked_packages_whose_commands_start_another_python(tmp_path: Path) -> None:
+    env = tmp_path / "env"
+    scripts, site = env / "bin", env / "lib" / "site-packages"
+    # The checkout's old .venv: a link to the environment, so its Python is the same one.
+    link = tmp_path / "checkout" / ".venv"
+    link.parent.mkdir()
+    link.symlink_to(env)
+    scripts.mkdir(parents=True)
+    (scripts / "python").write_text("")
+    assert (link / "bin" / "python").resolve() == (scripts / "python").resolve()
+    far = tmp_path / ("long" * 30) / "bin" / "python"
+
+    _installed(site, scripts, "by-the-link", {"by-the-link": f"#!{link}/bin/python"})
+    _installed(site, scripts, "too-long", {"too-long": _sh(f"'{far}'")})
+    _installed(site, scripts, "current", {"current": f"#!{scripts}/python", "current-sh": _sh(f"'{scripts}/python'")})
+    _installed(site, scripts, "by-env", {"by-env": "#!/usr/bin/env python3"})
+    # uv's relocatable form: the Python beside the command, wherever the environment is.
+    beside = '"$(dirname -- "$(realpath -- "$0")")"/' + "'python'"
+    _installed(site, scripts, "relocatable", {"relocatable": _sh(beside)})
+    _installed(site, scripts, "unlocked", {"unlocked": f"#!{link}/bin/python"})
+    locked = {"by-the-link", "too-long", "current", "by-env", "relocatable"}
+
+    assert _stale_scripts().stale(scripts, [str(site)], locked) == {
+        "by-the-link": [("by-the-link", f"{link}/bin/python")],
+        "too-long": [("too-long", str(far))],
+    }
+
+
+def test_stale_scripts_looks_at_what_uv_lock_pins_by_uv_s_spelling() -> None:
+    module = _stale_scripts()
+    names = module.locked(REPO / "uv.lock")
+    assert {"ansible-core", "pytest", "markdown", "ruamel-yaml"} <= names
+    assert "pip" not in names
+    assert [module.normalized(name) for name in ("Markdown", "ruamel.yaml", "charset_normalizer")] == [
+        "markdown",
+        "ruamel-yaml",
+        "charset-normalizer",
+    ]
+
+
+def _environment_naming_its_link(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A real virtualenv whose pytest - a package uv.lock pins - starts its Python by a link to the environment, as
+    make venv left them; returns its python, that command, and the link."""
+    env = tmp_path / "env"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(env)], check=True)
+    python = env / "bin" / "python"
+    paths = json.loads(
+        subprocess.run(
+            [python, "-c", "import json, sysconfig; print(json.dumps(sysconfig.get_paths()))"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    link = tmp_path / "checkout" / ".venv"
+    link.parent.mkdir()
+    link.symlink_to(env)
+    _installed(Path(paths["purelib"]), Path(paths["scripts"]), "pytest", {"pytest": f"#!{link}/bin/python"})
+    return python, Path(paths["scripts"]) / "pytest", link
+
+
+def _stand_in_uv(tmp_path: Path, fixes: bool) -> tuple[Path, Path]:
+    """A uv that records each run's arguments, a line per run; with fixes, a reinstall rewrites the command's first
+    line as uv's does."""
+    record = tmp_path / "uv-runs"
+    uv = tmp_path / "uv"
+    fix = 'sed -i.orig "1s|.*|#!$UV_PROJECT_ENVIRONMENT/bin/python|" "$UV_PROJECT_ENVIRONMENT/bin/pytest"'
+    reinstall = f'case "$*" in *--reinstall-package*) {fix};; esac\n' if fixes else ""
+    uv.write_text(f'#!/bin/sh\necho "$*" >> {record}\n{reinstall}')
+    uv.chmod(0o755)
+    return uv, record
+
+
+def test_install_reinstalls_a_package_whose_commands_start_another_python(tmp_path: Path) -> None:
+    python, command, link = _environment_naming_its_link(tmp_path)
+    uv, record = _stand_in_uv(tmp_path, fixes=True)
+    galaxy = tmp_path / "galaxy-bin"
+    _stand_in_galaxy(galaxy)
+    result = _make("install", f"PYTHON={python}", f"UV={uv}", f"BIN={galaxy}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"1 command in [{command.parent}] starts a Python outside it" in result.stderr
+    assert f"  {link}/bin/python: pytest" in result.stderr
+    first_run = record.read_text().splitlines()
+    assert len(first_run) == 1, first_run
+    assert first_run[0].endswith(f"--python {python} --reinstall-package pytest"), first_run
+    assert command.read_text().startswith(f"#!{python.parent}/python\n")
+    # Fixed, so the next make install reinstalls nothing.
+    again = _make("install", f"PYTHON={python}", f"UV={uv}", f"BIN={galaxy}")
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert "--reinstall-package" not in record.read_text().splitlines()[-1]
+    assert "Python outside" not in again.stderr
+
+
+def test_install_fails_when_the_reinstall_left_a_command_starting_another_python(tmp_path: Path) -> None:
+    # Said, rather than reinstalled again on every make install.
+    python, command, _ = _environment_naming_its_link(tmp_path)
+    uv, _ = _stand_in_uv(tmp_path, fixes=False)
+    galaxy = tmp_path / "galaxy-bin"
+    galaxy_args = _stand_in_galaxy(galaxy)
+    result = _make("install", f"PYTHON={python}", f"UV={uv}", f"BIN={galaxy}")
+    assert result.returncode != 0
+    error = f"error: after the reinstall, 1 command in [{command.parent}] still starts a Python outside it"
+    assert error in result.stderr
+    assert not galaxy_args.exists()
 
 
 def test_targets_run_the_tools_of_python_s_environment() -> None:

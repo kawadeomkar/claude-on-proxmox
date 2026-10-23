@@ -9,3 +9,5 @@
           - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMoleculeTestKeyDoNotUse0000000000000000000 molecule@test
         common_extra_packages: [sl]
         common_timezone: Europe/Amsterdam
+        # The agent under its unit's full name; side_effect.yml runs it under the default's.
+        common_enabled_services: [qemu-guest-agent.service, claude-on-proxmox-stand-in]

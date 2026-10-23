@@ -7,15 +7,16 @@
 # narrows one to a single part of it (make deploy TYPE=configure, make test
 # TYPE=integration). `make help` lists them, with the TYPEs each one takes.
 
-# The Python of that environment: a virtualenv of your own, wherever it lives -
-# a pyenv virtualenv that this directory's .python-version names (pyenv local),
-# one you activated, or PYTHON=/path/to/env/bin/python. The project keeps no
-# environment of its own.
+# The Python of that environment: a virtualenv of your own, wherever it lives
+# and whatever made it - python3 as this directory's shell finds it (one you
+# activated, or one a version manager picks here), or
+# PYTHON=/path/to/env/bin/python. The project keeps no environment of its
+# own, and calls no tool to make or choose one.
 PYTHON     ?= python3
 # Where the environment's tools are, and its prefix, asked of PYTHON the first
 # time a recipe needs them and never again in the run, so make help and the
 # refusals made while the Makefile is read start no Python. Empty when PYTHON
-# is no virtualenv's - pyenv's own, the system's, whose scripts directory is
+# is no virtualenv's - an installed Python itself, whose scripts directory is
 # /usr/local/bin and the like - which env-check, run before every tool, then
 # refuses: the tools come from this project's environment or not at all, never
 # from a system-wide install. BIN=<dir> on the command line points every target
@@ -359,18 +360,26 @@ init: install ## Set up this checkout: make install, the local config files, the
 # after checking the lock still matches pyproject.toml. --inexact: the
 # environment is the user's, and a package the lock does not list - theirs, or
 # another project's in an environment that serves both - stays where it is.
-# A Python that is no virtualenv at all (pyenv's own, the system's) is refused
+# A Python that is no virtualenv at all (an installed Python itself) is refused
 # by env-check before uv runs. --python names that environment's interpreter,
-# so uv never swaps it for another. ansible-galaxy installs the collections
-# requirements.yml pins. Both change nothing when they are current, so this is
-# also the command to run after a pull, and what CI runs.
+# so uv never swaps it for another. Before the sync, tools/stale_scripts.py
+# names each locked package with a command that starts a Python outside the
+# environment's bin - uv writes the path the environment was synced by into
+# every command, so a sync through a link into it (the .venv make venv once
+# made) left them naming the link, and a sync that installs nothing rewrites
+# none - and the sync reinstalls those, then checks that none is left: one it
+# could not fix would be reinstalled on every run. ansible-galaxy installs the
+# collections requirements.yml pins. Both change nothing when they are
+# current, so this is also the command to run after a pull, and what CI runs.
 #: TYPE=lock  Update uv.lock after editing a pin in pyproject.toml, installing nothing (uv from PATH)
 .PHONY: install
 install: $(if $(filter lock,$(KIND_install)),,env-check) ## Install the locked Python packages and the Galaxy collections into your environment
 ifeq ($(KIND_install),lock)
 	$(UV_RUN) lock
 else
-	UV_PROJECT_ENVIRONMENT="$(ENV_PREFIX)" $(UV_RUN) sync --locked --inexact --python "$(ENV_PYTHON)"
+	reinstall=$$("$(ENV_PYTHON)" -I tools/stale_scripts.py) || exit 1; \
+	UV_PROJECT_ENVIRONMENT="$(ENV_PREFIX)" $(UV_RUN) sync --locked --inexact --python "$(ENV_PYTHON)" $$reinstall \
+	  && { test -z "$$reinstall" || "$(ENV_PYTHON)" -I tools/stale_scripts.py --check; }
 	$(BIN)/ansible-galaxy collection install -r requirements.yml
 endif
 
@@ -592,7 +601,7 @@ vault-check:
 
 # Refuse to run a tool from anything but a virtualenv's bin: BIN is empty when
 # PYTHON is no virtualenv's, which would otherwise have made it the scripts
-# directory of pyenv's own Python or the system's - /usr/local/bin, where a
+# directory of an installed Python itself - /usr/local/bin, where a
 # system-wide Ansible lives. Every target that runs a tool runs this first, or
 # collections-check, which does. Read through the environment, like VM_NAME.
 .PHONY: env-check
@@ -600,9 +609,9 @@ env-check: export PYTHON_CHECK := $(value PYTHON)
 env-check:
 	@test -n "$(BIN)" || { \
 	  echo "error: [$$PYTHON_CHECK] is not the Python of a virtualenv, and this project runs its tools only from"; \
-	  echo "one of its own, never from a system-wide install. Make one, name it here, then run make install:"; \
-	  echo "  pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox"; \
-	  echo "or: python3 -m venv ~/.virtualenvs/claude-on-proxmox, then PYTHON=~/.virtualenvs/claude-on-proxmox/bin/python"; \
+	  echo "one of its own, never from a system-wide install. Make one of Python 3.12 or later with any tool, e.g."; \
+	  echo "  python3 -m venv ~/.virtualenvs/claude-on-proxmox"; \
+	  echo "then activate it, or add PYTHON=~/.virtualenvs/claude-on-proxmox/bin/python, and run make install."; \
 	  exit 1; }
 
 # Refuse to run Ansible with Galaxy collections other than the ones

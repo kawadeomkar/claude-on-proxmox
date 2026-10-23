@@ -9,9 +9,10 @@ get wrong.
 ## Always run tooling through the project's Python environment
 
 Every tool is pinned in `pyproject.toml`, locked with all it pulls in in `uv.lock`, and `make install`
-puts it into the user's own virtualenv for the project - the one `python3` resolves to here (pyenv's,
-from `.python-version`; on this machine the pyenv virtualenv `claude-on-proxmox`) or `PYTHON=` names. The
-project keeps no environment of its own and never assumes a `.venv`. Use `make`, which runs each tool
+puts it into the user's own virtualenv for the project - the one `python3` resolves to here or `PYTHON=`
+names, made with whatever tool they like. The project keeps no environment of its own, never assumes a
+`.venv`, and never assumes pyenv: the README suggests it, but no code, message or test may call it or
+depend on it. Use `make`, which runs each tool
 from that environment's `bin` (`$(BIN)`, asked of `$(PYTHON)` once per run, and empty for a Python that is
 no virtualenv's, which `env-check` - run before every tool - refuses), or `tools/env-run <tool>`, which
 finds it the same way; the git hooks and the Vagrantfile use that. Never a system-wide `ansible`,
@@ -261,7 +262,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` tasks
   run `claude` in a terminal and a login shell split to its left (one presentation group); with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
   0700 directory), and a second `folderOpen` task, "Session notes", run beside the Claude task, which
-  rewrites only the notes' section between the live markers each time the window opens and opens them.
+  rewrites only the notes' section between the live markers each time the window opens and opens them,
+  its time in this machine's zone (`code_timezone`, an argument like everything variable; UTC without one).
   Never make it the Claude task's `dependsOn`: VS Code misses a workspace-file task when it looks a
   dependency up and asks every task provider instead (npm, gulp running `gulp`, grunt, jake), which held
   Claude back 7.5 s live; `test_code_session.py` fails on any `dependsOn`. Its bash runs the Python part
@@ -425,8 +427,11 @@ command, and "make deploy signs it in next" names one with nothing to do. A new 
 `tests/unit/test_attention_callback.py` fails without it. Tests never load the callback (an
 `ansible.cfg` holding only `inject_facts_as_vars = false`, and the JSON callback); the harness shows custom stats, and `_left_to_do` reads the records.
 
-**Discovery is a playbook, not the `community.proxmox` inventory plugin.** The header of
-`discover.yml` records the trade-offs; the swap is a live design question, not an oversight.
+**Discovery is a playbook, not the `community.proxmox` inventory plugin.** Decided, not open: the plugin
+turns an unreachable API or a refused token into a warning and an exit 0, merges two VMs of one name, calls
+Proxmox on every `ansible*` command (`--syntax-check` and ansible-lint included), and would replace only
+`discover.yml`, since five playbooks read the cluster through `tasks/` anyway. See
+docs/architecture/decisions.md §15.1.
 
 **Fleet listings read `/cluster/resources`, never an unfiltered `proxmox_vm_info`.** Unfiltered, the
 module asks every node that owns a VM for its VM list and fails on any error, so one node that is
@@ -452,6 +457,12 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   Every Ansible target now runs `collections-check` first (`ansible-galaxy collection install --offline`
   against `requirements.yml`), and refuses, naming `make install`, while a collection differs
   from its pin.
+- **uv writes the environment's path, as it was given, into every command it installs.** `make venv`
+  synced through the checkout's `.venv` link to the environment, so 31 commands started their Python by
+  that link and would have broken with it, and a sync that finds every package current rewrites none.
+  `make install` runs `tools/stale_scripts.py` first and reinstalls each locked package with a command
+  whose first line names a Python outside the environment's `bin`, compared as spelled, never resolved
+  (the link resolves to the right Python), then `--check`s that none is left.
 - **`-e key=value` splits extra-vars on whitespace.** `VM_NAME="alpha beta"` silently provisioned
   half the fleet. The Makefile passes JSON (`-e '{"vm_name": "..."}'`) to keep the value whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them
