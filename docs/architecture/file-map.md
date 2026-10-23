@@ -13,6 +13,7 @@ zensical.toml                     the wiki as a site: navigation, theme, GitHub-
 Makefile                          every entry point: few targets, each narrowed to one part by TYPE (make help)
 tools/docs.py                     make docs: the generated reference sections; templates/role.md.j2 for docsible
 tools/env-run                     run a tool from the project's virtualenv, found as the Makefile finds it (the git hooks)
+tools/stale_scripts.py            make install: the locked packages whose commands start another Python, to reinstall
 pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
 
 playbooks/

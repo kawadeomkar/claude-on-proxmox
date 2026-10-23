@@ -71,6 +71,11 @@ pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a P
 make init            # installs the tools, then asks for your Proxmox host, its API token and your GitHub username
 ```
 
+pyenv, with its pyenv-virtualenv plugin, is the suggestion: `pyenv local` makes that environment this
+directory's `python3` from then on. Any other virtualenv of Python 3.12 or later works -
+`python3 -m venv ~/.virtualenvs/claude-on-proxmox`, then activate it in each shell, or put
+`PYTHON=~/.virtualenvs/claude-on-proxmox/bin/python` on each `make` line.
+
 Enter at a question leaves it for the next `make init`. What you answer goes into three git-ignored files,
 the vault encrypted, with its password in `.vault_pass`: keep that file.
 

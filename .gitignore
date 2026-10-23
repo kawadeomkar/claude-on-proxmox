@@ -39,7 +39,7 @@ vault*.json
 
 # --- Python / tooling ---
 .venv/
-# The pyenv virtualenv `pyenv local` names for this checkout: each developer's own.
+# The Python a version manager picks for this checkout (pyenv local writes it): each developer's own.
 .python-version
 __pycache__/
 *.pyc
