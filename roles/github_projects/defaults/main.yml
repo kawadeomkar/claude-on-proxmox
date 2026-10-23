@@ -8,7 +8,7 @@ github_projects_username: ""
 # github_projects_auth signs gh in on the VM - where gh is signed out, or
 # signed in by this role - so the same token clones them and pushes. A login
 # made by hand stays, and the token then only lists. Without one, gh is signed
-# in once by the device flow (make github-login) and the listing uses the token
+# in once by the device flow (make login TYPE=github) and the listing uses the token
 # gh stored from then on. The permissions it needs are in docs/guides/github.md.
 github_projects_token: ""
 github_projects_api_url: https://api.github.com
@@ -41,9 +41,9 @@ github_projects_depth: ""
 # identity below alone.
 github_projects_auth: true
 # How gh is signed in. auto: with github_projects_token when there is one,
-# else by GitHub's device flow, which `make github-login` and `make deploy` run
+# else by GitHub's device flow, which `make login TYPE=github` and `make deploy` run
 # one VM at a time (a page opens on the controller, the code is copied there,
-# the user approves); `make configure` never prompts. web: the device flow
+# the user approves); `make deploy TYPE=configure` never prompts. web: the device flow
 # always; a token then only lists. token: the token only, put over any login
 # gh holds, and an empty one is a named failure rather than a fallback.
 github_projects_auth_method: auto
@@ -55,7 +55,7 @@ github_projects_login_scopes: [workflow]
 # the developer's machine.
 github_projects_login_desktop: true
 # Read by the login entry point (playbooks/github_login.yml sets them). Run
-# GitHub's device flow for a VM that is signed out: make github-login with
+# GitHub's device flow for a VM that is signed out: make login TYPE=github with
 # names, or make deploy for a VM whose Claude code was entered in this run.
 github_projects_login_interactive: false
 # Ask at a prompt first: make deploy, for every VM but one whose Claude prompt
@@ -66,9 +66,9 @@ github_projects_login_ask: false
 # next, in the same run, so a vault token not yet signed in is said to be
 # signed in by it rather than by a command to run.
 github_projects_login_role_follows: false
-# Read by make configure's message for a signed-out VM: true under make
+# Read by make deploy TYPE=configure's message for a signed-out VM: true under make
 # deploy, whose sign-ins come next in the same run, so it says so rather than
-# naming make github-login.
+# naming make login TYPE=github.
 github_projects_sign_in_follows: false
 # The git identity of github_projects_user. Set, it is written to ~/.gitconfig.
 # Empty, it is derived where ~/.gitconfig has none yet, so one set by hand on

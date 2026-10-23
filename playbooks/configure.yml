@@ -3,8 +3,8 @@
 # of every GitHub project and, last, Tailscale. Finds them by tag, so it works
 # on its own and not only straight after provisioning.
 #
-#   make configure                    -> every VM tagged claude-on-proxmox
-#   make configure VM_NAME=alpha,beta
+#   make deploy TYPE=configure                    -> every VM tagged claude-on-proxmox
+#   make deploy VM_NAME=alpha,beta TYPE=configure
 #
 # deploy.yml imports this with claude_vm_discovery: false, because provisioning
 # has already put the VMs it was asked for into claude_vms.
@@ -73,7 +73,7 @@
           ({{ configure_cloud_init_where }}), so the VM may be half set up. /var/log/cloud-init-output.log on it says why.
           Building it again is the sure way past a failure that will not repeat - a mirror, a corrupted download:
           make destroy VM_NAME={{ inventory_hostname }}, then make deploy VM_NAME={{ inventory_hostname }}. Or
-          repair it by hand, then make configure VM_NAME={{ inventory_hostname }}
+          repair it by hand, then make deploy VM_NAME={{ inventory_hostname }} TYPE=configure
           ANSIBLE_ARGS="-e configure_wait_for_cloud_init=false".
       when:
         - configure_wait_for_cloud_init | default(true) | bool
@@ -105,7 +105,7 @@
   # below, or under make deploy by deploy's own, after VS Code - while the VM
   # still gets its alias. From tasks:, which run after roles: and before
   # post_tasks:. import_role, not include_role: a static import takes the
-  # block's tag, so make configure TAGS=tailscale runs every task of the role,
+  # block's tag, so make deploy TAGS=tailscale runs every task of the role,
   # where an include's tag would reach only the include.
   tasks:
     - name: Install Tailscale and keep it joined
@@ -124,7 +124,7 @@
               {{ claude_vm_configure_failures | default([])
                  + [inventory_hostname ~ ': Tailscale failed at "' ~ (ansible_failed_task.name | default('a task'))
                     ~ '": ' ~ claude_vm_tailscale_why ~ ('' if claude_vm_tailscale_why is search('[.!?]$') else '.')
-                    ~ ' Retry it with: make configure VM_NAME=' ~ inventory_hostname ~ ' TAGS=tailscale'] }}
+                    ~ ' Retry it with: make deploy VM_NAME=' ~ inventory_hostname ~ ' TAGS=tailscale'] }}
 
         - name: Say why, and go on
           ansible.builtin.debug:
@@ -135,7 +135,7 @@
   # guessed on the controller (Ansible's own user_dir fact is the connecting
   # user's home, which under Molecule is root's). Last, so a host that failed
   # a role never records one and never gets an alias. Tagged "always" like
-  # discovery, so a `make configure TAGS=...` still refreshes the alias.
+  # discovery, so a `make deploy TAGS=...` still refreshes the alias.
   post_tasks:
     - name: Look up the VM user's home directory
       ansible.builtin.getent:
@@ -154,7 +154,7 @@
 # (docs/guides/vscode.md). A localhost play after the roles: the alias must
 # not exist before the VM is ready, and the play above has just recorded
 # where each VM's code lives. Only a VM that finished that play gets one.
-# Tagged "always" like discovery, so `make configure TAGS=...` still
+# Tagged "always" like discovery, so `make deploy TAGS=...` still
 # refreshes an address that moved; `claude_ssh_config: false` keeps this
 # project out of ~/.ssh entirely.
 - name: Keep an SSH alias for each configured VM

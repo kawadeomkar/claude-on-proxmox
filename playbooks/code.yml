@@ -5,8 +5,8 @@
 #   make code VM_NAME=alpha                              -> ~/projects
 #   make code VM_NAME=alpha PROJECT=discord-music-bot    -> ~/projects/discord-music-bot
 #
-# The quick way to an existing VM: the alias step of `make configure` and
-# `make ssh-config` for this one VM - its address is read from Proxmox again,
+# The quick way to an existing VM: the alias step of `make deploy TYPE=configure` and
+# `make deploy TYPE=ssh-config` for this one VM - its address is read from Proxmox again,
 # so a lease that moved since the last run is corrected before connecting -
 # followed by the one step those never do, launching the editor. The folder is
 # looked for on the VM first, read-only and over SSH as the VM user, so a
@@ -222,7 +222,7 @@
     # gh and the read loop end, and claude starts as after a sign-in that
     # failed. Then gh is made git's credential helper, so a push from this
     # terminal works at once; the private repositories still take the make
-    # configure that $5 names, and a sign-in that fails does not keep Claude
+    # deploy that $5 names, and a sign-in that fails does not keep Claude
     # from starting. pipefail, so that gh's exit status survives the read
     # loop. After a sign-in that succeeded here, Claude's or gh's, the notes'
     # helper runs once more in the background, refresh-only: it ran as the
@@ -272,7 +272,7 @@
           printf '%s\n' "$5"
           refresh=1
         else
-          printf '%s\n' "Not signed in to GitHub. From your machine: make github-login VM_NAME=$8"
+          printf '%s\n' "Not signed in to GitHub. From your machine: make login VM_NAME=$8 TYPE=github"
         fi
       fi
       trap - INT
@@ -368,7 +368,7 @@
           if not isinstance(status, dict):
               return "unknown (claude auth status gave no status)"
           if not status.get("loggedIn"):
-              return f"not signed in: make claude-login VM_NAME={vm} on your machine"
+              return f"not signed in: make login VM_NAME={vm} TYPE=claude on your machine"
           if status.get("apiKeySource") or status.get("authMethod") == "api_key":
               return f"an API key ({clean(status.get('apiKeySource') or 'ANTHROPIC_API_KEY')})"
           plan = status.get("subscriptionType")
@@ -402,9 +402,9 @@
           accounts = hosts.get("github.com") or []
           active = next((account for account in accounts if isinstance(account, dict) and account.get("active")), None)
           if active is None:
-              return f"not signed in: make github-login VM_NAME={vm} on your machine"
+              return f"not signed in: make login VM_NAME={vm} TYPE=github on your machine"
           if active.get("state") != "success":
-              return f"`{clean(active.get('login') or '?')}`, but its token is refused: make github-login VM_NAME={vm}"
+              return f"`{clean(active.get('login') or '?')}`, but its token is refused: make login VM_NAME={vm} TYPE=github"
           return f"`{clean(active.get('login') or '?')}` · git over {clean(active.get('gitProtocol') or '?')}"
 
 
@@ -418,7 +418,7 @@
               return "unknown (tailscale status gave no status)"
           backend = clean(status.get("BackendState") or "unknown")
           if backend != "Running":
-              return f"{backend}: make tailscale-login VM_NAME={vm} signs it in" if backend == "NeedsLogin" else backend
+              return f"{backend}: make login VM_NAME={vm} TYPE=tailscale signs it in" if backend == "NeedsLogin" else backend
           node = status.get("Self") or {}
           name = clean(str(node.get("DNSName") or "").rstrip("."))
           addresses = [clean(address) for address in node.get("TailscaleIPs") or [] if ":" not in str(address)]
@@ -492,7 +492,7 @@
       exit 0
     code_not_installed: >-
       Claude Code is not installed on {{ claude_vm_names[0] }} yet. On your machine, run
-      make configure VM_NAME={{ claude_vm_names[0] }}, then "Tasks: Run Task", Claude here.
+      make deploy VM_NAME={{ claude_vm_names[0] }} TYPE=configure, then "Tasks: Run Task", Claude here.
     # Remote Control needs that claude.ai login, which is why it was waiting.
     # On a VM with no login the claude_code role leaves a path unit that starts
     # it once the login lands; the role's next run, which the first line names,
@@ -504,11 +504,11 @@
     code_signed_in_watched: >-
       {{ ('Signed in. Remote Control starts by itself in a moment, putting this VM in the Claude apps too;'
           ~ ' to keep it on across reboots, run on your machine: '
-          ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
+          ~ 'make deploy VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
          if claude_code_remote_control | default(true) | bool else '' }}
     code_signed_in_unwatched: >-
       {{ ('Signed in. To reach this VM from the Claude apps too, start Remote Control from your machine: '
-          ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
+          ~ 'make deploy VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=claude_code')
          if claude_code_remote_control | default(true) | bool else '' }}
     # The role's own default, unless the inventory names the service otherwise.
     code_login_watch: "/etc/systemd/system/{{ code_remote_control_unit }}.path"
@@ -520,7 +520,7 @@
     # take one more configure run (docs/guides/github.md).
     code_github_signed_in: >-
       {{ ('Signed in to GitHub. To clone your private repositories here too, run on your machine: '
-          ~ 'make configure VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=github_projects')
+          ~ 'make deploy VM_NAME=' ~ claude_vm_names[0] ~ ' TAGS=github_projects')
          if github_projects_auth | default(true) | bool and github_projects_auth_method | default('auto') != 'token' else '' }}
 
     # Read on this machine, never written. task.allowAutomaticTasks is an
@@ -708,8 +708,8 @@
         # The connection Ansible makes to configure the VM: its own ssh settings
         # and accept-new, not the user's ssh config, which is VS Code's business.
         # In claude_vms, so connection variables set on that group in the
-        # inventory - a key, a port - apply here as they do to make configure.
-        - name: Reach the VM the way make configure does
+        # inventory - a key, a port - apply here as they do to make deploy TYPE=configure.
+        - name: Reach the VM the way make deploy TYPE=configure does
           ansible.builtin.add_host:
             name: "{{ claude_vm_names[0] }}"
             groups: claude_vms
@@ -864,10 +864,10 @@
                  if code_close else 'The projects there are: ' ~ code_names | join(', ') ~ '.' }}
               {%- elif code_project and code_root_there | bool -%}
               {{ code_root }} on {{ claude_vm_names[0] }} holds no projects yet.
-              `make configure VM_NAME={{ claude_vm_names[0] }}` clones your repositories into it.
+              `make deploy VM_NAME={{ claude_vm_names[0] }} TYPE=configure` clones your repositories into it.
               {%- else -%}
               {{ code_root }} does not exist on {{ claude_vm_names[0] }} yet: the VM has not been configured,
-              or vm_projects_dir points somewhere else. `make configure VM_NAME={{ claude_vm_names[0] }}` creates it and
+              or vm_projects_dir points somewhere else. `make deploy VM_NAME={{ claude_vm_names[0] }} TYPE=configure` creates it and
               clones your repositories into it.
               {%- endif -%}
             quiet: true

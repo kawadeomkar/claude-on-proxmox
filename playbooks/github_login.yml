@@ -1,11 +1,11 @@
 ---
 # Sign gh in to GitHub on the VMs, or say how each one is signed in.
 #
-#   make github-login VM_NAME=alpha        -> signs alpha in, then runs the role (signed in or not)
-#   make github-login VM_NAME=alpha,beta   -> the same, one VM after the other
-#   make github-login                      -> reports every VM's state
+#   make login VM_NAME=alpha TYPE=github        -> signs alpha in, then runs the role (signed in or not)
+#   make login VM_NAME=alpha,beta TYPE=github   -> the same, one VM after the other
+#   make login TYPE=github                      -> reports every VM's state
 #
-# With vault_github_token set, make configure signs gh in by itself. Without
+# With vault_github_token set, make deploy TYPE=configure signs gh in by itself. Without
 # one the login is GitHub's device flow, which no run can finish alone: a
 # one-time code has to be entered on a page and authorised. This runs it as
 # far as it goes - gh in the background on the VM, the code read from its
@@ -70,7 +70,7 @@
   vars:
     claude_vm_login_named: >-
       {{ (vm_name | default('', true) | split(',') | map('trim') | select | list | length) > 0 }}
-    # make github-login VM_NAME=x runs the whole role after this play for each
+    # make login VM_NAME=x TYPE=github runs the whole role after this play for each
     # VM named, signed in now or before, so the command that signs gh in is
     # also the one that clones; make deploy's configure has just run it.
     claude_vm_login_role_follows: >-
@@ -80,8 +80,8 @@
   tasks:
     - name: Sign this VM in
       block:
-        # The decision is the github_projects role's, so this and `make
-        # configure` cannot disagree about whether a VM is signed in, or how.
+        # The decision is the github_projects role's, so this and `make deploy
+        # TYPE=configure` cannot disagree about whether a VM is signed in, or how.
         # tests/unit/test_github_auth.py runs this playbook against canned logins.
         - name: Report the login state, and sign the VM in when asked to
           ansible.builtin.include_role:
@@ -112,7 +112,7 @@
             msg: "{{ claude_vm_github_login_failure }}"
 
 # The rest of the role, after the last approval, for every VM signed in just
-# now, and under make github-login VM_NAME=x for every VM named: the credential
+# now, and under make login VM_NAME=x TYPE=github for every VM named: the credential
 # helper, the listing with the token gh holds, the private repositories - and,
 # with vault_github_token set, the token sign-in itself. A failure here is not
 # a failed sign-in, and is raised even under make deploy, at its end.
@@ -155,15 +155,16 @@
                     ~ (ansible_failed_task.name | default('a task')) ~ '"'
                     ~ (' (' ~ claude_vm_failed_items | join(', ') ~ ')' if claude_vm_failed_items | length > 0 else '')
                     ~ ': ' ~ claude_vm_failed_why ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.')
-                    ~ ' Retry it with: make configure VM_NAME=' ~ inventory_hostname ~ ' TAGS=github_projects'] }}
+                    ~ ' Retry it with: make deploy VM_NAME=' ~ inventory_hostname ~ ' TAGS=github_projects'] }}
 
         - name: Say why
           ansible.builtin.debug:
             msg: "{{ claude_vm_configure_failures | last }}"
 
 # make deploy carries on past a sign-in that failed, and raises the work after
-# a sign-in at its own end; make github-login exists to sign in, so here the
-# run fails, VM by VM.
+# a sign-in at its own end; make login TYPE=github exists to sign in, so here the
+# run fails, VM by VM - unless make login runs the three sign-ins
+# (claude_vm_login_raised_later), whose own last play raises it.
 - name: Fail each VM whose sign-in, or the work after it, failed
   hosts: claude_vms
   gather_facts: false
@@ -175,6 +176,7 @@
       when:
         - claude_vm_github_login_failure is defined
         - not (claude_vm_login_in_deploy | default(false) | bool)
+        - not (claude_vm_login_raised_later | default(false) | bool)
 
     - name: Fail where the work after the sign-in failed
       ansible.builtin.fail:
@@ -182,3 +184,4 @@
       when:
         - claude_vm_configure_failures | default([]) | length > 0
         - not (claude_vm_login_in_deploy | default(false) | bool)
+        - not (claude_vm_login_raised_later | default(false) | bool)

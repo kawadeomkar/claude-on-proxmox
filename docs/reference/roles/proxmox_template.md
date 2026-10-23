@@ -1,6 +1,6 @@
 # `proxmox_template`
 
-Builds the cloud-init Ubuntu template every VM is cloned from: downloads the cloud image, checks it against Ubuntu's `SHA256SUMS`, bakes the QEMU guest agent in, and imports it with `qm`. It runs on the Proxmox host over SSH as root, once - `make template`, or `make deploy` when the template is missing.
+Builds the cloud-init Ubuntu template every VM is cloned from: downloads the cloud image, checks it against Ubuntu's `SHA256SUMS`, bakes the QEMU guest agent in, and imports it with `qm`. It runs on the Proxmox host over SSH as root, once - `make deploy TYPE=template`, or `make deploy` when the template is missing.
 
 What the host needs for it: [Requirements](../../getting-started/requirements.md). How it works: [§5.1](../../architecture/roles.md#51-proxmox_template--build-the-golden-image).
 

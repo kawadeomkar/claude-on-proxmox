@@ -1,9 +1,9 @@
 ---
 # Sign Claude Code in on the VMs, or say how each one is signed in.
 #
-#   make claude-login VM_NAME=alpha         -> signs alpha in, then starts Remote Control
-#   make claude-login VM_NAME=alpha,beta    -> the same, one VM after the other
-#   make claude-login                       -> reports every VM's state
+#   make login VM_NAME=alpha TYPE=claude         -> signs alpha in, then starts Remote Control
+#   make login VM_NAME=alpha,beta TYPE=claude    -> the same, one VM after the other
+#   make login TYPE=claude                       -> reports every VM's state
 #
 # Remote Control needs a claude.ai subscription login on the VM itself, and
 # Anthropic supports no non-interactive way to create one: API keys are not
@@ -61,7 +61,7 @@
   tasks:
     - name: Sign this VM in
       block:
-        # The decision is the claude_code role's, so this and `make configure`
+        # The decision is the claude_code role's, so this and `make deploy TYPE=configure`
         # cannot disagree about whether a VM is signed in the way Remote
         # Control needs. tests/unit/test_remote_control_playbooks.py and
         # tests/unit/test_claude_login.py run this playbook against stand-ins.
@@ -100,7 +100,7 @@
   gather_facts: false
 
   tasks:
-    - name: Start Remote Control as make configure would
+    - name: Start Remote Control as make deploy TYPE=configure would
       when:
         - claude_vm_claude_login_failure is not defined
         - claude_code_login_done | default(false) | bool
@@ -119,7 +119,7 @@
                  + [inventory_hostname ~ ' is signed in to Claude, but starting Remote Control failed at "'
                     ~ (ansible_failed_task.name | default('a task')) ~ '": ' ~ claude_vm_failed_why
                     ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.')
-                    ~ ' Retry it with: make configure VM_NAME=' ~ inventory_hostname ~ ' TAGS=claude_code'] }}
+                    ~ ' Retry it with: make deploy VM_NAME=' ~ inventory_hostname ~ ' TAGS=claude_code'] }}
 
         - name: Say why
           ansible.builtin.debug:
@@ -127,8 +127,10 @@
 
 # make deploy carries on past a sign-in that failed - its VMs exist and are
 # configured, and the message above says what is left - and raises the work
-# after a sign-in at its own end; make claude-login exists to sign in, so here
-# the run fails, VM by VM.
+# after a sign-in at its own end; make login TYPE=claude exists to sign in, so here
+# the run fails, VM by VM - unless make login runs the three sign-ins
+# (claude_vm_login_raised_later), whose own last play raises it once all three
+# have had their turn.
 - name: Fail each VM whose sign-in, or the work after it, failed
   hosts: claude_vms
   gather_facts: false
@@ -140,6 +142,7 @@
       when:
         - claude_vm_claude_login_failure is defined
         - not (claude_vm_login_in_deploy | default(false) | bool)
+        - not (claude_vm_login_raised_later | default(false) | bool)
 
     - name: Fail where the work after the sign-in failed
       ansible.builtin.fail:
@@ -147,3 +150,4 @@
       when:
         - claude_vm_configure_failures | default([]) | length > 0
         - not (claude_vm_login_in_deploy | default(false) | bool)
+        - not (claude_vm_login_raised_later | default(false) | bool)

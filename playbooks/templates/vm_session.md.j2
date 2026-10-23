@@ -29,7 +29,7 @@ Opening the window fills this in; "Tasks: Run Task", **Session notes** refreshes
 {% endif %}
 | User | `{{ vm_user }}` · projects in `{{ code_root }}` |
 | LAN address | `{{ vm.address }}` (DHCP, as the guest agent reported it) |
-| SSH alias | `{{ name }}` (`make ssh-config` on your machine refreshes it) |
+| SSH alias | `{{ name }}` (`make deploy TYPE=ssh-config` on your machine refreshes it) |
 
 ## Reach this VM
 
@@ -58,14 +58,14 @@ Opening the window fills this in; "Tasks: Run Task", **Session notes** refreshes
 | Command | Does |
 |---|---|
 | `make code VM_NAME={{ name }}` | open this window again |
-| `make claude-login VM_NAME={{ name }}` | sign Claude Code in |
+| `make login VM_NAME={{ name }} TYPE=claude` | sign Claude Code in |
 {% if github_auth | default(true) | bool %}
-| `make github-login VM_NAME={{ name }}` | sign `gh` in, then clone the private repositories |
+| `make login VM_NAME={{ name }} TYPE=github` | sign `gh` in, then clone the private repositories |
 {% endif %}
 {% if tailscale_enabled | default(true) | bool %}
-| `make tailscale-login VM_NAME={{ name }}` | sign it in to Tailscale |
+| `make login VM_NAME={{ name }} TYPE=tailscale` | sign it in to Tailscale |
 {% endif %}
-| `make configure VM_NAME={{ name }}` | run the configuration again; `TAGS=<role>` for one part of it |
+| `make deploy VM_NAME={{ name }} TYPE=configure` | run the configuration again; `TAGS=<role>` for one part of it |
 | `make list` · `make logs` | the fleet · the run logs |
 | `make destroy VM_NAME={{ name }}` | sign it out of everything, then delete it |
 
@@ -76,9 +76,9 @@ Opening the window fills this in; "Tasks: Run Task", **Session notes** refreshes
 - **VS Code asked whether to open this file?** In a one-project window it lies outside the window's folder. Open is remembered for that window; trusting the window of `make code VM_NAME={{ name }}` once avoids the question in every project's.
 - **"REMOTE HOST IDENTIFICATION HAS CHANGED"** after a rebuild: `ssh-keygen -R {{ vm.address }}` on your machine.
 {% if claude_code_remote_control | default(true) | bool %}
-- **Not in the Claude apps?** `systemctl status {{ code_remote_control_unit }}` here, then `make configure VM_NAME={{ name }} TAGS=claude_code` on your machine.
+- **Not in the Claude apps?** `systemctl status {{ code_remote_control_unit }}` here, then `make deploy VM_NAME={{ name }} TAGS=claude_code` on your machine.
 {% endif %}
-- **Private repositories missing?** `make configure VM_NAME={{ name }} TAGS=github_projects` on your machine.
+- **Private repositories missing?** `make deploy VM_NAME={{ name }} TAGS=github_projects` on your machine.
 
 ## About this file
 

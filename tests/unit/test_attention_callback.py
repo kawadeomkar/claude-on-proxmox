@@ -223,16 +223,16 @@ def test_next_steps_after_the_recap_by_vm_then_matter_each_line_once(tmp_path):
   tasks:
     - ansible.builtin.set_stats:
         data:
-          github_projects_next: "{{ {'beta': {'github': 'beta: run make github-login VM_NAME=beta'}} }}"
+          github_projects_next: "{{ {'beta': {'github': 'beta: run make login VM_NAME=beta TYPE=github'}} }}"
     - ansible.builtin.set_stats:
         data:
-          claude_code_next: "{{ {'beta': {'claude': 'beta: run make claude-login VM_NAME=beta'}} }}"
+          claude_code_next: "{{ {'beta': {'claude': 'beta: run make login VM_NAME=beta TYPE=claude'}} }}"
     - ansible.builtin.set_stats:
         data:
           tailscale_next: "{{ {'alpha': {'tailscale': 'alpha: Tailscale is down: sudo tailscale up.'}} }}"
     - ansible.builtin.set_stats:
         data:
-          claude_code_next: "{{ {'alpha': {'claude': 'alpha: not signed in. Run make claude-login VM_NAME=alpha'}} }}"
+          claude_code_next: "{{ {'alpha': {'claude': 'alpha: not signed in. Run make login VM_NAME=alpha'}} }}"
     - name: Signed in later in the run
       ansible.builtin.set_stats:
         data:
@@ -240,7 +240,7 @@ def test_next_steps_after_the_recap_by_vm_then_matter_each_line_once(tmp_path):
     - name: The same line for two matters
       ansible.builtin.set_stats:
         data:
-          code_next: "{{ {'beta': {'vscode': 'beta: run make github-login VM_NAME=beta'}} }}"
+          code_next: "{{ {'beta': {'vscode': 'beta: run make login VM_NAME=beta TYPE=github'}} }}"
     - name: Under a name nobody reads
       ansible.builtin.set_stats:
         data:
@@ -252,10 +252,10 @@ def test_next_steps_after_the_recap_by_vm_then_matter_each_line_once(tmp_path):
     assert (
         f"{RULE}\n##  NEXT STEPS\n{RULE}\n"
         "alpha: Tailscale is down: sudo tailscale up.\n"
-        "beta: run make claude-login VM_NAME=beta\n"
-        "beta: run make github-login VM_NAME=beta\n"
+        "beta: run make login VM_NAME=beta TYPE=claude\n"
+        "beta: run make login VM_NAME=beta TYPE=github\n"
     ) in tail, tail
-    assert "not this" not in out and "make claude-login VM_NAME=alpha\n" not in tail
+    assert "not this" not in out and "make login VM_NAME=alpha TYPE=claude\n" not in tail
     assert "##  NEXT STEPS" in log
 
 
@@ -322,7 +322,14 @@ def _task_lists(node):
 
 
 def _files():
-    return sorted([*REPO.glob("roles/*/tasks/*.yml"), *REPO.glob("playbooks/*.yml"), REPO / "deploy.yml"])
+    return sorted(
+        [
+            *REPO.glob("roles/*/tasks/*.yml"),
+            *REPO.glob("playbooks/*.yml"),
+            *REPO.glob("playbooks/tasks/*.yml"),
+            REPO / "deploy.yml",
+        ]
+    )
 
 
 def _tasks(path: Path):
@@ -348,7 +355,7 @@ def test_every_prompt_is_drawn_by_banner():
             if isinstance(play, dict):
                 prompts += [entry["prompt"] for entry in play.get("vars_prompt") or []]
         prompts += [task["ansible.builtin.pause"]["prompt"] for task in _tasks(path) if "ansible.builtin.pause" in task]
-    assert len(prompts) == 5
+    assert len(prompts) == 7
     assert all("| banner(" in prompt for prompt in prompts), prompts
 
 

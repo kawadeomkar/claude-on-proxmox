@@ -1,5 +1,5 @@
 ---
-# Entry point for playbooks/tailscale_login.yml (make tailscale-login, and make
+# Entry point for playbooks/tailscale_login.yml (make login TYPE=tailscale, and make
 # deploy's step): say how the VM is on Tailscale, and sign it in by Tailscale's
 # web login when asked to. In the role, so that it decides from the same
 # vars/main.yml definitions configuration does, and the two cannot disagree.

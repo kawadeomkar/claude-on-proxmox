@@ -179,9 +179,9 @@
 # Discovery runs as its own playbook here, in a Molecule stage of its own, so
 # the in-memory hosts provisioning added are gone: this proves the VMs can be
 # found again from their Proxmox tag alone, which is what a later
-# `make configure` depends on.
+# `make deploy TYPE=configure` depends on.
 #
-# No vm_name, so this is `make configure` with no VM_NAME: the whole fleet,
+# No vm_name, so this is `make deploy TYPE=configure` with no VM_NAME: the whole fleet,
 # with the ownership filter as the only thing between discovery and every
 # running VM on the host.
 - name: Discover the whole fleet
@@ -535,7 +535,7 @@
           beta {{ verify_beta_status.json.data.status }}): {{ verify_stopped_run.stdout_lines[-20:] }}
         quiet: true
 
-    # `make provision VM_NAME=solo`, the simplest command: one name, so
+    # `make deploy VM_NAME=solo TYPE=provision`, the simplest command: one name, so
     # play 1 lists nothing, asks for no VMID and hands the role no
     # proxmox_vm_id - every lazy var there defaults from a skipped register,
     # and the role lets Proxmox pick the VMID. Every other provision run here
@@ -576,13 +576,13 @@
           - verify_solo_run.rc == 0
           - verify_solo_run.stdout is search('solo is up at 192\.0\.2\.63')
         fail_msg: >-
-          make provision VM_NAME=solo went wrong (rc {{ verify_solo_run.rc }}):
+          make deploy VM_NAME=solo TYPE=provision went wrong (rc {{ verify_solo_run.rc }}):
           {{ (verify_solo_run.stdout ~ '\n' ~ verify_solo_run.stderr).splitlines()[-20:] }}
         quiet: true
 
-    # `make check` runs discovery in check mode, where a task that does not
+    # `make deploy TYPE=check` runs discovery in check mode, where a task that does not
     # support it is skipped - and uri, which lists the cluster, is one.
-    - name: Run discovery in check mode, as make check does
+    - name: Run discovery in check mode, as make deploy TYPE=check does
       ansible.builtin.command:
         argv: "{{ verify_playbook_cmd + ['--check', '--extra-vars', '{\"vm_name\": \"alpha\"}', playbook_dir ~ '/../../playbooks/discover.yml'] }}"
       environment: "{{ verify_playbook_env }}"
@@ -1086,7 +1086,7 @@
           nextid requests, and these clones: {{ provision_verify_solo_clones | map(attribute='params') | list }}
         quiet: true
 
-# The aliases on this machine follow the fleet: `make ssh-config` against
+# The aliases on this machine follow the fleet: `make deploy TYPE=ssh-config` against
 # this cluster with the node that is down first off and then on, one VM at a
 # time, and `make code` against a stand-in VS Code that only records what it
 # was asked. Last, because the node switch changes what the listing shows,
@@ -1432,12 +1432,12 @@
                                  verify_task.args[5], '/etc/systemd/system/claude-remote-control.path', verify_task.args[7],
                                  'https', 'workflow', 'alpha', verify_notes_script, verify_notes, 'claude-remote-control',
                                  'Asia/Kolkata']
-          - verify_task.args[3] is search('make configure VM_NAME=alpha,')
+          - verify_task.args[3] is search('make deploy VM_NAME=alpha TYPE=configure,')
           # What a sign-in there says: Remote Control started by the path unit that watches for the login, or not.
-          - verify_task.args[4] is search('starts by itself.* make configure VM_NAME=alpha TAGS=claude_code$')
-          - verify_task.args[5] is search('start Remote Control from your machine. make configure VM_NAME=alpha TAGS=claude_code$')
+          - verify_task.args[4] is search('starts by itself.* make deploy VM_NAME=alpha TAGS=claude_code$')
+          - verify_task.args[5] is search('start Remote Control from your machine. make deploy VM_NAME=alpha TAGS=claude_code$')
           # The GitHub sign-in message, empty when github_auth is off.
-          - verify_task.args[7] is search('make configure VM_NAME=alpha TAGS=github_projects$')
+          - verify_task.args[7] is search('make deploy VM_NAME=alpha TAGS=github_projects$')
           - verify_task.options.cwd == verify_ws ~ '/discord-music-bot'
           - "verify_task.runOptions == {'runOn': 'folderOpen'}"
           - "verify_task.presentation == {'reveal': 'always', 'focus': true, 'panel': 'dedicated', 'group': 'claude', 'clear': true, 'showReuseMessage': true}"
@@ -1470,7 +1470,7 @@
           - verify_notes_text is match('# alpha\n')
           - verify_notes_text is search('<!-- claude-on-proxmox:live -->\n## Signed in\n\nOpening the window fills this in;')
           - verify_notes_text is search('\| LAN address \| `192.0.2.51`')
-          - verify_notes_text is search('`make claude-login VM_NAME=alpha`')
+          - verify_notes_text is search('`make login VM_NAME=alpha TYPE=claude`')
         fail_msg: "make code wrote {{ verify_notes_before.results | map(attribute='stat.mode') | list }}: {{ verify_notes_text }}"
         quiet: true
 

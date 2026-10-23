@@ -51,7 +51,7 @@
         msg: |-
           {% if claude_list_rows | length == 0 %}
           No VMs tagged "{{ claude_vm_tag }}"{{ ' match VM_NAME' if vm_name is defined else ' exist on this host' }}.
-          Create one with: make provision VM_NAME=alpha
+          Create one with: make deploy VM_NAME=alpha
           {% else %}
           {{ '%-24s %7s  %-9s %s' | format('NAME', 'VMID', 'STATUS', 'ADDRESS') }}
           {% for row in claude_list_rows %}
@@ -60,7 +60,7 @@
           {% endfor %}
 
           {{ claude_list_rows | length }} VM{{ '' if claude_list_rows | length == 1 else 's' }} tagged "{{ claude_vm_tag }}".
-          VS Code: make code VM_NAME=<name> [PROJECT=<repo>] (make ssh-config refreshes the aliases).
+          VS Code: make code VM_NAME=<name> [PROJECT=<repo>] (make deploy TYPE=ssh-config refreshes the aliases).
           {% if claude_list_unaddressed | length > 0 %}
           No address for {{ claude_list_unaddressed | map(attribute='name', default='(no name)') | join(', ') }}: the guest agent has not reported one.
           Those VMs may be stopped, still booting, built without the agent, or on a node that is down.

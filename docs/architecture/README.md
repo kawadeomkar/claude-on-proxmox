@@ -60,7 +60,7 @@ Four actors:
 ```mermaid
 flowchart TB
     subgraph C["Controller (your machine)"]
-        A["ansible-playbook<br/>.venv/bin"]
+        A["ansible-playbook<br/>your virtualenv"]
         INV["inventory/<br/>hosts.yml + group_vars"]
         SSHC["~/.ssh/claude-on-proxmox.conf<br/>Host alpha → address"]
         VSC["VS Code<br/>Remote - SSH"]

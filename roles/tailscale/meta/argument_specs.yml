@@ -137,7 +137,7 @@ argument_specs:
         type: str
         default: auto
         choices: [auto, key, web]
-        description: Under key, a VM is joined by make configure with the key, never by the web login.
+        description: Under key, a VM is joined by make deploy TYPE=configure with the key, never by the web login.
       tailscale_login_timeout:
         type: int
         default: 300

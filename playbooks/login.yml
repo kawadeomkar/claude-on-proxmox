@@ -1,0 +1,74 @@
+---
+# Sign the VMs in to Claude, GitHub and Tailscale, in that order, or say how
+# each VM is signed in to each.
+#
+#   make login VM_NAME=alpha            -> signs alpha in to all three, one page at a time
+#   make login VM_NAME=alpha,beta       -> the same, one VM after the other
+#   make login                          -> reports every VM's three states
+#   make login VM_NAME=alpha TYPE=github  -> only that one: playbooks/github_login.yml
+#
+# The three sign-in playbooks, imported as they are, after one discovery, so
+# this is their sum and cannot drift from them, with the decisions make deploy
+# makes between them: GitHub's device flow waits up to fifteen minutes for a
+# browser, and Tailscale's web login up to tailscale_login_timeout, so neither
+# is started for a VM whose Claude sign-in nobody answered (Enter, or a browser
+# that never came back) - and with github_login_auto_start or
+# tailscale_login_auto_start off, each VM is asked first, as deploy asks. A
+# report, with no names, starts nothing. And as under deploy, a VM goes on to
+# the next sign-in after one that failed, or after the work it leads to
+# failing - Remote Control's start - rather than being failed there and left
+# signed out of the rest: each sign-in leaves what failed for the last play
+# (claude_vm_login_raised_later), which fails the run, VM by VM, with all of it.
+- name: Discover VMs on Proxmox
+  ansible.builtin.import_playbook: discover.yml
+  when: claude_vm_discovery | default(true) | bool
+
+- name: Sign Claude Code in on each VM, and start Remote Control
+  ansible.builtin.import_playbook: claude_login.yml
+  vars:
+    claude_vm_discovery: false
+    claude_vm_login_raised_later: true
+
+# deploy.yml's own decisions for these two steps, behind claude_vm_login_named,
+# the play var each of their sign-in plays keeps: names given. Without them,
+# these stay false and the step reports. test_sign_in_plays.py holds each to
+# deploy.yml's.
+- name: Sign gh in on each VM, and clone its private repositories
+  ansible.builtin.import_playbook: github_login.yml
+  vars:
+    claude_vm_discovery: false
+    claude_vm_login_raised_later: true
+    claude_vm_login_interactive: >-
+      {{ claude_vm_login_named | bool and (not (claude_code_login_skipped | default(false)) if github_login_auto_start | default(true) | bool
+         else claude_code_login_answered | default(false)) }}
+    claude_vm_login_ask: >-
+      {{ claude_vm_login_named | bool and (not (github_login_auto_start | default(true) | bool) and not (claude_code_login_skipped | default(false))) }}
+
+- name: Sign each VM in to Tailscale
+  ansible.builtin.import_playbook: tailscale_login.yml
+  vars:
+    claude_vm_discovery: false
+    claude_vm_login_raised_later: true
+    claude_vm_login_interactive: >-
+      {{ claude_vm_login_named | bool and (not (claude_code_login_skipped | default(false)) if tailscale_login_auto_start | default(true) | bool
+         else claude_code_login_answered | default(false)) }}
+    claude_vm_login_ask: >-
+      {{ claude_vm_login_named | bool and (not (tailscale_login_auto_start | default(true) | bool) and not (claude_code_login_skipped | default(false))) }}
+  when: tailscale_enabled | default(true) | bool
+
+# make login exists to sign in: a VM any of whose sign-ins failed, or whose
+# work after one did, fails here, once every VM has had all three turns.
+- name: Fail each VM whose sign-in, or the work after one, failed
+  hosts: claude_vms
+  gather_facts: false
+
+  tasks:
+    - name: Fail where a sign-in, or the work after one, failed
+      vars:
+        claude_vm_login_failed: >-
+          {{ [claude_vm_claude_login_failure | default(''), claude_vm_github_login_failure | default(''),
+              claude_vm_tailscale_login_failure | default('')] | select | list
+             + claude_vm_configure_failures | default([]) }}
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_login_failed | join(' ') }}"
+      when: claude_vm_login_failed | length > 0

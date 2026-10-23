@@ -1,0 +1,146 @@
+---
+# One of make init's choices (playbooks/init_check.yml): a setting whose value
+# must be one of what the node lists and the token can use - the storage for
+# VM disks, the bridge the template's NIC is on. Inputs, through the include's
+# vars (never facts):
+#
+#   init_choose_setting     the local.yml setting: proxmox_storage
+#   init_choose_what        the word for one of them in a message: storage
+#   init_choose_value       the value in effect: proxmox_storage
+#   init_choose_set         whether local.yml sets it (else it is the default)
+#   init_choose_given       the value given on make's command line, or ""
+#   init_choose_flag        how it was given: STORAGE
+#   init_choose_candidates  what the node lists, from the init_candidates filter
+#   init_choose_path        the permission path before a name: /storage/
+#   init_choose_node        the node they are listed on
+#   init_choose_seen_by     the privileges Proxmox lists one on, any of them:
+#                           what the token is told to be granted when it sees none
+#   init_choose_unlisted_note  said after a value set in local.yml that is not
+#                           listed (optional)
+#   init_choose_only_check  true to refuse a given value that will not do, and
+#                           nothing else: every given value is held to what the
+#                           node lists before anything is written
+#
+# The value in effect is ok when it is listed and the token can use it. A
+# default that is not listed gets a question at a terminal - y or n for one
+# usable candidate, a number for several, the unusable ones shown with what the
+# token lacks - and the answer is written into local.yml in place of the
+# setting's commented line. A value given is written whenever the token can use
+# it, the default's fitting or not, and fails the run otherwise. A value set in
+# local.yml is never written over. Without a terminal, nothing but a given
+# value is written: the rest is reported.
+#
+# What follows from the inputs is set as facts at the start of each include,
+# and again after the question, every time, so none carries an earlier
+# choice's answer into the next.
+- name: init_choose | Work out what the token can use
+  ansible.builtin.set_fact:
+    init_choose_usable: >-
+      {{ init_choose_candidates | rejectattr('lacks') | rejectattr('inactive') | map(attribute='name') | list }}
+    init_choose_in_effect: >-
+      {{ init_choose_candidates | selectattr('name', 'equalto', init_choose_value) | first | default({}) }}
+    # Asked at a terminal only, and only for a default that is not listed.
+    init_choose_asked: >-
+      {{ init_ask | bool and init_choose_given | length == 0 and not init_choose_set | bool
+         and init_choose_candidates | selectattr('name', 'equalto', init_choose_value) | list | length == 0
+         and init_choose_candidates | rejectattr('lacks') | rejectattr('inactive') | list | length > 0 }}
+
+- name: init_choose | Refuse a value given on the command line that will not do
+  ansible.builtin.fail:
+    msg: >-
+      {{ init_choose_flag }}={{ init_choose_given }}:
+      {{ ('the token cannot see it on ' ~ init_choose_node ~ ' ('
+          ~ (init_choose_candidates | map(attribute='name') | join(', ') or 'nothing listed') ~ ')')
+         if init_choose_given_row | length == 0 else
+         ('the token lacks ' ~ init_choose_given_row.lacks | join(', ') ~ ' on ' ~ init_choose_path ~ init_choose_given)
+         if init_choose_given_row.lacks | length > 0 else
+         ('it is inactive on ' ~ init_choose_node ~ ': Proxmox lists it, but cannot reach it')
+         if init_choose_given_row.inactive | default(false) else
+         ('inventory/group_vars/all/local.yml already sets ' ~ init_choose_setting ~ ': ' ~ init_choose_value
+          ~ ', and make init never writes over a value: edit the file to change it') }}.
+  vars:
+    init_choose_given_row: >-
+      {{ init_choose_candidates | selectattr('name', 'equalto', init_choose_given) | first | default({}) }}
+  when: >-
+    init_choose_given | length > 0
+    and (init_choose_given_row | length == 0 or init_choose_given_row.lacks | length > 0
+         or init_choose_given_row.inactive | default(false)
+         or (init_choose_set | bool and init_choose_value != init_choose_given))
+
+- name: init_choose | Ask which to use, {{ init_choose_what }}
+  ansible.builtin.include_tasks: init_ask.yml
+  vars:
+    init_ask_name: "{{ init_choose_setting }}"
+    init_ask_label: >-
+      {{ 'Use ' ~ init_choose_usable[0] ~ '? y or n, Enter to decide later' if init_choose_usable | length == 1
+         else 'Number, Enter to decide later' }}
+    init_ask_kind: "{{ 'yes_no' if init_choose_usable | length == 1 else 'choice' }}"
+    init_ask_choices: "{{ init_choose_usable }}"
+    init_ask_hidden: false
+    init_ask_given: ""
+    init_ask_flag: ""
+    init_ask_text: >-
+      {{ [init_choose_what | capitalize ~ ' ' ~ init_choose_value ~ ' is not on ' ~ init_choose_node ~ '. What your'
+          ~ ' token can see there:'] + (init_choose_candidates | init_choose_rows(init_choose_path)) }}
+  when: init_choose_asked | bool and not init_choose_only_check | default(false) | bool
+
+# The value written: a given one the token can use, where local.yml sets
+# none, or the answer - y to the one candidate, or the one a number names.
+- name: init_choose | Settle the value to write
+  ansible.builtin.set_fact:
+    init_choose_chosen: >-
+      {{ init_choose_given if init_choose_given | length > 0
+         else init_choose_usable[0] if (init_answers | default({}))[init_choose_setting] | default('') == 'y'
+         else '' if (init_answers | default({}))[init_choose_setting] | default('') in ['', 'n']
+         else (init_answers | default({}))[init_choose_setting] }}
+    init_choose_writes: >-
+      {{ (init_choose_given | length > 0 and not init_choose_set | bool)
+         or (init_choose_asked | bool and (init_answers | default({}))[init_choose_setting] | default('') not in ['', 'n']) }}
+  when: not init_choose_only_check | default(false) | bool
+
+- name: init_choose | Write into local.yml {{ init_choose_setting }}
+  ansible.builtin.include_tasks: init_local_setting.yml
+  vars:
+    init_setting_key: "{{ init_choose_setting }}"
+    init_setting_value: "{{ init_choose_chosen }}"
+  when: >-
+    (init_ask | bool or init_choose_given | length > 0)
+    and not init_choose_only_check | default(false) | bool and init_choose_writes | bool
+
+- name: init_choose | Record the result for {{ init_choose_what }}
+  ansible.builtin.set_fact:
+    init_results: "{{ init_results + [init_choose_result] }}"
+  vars:
+    init_choose_grant: >-
+      {{ "pveum aclmod " ~ init_choose_path ~ init_choose_value ~ " -user " ~ proxmox_api_user ~ " -role AnsibleVM" }}
+    init_choose_result: >-
+      {{ {'ok': true, 'text': init_choose_what ~ ' ' ~ init_choose_chosen ~ ': written into local.yml as '
+          ~ init_choose_setting ~ ', and the token can use it'}
+         if init_choose_writes | bool else
+         {'ok': true, 'text': init_choose_what ~ ' ' ~ init_choose_value ~ ': the token can use it'}
+         if init_choose_in_effect | length > 0 and init_choose_in_effect.lacks | length == 0
+            and not init_choose_in_effect.inactive | default(false) else
+         {'ok': false, 'text': init_choose_what ~ ' ' ~ init_choose_value ~ ' is inactive on ' ~ init_choose_node
+          ~ ': Proxmox lists it, but cannot reach it'}
+         if init_choose_in_effect | length > 0 and init_choose_in_effect.lacks | length == 0 else
+         {'ok': false, 'text': init_choose_what ~ ' ' ~ init_choose_value ~ ': the token lacks '
+          ~ init_choose_in_effect.lacks | join(', ') ~ ' on ' ~ init_choose_path ~ init_choose_value ~ ': '
+          ~ init_choose_grant ~ ' (docs/getting-started/proxmox-access.md)'}
+         if init_choose_in_effect | length > 0 else
+         {'ok': false, 'text': init_choose_setting ~ ' is ' ~ init_choose_value ~ ' in local.yml, which the token cannot'
+          ~ ' see on ' ~ init_choose_node ~ ': ' ~ (init_choose_candidates | map(attribute='name') | join(', ')
+          or 'it sees none') ~ ' instead' ~ init_choose_unlisted_note | default('')}
+         if init_choose_set | bool else
+         {'ok': false, 'text': init_choose_what ~ ' ' ~ init_choose_value ~ ' is not on ' ~ init_choose_node
+          ~ ', and the token can use no other there'
+          ~ ((': ' ~ init_choose_candidates | map(attribute='name') | join(', ') ~ ' lack what it needs')
+             if init_choose_candidates | length > 0 else
+             ('. Proxmox lists one only to a token that holds ' ~ init_choose_seen_by | join(' or ')
+              ~ ' on it: grant the role on yours with pveum aclmod ' ~ init_choose_path ~ '<yours> -user '
+              ~ proxmox_api_user ~ ' -role AnsibleVM (docs/getting-started/proxmox-access.md)'))}
+         if init_choose_usable | length == 0 else
+         {'ok': false, 'text': init_choose_what ~ ' ' ~ init_choose_value ~ ' is not on ' ~ init_choose_node
+          ~ ': set ' ~ init_choose_setting ~ ' in local.yml to one the token can use - '
+          ~ init_choose_usable | join(', ') ~ ' - '
+          ~ ('or answer make init, which asks again' if init_ask | bool else 'or run make init at a terminal, which asks')} }}
+  when: not init_choose_only_check | default(false) | bool

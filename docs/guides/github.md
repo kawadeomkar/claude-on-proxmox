@@ -25,7 +25,7 @@ on the VM, one of two ways:
   Pull requests and Workflows (read and write) on all repositories - a token limited to selected
   repositories lists and clones only those. The same token serves every VM.
 - **Without one**, `make deploy` signs the VM in itself, with no question first (`github_login_auto_start`;
-  `make github-login VM_NAME=alpha` does the same for a VM that exists). It runs GitHub's device flow for
+  `make login VM_NAME=alpha TYPE=github` does the same for a VM that exists). It runs GitHub's device flow for
   you, as far as GitHub allows: gh
   starts on the VM in the background, the page github.com/login/device opens in your browser, the
   one-time code is on your clipboard and printed, and the run waits up to fifteen minutes while you paste
@@ -37,23 +37,23 @@ on the VM, one of two ways:
 ```bash
 make deploy VM_NAME=alpha        # ... the GitHub page opens, the code is on your clipboard: paste,
                                  # authorise, and the private repositories are cloned in the same run
-make github-login VM_NAME=alpha  # the same, later, for a VM make configure left signed out
+make login alpha TYPE=github     # the same, later, for a VM configuration left signed out
 ```
 
 ### Signing VMs in by the device flow
 
-Without a name, `make github-login` only reports each VM's state; given several, it signs them in one
+Without a name, `make login TYPE=github` only reports each VM's state; given several, it signs them in one
 after another, since the browser takes one sign-in at a time. A code left unapproved expires after
 fifteen minutes and that VM's sign-in fails saying so, after the others have had their turn; run it
 again for a fresh code. `make deploy` starts it for every VM but one whose Claude sign-in nobody
 answered, and a run with no terminal skips it, as nobody is there to approve it. Once the code is shown
 the run waits until it is approved or expires, and Ctrl-C there ends the whole run; with
-`github_login_auto_start: false` it asks first, and `n` leaves a VM for later. `make configure` never
+`github_login_auto_start: false` it asks first, and `n` leaves a VM for later. `make deploy TYPE=configure` never
 runs it. On a controller with no browser or clipboard the run prints the page and the
 code and waits all the same, and `login_desktop: false` makes it never try. The terminal that `make
 code` opens runs the same flow after the Claude sign-in, with the page opening by itself and the code
 printed to copy (a Remote-SSH terminal cannot fill your clipboard); Ctrl-C there skips it and starts
-Claude. The private repositories then take one `make configure`, or `make github-login VM_NAME=alpha`,
+Claude. The private repositories then take one `make deploy TYPE=configure`, or `make login VM_NAME=alpha TYPE=github`,
 which on a VM already signed in runs the clone straight away.
 
 ### Choosing the sign-in

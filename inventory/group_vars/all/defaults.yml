@@ -63,15 +63,15 @@ proxmox_template_name: ubuntu-24.04-cloudinit
 
 # ------------------------------------------------------------------- VM -----
 # Name(s) of the VM(s) to create. Set on the command line, comma-separated:
-#   make provision VM_NAME=alpha,beta
+#   make deploy VM_NAME=alpha,beta TYPE=provision
 # The name is what appears in the Proxmox UI. VMIDs are assigned by Proxmox and
 # addresses by your DHCP server, so neither has to be declared here.
 #
 # claude_vm_names falls back to this default name when vm_name is not given,
 # which is what provision.yml, deploy.yml and destroy.yml act on. discover.yml
 # and list.yml test `vm_name is defined` instead and, without it, cover every
-# tagged VM - so configure, check, list, ssh-config, claude-login and
-# github-login are fleet-wide.
+# tagged VM - so make list, make login and make deploy TYPE=configure, check
+# and ssh-config are fleet-wide.
 claude_vm_default_name: claude-on-proxmox-default
 # Applied to every VM this project creates, and how they are found again.
 claude_vm_tag: claude-on-proxmox
@@ -104,7 +104,7 @@ claude_vm_names: >-
   {{ (vm_name | default(claude_vm_default_name, true)) | split(',') | map('trim') | select | list }}
 # The tagged VMs a fleet-wide target acts on: the ones VM_NAME names, or all of
 # them without it. discover.yml and list.yml both narrow through this, so
-# `make configure` and `make list` cannot disagree on what VM_NAME selects.
+# `make deploy TYPE=configure` and `make list` cannot disagree on what VM_NAME selects.
 claude_vm_requested: >-
   {{ claude_vm_tagged | selectattr('name', 'defined') | selectattr('name', 'in', claude_vm_names) | list
      if vm_name is defined else claude_vm_tagged }}
@@ -136,9 +136,9 @@ github_username: "{{ vault_github_username | default('', true) }}"
 # Optional. With it, private repositories are listed and cloned, and gh on
 # each VM is signed in with it, so `git push` and `gh pr create` work there
 # (docs/guides/github.md, for the permissions it needs). Without it, gh is signed in once per VM by GitHub's
-# device flow - `make github-login VM_NAME=<name>` runs it and then clones the
+# device flow - `make login VM_NAME=<name> TYPE=github` runs it and then clones the
 # private repositories, and the terminal `make code` opens runs it too - and
-# every later `make configure` lists with the token gh stored. Either way the
+# every later `make deploy TYPE=configure` lists with the token gh stored. Either way the
 # same token serves the listing, the clones and the pushes.
 github_token: "{{ vault_github_token | default('', true) }}"
 # Repository names to clone. Empty list = every repository of github_username
@@ -151,7 +151,7 @@ github_auth: true
 # How: auto signs in with github_token when there is one and by GitHub's
 # device flow otherwise; web is the device flow always, and a token then only
 # lists; token is the token only, and an empty one fails by name. The device
-# flow runs in `make deploy` and in `make github-login VM_NAME=<name>`: a page
+# flow runs in `make deploy` and in `make login VM_NAME=<name> TYPE=github`: a page
 # opens in your browser, the code is on your clipboard, you paste it and
 # approve, and the run then clones the private repositories too. Scopes it
 # asks for on top of gh's own: workflow, so that pushes which change
@@ -171,7 +171,7 @@ git_user_email: ""
 # ------------------------------------------------------------ Anthropic -----
 # Optional API key, for billing Claude Code to Anthropic API credits. If empty,
 # the VM signs in with your Claude account instead: make deploy and make
-# claude-login run that sign-in for you.
+# login run that sign-in for you.
 #
 # Note this is not the credential Remote Control uses - see below.
 anthropic_api_key: "{{ vault_anthropic_api_key | default('', true) }}"
@@ -185,11 +185,11 @@ anthropic_api_key: "{{ vault_anthropic_api_key | default('', true) }}"
 # that login can establish a Remote Control session.
 #
 #   anthropic_api_key set  -> off; you are on the API path
-#   no key, not logged in  -> prepared but not started; run make claude-login
+#   no key, not logged in  -> prepared but not started; run make login TYPE=claude
 #   no key, logged in      -> started, and reachable from the app
 #
 # So activating it is: leave the API key empty, and sign in once - `make
-# deploy` asks for that itself, and `make claude-login VM_NAME=<name>` does it
+# deploy` asks for that itself, and `make login VM_NAME=<name> TYPE=claude` does it
 # for a VM that exists. Either starts Remote Control in the same run, and a
 # sign-in made any other way starts it by itself.
 # Set this false to opt out. Off - by this switch or by a key - stops, disables
@@ -214,8 +214,8 @@ claude_login_approval_timeout: 300
 # GitHub's and Tailscale's start by themselves (github_login_auto_start,
 # tailscale_login_auto_start), for every VM but one whose Claude sign-in nobody
 # answered; none runs where a vault token or key signs the VM in. A run with
-# no terminal skips them all; make claude-login, make github-login and make
-# tailscale-login do them later. false leaves the sign-ins to those commands.
+# no terminal skips them all; make login does them later. false leaves the
+# sign-ins to that command.
 deploy_sign_in: true
 # Open the VM in VS Code at the end of make deploy, as make code does, when the
 # run was for one VM; a deploy for several ends with each VM's make code line.
@@ -241,7 +241,7 @@ login_desktop: true
 # A Tailscale installed on a VM by hand is left alone either way.
 tailscale_enabled: true
 # Optional: an auth key (vault_tailscale_auth_key) joins each new VM during
-# configuration, with nothing to click. Without one, make tailscale-login - and
+# configuration, with nothing to click. Without one, make login TYPE=tailscale - and
 # make deploy's step - signs a VM in by Tailscale's web login. Only ever used
 # for a VM's first join. A reusable, pre-approved, tagged key is the kind to
 # make.
@@ -340,8 +340,8 @@ vscode_session_notes: true
 vscode_user_settings_file: ""
 
 # An SSH alias per VM on this machine, kept in step with the VM's address:
-# `make deploy` and `make configure` write one for each VM they configure,
-# `make ssh-config` refreshes the whole fleet, `make destroy` removes it. The
+# `make deploy` and `make deploy TYPE=configure` write one for each VM they configure,
+# `make deploy TYPE=ssh-config` refreshes the whole fleet, `make destroy` removes it. The
 # aliases live in the managed file below, as one block per VM, and
 # ~/.ssh/config gets exactly one line, an Include of that file at its top.
 # Nothing else in ~/.ssh is ever edited. Set false to keep this project out of

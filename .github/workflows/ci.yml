@@ -30,9 +30,10 @@ jobs:
   lint:
     name: Lint and unit tests
     runs-on: ubuntu-latest
-    # The unit suite runs real playbooks: about 12 minutes on a laptop, and
-    # past 15 on a hosted runner once the Tailscale tests came in.
-    timeout-minutes: 30
+    # The unit suite runs real playbooks: about 15 minutes on a laptop, and
+    # 27 on a hosted runner before make init's questions and checks came in,
+    # whose tests each run one, many at a pseudo-terminal.
+    timeout-minutes: 60
     env:
       # v8.30.0, the same release .pre-commit-config.yaml pins.
       GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
@@ -51,33 +52,25 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      - name: Lint
-        run: make lint
-
-      - name: Syntax check playbooks
-        run: make syntax
-
-      - name: Unit tests
-        run: make unit
-
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
-      # `make lint` already ran yamllint, ansible-lint and ruff, so skip those
-      # and run the rest: detect-private-key, the large-file check and the
-      # whitespace hooks. Without this they only ever run for a developer who
-      # installed the git hook.
+      # Every linter, the playbooks' syntax check and the pre-commit hooks
+      # those do not cover: detect-private-key, the large-file check and the
+      # whitespace hooks, which would otherwise only ever run for a developer
+      # who installed the git hook.
       #
-      # gitleaks is skipped here and run by the two steps below. Its hook is
-      # `gitleaks git --pre-commit --staged`, which scans the git index - and
-      # in a CI checkout the index equals HEAD, so it scans an empty diff and
-      # always passes.
-      - name: File hygiene
-        env:
-          SKIP: yamllint,ansible-lint,ruff-check,ruff-format,gitleaks
-        run: make pre-commit
+      # gitleaks is among the hooks make lint skips, and is run by the two
+      # steps below. Its hook is `gitleaks git --pre-commit --staged`, which
+      # scans the git index - and in a CI checkout the index equals HEAD, so it
+      # scans an empty diff and always passes.
+      - name: Lint
+        run: make lint
+
+      - name: Unit tests
+        run: make test TYPE=unit
 
       # The files as the change leaves them. On its own this misses a token
       # committed in one commit and deleted in the next, which is gone from
@@ -147,7 +140,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Molecule test
-        run: make molecule MOLECULE_ROLES=${{ matrix.role }}
+        run: make test ROLE=${{ matrix.role }}
 
   # Not part of the gate: this runs only on the weekly schedule (or on demand)
   # and tests the roles against the *unpinned* image, so an upstream Ubuntu
@@ -182,7 +175,7 @@ jobs:
 
       - uses: ./.github/actions/setup
       - name: Molecule test (full configure playbook)
-        run: make molecule-integration
+        run: make test TYPE=integration
 
   playbooks:
     name: Molecule (${{ matrix.scenario }} playbook)
@@ -191,10 +184,16 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # The job keeps the scenario's name; make test calls the configure
+      # scenario TYPE=integration.
       matrix:
-        scenario: [configure, provision]
+        include:
+          - scenario: configure
+            type: integration
+          - scenario: provision
+            type: provision
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Molecule test
-        run: make molecule-scenario SCENARIO=${{ matrix.scenario }}
+        run: make test TYPE=${{ matrix.type }}

@@ -1,9 +1,11 @@
 ---
-# Copy to inventory/group_vars/all/vault.yml (git-ignored), fill in, then encrypt:
+# make init copies this to inventory/group_vars/all/vault.yml (git-ignored), asks
+# for the token secret and the GitHub username, and writes them encrypted, its
+# password in .vault_pass. By hand instead: copy it, fill it in, then encrypt:
 #
 #   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
 #   (umask 077; openssl rand -base64 32 > .vault_pass)
-#   make vault-encrypt
+#   make vault
 #
 # Values are referenced indirectly (vault_* -> plain name) in defaults.yml so
 # `grep` finds their usage and ansible-lint's naming conventions are satisfied.
@@ -28,7 +30,7 @@ vault_github_username: "your-github-username"
 # token needs repo, workflow and read:org; a fine-grained one Metadata (read)
 # and Contents, Pull requests and Workflows (read and write) on all
 # repositories. Leave it empty to sign in once per VM by GitHub's device flow
-# instead (make github-login VM_NAME=<name>), with no secret here: that run
+# instead (make login VM_NAME=<name> TYPE=github), with no secret here: that run
 # clones the private repositories too, and later runs list with the token gh
 # stored. docs/guides/github.md.
 vault_github_token: ""
@@ -46,7 +48,7 @@ vault_anthropic_api_key: ""
 # fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale
 # removes an ephemeral node within the hour of it going offline, and a VM left
 # stopped would be. Leave it empty to sign each VM in by Tailscale's web login
-# instead (make tailscale-login VM_NAME=<name>), with no secret here. Only ever
+# instead (make login VM_NAME=<name> TYPE=tailscale), with no secret here. Only ever
 # used for a VM's first join. docs/guides/tailscale.md.
 vault_tailscale_auth_key: ""
 

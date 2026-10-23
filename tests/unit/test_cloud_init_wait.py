@@ -89,7 +89,7 @@ def test_a_failed_first_boot_names_what_failed_and_how_to_get_past_it(waited):
         " package_update_upgrade_install), so the VM may be half set up. /var/log/cloud-init-output.log on it says"
         " why. Building it again is the sure way past a failure that will not repeat - a mirror, a corrupted"
         " download: make destroy VM_NAME=failed, then make deploy VM_NAME=failed. Or repair it by hand, then make"
-        ' configure VM_NAME=failed ANSIBLE_ARGS="-e configure_wait_for_cloud_init=false".'
+        ' deploy VM_NAME=failed TYPE=configure ANSIBLE_ARGS="-e configure_wait_for_cloud_init=false".'
     )
 
 

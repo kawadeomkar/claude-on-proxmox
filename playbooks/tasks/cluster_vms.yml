@@ -21,7 +21,7 @@
     validate_certs: "{{ proxmox_validate_certs }}"
     ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
   register: claude_vm_all
-  # uri does not run in check mode at all, and `make check` needs the listing
+  # uri does not run in check mode at all, and `make deploy TYPE=check` needs the listing
   # to find anything to check. A GET changes nothing, so it always runs.
   check_mode: false
   # The request carries the token. Hiding the task hides its error as well, so

@@ -6,22 +6,30 @@ git-ignored file, never in a commit.
 
 ## Setup
 
-You need Python 3.12+ (the pinned ansible-core requires it), [uv](https://docs.astral.sh/uv/getting-started/installation/)
-0.12 or newer (`brew install uv`, or its standalone installer), `make`, and Docker Engine for the tests.
+You need Python 3.12+ (the pinned ansible-core requires it) in a virtualenv of its own for this project,
+[uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12 or newer (`brew install uv`, or its
+standalone installer), `make`, and Docker Engine for the tests.
 
 ```bash
-make init     # virtualenv, Galaxy collections, config from the .example files, git hooks
-make test     # lint, syntax, unit tests, every Molecule scenario
+pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # or any virtualenv: PYTHON=<its python>
+make init     # make install (the locked packages, the Galaxy collections), git hooks, the config, asked for
+make test     # lint (syntax and hooks included), unit tests, every Molecule scenario
 ```
 
-`make init` copies `inventory/hosts.yml.example` and the two `group_vars` examples into place and installs
-the pre-commit hooks. All tooling lives in `.venv` at the versions locked in `uv.lock`, so please
-run it through `make` rather than from a system-wide install - Molecule in particular resolves
-`ansible-playbook` from `PATH` and will silently use a different ansible-core if the virtualenv is not
-first.
+`make init` runs `make install`, installs the pre-commit hooks, copies `inventory/hosts.yml.example`
+and the two `group_vars` examples into place where they are missing, and asks for the values a first
+deploy needs (`make init PROMPT=no` asks nothing; a checkout that only runs the tests needs none).
+`make install` puts the versions locked in `uv.lock` into your environment - the Python `python3` is
+here (the one you activated, or the one `pyenv local` chose), or `PYTHON=/path/to/python` - leaving the
+rest of it alone, and refuses a Python that is not a virtualenv; it changes nothing that is current, so
+it is also the command to run after a pull. The project keeps no `.venv`. Please run the tools through
+`make`, or `tools/env-run <tool>` as the git hooks do, which run them from that environment rather than
+whatever is first on `PATH`, and refuse a Python that is not a virtualenv - Molecule in particular
+resolves `ansible-playbook` from `PATH` and will silently use a different ansible-core if the
+environment is not first.
 
 The pins live in `pyproject.toml`: the playbooks' own in `[project]`, the linters' and tests' in the
-`dev` group. After changing one, run `make lock` and commit `uv.lock` with it; `make lint` fails on a
+`dev` group. After changing one, run `make install TYPE=lock` and commit `uv.lock` with it; `make lint` fails on a
 lock that no longer matches. `uv lock --upgrade-package <name>` moves one locked package without
 touching a pin. Dependabot proposes the weekly updates itself.
 
@@ -29,13 +37,13 @@ touching a pin. Dependabot proposes the weekly updates itself.
 
 | Command | What it runs |
 |---------|--------------|
-| `make lint` | yamllint, ansible-lint (production profile), ruff |
-| `make syntax` | `--syntax-check` on every playbook, against your `inventory/` |
-| `make unit` | pytest: the custom filters (the VS Code settings reader, the sign-ins' page opener and `plain_text` among them), the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the Claude sign-in (`claude_login.yml` against a stand-in `claude`, and at a pseudo-terminal: the prompt, a partly copied code, an expired attempt, Ctrl-C then A), the three sign-in playbooks and deploy's sign-in steps end to end, an unreachable VM among them, Tailscale (the role's files, `tailscale_login.yml` and deploy's Tailscale step against a stand-in `tailscale`, check mode, `configure.yml`'s rescue, and the guards that keep every test setup off Tailscale), the GitHub sign-in (`auth.yml`, `clone.yml` and `github_login.yml` against a stand-in `gh` and the fake GitHub API), the managed SSH config (and that no scenario writes into `~/.ssh`), the Claude terminal's script (once at a pseudo-terminal), `code.yml`'s window step in `make deploy` and out of it, and its allowlist, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, `deploy`'s refusal of `TAGS`, `code`'s one name) |
-| `make molecule MOLECULE_ROLES="common dev_tools"` | one or more role scenarios |
-| `make molecule-integration` | `playbooks/configure.yml` end to end in a container |
-| `make molecule-provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
-| `make vagrant-up` | `configure.yml` on a real VirtualBox VM |
+| `make lint` | every linter: `uv lock --check`, yamllint, ansible-lint (production profile), ruff, `--syntax-check` on every playbook against your `inventory/`, and the pre-commit hooks those do not cover. `TYPE=yaml`, `ansible`, `python`, `syntax`... runs one |
+| `make test` | `make lint`, then everything below but Vagrant: the local quality gate |
+| `make test TYPE=unit` | pytest: the custom filters (the VS Code settings reader, the sign-ins' page opener and `plain_text` among them), the `github_repos` module, the tracked-file guard, configure tags, the Remote Control playbooks, the Claude sign-in (`claude_login.yml` against a stand-in `claude`, and at a pseudo-terminal: the prompt, a partly copied code, an expired attempt, Ctrl-C then A), the three sign-in playbooks and deploy's sign-in steps end to end, an unreachable VM among them, Tailscale (the role's files, `tailscale_login.yml` and deploy's Tailscale step against a stand-in `tailscale`, check mode, `configure.yml`'s rescue, and the guards that keep every test setup off Tailscale), the GitHub sign-in (`auth.yml`, `clone.yml` and `github_login.yml` against a stand-in `gh` and the fake GitHub API), the managed SSH config (and that no scenario writes into `~/.ssh`), the Claude terminal's script (once at a pseudo-terminal), `code.yml`'s window step in `make deploy` and out of it, and its allowlist, and the Makefile's guards (`vm-name-check`, the JSON `VM_NAME`, the checked `TYPE`, `TAGS` and `ROLE`, `code`'s one name) |
+| `make test ROLE=common,dev_tools` | one or more role scenarios (`TYPE=role` for all of them, `TYPE=molecule` for every scenario) |
+| `make test TYPE=integration` | `playbooks/configure.yml` end to end in a container |
+| `make test TYPE=provision` | `provision.yml` + `discover.yml` against a fake Proxmox API |
+| `make vagrant` | `configure.yml` on a real VirtualBox VM |
 
 Every run of these through `make` that uses Ansible, Molecule included, is also written to `.logs/`
 (`make logs` lists them), which is the place to read a failure back once the terminal has scrolled.

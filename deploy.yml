@@ -8,12 +8,12 @@
 #   make deploy VM_NAME=alpha,beta    -> alpha and beta, and only them
 #
 # Each stage is a playbook of its own, imported as is, so deploy is the sum of
-# make template, provision, configure, claude-login, github-login and code by
-# construction, and cannot drift from them.
+# make deploy TYPE=template, TYPE=provision and TYPE=configure, make login and
+# make code by construction, and cannot drift from them.
 #
 # Configuration is limited to the VMs this run provisioned. Other VMs this
-# project created are left alone; `make configure` with no VM_NAME is the
-# command that reaches the whole fleet.
+# project created are left alone; `make deploy TYPE=configure` with no VM_NAME
+# is the command that reaches the whole fleet.
 #
 # The sign-ins are the steps only the person can take, each a page in the
 # browser: they run one VM at a time, after configuration, and the run waits
@@ -22,10 +22,10 @@
 # tailscale_login_auto_start). A VM whose Claude sign-in nobody answered is
 # left out of the other two; a run with no terminal skips them all, as the
 # Makefile then passes deploy_sign_in: false, which also skips them on purpose.
-# Either way the VM is deployed: make claude-login, make github-login and make
-# tailscale-login finish the job later. What a sign-in leads to - Remote Control's start, the
-# private repositories - failing is raised at the end, after VS Code, and so is
-# a Tailscale failure during configuration.
+# Either way the VM is deployed: make login finishes the job later. What a
+# sign-in leads to - Remote Control's start, the private repositories - failing
+# is raised at the end, after VS Code, and so is a Tailscale failure during
+# configuration.
 #
 # Every stage is idempotent, so this is also the command to re-run after
 # changing a variable - not only the one to run first. A second run rebuilds
@@ -152,7 +152,7 @@
   vars:
     claude_vm_discovery: false
     # The sign-ins come next in this run, so configuration says so rather than
-    # name make claude-login and make github-login.
+    # name make login.
     claude_code_sign_in_follows: "{{ deploy_sign_in }}"
     github_projects_sign_in_follows: "{{ deploy_sign_in }}"
     tailscale_sign_in_follows: "{{ deploy_sign_in }}"
@@ -162,7 +162,7 @@
 
 # The VMs configuration reached, as for configure: a VM left stopped or whose
 # configuration failed is not in the group. A sign-in that fails is said and
-# left for make claude-login, rather than ending the run.
+# left for make login, rather than ending the run.
 - name: Sign Claude Code in on each VM, and start Remote Control
   ansible.builtin.import_playbook: playbooks/claude_login.yml
   vars:

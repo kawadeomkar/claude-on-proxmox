@@ -1,5 +1,5 @@
 ---
-# End-to-end test of the user-facing flow: `make provision VM_NAME=alpha,beta`
+# End-to-end test of the user-facing flow: `make deploy VM_NAME=alpha,beta TYPE=provision`
 # against a fake Proxmox API, followed by tag-based discovery. The container
 # only hosts the API; the playbooks run on the controller.
 dependency:

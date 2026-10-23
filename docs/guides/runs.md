@@ -14,7 +14,9 @@ Code:
 ```
 
 - **`USER INPUT REQUIRED`**: a prompt to type at - the code Claude's sign-in page shows, or, with
-  `github_login_auto_start` or `tailscale_login_auto_start` off, whether to sign a VM in now.
+  `github_login_auto_start` or `tailscale_login_auto_start` off, whether to sign a VM in now. `make init`
+  asks this way too, for each value a first deploy needs that is still the example's (`make init` in the
+  block's title); there, Enter leaves the value for the next `make init`.
 - **`ACTION REQUIRED IN YOUR BROWSER`**: a page to approve - Claude's, GitHub's device code, Tailscale's.
   While the run waits for it, it says so once, with the time left, rather than a retry line every few
   seconds.
@@ -33,13 +35,15 @@ question, which Ansible does not log.
 ## Run logs
 
 Every `make` target that runs Ansible keeps a copy of the whole run in `.logs/`, one file per run,
-named after when it started and the target:
+named after when it started, the target and its `TYPE`:
 
 ```bash
 make deploy VM_NAME=beta
 #   Logging this run to /home/you/claude-on-proxmox/.logs/20261007-203015-deploy.log
+make deploy VM_NAME=beta TYPE=configure
+#   Logging this run to /home/you/claude-on-proxmox/.logs/20261007-204510-deploy-configure.log
 make logs                         # the newest 20, newest first
-make logs-clean                   # delete them all
+make clean TYPE=logs              # delete them all
 ```
 
 Logging changes nothing in the terminal: Ansible copies its output to the file with a
@@ -49,8 +53,8 @@ the GitHub token never reach it. The files do name the Proxmox host and every VM
 `.logs/` is git-ignored, refused by the tracked-file guard even with `git add -f`, and readable only
 by you. Logs older than 14 days are deleted whenever a logged run starts (`LOG_RETENTION_DAYS`).
 `LOG_DIR=` turns logging off for one run, `LOG_DIR=/some/where` moves it, and an
-`ANSIBLE_LOG_PATH` of your own is used as it is. Molecule runs (`make molecule`, `make test`) are
-logged the same way. A command you run with `.venv/bin/ansible-playbook` directly is not; put
+`ANSIBLE_LOG_PATH` of your own is used as it is. Molecule runs (`make test`) are
+logged the same way. A command you run with `ansible-playbook` directly is not; put
 `ANSIBLE_LOG_PATH=.logs/<name>.log` in front of it for the same result.
 
 ## See also

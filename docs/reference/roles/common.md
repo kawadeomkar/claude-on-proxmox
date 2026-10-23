@@ -1,6 +1,6 @@
 # `common`
 
-The OS baseline every VM gets, first in `make configure`: packages, the login user with its sudo rule and SSH keys, sshd hardening, the timezone and the guest agent. `TAGS=common` runs it alone.
+The OS baseline every VM gets, first in `make deploy TYPE=configure`: packages, the login user with its sudo rule and SSH keys, sshd hardening, the timezone and the guest agent. `TAGS=common` runs it alone.
 
 What those defaults mean for the VM: [What the VM trusts](../../guides/what-the-vm-trusts.md). How it works: [§5.3](../../architecture/roles.md#53-common--os-baseline).
 

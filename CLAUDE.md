@@ -6,37 +6,51 @@ development boxes. The wiki in `docs/` is the documentation - the guides are the
 page, and `CONTRIBUTING.md` has the setup and conventions. This file is the part that is easy to
 get wrong.
 
-## Always run tooling through the virtualenv
+## Always run tooling through the project's Python environment
 
-Every tool is pinned in `pyproject.toml`, locked with all it pulls in in `uv.lock`, and lives in
-`.venv/bin`. Use `make`, or call `.venv/bin/<tool>` directly. Never a system-wide `ansible`,
-`ansible-lint` or `molecule`. uv is the one tool on `PATH` by design: it only builds `.venv`
-(`make venv`) and the lock (`make lock`, after editing a pin; never edit `uv.lock` by hand).
+Every tool is pinned in `pyproject.toml`, locked with all it pulls in in `uv.lock`, and `make install`
+puts it into the user's own virtualenv for the project - the one `python3` resolves to here or `PYTHON=`
+names, made with whatever tool they like. The project keeps no environment of its own, never assumes a
+`.venv`, and never assumes pyenv: the README suggests it, but no code, message or test may call it or
+depend on it. Use `make`, which runs each tool
+from that environment's `bin` (`$(BIN)`, asked of `$(PYTHON)` once per run, and empty for a Python that is
+no virtualenv's, which `env-check` - run before every tool - refuses), or `tools/env-run <tool>`, which
+finds it the same way; the git hooks and the Vagrantfile use that. Never a system-wide `ansible`,
+`ansible-lint` or `molecule`: a non-virtualenv Python's scripts directory is `/usr/local/bin` and the
+like, which is why `BIN` is never taken from one. uv is the one tool on `PATH` by design: it only
+installs into that environment (`make install`: `uv sync --locked --inexact`, the locked versions in and
+nothing else of the user's removed) and writes the lock (`make install TYPE=lock`, after editing a pin;
+never edit `uv.lock` by hand).
 
 Molecule resolves `ansible-playbook` from `PATH` and only *appends* the virtualenv, so it must be
-**prepended** or a different ansible-core is silently used. The `molecule` targets already do this;
+**prepended** or a different ansible-core is silently used. `make test` already does this;
 a hand-rolled `molecule test` will not.
 
 ```
-make venv            # sync .venv to uv.lock (uv sync --locked); make lock after editing a pin
-make lint            # uv lock --check, yamllint --strict, ansible-lint (production), ruff check + format
-make syntax          # --syntax-check on deploy.yml and playbooks/*
-make unit            # pytest, tests/unit/
-make molecule MOLECULE_ROLES="proxmox_vm"      # one role scenario
-make molecule-scenario SCENARIO=provision      # one playbook scenario
-make test            # everything, including pre-commit — the CI gate
+make install         # sync your virtualenv to uv.lock (uv sync --locked) + the Galaxy collections; TYPE=lock after editing a pin
+make init            # once: make install + the git hook + the local config, asking for what a first deploy needs
+make vault           # encrypt the vault while it is plaintext, edit it once it is encrypted
+make lint            # uv lock --check, yamllint --strict, ansible-lint (production), ruff, --syntax-check, the other pre-commit hooks
+make lint TYPE=syntax          # one of them: lock, yaml, ansible, python, syntax or hooks
+make test            # lint, then every test: unit and every Molecule scenario — the CI gate
+make test TYPE=unit            # pytest, tests/unit/
+make test ROLE=proxmox_vm      # one role scenario (TYPE=role: every role; TYPE=molecule: every scenario)
+make test TYPE=provision       # one playbook scenario (TYPE=integration is the configure scenario)
 make deploy          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (make deploy alpha: that VM)
-make destroy VM_NAME=alpha        # release the VM from Claude, GitHub and Tailscale, then delete it (or: make destroy alpha)
-make claude-login VM_NAME=alpha   # sign Claude in by the browser (page opens here, comes back over an SSH forward), start Remote Control
-make github-login VM_NAME=alpha   # sign gh in to GitHub by the device flow (page opens here, code on the clipboard), then clone private repos
-make tailscale-login VM_NAME=alpha   # sign the VM in to Tailscale by its web login (page opens here), one VM after another
-make configure VM_NAME=alpha TAGS=claude_code   # re-run one role, e.g. to push an API key
+make deploy alpha TYPE=configure   # one stage of it: template, provision, configure, check (dry run) or ssh-config (fleet-wide also prunes)
+make deploy alpha TAGS=claude_code # re-run one role, e.g. to push an API key (TAGS means TYPE=configure)
+make destroy alpha   # release the VM from Claude, GitHub and Tailscale, then delete it
+make login alpha     # Claude, GitHub, Tailscale in deploy's order, one VM after another (TYPE=claude, github or tailscale: one)
 make list            # read-only: the VMs this project created, and their addresses
-make ssh-config      # refresh the SSH alias per VM on this machine; fleet-wide also prunes
 make code VM_NAME=alpha [PROJECT=repo]   # refresh one alias, check the folder over SSH, open it in VS Code with a Claude terminal
 make logs            # the run logs, newest first: read these instead of asking for terminal output
-make docs            # regenerate the wiki's reference pages; make docs-serve previews the site
+make docs            # regenerate the wiki's reference pages; TYPE=serve previews the site, TYPE=build builds it strictly
 ```
+
+`make help` lists every target with the `TYPE`s it takes; `TYPES_<target>` in the Makefile is the list,
+and the `#: TYPE=...` comment lines above each target describe them for help and the wiki
+(`test_makefile.py` holds the two to the same list). The targets the Makefile no longer has (`configure`,
+`provision`, `claude-login`, `molecule`, ...) stop with the command that replaced them (`RENAMED_<name>`).
 
 **A change to behaviour changes the wiki in the same commit.** The page for it is in `docs/`
 (`docs/README.md` maps them; `docs/architecture/` for the design, cited by section number). The
@@ -54,11 +68,11 @@ spaces before a nested one. Only `docs/README.md` and `docs/`'s folders are the 
 the top of `docs/` is a local working document, ignored and refused by the tracked-file guard.
 
 Every target that runs Ansible, Molecule included, writes its whole run to
-`.logs/<YYYYMMDD-HHMMSS>-<target>.log` through `ANSIBLE_LOG_PATH`. When a user says they ran
+`.logs/<YYYYMMDD-HHMMSS>-<target>[-<TYPE>].log` through `ANSIBLE_LOG_PATH`. When a user says they ran
 something, read the newest log for that target before asking them to paste anything. Logs name the
 Proxmox host and VMs by address, so `.logs/` is git-ignored and blocked by
 `tests/check_no_local_files.sh`; a log file is never committed, quoted into a doc, or attached to a
-pull request. The file name is built from the date and the target only, never from `VM_NAME`,
+pull request. The file name is built from the date, the target and its checked `TYPE` only, never from `VM_NAME`,
 which is the one value a user types that reaches the shell.
 
 Scenarios are slow and disk-hungry. Run the ones your change touches, one at a time, rather than
@@ -119,8 +133,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
 - **Tests never open the developer's browser, touch their clipboard, or read their terminal.** The
   sign-ins - GitHub's device flow (`roles/github_projects/tasks/device_flow.yml`), Claude's browser
   sign-in (`roles/claude_code/tasks/browser_login.yml`) and Tailscale's web login
-  (`roles/tailscale/tasks/web_login.yml`), run by `make github-login`, `make claude-login`, `make
-  tailscale-login` and `make deploy` - open a page (and GitHub's copies its code) on `localhost`, which in
+  (`roles/tailscale/tasks/web_login.yml`), run by `make login` and `make deploy` - open a page (and GitHub's copies its code) on `localhost`, which in
   the unit harness and every playbook scenario is the developer's machine. `login_desktop` (roles:
   `github_projects_login_desktop`, `claude_code_login_desktop`, `tailscale_login_desktop`, all wired from
   it in `inventory/group_vars/all/defaults.yml`) gates those steps; every scenario and the harnesses set
@@ -141,7 +154,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   one-VM guards read `ansible_play_batch` - `ansible_play_hosts` ignores serial. Under serial a failed
   VM is a whole batch failed, which ends the run, so the plays rescue a failure, say it, and raise it
   in a later non-serial play, which `make deploy` skips (`claude_vm_login_in_deploy`): deploy goes on
-  past a failed sign-in. `rescue` covers failed tasks only: an unreachable VM is caught by a non-serial
+  past a failed sign-in. `make login` (`playbooks/login.yml`) skips it too
+  (`claude_vm_login_raised_later`), so a VM goes on to its next sign-in as under deploy, and raises every
+  failure in a last play of its own. `rescue` covers failed tasks only: an unreachable VM is caught by a non-serial
   play before the sign-in, which pings each VM with `ignore_unreachable` and records it as failed. The
   block's condition sits on the task inside it, never on the block: a block's `when` is its rescue's
   too, read again for each task, and the rescue sets the very fact it tests, which skipped the message
@@ -150,7 +165,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   its failure is recorded in `claude_vm_configure_failures` and raised even under `make deploy`, by
   deploy's last play, since it is not a failed sign-in and the VM is not done.
   `tests/unit/test_sign_in_plays.py` runs both playbooks, and deploy's sign-ins as deploy.yml has them,
-  against stand-ins, a VM whose ssh exits 255 among them. `make configure` never prompts.
+  against stand-ins, a VM whose ssh exits 255 among them. `make deploy TYPE=configure` never prompts.
 - **Claude's sign-in comes back over a forward, or hands the code over a pipe, and nothing decides from a
   terminal probe.** Given `BROWSER`, `claude auth login` runs it with a page that redirects to
   `http://localhost:<port>/callback`, listens on the VM's `127.0.0.1:<port>`, and takes a code from that
@@ -282,6 +297,28 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the `Include` off, the Vagrantfile sets `claude_ssh_config: false`, and
   `tests/unit/test_ssh_config.py` fails if any of them stops.
 
+- **`make init` writes only what is still a placeholder, only at a terminal or as given, and the vault
+  only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`
+  (the controller alone, pipelining on, no `group_vars`; never in `playbooks/` itself, where the syntax
+  check and ansible-lint take it for a playbook), and asks through `tasks/init_ask.yml` only while a value
+  is the example's or unset; Enter is "later", and an answer is held to its kind by `init_answer`
+  (`filter_plugins/settings.py`). `init_ask` is false unless the Makefile sees a terminal and `PROMPT` is
+  not `no` (`INIT_TTY_ARGS`), and every write is under it or under a value given on the command line
+  (`init_given`), which never overwrites: one that differs from what is set fails the run, naming both.
+  `hosts.yml` and `local.yml` are changed by one validated `lineinfile` each, on the example's own line.
+  The vault is re-encrypted by piping its text into `ansible-vault encrypt`'s stdin under `no_log`, never
+  through `copy`, which decrypts. `.vault_pass` is created `O_EXCL`, 0600, and never rewritten. Every
+  test points the four `init_*_file` vars into its own directory, through `_init` and
+  `_init_at_a_terminal` in `tests/unit/test_init_settings.py`, which holds that statically. The token
+  secret is never taken from the command line (`TOKEN_SECRET=` stops `make`): only from
+  `TOKEN_SECRET_FILE`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
+  argv. `playbooks/init_check.yml`, its second run, changes nothing but `local.yml`, through
+  `tasks/init_local_setting.yml` and under `init_ask` or a value given: the node when it is the default and
+  not the template's (worked out, never chosen), the storage or bridge chosen from what the node lists and
+  the token can use (`tasks/init_choose.yml`). Every other task is a read, its one command `hostname -s` over
+  root SSH, and its tests give the Proxmox host a local stand-in or a refusing `ssh`, never a real one
+  (`tests/unit/test_init_check.py` holds all three).
+
 ## Architecture, and why it looks like this
 
 **Playbooks own inventory; roles do not.** `add_host` sets `BYPASS_HOST_LOOP`, so it runs *once per
@@ -326,8 +363,8 @@ localhost: against the fake, 20 VMs took 168 s that way and take 41 s now. The p
 **`deploy.yml` configures only what provisioning published.** It imports `configure.yml` with
 `claude_vm_discovery: false`. Discovery without `vm_name` means every tagged VM, while provisioning
 without it means the one default VM, so running both made a bare `make deploy` create the default VM
-and then configure the whole fleet. Standalone `configure`, `check`, `list` and `claude-login` stay
-fleet-wide without `VM_NAME`.
+and then configure the whole fleet. `make deploy TYPE=configure`, `check` and `ssh-config`, `make list`
+and `make login` stay fleet-wide without `VM_NAME`: each runs its own playbook, discovery on.
 
 **A stopped VM is left stopped, and not waited on.** An existing, configured VM is started only
 with `proxmox_vm_start_existing`. Otherwise `present.yml` sets `proxmox_vm_stopped` from the
@@ -426,7 +463,14 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
 - **Every checkout on a machine shares `~/.ansible/collections`.** `make deps` in a worktree that still
   pinned ansible.posix 2.1.0 put it back under every other checkout, whose runs went on without a word.
   Every Ansible target now runs `collections-check` first (`ansible-galaxy collection install --offline`
-  against `requirements.yml`), and refuses, naming `make deps`, while a collection differs from its pin.
+  against `requirements.yml`), and refuses, naming `make install`, while a collection differs
+  from its pin.
+- **uv writes the environment's path, as it was given, into every command it installs.** `make venv`
+  synced through the checkout's `.venv` link to the environment, so 31 commands started their Python by
+  that link and would have broken with it, and a sync that finds every package current rewrites none.
+  `make install` runs `tools/stale_scripts.py` first and reinstalls each locked package with a command
+  whose first line names a Python outside the environment's `bin`, compared as spelled, never resolved
+  (the link resolves to the right Python), then `--check`s that none is left.
 - **`-e key=value` splits extra-vars on whitespace.** `VM_NAME="alpha beta"` silently provisioned
   half the fleet. The Makefile passes JSON (`-e '{"vm_name": "..."}'`) to keep the value whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them
@@ -463,14 +507,25 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   aliases it had just refreshed. Pass the task file's inputs only through `vars:` on the import;
   `tests/unit/test_ssh_config.py` fails if a playbook sets them as facts.
 - **Every value typed on the `make` line is checked before a shell sees it.** `VM_NAME` and `PROJECT`
-  each have a `*-name-check` target that reads the value through the environment with `$(value ...)`
-  and refuses anything outside its character set with a shell `case`, then the value travels to Ansible
-  as JSON. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused as well, and
+  each have a `*-name-check` target, and `make init`'s `HOST`, `TOKEN_USER`, `TOKEN_NAME`,
+  `TOKEN_SECRET_FILE`, `GITHUB_USER` and `PROMPT` have `init-args-check`, each reading the value through
+  the environment with `$(value ...)` and refusing anything outside its character set with a shell
+  `case`, then the value travels to Ansible as JSON (`INIT_GIVEN_ARGS`). Those init values are assigned
+  empty in the Makefile, so only the command line sets them, never an exported variable; the token
+  secret is refused there outright, since `make` copies the command line into `MAKEFLAGS`. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused as well, and
   `code.yml` repeats the check for a direct `ansible-playbook` run. The targets in `NAMED_TARGETS`,
   every one that takes `VM_NAME`, also take the names as the words after them, which make reads as
   goals: they become `VM_NAME` and go into no rule's syntax and no `$(shell)` before `vm-name-check` (a
   `%:` rule that does nothing answers each), and a word the Makefile has a rule for is refused while
-  the Makefile is read, or make would run that target after the first, or beside it under `-j`.
+  the Makefile is read, or make would run that target after the first, or beside it under `-j` - and so
+  is one of the target's own TYPEs (`make deploy configure` would create a VM named `configure`).
+  So is a target an earlier Makefile had (`RENAMED_<name>`): `make deploy alpha syntax` would create a VM
+  named `syntax`. `TYPE`, `TAGS` and `ROLE` are taken from the command line only (`:=`, which outranks
+  the environment: an exported `TYPE=check` made every deploy a dry run), and checked while the Makefile
+  is read, through `$(value ...)`, against the fixed lists (`TYPES_<target>`, the six role tags, `ROLES`),
+  so only a listed word ever reaches a recipe or a log file's name; `TAGS` stands for `TYPE=configure`
+  only beside VM names, since configuration without names reaches the fleet and a bare deploy does not; a TYPE is kept per target (`KIND_<target>`), so it never narrows a second goal
+  on the same line.
 - **There is deliberately no `LIMIT`.** `--limit` is applied before the plays run, and these VMs
   only enter the inventory once discovery has found them, so it could never match.
 - **`gitleaks --staged` scans the index**, which equals HEAD in a CI checkout — i.e. nothing. CI

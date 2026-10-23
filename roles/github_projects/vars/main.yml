@@ -259,10 +259,10 @@ github_projects_git_identity_wanted: >-
 # The command that signs gh in by the device flow, run on the controller: it
 # opens the page there, copies the code, waits for the approval, and then
 # runs this role so the private repositories arrive in the same run.
-github_projects_login_command: make github-login VM_NAME={{ inventory_hostname }}
+github_projects_login_command: make login VM_NAME={{ inventory_hostname }} TYPE=github
 # The command that runs this role alone: the token sign-in, the listing and the
-# clones, with nothing else of make configure.
-github_projects_configure_command: make configure VM_NAME={{ inventory_hostname }} TAGS=github_projects
+# clones, with nothing else of make deploy TYPE=configure.
+github_projects_configure_command: make deploy VM_NAME={{ inventory_hostname }} TAGS=github_projects
 
 # --- releasing the VM before it is destroyed (release.yml) ---
 # The token gh held, read under no_log; '' when it held none. Every task that

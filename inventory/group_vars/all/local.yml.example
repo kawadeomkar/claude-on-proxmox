@@ -9,6 +9,8 @@
 # role variable it sets; that page is generated from this file (make docs).
 
 # ---------------------------------------------------------------- Proxmox ---
+# make init writes the node, the storage and the bridge here, in place of their
+# lines below, when the defaults do not fit the host.
 # Proxmox node name as shown in the PVE UI, and the storage for VM disks.
 # proxmox_node: pve
 # proxmox_storage: local-lvm
@@ -75,7 +77,7 @@
 # github_projects_exclude: []
 # github_projects_clone_protocol: https
 # Sign gh in on each VM (from vault_github_token, or by GitHub's device flow,
-# which make deploy and make github-login run for you) and make it git's
+# which make deploy and make login TYPE=github run for you) and make it git's
 # credential helper, so private repositories clone and git push works. false
 # leaves gh and ~/.gitconfig alone. auto takes the token when there is one, else
 # the device flow; web is the device flow always; token is the token only.
@@ -183,7 +185,7 @@
 # ------------------------------------------------ Sign-ins and teardown ---
 # make deploy ends with the VM signed in to Claude, GitHub and Tailscale and
 # open in VS Code; the sign-ins each open a page and wait for you, one VM at a
-# time. false leaves them to make claude-login, github-login and tailscale-login.
+# time. false leaves them to make login.
 # deploy_sign_in: true
 # Open the VM in VS Code at the end of a one-VM make deploy.
 # deploy_code: true

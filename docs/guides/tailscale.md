@@ -3,7 +3,8 @@
 You can reach a VM over [Tailscale](https://tailscale.com): it puts each VM on your tailnet - the private
 network your other devices are on - so `ssh`, VS Code's Remote - SSH and a dev server on any port reach the
 VM from anywhere, not only from the LAN Proxmox sits on. It is on by default; `tailscale_enabled: false` in
-`local.yml` turns it off.
+`local.yml` turns it off. `make init` reminds you until `local.yml` sets it either way, and
+`make init TAILSCALE=off` writes it.
 
 ## Joining a VM to your tailnet
 
@@ -11,15 +12,15 @@ There are two ways in. `tailscale_auth_method` picks: `auto` (the default) is th
 one and the web login otherwise, `key` is the key only (an empty one fails by name, and no VM is ever sent
 to a browser), and `web` is the web login only, with a key in the vault left unused.
 
-- **An auth key** (`vault_tailscale_auth_key`). `make configure` - and so `make deploy` - joins each new VM
-  by itself, with nothing to click. Make the key in Tailscale's admin console (Settings, Keys):
+- **An auth key** (`vault_tailscale_auth_key`). Configuration - `make deploy`, or `make deploy TYPE=configure` - joins each new
+  VM by itself, with nothing to click. Make the key in Tailscale's admin console (Settings, Keys):
   **reusable** for a fleet, or one-off for one VM; **pre-approved** if your tailnet has device approval
   on; and **tagged** (`tag:claude-vm`, below). Never ephemeral: Tailscale removes an ephemeral node within
   the hour of it going offline, and a VM left stopped would be. The key is only used for a VM's first
   join - a VM that has joined keeps working after the key expires - and it reaches the VM on standard
   input, never on a command line or in a file. An OAuth client secret (`tskey-client-...`) works too, with
   `tailscale_advertise_tags` set and `?ephemeral=false` on the secret.
-- **The web login**, with no secret at all. `make tailscale-login VM_NAME=alpha` - and `make deploy`'s
+- **The web login**, with no secret at all. `make login VM_NAME=alpha TYPE=tailscale` - and `make deploy`'s
   step, which starts by itself (`tailscale_login_auto_start`; `false` asks first) - opens Tailscale's
   sign-in page here and waits up to five minutes (`tailscale_login_timeout`) for you to sign in and
   approve the VM. A VM you approve later joins by itself: the page stays valid for 7 days.
@@ -100,7 +101,7 @@ and remove it the way you installed it; for the package that is `sudo apt purge 
 next install does not start under the old login.
 
 A login you made by hand on a Tailscale this project installed keeps its own settings, and when its key
-expires `make tailscale-login` and `make deploy` leave it for you to sign in again the way you made it,
+expires `make login TYPE=tailscale` and `make deploy` leave it for you to sign in again the way you made it,
 rather than put this project's settings over it. A sign-in this project started is its own, however late
 it ends - a page you approve after the run, or a join with the key that ran out of time - and so is a
 login made by hand while that page still waits, which cannot be told from it; a join with the key that
@@ -112,12 +113,12 @@ the daemon's first start, which also ends Tailscale's technical support for the 
 
 If installing Tailscale fails - its package site out of reach, say - the VM is configured otherwise and
 keeps its alias, `make deploy` still signs it in and opens it, and the run fails at its end with `make
-configure VM_NAME=alpha TAGS=tailscale`; Tailscale's repository is taken back out, so `apt` on the VM
+deploy VM_NAME=alpha TAGS=tailscale`; Tailscale's repository is taken back out, so `apt` on the VM
 works as before.
 
 ## Turning it off
 
-`tailscale_enabled: false`, then `make configure`: each VM is logged out - a
+`tailscale_enabled: false`, then `make deploy TYPE=configure`: each VM is logged out - a
 `tailscaled` you stopped is started for that - and `tailscaled`, the package and its repository are
 removed. The device stays in your tailnet, expired, until you delete it in the admin console (Machines),
 unless the project can delete it for you (below). A logout that fails - Tailscale's servers out of the VM's

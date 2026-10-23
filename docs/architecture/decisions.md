@@ -33,9 +33,9 @@ declared a second time. It is not used, because:
   ID can end up beside the other's address; `discover.yml` refuses to go on
   ([§9](failure-modes.md)).
 - **Every command would call Proxmox.** Each `ansible-playbook` parses the inventory before anything
-  else: `make syntax` would call the API once for each playbook it checks, ansible-lint would too, and
-  so would CI, which has neither Proxmox nor the vault password. So would the commands that only need
-  SSH to a VM. 2.0.0 sets no timeout on its requests; 2.1.0's `api_timeout` is 5 s.
+  else: `make lint TYPE=syntax` would call the API once for each playbook it checks, ansible-lint would
+  too, and so would CI, which has neither Proxmox nor the vault password. So would the commands that only
+  need SSH to a VM. 2.0.0 sets no timeout on its requests; 2.1.0's `api_timeout` is 5 s.
 - **It makes four API calls per VM** (its status, its configuration, its snapshots and its agent's
   interfaces), where `tasks/vm_addresses.yml` makes two.
 

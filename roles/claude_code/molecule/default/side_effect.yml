@@ -177,7 +177,7 @@
           LoadState {{ claude_code_side_effect_off.status.LoadState | default('?') }}).
         quiet: true
 
-    # `make check` on a VM that has never had the unit, which failed: check mode
+    # `make deploy TYPE=check` on a VM that has never had the unit, which failed: check mode
     # writes no unit, and systemd_service rejects a missing one in check mode
     # too. Applied to the role rather than passed as --check, so
     # ansible_check_mode stays false - which the fix does not depend on.

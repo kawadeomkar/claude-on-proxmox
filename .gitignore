@@ -39,6 +39,8 @@ vault*.json
 
 # --- Python / tooling ---
 .venv/
+# The Python a version manager picks for this checkout (pyenv local writes it): each developer's own.
+.python-version
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -73,5 +75,5 @@ collections/ansible_collections/
 !/docs/architecture/
 !/docs/development/
 !/docs/stylesheets/
-# The wiki built as a site (make docs-build).
+# The wiki built as a site (make docs TYPE=build).
 /site/

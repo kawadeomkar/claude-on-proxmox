@@ -57,7 +57,7 @@
     that: claude_code_login_which.stdout | trim | length > 0
     fail_msg: >-
       `claude` is not on {{ claude_code_user }}'s PATH on {{ inventory_hostname }}, so there is
-      nothing to sign in yet: make configure VM_NAME={{ inventory_hostname }} installs it.
+      nothing to sign in yet: make deploy VM_NAME={{ inventory_hostname }} TYPE=configure installs it.
     quiet: true
 
 - name: browser_login | Make the directory for the sign-in's files
@@ -69,7 +69,7 @@
   become_user: "{{ claude_code_user }}"
 
 # A sign-in of this VM still waiting - a run left at its prompt, or a second
-# make claude-login started meanwhile - owns the pipe and the pidfile below;
+# make login TYPE=claude started meanwhile - owns the pipe and the pidfile below;
 # taking them over would hand one run's code to the other's claude and end the
 # other's process. Told by the recorded pid's command line, so a pid reused by
 # something else since is no reason to refuse; with no ps to ask, nothing is.
@@ -120,7 +120,7 @@
     content: |
       #!/bin/sh
       # The browser claude opens its sign-in page with on this VM: it records
-      # the page, which make claude-login opens on your machine instead.
+      # the page, which make login TYPE=claude opens on your machine instead.
       printf '%s\n' "$*" > {{ claude_code_login_page_file | quote }}
   become: true
   become_user: "{{ claude_code_user }}"

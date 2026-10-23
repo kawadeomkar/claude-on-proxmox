@@ -1,11 +1,11 @@
 ---
 # Sign the VMs in to Tailscale by its web login, or say how each one is on it.
 #
-#   make tailscale-login VM_NAME=alpha        -> signs alpha in: a page opens here
-#   make tailscale-login VM_NAME=alpha,beta   -> the same, one VM after the other
-#   make tailscale-login                      -> reports every VM's state
+#   make login VM_NAME=alpha TYPE=tailscale        -> signs alpha in: a page opens here
+#   make login VM_NAME=alpha,beta TYPE=tailscale   -> the same, one VM after the other
+#   make login TYPE=tailscale                      -> reports every VM's state
 #
-# With vault_tailscale_auth_key set, make configure joins each new VM by
+# With vault_tailscale_auth_key set, make deploy TYPE=configure joins each new VM by
 # itself. Without one the join is Tailscale's web login, which ends with a
 # person approving a page: this runs it as far as it goes - one `tailscale up`
 # on the VM, the page read from its state, the page opened on this machine
@@ -59,7 +59,7 @@
   tasks:
     - name: Sign this VM in
       block:
-        # The decision is the tailscale role's, so this and make configure
+        # The decision is the tailscale role's, so this and make deploy TYPE=configure
         # cannot disagree about how a VM is on Tailscale.
         # tests/unit/test_tailscale.py runs this playbook against stand-ins.
         - name: Report how the VM is on Tailscale, and sign it in when asked to
@@ -89,8 +89,9 @@
             msg: "{{ claude_vm_tailscale_login_failure }}"
 
 # make deploy carries on past a sign-in that failed - the person's to finish
-# later with make tailscale-login; this command exists to sign in, so here the
-# run fails, VM by VM.
+# later with make login TYPE=tailscale; this command exists to sign in, so here the
+# run fails, VM by VM - unless make login runs the three sign-ins
+# (claude_vm_login_raised_later), whose own last play raises it.
 - name: Fail each VM whose sign-in failed
   hosts: claude_vms
   gather_facts: false
@@ -102,3 +103,4 @@
       when:
         - claude_vm_tailscale_login_failure is defined
         - not (claude_vm_login_in_deploy | default(false) | bool)
+        - not (claude_vm_login_raised_later | default(false) | bool)

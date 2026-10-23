@@ -1,7 +1,9 @@
 ---
-# Install once with:  make init   (or: .venv/bin/pre-commit install)
-# The linters run from the project virtualenv so their versions are pinned in
-# exactly one place (pyproject.toml, locked in uv.lock).
+# Install once with:  make init   (or: pre-commit install, from the project's environment)
+# The linters run from the project's Python environment, through tools/env-run,
+# which finds it the way the Makefile does - never by name from PATH - so their
+# versions are pinned in exactly one place (pyproject.toml, locked in uv.lock),
+# whatever shell or editor makes the commit.
 repos:
   # Pinned to commit SHAs, not tags: a tag can be moved to point at different
   # code, and pre-commit executes whatever it resolves to, in CI included.
@@ -25,23 +27,23 @@ repos:
     hooks:
       - id: yamllint
         name: yamllint
-        entry: .venv/bin/yamllint --strict
+        entry: tools/env-run yamllint --strict
         language: system
         types: [yaml]
       - id: ansible-lint
         name: ansible-lint
-        entry: .venv/bin/ansible-lint
+        entry: tools/env-run ansible-lint
         language: system
         pass_filenames: false
         always_run: true
       - id: ruff-check
         name: ruff check
-        entry: .venv/bin/ruff check --fix
+        entry: tools/env-run ruff check --fix
         language: system
         types: [python]
       - id: ruff-format
         name: ruff format
-        entry: .venv/bin/ruff format
+        entry: tools/env-run ruff format
         language: system
         types: [python]
       # The wiki's reference pages are generated from these files; a commit
@@ -49,7 +51,7 @@ repos:
       # are added too, as a formatter does.
       - id: docs
         name: wiki reference pages (make docs)
-        entry: .venv/bin/python tools/docs.py
+        entry: tools/env-run python tools/docs.py
         language: system
         pass_filenames: false
         files: |

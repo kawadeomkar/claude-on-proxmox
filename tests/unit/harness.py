@@ -33,16 +33,21 @@ the developer's keyboard, and a run cut short ends with its workers.
 
 from __future__ import annotations
 
+import datetime
 import fcntl
 import json
 import os
 import pty
 import select
 import signal
+import socket
+import ssl
 import subprocess
 import sys
 import termios
 import time
+import urllib.parse
+import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -339,6 +344,7 @@ def _run_at_a_terminal(
     args: Iterable[str] = (),
     ordered: bool = False,
     timeout: float = 180,
+    env: dict | None = None,
 ) -> tuple[int, str, str]:
     """Run a playbook whose stdin is a pseudo-terminal it controls, and answer its prompts. rc, output, run log.
 
@@ -346,13 +352,14 @@ def _run_at_a_terminal(
     (prompt, keys) or (prompt, keys, seconds), types its keys as they are at
     its prompt's next appearance, that many seconds later. Keys go in once the
     prompt has the terminal in raw mode, and again if it has not taken them
-    within two seconds. args go on the command line, before the playbook.
+    within two seconds. args go on the command line, before the playbook; env
+    sets variables on top of the harness's, as _run's does.
     """
     plan = [(prompt, answer.encode() + b"\n")] if steps is None else list(steps)
     plan = [(step[0], step[1], step[2] if len(step) > 2 else 0) for step in plan]
     inventory = _inventory(root, hosts, ordered)
     log = root / "run.log"
-    env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM="dumb")
+    env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM="dumb", **(env or {}))
     master, slave = pty.openpty()
     process = subprocess.Popen(
         [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, "-e", json.dumps(extra), str(playbook)],
@@ -435,3 +442,82 @@ def _messages(report: dict, task: str) -> dict:
 
 def _failures(report: dict) -> dict:
     return {host: f"{name}: {result.get('msg')}" for name, host, result in _results(report) if result.get("failed")}
+
+
+# ------------------------------------------------------------ the fake APIs ---
+# The fakes in tests/molecule/ on a loopback port of their own, for the tests
+# that run a playbook against one: the fake Proxmox is TLS, with a certificate
+# made for the run, and accepts the token whose secret is PVE_SECRET.
+PVE_SECRET = "unit-test-pve-secret"
+FAKES = REPO / "tests" / "molecule"
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _serve(script: Path, *args: str):
+    """A fake API on a loopback port, until the fixture ends; yields its base URL."""
+    port = _free_port()
+    command = [sys.executable, str(script), str(port), *args]
+    server = subprocess.Popen(command, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(100):
+            if server.poll() is not None:
+                pytest.fail(f"{script.name} exited: {server.stderr.read()}")
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            pytest.fail(f"{script.name} did not start")
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.terminate()
+        server.wait(timeout=10)
+
+
+def _certificate(directory: Path) -> tuple[Path, Path]:
+    """A self-signed certificate for the fake Proxmox's TLS; returns the certificate's file and the key's."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    now = datetime.datetime.now(datetime.UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    cert, key_file = directory / "cert.pem", directory / "key.pem"
+    cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(
+        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    return cert, key_file
+
+
+def _pve(base: str, method: str, endpoint: str, **params) -> dict:
+    """One request to the fake Proxmox (tests/molecule/fake_pve_api.py), as a fixture makes it."""
+    request = urllib.request.Request(
+        f"{base}/api2/json/{endpoint}",
+        data=urllib.parse.urlencode(params).encode() if params else None,
+        method=method,
+        headers={"Authorization": f"PVEAPIToken=ansible@pve!ansible={PVE_SECRET}"},
+    )
+    unverified = ssl.create_default_context()
+    unverified.check_hostname = False
+    unverified.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(request, timeout=10, context=unverified) as answer:
+        return json.loads(answer.read() or b"{}")

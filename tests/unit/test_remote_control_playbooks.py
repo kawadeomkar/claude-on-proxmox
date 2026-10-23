@@ -10,16 +10,16 @@ developer's machine.
 
 What these guard:
 
-- `make claude-login` decided "signed in" from `loggedIn` alone, while the role
+- `make login TYPE=claude` decided "signed in" from `loggedIn` alone, while the role
   also requires a claude.ai login with no API key in the way, so a VM signed in
   any other way was sent back and forth between the two.
 - The login command it printed ran `claude` in a non-login shell, where the
   native install is not on PATH.
-- Its report named `make configure` for every VM it did not sign in, and told
+- Its report named `make deploy TYPE=configure` for every VM it did not sign in, and told
   a VM on the API path to remove the key the vault writes back; now configure
   is named only where it is what starts Remote Control, and Remote Control off
   on purpose is said as such.
-- `make check` failed on every VM without the Remote Control unit, because
+- `make deploy TYPE=check` failed on every VM without the Remote Control unit, because
   systemd_service rejects a missing unit even in check mode.
 - A settings.json that disables Remote Control (a telemetry opt-out, an
   apiKeyHelper, an ANTHROPIC_BASE_URL pointing elsewhere) failed the whole
@@ -114,7 +114,7 @@ SETTINGS = {
 }
 
 # Signed in, but in a way Remote Control cannot use: the one state in which
-# make configure, after the user has fixed the login, is what starts it.
+# make deploy TYPE=configure, after the user has fixed the login, is what starts it.
 INELIGIBLE = sorted(set(LOGINS) - {"claude-ai", "logged-out"})
 # Remote Control off on purpose, beside the canned logins: on the API path (a
 # key from the vault, which claude reports as its login), and switched off.
@@ -164,15 +164,15 @@ def test_claude_login_prints_a_login_command_that_finds_claude(login, host):
 
 @pytest.mark.parametrize("host", sorted(set(LOGINS) | set(OFF_ON_PURPOSE)))
 def test_make_configure_is_named_only_where_it_is_what_starts_remote_control(login, host):
-    # After a login fixed by hand no path unit waits, so make configure starts
+    # After a login fixed by hand no path unit waits, so make deploy TYPE=configure starts
     # Remote Control; anywhere else - signed in already, a sign-in that starts
     # it itself, or Remote Control off on purpose - naming it costs the user a
     # configure run that changes nothing.
     _, messages = login
     if host in INELIGIBLE:
-        assert f"Then make configure VM_NAME={host} TAGS=claude_code starts it." in messages[host]
+        assert f"Then make deploy VM_NAME={host} TAGS=claude_code starts it." in messages[host]
     else:
-        assert "make configure" not in messages[host], messages[host]
+        assert not re.search(r"make deploy VM_NAME=\S+ (TYPE=configure|TAGS=)", messages[host]), messages[host]
         assert "Then" not in messages[host], messages[host]
 
 
@@ -288,14 +288,14 @@ def test_configure_names_the_sign_in_that_comes_next(check_mode):
     _, _, report = check_mode
     said = _messages(report, "Say exactly what to run")
     # Standalone, the command that signs in and starts Remote Control.
-    assert 'Sign in once: "make claude-login VM_NAME=not-ready" opens the sign-in page' in said["not-ready"]
+    assert 'Sign in once: "make login VM_NAME=not-ready TYPE=claude" opens the sign-in page' in said["not-ready"]
     assert "page shows, and starts it." in said["not-ready"]
-    assert "make deploy" not in said["not-ready"]
+    assert "make deploy signs it in next" not in said["not-ready"]
     # Inside make deploy, whose own sign-in follows in the same run.
     assert "make deploy signs it in next, in this run." in said["not-ready-in-deploy"]
-    assert "make claude-login" not in said["not-ready-in-deploy"]
+    assert "TYPE=claude" not in said["not-ready-in-deploy"]
     # A sign-in leaves a VM with a blocking setting stopped: no promise to start it.
-    assert 'Sign in once: "make claude-login VM_NAME=not-ready-blocked"' in said["not-ready-blocked"]
+    assert 'Sign in once: "make login VM_NAME=not-ready-blocked TYPE=claude"' in said["not-ready-blocked"]
     assert "and starts it" not in said["not-ready-blocked"]
 
 
@@ -305,11 +305,11 @@ def test_next_steps_name_the_sign_in_unless_one_follows_and_a_blocker_where_sign
     said = _messages(report, "Say exactly what to run")
     left = _left_to_do(report)
     # Signed out, the sign-in is the one thing left, under the sign-in's matter.
-    # This once left it to the sign-in's own report, which a make configure, or
+    # This once left it to the sign-in's own report, which a make deploy TYPE=configure, or
     # a make deploy with no terminal, never runs, so theirs named no sign-in.
     for host in ("not-ready", "not-ready-blocked"):
         assert left[host] == {"remote_control": "", "claude": said[host]}, host
-        assert "make claude-login VM_NAME=" + host in left[host]["claude"]
+        assert "make login VM_NAME=" + host + " TYPE=claude" in left[host]["claude"]
     # Under make deploy its sign-in follows, and that report says what is left.
     assert left["not-ready-in-deploy"] == {"remote_control": "", "claude": ""}
     blocked = [host for host, (_, expected) in SETTINGS.items() if expected]
@@ -334,7 +334,7 @@ def test_settings_that_disable_remote_control_are_named_rather_than_fatal(check_
     assert set(named.group(1).split(", ")) == set(expected), messages[host]
     assert "claude_remote_control: false" in messages[host]
     # Signed in already, so no login step is suggested.
-    assert "make claude-login" not in messages[host]
+    assert "TYPE=claude" not in messages[host]
 
 
 def test_the_path_unit_is_retired_before_remote_control_starts():
@@ -554,7 +554,7 @@ def test_the_galaxy_collections_resolve_from_where_ansible_is_told(tmp_path, mon
         if path and (Path(path).expanduser() / "ansible_collections" / "community" / "proxmox").is_dir()
     ]
     if not found:
-        pytest.skip("the Galaxy collections are not installed (make deps)")
+        pytest.skip("the Galaxy collections are not installed (make init)")
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

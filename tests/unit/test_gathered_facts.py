@@ -31,6 +31,7 @@ NOT_FACTS = {
     "ansible_user",
     "ansible_connection",
     "ansible_python_interpreter",
+    "ansible_pipelining",
     "ansible_ssh_private_key_file",
     "ansible_ssh_timeout",
     "ansible_check_mode",
