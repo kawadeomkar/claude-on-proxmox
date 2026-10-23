@@ -49,6 +49,12 @@ The bridge the template's NIC is attached to, which every clone inherits. Set it
 |---|---|---|
 | `proxmox_bridge` | `vmbr0` | Sets `proxmox_template_bridge` ([`proxmox_template`](roles/proxmox_template.md)): Bridge the template's net0 is attached to, and so every clone's. |
 
+The PCI resource mapping that names a GPU (Datacenter, Resource Mappings), for vm_gpu below. The host's owner makes it, and the token needs Mapping.Use on it ([docs/guides/vms.md](../guides/vms.md), "GPU passthrough").
+
+| Setting | Default | Notes |
+|---|---|---|
+| `proxmox_gpu_mapping` | `""` | Sets `proxmox_vm_gpu_mapping` ([`proxmox_vm`](roles/proxmox_vm.md)): The PCI resource mapping that names the GPU (Datacenter, Resource Mappings), which the host's owner makes and the token needs Mapping.Use on. For example `claude-gpu`. |
+
 The API user and token the pveum commands in [docs/getting-started/proxmox-access.md](../getting-started/proxmox-access.md) create, and the API's port.
 
 | Setting | Default | Notes |
@@ -116,6 +122,12 @@ The DNS search domain cloud-init gives the VMs. Empty leaves it out.
 | Setting | Default | Notes |
 |---|---|---|
 | `vm_searchdomain` | `""` | Sets `proxmox_vm_searchdomain` ([`proxmox_vm`](roles/proxmox_vm.md)): Defaults to the vm_searchdomain host var. For example `lan`. |
+
+Give every VM a run creates the GPU proxmox_gpu_mapping names, as hostpci0. Only a VM's first run attaches it; one GPU serves one running VM at a time, so for one VM: make deploy alpha ANSIBLE_ARGS="-e vm_gpu=true".
+
+| Setting | Default | Notes |
+|---|---|---|
+| `vm_gpu` | `false` | Sets `proxmox_vm_gpu` ([`proxmox_vm`](roles/proxmox_vm.md)): Attach the GPU mapping proxmox_vm_gpu_mapping names to a VM this run creates, as hostpci0. |
 
 Addressing is DHCP by default and the guest agent reports back what it got. To pin an address instead, set the cloud-init ipconfig line directly. This is also fleet-wide: every VM a run provisions gets this same address, so use it only for a single VM, or one VM per run with a new value each time. (A router DHCP reservation is no substitute across rebuilds - every clone gets a new MAC.)
 

@@ -204,8 +204,10 @@ against 41 s.
    (`tasks/vm_addresses.yml`). The listing gives the status Proxmox last polled, up to ten seconds old,
    so a VM started seconds before is still "stopped" there: the VMs started are passed as
    `claude_vm_just_started` and asked whatever it says. Read by the listing alone, a VM that booted
-   within those seconds got no address and was deleted unreleased (seen live). A VM that does not start
-   or report one gets no address. The VMs started are
+   within those seconds got no address and was deleted unreleased (seen live). Each start's task is read
+   to its end first: Proxmox accepts the start of a VM whose GPU another running VM holds and fails its
+   task before QEMU runs, so such a VM is said not to have started, with Proxmox's reason, and is not
+   waited on. A VM that does not start or report an address gets none. The VMs started are
    kept in `claude_vm_release_started`, and stopped again (`tasks/vm_stop.yml`) by whatever ends the run
    without deleting one, so a failed destroy leaves a VM as it found it: a rescue around the listing, the
    addresses and the `add_host` - which can still fail - stops them and fails again; the last play stops

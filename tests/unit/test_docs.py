@@ -170,6 +170,7 @@ def test_every_setting_that_reaches_a_role_is_in_an_example_file():
     not_settings = {
         "inventory_hostname": "Ansible's own: the VM's name",
         "proxmox_api_host": "taken from inventory/hosts.yml",
+        "proxmox_api_ca_path": "REQUESTS_CA_BUNDLE, while proxmox_validate_certs is on",
     }
     missing = [
         source

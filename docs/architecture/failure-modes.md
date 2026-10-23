@@ -40,6 +40,27 @@ breaks early on an access failure, as recognised by the `proxmox_access_denied` 
 ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)). In `discover.yml` the same condition is `failed_when`, because
 there it applies to every VM and swallowing it means exiting 0 with zero hosts.
 
+## A GPU another VM holds
+
+A mapping's device serves one running VM. Proxmox refuses a start that finds none free before QEMU runs,
+so its task ends at once with the reason as its exit status - `PCI device '0000:01:00.0' already in use by
+VMID '101'` for a mapping of one device, `could not find a free device for 'hostpci0'` for several, `PCI
+device mapping not found for '<id>'` when the node has none. `proxmox_kvm` only waits for an `OK` that never
+comes, its whole `proxmox_vm_timeout` (600 s), then reports the task log's first line, so a VM with a GPU
+starts through the API and the role reads the task itself, failing at once with Proxmox's reason and the
+way out: stop the other VM, or `vm_gpu=false`, which takes the GPU off a VM still on its first run. The VM
+keeps its unfinished tag, so the next run finishes it. A finished VM (started by `proxmox_vm_start_existing`)
+keeps its GPU, so it is told only to stop the other VM or remove the device in Proxmox. `make destroy`,
+which starts a stopped VM to release it, reads each start's task the same way, so a VM whose GPU is held is
+said not to have started and is deleted without a three-minute wait for an agent that never comes up.
+
+## A token without `Mapping.Use`
+
+Setting a `hostpciN` needs `VM.Config.HWType` on the VM and `Mapping.Use` on the mapping; one set by a PCI
+address is root's alone. A token without them fails the settings call with Proxmox's 403, which names the
+privilege and its path, and the VM, left with no cloud-init user, is repaired by the next run once the
+host's owner grants it ([Proxmox access](../getting-started/proxmox-access.md#a-gpu-by-its-mapping)).
+
 ## Duplicate names
 
 Proxmox permits them. The role refuses to act on one; `discover.yml` refuses to

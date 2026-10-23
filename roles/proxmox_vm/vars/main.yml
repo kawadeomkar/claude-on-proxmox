@@ -64,11 +64,12 @@ proxmox_vm_sent_tags: "{{ proxmox_vm_tags | map('lower') | list }}"
 # follows it has succeeded. See proxmox_vm_needs_configuration.
 proxmox_vm_unfinished_tag: "{{ proxmox_vm_sent_tags[0] }}-unfinished"
 
-# Internal: whether the VM still needs its settings applied, its disk resized
-# and a start. Existence alone is not convergence - if a run died between the
-# clone and the settings call, the VM exists but has no cloud-init user, no SSH
-# keys and no agent, and keying off existence would skip the repair forever and
-# then wait out the whole agent poll budget for an agent that was never enabled.
+# Internal: whether the VM is still on its first run: it needs its settings
+# applied, its disk resized and a start. Existence alone is not convergence -
+# if a run died between the clone and the settings call, the VM exists but has
+# no cloud-init user, no SSH keys and no agent, and keying off existence would
+# skip the repair forever and then wait out the whole agent poll budget for an
+# agent that was never enabled.
 #
 # Two markers, because the settings call is not the last step. The cloud-init
 # user says the settings call never ran: only that call writes it, and the
@@ -84,12 +85,87 @@ proxmox_vm_unfinished_tag: "{{ proxmox_vm_sent_tags[0] }}-unfinished"
 # cloned, so that a half-built VM is still recognisably this project's - and
 # main.yml refuses to touch an existing VM without the tag, so "untagged" can
 # no longer mean "ours, but unfinished".
-proxmox_vm_needs_configuration: >-
+proxmox_vm_first_run: >-
   {{ (not proxmox_vm_exists)
-     or (proxmox_vm_force_update | bool)
      or ((proxmox_vm_lookup.proxmox_vms[0].config | default({}, true)).ciuser
          | default('', true) | length == 0)
      or (proxmox_vm_unfinished_tag in proxmox_vm_found_tags) }}
+
+# Internal: the first run, or proxmox_vm_force_update, which re-applies the
+# settings to a finished VM too.
+proxmox_vm_needs_configuration: >-
+  {{ (proxmox_vm_first_run | bool) or (proxmox_vm_force_update | bool) }}
+
+# Internal: the GPU. Every decision about it - the settings call's hostpci0,
+# taking it off again, how the VM starts - is made before present.yml reads
+# a new VM's config after its start, so it reads this run's lookup alone: the
+# config of the VM the name found, or none for a VM about to be cloned. Never
+# proxmox_vm_found_config, which for a new VM falls back to proxmox_vm_config,
+# a register the previous run of the role (another VM, on the same host)
+# leaves behind until this run reads it.
+proxmox_vm_gpu_config: >-
+  {{ (proxmox_vm_lookup.proxmox_vms[0].config | default({}, true)) if proxmox_vm_exists | bool else {} }}
+
+# Internal: {slot: mapping id} for each hostpciN of that config, "" for a
+# device that is no mapping's (host=, which only root may set).
+proxmox_vm_gpu_mappings: "{{ proxmox_vm_gpu_config | hostpci_mappings }}"
+
+# Internal: whether the VM already has the mapping proxmox_vm_gpu_mapping names.
+proxmox_vm_gpu_attached: >-
+  {{ proxmox_vm_gpu_mapping | lower in (proxmox_vm_gpu_mappings.values() | map('lower') | list) }}
+
+# Internal: whether this run may add or remove the GPU: on the VM's first run
+# only, and only while it is stopped. A change to a running VM's config stays
+# pending, and the lookup never sees it, so a VM on its first run that has
+# started already is treated as finished. proxmox_vm_force_update is no first run.
+proxmox_vm_gpu_changeable: >-
+  {{ (proxmox_vm_first_run | bool)
+     and (not (proxmox_vm_exists | bool) or proxmox_vm_lookup.proxmox_vms[0].status | default('') == 'stopped') }}
+
+# Internal: the settings call sends hostpci0, or a call of its own takes the
+# mapping off hostpci0 again (proxmox_vm_gpu turned off on a VM whose first run
+# attached it and then failed to start, say on a GPU another VM holds). Only
+# proxmox_vm_gpu_mapping, the one this role attaches: another mapping there is
+# not the role's to take off.
+proxmox_vm_gpu_set: "{{ (proxmox_vm_gpu_changeable | bool) and (proxmox_vm_gpu | bool) }}"
+proxmox_vm_gpu_unset: >-
+  {{ (proxmox_vm_gpu_changeable | bool) and not (proxmox_vm_gpu | bool)
+     and proxmox_vm_gpu_mapping | length > 0
+     and proxmox_vm_gpu_mappings.hostpci0 | default('') | lower == proxmox_vm_gpu_mapping | lower }}
+
+# Internal: proxmox_vm_gpu asks for a GPU this run may not attach, and the VM
+# does not have: present.yml says so.
+proxmox_vm_gpu_mismatch: >-
+  {{ not (proxmox_vm_gpu_changeable | bool) and (proxmox_vm_gpu | bool) and not (proxmox_vm_gpu_attached | bool) }}
+
+# Internal: whether the VM has a PCI device once this run's settings are
+# written - the one it is given, or one it has (a mapping, or a device root
+# attached by hand) and keeps. Such a VM starts through the API, whose task
+# says at once why a start failed where proxmox_kvm waits out its timeout,
+# and keeps all of its memory: VFIO pins it, so a balloon below it does nothing.
+proxmox_vm_has_gpu: >-
+  {{ (proxmox_vm_gpu_set | bool)
+     or (proxmox_vm_gpu_mappings | dict2items
+         | rejectattr('key', 'equalto', 'hostpci0' if proxmox_vm_gpu_unset | bool else '') | list | length > 0) }}
+
+# Internal: this run starts the VM through the API, as a VM with a GPU is
+# started (present.yml): a VM this run created or repaired, or one
+# proxmox_vm_start_existing asks to start, unless it runs already.
+proxmox_vm_gpu_starts: >-
+  {{ ((proxmox_vm_needs_configuration | bool) or (proxmox_vm_start_existing | bool))
+     and (proxmox_vm_has_gpu | bool)
+     and proxmox_vm_lookup.proxmox_vms[0].status | default('') != 'running' }}
+
+# Internal: the one request no proxmox_kvm call makes for this role, a VM's
+# start whose task it reads itself: the base URL, an IPv6 address bracketed as
+# proxmoxer brackets it, and the header, which carries the token, so every
+# task that sends it is no_log.
+proxmox_vm_api_url: >-
+  https://{{ '[' ~ proxmox_vm_api_host ~ ']' if proxmox_vm_api_host is search(':.*:')
+  and proxmox_vm_api_host is not match('[[]') else proxmox_vm_api_host }}:{{ proxmox_vm_api_port }}/api2/json
+proxmox_vm_api_headers:
+  Authorization: >-
+    PVEAPIToken={{ proxmox_vm_api_user }}!{{ proxmox_vm_api_token_id }}={{ proxmox_vm_api_token_secret }}
 
 # Internal: the address whose host key should be forgotten when the VM is
 # deleted, as the guest agent reports it while the VM still exists. A VM that is

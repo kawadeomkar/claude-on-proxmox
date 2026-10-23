@@ -56,6 +56,20 @@
       (got "{{ proxmox_vm_id }}"). Leave it empty to let Proxmox choose.
     quiet: true
 
+# A mapping ID is Proxmox's pve-configid, matched case-insensitively. Checked
+# before any API call, and so that nothing but one ID - never ",host=<address>",
+# which would attach a device by its address - reaches the settings call.
+- name: Validate the GPU mapping
+  ansible.builtin.assert:
+    that: proxmox_vm_gpu_mapping is match('^[A-Za-z][A-Za-z0-9_-]+$')
+    fail_msg: >-
+      vm_gpu is on, but proxmox_gpu_mapping is "{{ proxmox_vm_gpu_mapping }}": set it to the name of a PCI
+      resource mapping (Datacenter, Resource Mappings) that the host's owner made for the GPU.
+    quiet: true
+  when:
+    - proxmox_vm_state == 'present'
+    - proxmox_vm_gpu | bool
+
 - name: Manage the VM
   module_defaults:
     group/community.proxmox.proxmox:

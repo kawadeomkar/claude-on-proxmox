@@ -36,14 +36,17 @@
         # to prove they are finished, one to prove a static address is
         # applied, two sharing a name, a tagged template, a stopped VM, two
         # with lookalike tags and one tagged second, and four created at the
-        # same time. Those are fixtures, not the role's work on claude-dev.
+        # same time, and nine about a GPU. Those are fixtures, not the role's
+        # work on claude-dev.
         proxmox_vm_verify_clones: >-
           {{ proxmox_vm_verify_calls | selectattr('path', 'search', '/qemu/9000/clone$')
              | rejectattr('params.name', 'in', ['someones-nas', 'half-built', 'static-vm',
                                                 'twin', 'tagged-template', 'stopped-vm',
                                                 'died-after-settings', 'died-before-untag',
                                                 'lookalike-suffix', 'lookalike-prefix', 'tagged-second',
-                                                'fleet-a', 'fleet-b', 'fleet-c', 'fleet-d']) | list }}
+                                                'fleet-a', 'fleet-b', 'fleet-c', 'fleet-d',
+                                                'gpu-a', 'gpu-none', 'gpu-finished', 'gpu-b', 'gpu-started',
+                                                'gpu-started-held', 'gpu-other', 'gpu-hostdev', 'gpu-denied']) | list }}
         proxmox_vm_verify_configs: >-
           {{ proxmox_vm_verify_lifetime | selectattr('method', 'equalto', 'PUT')
              | selectattr('path', 'search', '/qemu/9001/config$') | list }}

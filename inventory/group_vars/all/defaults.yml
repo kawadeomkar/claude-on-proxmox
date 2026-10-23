@@ -20,6 +20,10 @@ proxmox_validate_certs: false
 proxmox_node: pve
 proxmox_storage: local-lvm
 proxmox_bridge: vmbr0
+# The PCI resource mapping that names a GPU on the host (Datacenter, Resource
+# Mappings), which vm_gpu attaches to the VMs a run creates. A fact about the
+# host, like the storage: the host's owner makes the mapping. Empty: none.
+proxmox_gpu_mapping: ""
 # Which NIC of the template carries the LAN address: its MAC is how a VM's own
 # address is told apart from bridges the guest grows later. Provisioning,
 # discovery and make list all read it from here. Only change it if the
@@ -378,6 +382,8 @@ proxmox_vm_api_user: "{{ proxmox_api_user }}"
 proxmox_vm_api_token_id: "{{ proxmox_api_token_id }}"
 proxmox_vm_api_token_secret: "{{ proxmox_api_token_secret }}"
 proxmox_vm_validate_certs: "{{ proxmox_validate_certs }}"
+proxmox_vm_api_ca_path: "{{ proxmox_api_ca_path }}"
+proxmox_vm_gpu_mapping: "{{ proxmox_gpu_mapping }}"
 proxmox_vm_node: "{{ proxmox_node }}"
 proxmox_vm_storage: "{{ proxmox_storage }}"
 proxmox_vm_template_name: "{{ proxmox_template_name }}"

@@ -6,12 +6,13 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1230 tests. By file:
+pytest over `tests/unit/`: 1246 tests. By file:
 
-- **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
+- **Filters** (`test_filters.py` 93, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
-  sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
+  sign-ins' `page_opener`, `plain_text`, and `banner`'s block, and `hostpci_mappings`, which of a VM's PCI
+  devices are mappings.
 - **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
@@ -61,7 +62,7 @@ pytest over `tests/unit/`: 1230 tests. By file:
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
   that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
-- **Destroy's release** (`test_release.py` 31): `destroy.yml`'s release play and report against the
+- **Destroy's release** (`test_release.py` 32): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
   Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
   pasted by hand signed out and told apart, the vault token even under a marker claiming it, and a logout
@@ -89,6 +90,11 @@ pytest over `tests/unit/`: 1230 tests. By file:
   the guard that every scenario and the Vagrantfile keep the managed file out of `~/.ssh`, that no
   playbook sets the task file's inputs as facts, and that the user's own Include and file mode are left
   alone, a group the user is not in included (macOS).
+- **GPU passthrough, statically** (`test_proxmox_vm_gpu.py` 6): every `uri` call of `proxmox_vm` passes
+  `proxmox_vm_api_ca_path` and hides the token, a GPU is sent by its mapping alone after the mapping's
+  name is checked, the GPU decisions read this run's lookup and never `proxmox_vm_config`, the role still
+  sets only its four facts, and a VM with a GPU never starts through `proxmox_kvm`. The role scenario
+  runs the rest (§11.2).
 - **Smaller ones**: `test_configure_tags.py` 2 (`--tags claude_code` still runs discovery and the alias
   play), `test_deploy_report.py` 18 (deploy's opening message, rendered by its own tasks, naming only the
   sign-ins that open a page and the VMs as a list), `test_proxmox_vm_absent.py` 5 (deleting a VM
@@ -184,7 +190,19 @@ exact clone, config, resize, start, shutdown and delete requests, the deletes in
 its side effect. That side effect also proves the ownership guards: an untagged VM and the template are refused by both provisioning and
 deletion without a single config write reaching either, and a VM left tagged but unconfigured — what
 an interrupted run leaves — is repaired; and a minimum memory of 0, or one above the memory, is refused
-before any request is made, while converge's 2048 reaches the settings call as `balloon`.
+before any request is made, while converge's 2048 reaches the settings call as `balloon`. Its GPU
+cases run against two one-device mappings of the fake: a new VM with `vm_gpu` gets `hostpci0:
+mapping=gpu1` and its memory as `balloon`, starts through `status/start` and finishes, and a second run
+writes nothing; a new VM without it, straight after, gets no delete, its own minimum and a `proxmox_kvm`
+start, so nothing the previous run left is read; a finished VM run with `vm_gpu` is warned about and
+not written to; a second new VM on the GPU the first holds fails within seconds, naming VMID 9401, is
+left stopped and unfinished with its mapping, and with `vm_gpu` off gets one `delete=hostpci0` and
+starts through `proxmox_kvm`, the run saying so; a VM on its first run that has started already is warned
+about as started, and one holding a mapping keeps it; a first-run VM holding a mapping other than the
+configured one keeps it and starts through the API, and one holding a device attached by its address is
+refused `vm_gpu` with no write; an empty mapping, or one naming an address, is refused before any request; and the
+`nogpu` token's failure names `Mapping.Use`. `test_release.py` runs destroy's first play with a stopped VM
+whose GPU another running VM holds: it is said not to have started, with Proxmox's reason, and not waited on.
 `proxmox_template`'s side effect runs the role against a
 VMID the fake `/etc/pve/.vmlist` places on a second node and asserts the refusal names that node and
 that no build started.
@@ -279,7 +297,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 
 | Fake | Stands in for | Notes |
 |---|---|---|
-| `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does |
+| `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does; PCI resource mappings, and a start that fails on a GPU another VM holds |
 | `fake_qm.sh` | `qm` on the PVE node | stateful, one config file per VMID, logs every invocation |
 | `fake_virt_customize.sh` | `virt-customize` | so `proxmox_template` runs in a container |
 | `fake_github_api.py` | the GitHub REST API | serves local bare repositories, in paginated responses; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took, so a test can hold that nothing reaches it |
@@ -311,6 +329,16 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   can be shown to recover.
 - A config write carrying `fake-verbatim-tags` keeps its tags as sent, for the comma-joined fixture.
   It is not a PVE parameter.
+- PCI resource mappings, none until `PUT /api2/json/fake/mapping?id=&node=&devices=` makes one, its
+  entries in both key orders the GUI and the CLI write, listed by `GET /cluster/mapping/pci` (with
+  `checks` under `check-node`) and `GET /cluster/mapping/pci/<id>`. A `hostpciN` is accepted only as
+  `mapping=<id>` - `only root can set 'hostpciN' config for non-mapped devices` otherwise - and the `nogpu`
+  token is refused one with `Permission check failed (/mapping/pci/<id>, Mapping.Use)`. A VM mapping one
+  starts only while the node has a device of it that no running VM holds: otherwise the start's task
+  ends at once, stopped, with Proxmox's own reason as its exit status and `TASK ERROR: <reason>` in its
+  log (`PCI device '0000:01:00.0' already in use by VMID '<n>'`, `could not find a free device for
+  'hostpci0'`, `PCI device mapping not found for '<id>'`, from qemu-server 9.2.13), and the VM stays
+  stopped. Every other task ends `OK`.
 
 Beside these, the `proxmox_template` scenario serves a "cloud image" locally, with a real `SHA256SUMS`
 file, and a fake `/etc/pve/.vmlist` that places a VMID on a second node. The `tailscale` role scenario

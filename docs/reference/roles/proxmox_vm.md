@@ -29,6 +29,7 @@ All API calls are delegated to the controller.
 | `proxmox_vm_api_token_id` | str | `ansible` | Name of the API token, the part after the ! in user!token. Set through proxmox_api_token_id in local.yml. |
 | `proxmox_vm_api_token_secret` | str | `""` | API token secret. Keep it in an ansible-vault file. Asserted by the role rather than marked required, for the same reason as proxmox_vm_api_host. Set through vault_proxmox_api_token_secret in vault.yml. A secret: never logged. |
 | `proxmox_vm_validate_certs` | bool | `false` | Verify the API's TLS certificate. Turn it on once the controller trusts the Proxmox CA. Set through proxmox_validate_certs in local.yml. |
+| `proxmox_vm_api_ca_path` | str | `""` | The CA file for the role's own `uri` calls to the API (a VM with a GPU starts through one), which, unlike the modules' HTTP client, do not read REQUESTS_CA_BUNDLE. Empty sends none. Wired from proxmox_api_ca_path, which is REQUESTS_CA_BUNDLE while proxmox_validate_certs is on. |
 | `proxmox_vm_node` | str | `pve` | Node that holds the template, where new VMs are cloned. Set through proxmox_node in local.yml. |
 | `proxmox_vm_storage` | str | `local-lvm` | Storage a full clone's disks are created on. Set through proxmox_storage in local.yml. |
 | `proxmox_vm_template_name` | str | `ubuntu-24.04-cloudinit` | Name of the template VMs are cloned from. Set through proxmox_template_name in local.yml. |
@@ -45,6 +46,8 @@ All API calls are delegated to the controller.
 | `proxmox_vm_id` | raw | `""` | Pin the VM to a specific VMID. Left empty, Proxmox assigns the next free one. The VM is identified by name, not by ID, so this is rarely needed. Run across several hosts at once, the role clones one VM at a time unless each has a distinct VMID here, because concurrent clones that ask Proxmox for one are handed the same. provision.yml sets one for every new VM of a fleet. Declared raw so the role can validate it and report a helpful message. |
 | `proxmox_vm_cores` | int | `2` | Defaults to the vm_cores host var, else 2. Set through vm_cores in local.yml. |
 | `proxmox_vm_memory_mb` | int | `4096` | Defaults to the vm_memory_mb host var, else 4096. Set through vm_memory_mb in local.yml. |
+| `proxmox_vm_gpu` | bool | `false` | Attach the GPU mapping proxmox_vm_gpu_mapping names to a VM this run creates, as hostpci0. Only on the VM's first run, while it is stopped; a VM that has finished, or has started, is never changed, and is warned about when it lacks the mapping. Off, a VM still on its first run has the mapping taken off. A VM with a GPU starts through the API, so a GPU another VM holds fails the start at once, and keeps all of its memory, which VFIO pins. Defaults to the vm_gpu host var, else false. Set through vm_gpu. |
+| `proxmox_vm_gpu_mapping` | str | `""` | The PCI resource mapping that names the GPU (Datacenter, Resource Mappings), which the host's owner makes and the token needs Mapping.Use on. Sent as mapping=&lt;id&gt;, never as a PCI address. Set through proxmox_gpu_mapping in local.yml. |
 | `proxmox_vm_memory_min_mb` | int | computed | The least memory the host may leave the VM (Proxmox's minimum memory, ballooning), from 1 to proxmox_vm_memory_mb. Below it, the host takes the difference back once its memory use passes the node's ballooning target. Defaults to the vm_memory_min_mb host var, else proxmox_vm_memory_mb, a fixed allocation. Applied when the VM is created. Set through vm_memory_min_mb in local.yml. |
 | `proxmox_vm_disk` | str | `scsi0` | The root disk, as the template names it, resized to proxmox_vm_disk_size. |
 | `proxmox_vm_disk_size` | str | `32G` | Absolute root disk size with unit suffix (K, M, G, T). Applied when the VM is created or an unfinished one is repaired, and with proxmox_vm_force_update. Proxmox cannot shrink a disk, so a size below the current one fails. Defaults to the vm_disk_size host var, else 32G. Set through vm_disk_size in local.yml. |
@@ -62,7 +65,7 @@ All API calls are delegated to the controller.
 
 ## Internal values
 
-Set in `roles/proxmox_vm/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. All 10 are computed during a run, from earlier tasks' results.
+Set in `roles/proxmox_vm/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. 21 of the 22 are computed during a run, from earlier tasks' results.
 
 | Name | Value |
 |---|---|
@@ -73,7 +76,19 @@ Set in `roles/proxmox_vm/vars/main.yml`. These are not settings: Ansible ranks a
 | `proxmox_vm_found_tags` | <code>{{ proxmox_vm_lookup.proxmox_vms[0].tags &#124; default('', true) &#124; replace(',', ';') &#124; split(';') &#124; map('trim') &#124; select &#124; map('lower') &#124; list }}</code> |
 | `proxmox_vm_sent_tags` | <code>{{ proxmox_vm_tags &#124; map('lower') &#124; list }}</code> |
 | `proxmox_vm_unfinished_tag` | `{{ proxmox_vm_sent_tags[0] }}-unfinished` |
-| `proxmox_vm_needs_configuration` | <code>{{ (not proxmox_vm_exists) or (proxmox_vm_force_update &#124; bool) or ((proxmox_vm_lookup.proxmox_vms[0].config &#124; default({}, true)).ciuser &#124; default('', true) &#124; length == 0) or (proxmox_vm_unfinished_tag in proxmox_vm_found_tags) }}</code> |
+| `proxmox_vm_first_run` | <code>{{ (not proxmox_vm_exists) or ((proxmox_vm_lookup.proxmox_vms[0].config &#124; default({}, true)).ciuser &#124; default('', true) &#124; length == 0) or (proxmox_vm_unfinished_tag in proxmox_vm_found_tags) }}</code> |
+| `proxmox_vm_needs_configuration` | <code>{{ (proxmox_vm_first_run &#124; bool) or (proxmox_vm_force_update &#124; bool) }}</code> |
+| `proxmox_vm_gpu_config` | <code>{{ (proxmox_vm_lookup.proxmox_vms[0].config &#124; default({}, true)) if proxmox_vm_exists &#124; bool else {} }}</code> |
+| `proxmox_vm_gpu_mappings` | <code>{{ proxmox_vm_gpu_config &#124; hostpci_mappings }}</code> |
+| `proxmox_vm_gpu_attached` | <code>{{ proxmox_vm_gpu_mapping &#124; lower in (proxmox_vm_gpu_mappings.values() &#124; map('lower') &#124; list) }}</code> |
+| `proxmox_vm_gpu_changeable` | <code>{{ (proxmox_vm_first_run &#124; bool) and (not (proxmox_vm_exists &#124; bool) or proxmox_vm_lookup.proxmox_vms[0].status &#124; default('') == 'stopped') }}</code> |
+| `proxmox_vm_gpu_set` | <code>{{ (proxmox_vm_gpu_changeable &#124; bool) and (proxmox_vm_gpu &#124; bool) }}</code> |
+| `proxmox_vm_gpu_unset` | <code>{{ (proxmox_vm_gpu_changeable &#124; bool) and not (proxmox_vm_gpu &#124; bool) and proxmox_vm_gpu_mapping &#124; length > 0 and proxmox_vm_gpu_mappings.hostpci0 &#124; default('') &#124; lower == proxmox_vm_gpu_mapping &#124; lower }}</code> |
+| `proxmox_vm_gpu_mismatch` | <code>{{ not (proxmox_vm_gpu_changeable &#124; bool) and (proxmox_vm_gpu &#124; bool) and not (proxmox_vm_gpu_attached &#124; bool) }}</code> |
+| `proxmox_vm_has_gpu` | <code>{{ (proxmox_vm_gpu_set &#124; bool) or (proxmox_vm_gpu_mappings &#124; dict2items &#124; rejectattr('key', 'equalto', 'hostpci0' if proxmox_vm_gpu_unset &#124; bool else '') &#124; list &#124; length > 0) }}</code> |
+| `proxmox_vm_gpu_starts` | <code>{{ ((proxmox_vm_needs_configuration &#124; bool) or (proxmox_vm_start_existing &#124; bool)) and (proxmox_vm_has_gpu &#124; bool) and proxmox_vm_lookup.proxmox_vms[0].status &#124; default('') != 'running' }}</code> |
+| `proxmox_vm_api_url` | `https://{{ '[' ~ proxmox_vm_api_host ~ ']' if proxmox_vm_api_host is search(':.*:') and proxmox_vm_api_host is not match('[[]') else proxmox_vm_api_host }}:{{ proxmox_vm_api_port }}/api2/json` |
+| `proxmox_vm_api_headers` | `{"Authorization": "PVEAPIToken={{ proxmox_vm_api_user }}!{{ proxmox_vm_api_token_id }}={{ proxmox_vm_api_token_secret }}"}` |
 | `proxmox_vm_forget_address` | `{{ proxmox_vm_reported_address }}` |
 | `proxmox_vm_forget_names` | <code>{{ ([proxmox_vm_forget_address] if proxmox_vm_forget_address &#124; length > 0 else []) + ([proxmox_vm_name ~ '.' ~ proxmox_vm_known_hosts_domain] if proxmox_vm_known_hosts_domain &#124; length > 0 else []) }}</code> |
 
@@ -91,6 +106,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Validate the login credentials for the VM | `ansible.builtin.assert` |  |
 | Validate the minimum memory | `ansible.builtin.assert` |  |
 | Validate the VM ID | `ansible.builtin.assert` |  |
+| Validate the GPU mapping | `ansible.builtin.assert` | <code>proxmox_vm_state == 'present' and proxmox_vm_gpu &#124; bool</code> |
 | Manage the VM | block |  |
 | &emsp;Look up Proxmox VM {{ proxmox_vm_name }} | `community.proxmox.proxmox_vm_info` |  |
 | &emsp;Refuse to act on a duplicated VM name | `ansible.builtin.assert` |  |
@@ -119,8 +135,9 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Validate_the_VM_name1-->|Task| Validate_the_login_credentials_for_the_VM2[validate the login credentials for the vm]:::task
   Validate_the_login_credentials_for_the_VM2-->|Task| Validate_the_minimum_memory3[validate the minimum memory]:::task
   Validate_the_minimum_memory3-->|Task| Validate_the_VM_ID4[validate the vm id]:::task
-  Validate_the_VM_ID4-->|Block Start| Manage_the_VM5_block_start_0[[manage the vm]]:::block
-  Manage_the_VM5_block_start_0-->|Task| Look_up_Proxmox_VM_proxmox_vm_name0[look up proxmox vm proxmox vm name]:::task
+  Validate_the_VM_ID4-->|Task| Validate_the_GPU_mapping5[validate the gpu mapping<br>When: **proxmox vm state     present  and proxmox vm gpu  <br>bool**]:::task
+  Validate_the_GPU_mapping5-->|Block Start| Manage_the_VM6_block_start_0[[manage the vm]]:::block
+  Manage_the_VM6_block_start_0-->|Task| Look_up_Proxmox_VM_proxmox_vm_name0[look up proxmox vm proxmox vm name]:::task
   Look_up_Proxmox_VM_proxmox_vm_name0-->|Task| Refuse_to_act_on_a_duplicated_VM_name1[refuse to act on a duplicated vm name]:::task
   Refuse_to_act_on_a_duplicated_VM_name1-->|Task| Record_whether_the_VM_already_exists2[record whether the vm already exists]:::task
   Record_whether_the_VM_already_exists2-->|Task| Refuse_to_configure_a_template3[refuse to configure a template<br>When: **proxmox vm state     present  and proxmox vm<br>exists**]:::task
@@ -129,7 +146,7 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Create_the_VM_present_yml_5-->|Task| Refuse_to_delete_a_template6[refuse to delete a template<br>When: **proxmox vm state     absent  and proxmox vm exists**]:::task
   Refuse_to_delete_a_template6-->|Task| Refuse_to_delete_a_VM_this_project_does_not_own7[refuse to delete a vm this project does not own<br>When: **proxmox vm state     absent  and proxmox vm exists<br>and not  proxmox vm allow untagged delete   bool**]:::task
   Refuse_to_delete_a_VM_this_project_does_not_own7-->|Include task| Delete_the_VM_absent_yml_8[delete the vm<br>When: **proxmox vm state     absent**<br>include_task: absent yml]:::includeTasks
-  Delete_the_VM_absent_yml_8-.->|End of Block| Manage_the_VM5_block_start_0
+  Delete_the_VM_absent_yml_8-.->|End of Block| Manage_the_VM6_block_start_0
   Delete_the_VM_absent_yml_8-->End
 ```
 
@@ -171,9 +188,17 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Fail when the clone did not create a new VM | `ansible.builtin.assert` | <code>not proxmox_vm_exists</code> |
 | Record the VMID | `ansible.builtin.set_fact` | <code>not proxmox_vm_exists</code> |
 | Tag the new VM as created by this project | `community.proxmox.proxmox_kvm` | <code>not proxmox_vm_exists</code> |
+| Refuse to put the GPU over a device attached by its address | `ansible.builtin.assert` | <code>proxmox_vm_gpu_set &#124; bool</code> |
 | Apply hardware and cloud-init settings | `community.proxmox.proxmox_kvm` | <code>proxmox_vm_needs_configuration &#124; bool</code> |
+| Take the GPU off the VM before its first start | `community.proxmox.proxmox_kvm` | <code>proxmox_vm_gpu_unset &#124; bool</code> |
+| Say that the GPU was taken off | `ansible.builtin.debug` | <code>proxmox_vm_gpu_unset &#124; bool</code> |
+| Say that vm_gpu has no effect on the minimum memory of a VM with a GPU | `ansible.builtin.debug` | <code>proxmox_vm_needs_configuration &#124; bool and proxmox_vm_has_gpu &#124; bool and proxmox_vm_memory_min_mb &#124; int &lt; proxmox_vm_memory_mb &#124; int</code> |
+| Say that a GPU is attached only to a VM a run creates | `ansible.builtin.debug` | <code>proxmox_vm_gpu_mismatch &#124; bool</code> |
 | Resize the root disk to {{ proxmox_vm_disk_size }} | `community.proxmox.proxmox_disk` | <code>proxmox_vm_needs_configuration &#124; bool</code> |
-| Start the VM | `community.proxmox.proxmox_kvm` | <code>proxmox_vm_needs_configuration &#124; bool or proxmox_vm_start_existing &#124; bool</code> |
+| Start the VM | `community.proxmox.proxmox_kvm` | <code>proxmox_vm_needs_configuration &#124; bool or proxmox_vm_start_existing &#124; bool and not (proxmox_vm_has_gpu &#124; bool)</code> |
+| Start the VM with its GPU | `ansible.builtin.uri` | <code>proxmox_vm_gpu_starts &#124; bool</code> |
+| Wait for the start to finish | `ansible.builtin.uri` | <code>proxmox_vm_gpu_starts &#124; bool and proxmox_vm_gpu_start.status == 200</code> |
+| Fail when the VM could not start with its GPU | `ansible.builtin.fail` | <code>proxmox_vm_gpu_starts &#124; bool and proxmox_vm_gpu_start.status != 200 or proxmox_vm_gpu_task.json.data.exitstatus &#124; default('') is not match('OK$&#124;WARNINGS')</code> |
 | Mark the VM as finished | `community.proxmox.proxmox_kvm` | <code>proxmox_vm_needs_configuration &#124; bool</code> |
 | Record whether the VM is being left stopped | `ansible.builtin.set_fact` |  |
 | Read the new VM's network configuration | `community.proxmox.proxmox_vm_info` | <code>not proxmox_vm_exists</code> |
@@ -199,18 +224,26 @@ classDef rescue stroke:#665352,stroke-width:2px;
   present___Clone_from_template_proxmox_vm_template_name0-->|Task| present___Fail_when_the_clone_did_not_create_a_new_VM1[present   fail when the clone did not create a new<br>vm<br>When: **not proxmox vm exists**]:::task
   present___Fail_when_the_clone_did_not_create_a_new_VM1-->|Task| present___Record_the_VMID2[present   record the vmid<br>When: **not proxmox vm exists**]:::task
   present___Record_the_VMID2-->|Task| present___Tag_the_new_VM_as_created_by_this_project3[present   tag the new vm as created by this<br>project<br>When: **not proxmox vm exists**]:::task
-  present___Tag_the_new_VM_as_created_by_this_project3-->|Task| present___Apply_hardware_and_cloud_init_settings4[present   apply hardware and cloud init settings<br>When: **proxmox vm needs configuration   bool**]:::task
-  present___Apply_hardware_and_cloud_init_settings4-->|Task| present___Resize_the_root_disk_to_proxmox_vm_disk_size5[present   resize the root disk to proxmox vm disk<br>size<br>When: **proxmox vm needs configuration   bool**]:::task
-  present___Resize_the_root_disk_to_proxmox_vm_disk_size5-->|Task| present___Start_the_VM6[present   start the vm<br>When: **proxmox vm needs configuration   bool or proxmox<br>vm start existing   bool**]:::task
-  present___Start_the_VM6-->|Task| present___Mark_the_VM_as_finished7[present   mark the vm as finished<br>When: **proxmox vm needs configuration   bool**]:::task
-  present___Mark_the_VM_as_finished7-->|Task| present___Record_whether_the_VM_is_being_left_stopped8[present   record whether the vm is being left<br>stopped]:::task
-  present___Record_whether_the_VM_is_being_left_stopped8-->|Task| present___Read_the_new_VM_s_network_configuration9[present   read the new vm s network configuration<br>When: **not proxmox vm exists**]:::task
-  present___Read_the_new_VM_s_network_configuration9-->|Task| present___Fail_when_the_VM_s_NIC_could_not_be_read10[present   fail when the vm s nic could not be read<br>When: **not  proxmox vm stopped   bool**]:::task
-  present___Fail_when_the_VM_s_NIC_could_not_be_read10-->|Task| present___Wait_for_the_guest_agent_to_report_an_address11[present   wait for the guest agent to report an<br>address<br>When: **not  proxmox vm stopped   bool**]:::task
-  present___Wait_for_the_guest_agent_to_report_an_address11-->|Task| present___Record_the_VM_s_address12[present   record the vm s address]:::task
-  present___Record_the_VM_s_address12-->|Task| present___Fail_when_no_address_was_reported13[present   fail when no address was reported<br>When: **not  proxmox vm stopped   bool**]:::task
-  present___Fail_when_no_address_was_reported13-->|Task| present___Report_that_the_VM_was_left_stopped14[present   report that the vm was left stopped<br>When: **proxmox vm stopped   bool**]:::task
-  present___Report_that_the_VM_was_left_stopped14-->End
+  present___Tag_the_new_VM_as_created_by_this_project3-->|Task| present___Refuse_to_put_the_GPU_over_a_device_attached_by_its_address4[present   refuse to put the gpu over a device<br>attached by its address<br>When: **proxmox vm gpu set   bool**]:::task
+  present___Refuse_to_put_the_GPU_over_a_device_attached_by_its_address4-->|Task| present___Apply_hardware_and_cloud_init_settings5[present   apply hardware and cloud init settings<br>When: **proxmox vm needs configuration   bool**]:::task
+  present___Apply_hardware_and_cloud_init_settings5-->|Task| present___Take_the_GPU_off_the_VM_before_its_first_start6[present   take the gpu off the vm before its first<br>start<br>When: **proxmox vm gpu unset   bool**]:::task
+  present___Take_the_GPU_off_the_VM_before_its_first_start6-->|Task| present___Say_that_the_GPU_was_taken_off7[present   say that the gpu was taken off<br>When: **proxmox vm gpu unset   bool**]:::task
+  present___Say_that_the_GPU_was_taken_off7-->|Task| present___Say_that_vm_gpu_has_no_effect_on_the_minimum_memory_of_a_VM_with_a_GPU8[present   say that vm gpu has no effect on the<br>minimum memory of a vm with a gpu<br>When: **proxmox vm needs configuration   bool and proxmox<br>vm has gpu   bool and proxmox vm memory min mb  <br>int   proxmox vm memory mb   int**]:::task
+  present___Say_that_vm_gpu_has_no_effect_on_the_minimum_memory_of_a_VM_with_a_GPU8-->|Task| present___Say_that_a_GPU_is_attached_only_to_a_VM_a_run_creates9[present   say that a gpu is attached only to a vm<br>a run creates<br>When: **proxmox vm gpu mismatch   bool**]:::task
+  present___Say_that_a_GPU_is_attached_only_to_a_VM_a_run_creates9-->|Task| present___Resize_the_root_disk_to_proxmox_vm_disk_size10[present   resize the root disk to proxmox vm disk<br>size<br>When: **proxmox vm needs configuration   bool**]:::task
+  present___Resize_the_root_disk_to_proxmox_vm_disk_size10-->|Task| present___Start_the_VM11[present   start the vm<br>When: **proxmox vm needs configuration   bool or proxmox<br>vm start existing   bool and not  proxmox vm has<br>gpu   bool**]:::task
+  present___Start_the_VM11-->|Task| present___Start_the_VM_with_its_GPU12[present   start the vm with its gpu<br>When: **proxmox vm gpu starts   bool**]:::task
+  present___Start_the_VM_with_its_GPU12-->|Task| present___Wait_for_the_start_to_finish13[present   wait for the start to finish<br>When: **proxmox vm gpu starts   bool and proxmox vm gpu<br>start status    200**]:::task
+  present___Wait_for_the_start_to_finish13-->|Task| present___Fail_when_the_VM_could_not_start_with_its_GPU14[present   fail when the vm could not start with<br>its gpu<br>When: **proxmox vm gpu starts   bool and proxmox vm gpu<br>start status    200 or proxmox vm gpu task json<br>data exitstatus   default     is not match  ok <br>warnings**]:::task
+  present___Fail_when_the_VM_could_not_start_with_its_GPU14-->|Task| present___Mark_the_VM_as_finished15[present   mark the vm as finished<br>When: **proxmox vm needs configuration   bool**]:::task
+  present___Mark_the_VM_as_finished15-->|Task| present___Record_whether_the_VM_is_being_left_stopped16[present   record whether the vm is being left<br>stopped]:::task
+  present___Record_whether_the_VM_is_being_left_stopped16-->|Task| present___Read_the_new_VM_s_network_configuration17[present   read the new vm s network configuration<br>When: **not proxmox vm exists**]:::task
+  present___Read_the_new_VM_s_network_configuration17-->|Task| present___Fail_when_the_VM_s_NIC_could_not_be_read18[present   fail when the vm s nic could not be read<br>When: **not  proxmox vm stopped   bool**]:::task
+  present___Fail_when_the_VM_s_NIC_could_not_be_read18-->|Task| present___Wait_for_the_guest_agent_to_report_an_address19[present   wait for the guest agent to report an<br>address<br>When: **not  proxmox vm stopped   bool**]:::task
+  present___Wait_for_the_guest_agent_to_report_an_address19-->|Task| present___Record_the_VM_s_address20[present   record the vm s address]:::task
+  present___Record_the_VM_s_address20-->|Task| present___Fail_when_no_address_was_reported21[present   fail when no address was reported<br>When: **not  proxmox vm stopped   bool**]:::task
+  present___Fail_when_no_address_was_reported21-->|Task| present___Report_that_the_VM_was_left_stopped22[present   report that the vm was left stopped<br>When: **proxmox vm stopped   bool**]:::task
+  present___Report_that_the_VM_was_left_stopped22-->End
 ```
 
 <!-- END_GENERATED: role -->

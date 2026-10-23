@@ -21,6 +21,7 @@ tailnet_ipv4 = proxmox_filters.tailnet_ipv4
 guest_address = proxmox_filters.guest_address
 guest_addresses = proxmox_filters.guest_addresses
 proxmox_access_denied = proxmox_filters.proxmox_access_denied
+hostpci_mappings = proxmox_filters.hostpci_mappings
 
 
 def iface(name, mac, addresses):
@@ -460,3 +461,24 @@ class TestSshConfigPrune:
     def test_rejects_non_lists(self):
         with pytest.raises(AnsibleFilterError, match="as lists"):
             ssh_config_prune({"name": "alpha"}, [], TAG)
+
+
+# hostpci_mappings: which of a VM's PCI devices are mappings, and which.
+@pytest.mark.parametrize(
+    ("config", "slots"),
+    [
+        ({"hostpci0": "mapping=gpu"}, {"hostpci0": "gpu"}),
+        ({"hostpci0": "mapping=gpu,pcie=1"}, {"hostpci0": "gpu"}),
+        ({"hostpci0": "pcie=1,mapping=gpu"}, {"hostpci0": "gpu"}),
+        # Devices root attached by their address: devices, but no mapping's.
+        ({"hostpci0": "0000:01:00.0"}, {"hostpci0": ""}),
+        ({"hostpci1": "host=0000:01:00.0;0000:02:00.0,x-vga=1"}, {"hostpci1": ""}),
+        ({"hostpci0": "mapping=gpu", "hostpci2": "0000:03:00.0"}, {"hostpci0": "gpu", "hostpci2": ""}),
+        # Nothing that only resembles a slot.
+        ({"name": "alpha", "hostpci": "mapping=x", "hostpcix": "mapping=y", "memory": 4096}, {}),
+        ({}, {}),
+        (None, {}),
+    ],
+)
+def test_hostpci_mappings(config, slots):
+    assert hostpci_mappings(config) == slots

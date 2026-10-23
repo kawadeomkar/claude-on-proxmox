@@ -57,6 +57,67 @@ services a headless VM has no use for (`common_masked_units`: fwupd, multipathd,
 and snapd while no snap is installed), and apt deletes each package it downloads once it is installed
 (`common_apt_keep_downloads`).
 
+## GPU passthrough
+
+A VM can have a GPU of the Proxmox host's, passed through by a **PCI resource mapping**: a name the host's
+owner gives the device (Datacenter, Resource Mappings), which the token is allowed to use. This project
+only names the mapping; everything that makes one possible is the host's and stays its owner's:
+
+- IOMMU on, and the GPU bound to `vfio-pci` rather than a host driver
+  ([PCI passthrough](https://pve.proxmox.com/wiki/PCI_Passthrough) in Proxmox's wiki);
+- the mapping itself, on each node that has the device
+  ([Resource Mapping](https://pve.proxmox.com/pve-docs/pve-admin-guide.html#resource_mapping));
+- two privileges for the token: `VM.Config.HWType` on `/vms`, and `Mapping.Use` on the mapping
+  ([Proxmox access](../getting-started/proxmox-access.md#a-gpu-by-its-mapping)).
+
+Two settings in `local.yml` turn it on:
+
+```yaml
+proxmox_gpu_mapping: claude-gpu   # the mapping's name, a fact about the host
+vm_gpu: true                      # give it to every VM a run creates
+```
+
+One GPU serves one running VM, so `vm_gpu` stays off by default and is usually given for one run:
+`make deploy alpha ANSIBLE_ARGS="-e vm_gpu=true"`. The VM gets `hostpci0: mapping=claude-gpu` - by the
+mapping, never by the device's address, which only root may set.
+
+**Only a VM's first run attaches it**, while the VM is still stopped: a VM that exists and has finished,
+or has started, is never changed. `make deploy` with `vm_gpu` for such a VM says so and leaves it alone.
+To give it the GPU, recreate it (`make destroy alpha`, then `make deploy alpha` with `vm_gpu`; everything
+on the VM is lost), or add the mapping to it as a PCI device in Proxmox yourself (Hardware, Add, PCI
+Device, Mapped Device) and restart it.
+
+**One GPU, several VMs.** A mapping can list several devices of the same kind, and Proxmox gives each VM
+the first one free. When none is - the one GPU, held by another running VM - the VM does not start, and
+the run says so at once, naming the VM that holds it:
+
+```
+alpha did not start with its GPU. Proxmox said: PCI device '0000:01:00.0' already in use by VMID '101'.
+Stop that VM and run make deploy alpha again with vm_gpu on (ANSIBLE_ARGS="-e vm_gpu=true", unless
+local.yml sets it: without it, the GPU comes off), or run make deploy alpha ANSIBLE_ARGS="-e vm_gpu=false":
+alpha has not finished its first run, so the GPU comes off it.
+```
+
+Run with `vm_gpu` off, a VM still on its first run has the mapping `proxmox_gpu_mapping` names taken off,
+and the run says so; another mapping, or a device root attached by its address, is left where it is.
+`vm_gpu` is refused over such a device on `hostpci0`, which only root may change. A VM that has finished
+keeps its GPU whatever `vm_gpu` says: when another VM holds it, the run says to stop that VM, or to remove
+the device in Proxmox to start it without one. `make destroy` starts a stopped VM to sign it out first, and
+one that cannot start for its GPU is said, with Proxmox's reason, and deleted without that.
+
+A VM with a GPU starts through the API rather than `proxmox_kvm`, which would wait out its whole
+ten-minute timeout on a start that failed. A mapping with no device on the VM's node fails the same
+way, and is its owner's to extend.
+
+**What changes for a VM with a GPU.** It keeps all of its memory: VFIO pins it, so the balloon cannot
+take any back, and its minimum is its memory whatever `vm_memory_min_mb` says. Proxmox refuses to
+live-migrate it (unless the mapping is marked live-migration capable), to hibernate it, or to take a
+snapshot with its RAM.
+
+**What this project does not do:** install the GPU's drivers in the VM (`lspci` there shows the card);
+attach a GPU to a VM that exists, or more than one to a VM; mediated devices (vGPU); or the `pcie=1`,
+`q35` and `x-vga` options. It never creates or changes a mapping, the host's IOMMU or the token's rights.
+
 ## Re-running
 
 All playbooks are idempotent. `make deploy TYPE=configure` can be re-run at any time to pick up variable changes, and

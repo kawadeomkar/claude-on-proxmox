@@ -9,6 +9,9 @@ proxmox_vm_api_token_secret: ""
 # Set to true after trusting the PVE CA on the controller
 # (docs/getting-started/proxmox-access.md).
 proxmox_vm_validate_certs: false
+# The CA file for the role's own `uri` calls, which do not read
+# REQUESTS_CA_BUNDLE as the modules' HTTP client does. Empty sends none.
+proxmox_vm_api_ca_path: ""
 
 # Where and from what to create the VM.
 proxmox_vm_node: pve
@@ -47,6 +50,12 @@ proxmox_vm_memory_mb: "{{ vm_memory_mb | default(4096) }}"
 # back as that use falls. That target is the host's, and this project leaves
 # it alone. Equal to proxmox_vm_memory_mb by default: a fixed allocation.
 proxmox_vm_memory_min_mb: "{{ vm_memory_min_mb | default(proxmox_vm_memory_mb) }}"
+# GPU passthrough, by a PCI resource mapping the Proxmox host's owner made:
+# proxmox_vm_gpu attaches proxmox_vm_gpu_mapping to a VM this run creates, as
+# hostpci0, only on its first run and while it is stopped. A VM with a GPU
+# keeps all of its memory (VFIO pins it) and starts through the API.
+proxmox_vm_gpu: "{{ vm_gpu | default(false) }}"
+proxmox_vm_gpu_mapping: ""
 proxmox_vm_disk: scsi0
 # Which NIC of the template carries the LAN address. Only change this if the
 # template was built with something other than a single net0.

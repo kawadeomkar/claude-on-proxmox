@@ -1206,3 +1206,564 @@
           == (proxmox_vm_log_before.content | b64decode).splitlines() | length
         fail_msg: A refused minimum memory still sent requests to the API.
         quiet: true
+
+# GPU passthrough: a PCI resource mapping attached as hostpci0, on a VM's first
+# run only and while it is stopped. Each VM here has a VMID of its own, from
+# 9401. The fake holds three one-device mappings: gpu1, which gpu-a takes and
+# gpu-b then finds taken; gpu2, already in the config of a VM that started;
+# and gpu3, in the config of a VM whose first run is not the role's to undo.
+- name: Attach a GPU mapping only on a VM's first run
+  hosts: claude-on-proxmox-proxmox_vm
+  gather_facts: false
+  vars:
+    side_effect_base: "https://127.0.0.1:18006/api2/json"
+    side_effect_api: "{{ side_effect_base }}/nodes/pve/qemu"
+    side_effect_headers:
+      Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
+    # The requests made since the log was read into proxmox_vm_gpu_before:
+    # every one but the reads, for the VMID in side_effect_vmid.
+    side_effect_writes: >-
+      {{ (proxmox_vm_gpu_after.content | b64decode).splitlines()[(proxmox_vm_gpu_before.content | b64decode).splitlines()
+         | length:] | map('from_json') | selectattr('path', 'search', '/qemu/' ~ side_effect_vmid ~ '(/|$)')
+         | rejectattr('method', 'equalto', 'GET') | list }}
+  tasks:
+    - name: Make the three GPU mappings, one device each
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_base }}/fake/mapping?id={{ item }}&node=pve&devices=1"
+        method: PUT
+        headers: "{{ side_effect_headers }}"
+      loop: [gpu1, gpu2, gpu3]
+      delegate_to: localhost
+
+    # 1. A new VM with vm_gpu.
+    - name: Read the request log before gpu-a
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Create gpu-a with the GPU
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-a
+        proxmox_vm_id: 9401
+        proxmox_vm_gpu: true
+        proxmox_vm_gpu_mapping: gpu1
+
+    # 7. vm_memory_min_mb is 2048 in this scenario, below the memory: said.
+    - name: Assert gpu-a's first run said its minimum memory has no effect
+      ansible.builtin.assert:
+        that:
+          - proxmox_vm_gpu_memory_said is not skipped
+          - proxmox_vm_gpu_memory_said.msg is search('keeps all 8192 MB')
+          - proxmox_vm_gpu_said is skipped
+        fail_msg: "said: {{ proxmox_vm_gpu_memory_said }}"
+        quiet: true
+
+    # 8. Straight after gpu-a, whose post-start config read left hostpci0 in
+    # proxmox_vm_config: a new VM without the GPU reads none of it.
+    - name: Create gpu-none without the GPU, on the same host
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-none
+        proxmox_vm_id: 9407
+        proxmox_vm_gpu_mapping: gpu1
+
+    - name: Read the request log after both
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_after
+      become: true
+
+    - name: Assert gpu-a got the GPU, all its memory, and started through the API
+      vars:
+        side_effect_vmid: 9401
+        side_effect_settings: >-
+          {{ side_effect_writes | selectattr('path', 'search', '/config$') | selectattr('params.hostpci0', 'defined')
+             | list }}
+        side_effect_starts: "{{ side_effect_writes | selectattr('path', 'search', '/status/start$') | list }}"
+      ansible.builtin.assert:
+        that:
+          - side_effect_settings | length == 1
+          - side_effect_settings[0].params.hostpci0 == 'mapping=gpu1'
+          - side_effect_settings[0].params.balloon == '8192'
+          - side_effect_starts | length == 1
+          - side_effect_starts[0].agent is search('ansible-httpget')
+          - (side_effect_writes | last).params.tags == 'claude-on-proxmox'
+        fail_msg: "gpu-a's writes: {{ side_effect_writes | map(attribute='params') | list }}"
+        quiet: true
+
+    - name: Assert gpu-none was left without a GPU, as no GPU VM before it
+      vars:
+        side_effect_vmid: 9407
+        side_effect_settings: "{{ side_effect_writes | selectattr('path', 'search', '/config$') | list }}"
+        side_effect_starts: "{{ side_effect_writes | selectattr('path', 'search', '/status/start$') | list }}"
+      ansible.builtin.assert:
+        that:
+          - side_effect_settings | selectattr('params.delete', 'defined') | list | length == 0
+          - side_effect_settings | selectattr('params.hostpci0', 'defined') | list | length == 0
+          - side_effect_settings | selectattr('params.balloon', 'defined') | map(attribute='params.balloon') | list == ['2048']
+          - side_effect_starts | length == 1
+          - side_effect_starts[0].agent is not search('ansible-httpget')
+        fail_msg: "gpu-none's writes: {{ side_effect_writes | map(attribute='params') | list }}"
+        quiet: true
+
+    - name: Read the request log before gpu-a's second run
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Run gpu-a again, as a finished VM
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-a
+        proxmox_vm_gpu: true
+        proxmox_vm_gpu_mapping: gpu1
+
+    - name: Read the request log after it
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_after
+      become: true
+
+    - name: Assert the second run wrote nothing and said nothing about the GPU
+      vars:
+        side_effect_vmid: 9401
+      ansible.builtin.assert:
+        that:
+          - side_effect_writes | length == 0
+          - proxmox_vm_gpu_said is skipped
+          - proxmox_vm_gpu_memory_said is skipped
+        fail_msg: "gpu-a's second run wrote: {{ side_effect_writes | map(attribute='params') | list }}"
+        quiet: true
+
+    # 2. A finished VM without the GPU, run with vm_gpu: warned about, not changed.
+    - name: Create gpu-finished without the GPU
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-finished
+        proxmox_vm_id: 9402
+
+    - name: Read the request log before gpu-finished's run with vm_gpu
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Run gpu-finished with vm_gpu
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-finished
+        proxmox_vm_gpu: true
+        proxmox_vm_gpu_mapping: gpu1
+
+    - name: Read the request log after it
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_after
+      become: true
+
+    - name: Assert gpu-finished was warned about and left as it was
+      vars:
+        side_effect_vmid: 9402
+      ansible.builtin.assert:
+        that:
+          - side_effect_writes | length == 0
+          - proxmox_vm_gpu_said.msg is search('^gpu-finished already exists, so vm_gpu did not attach gpu1')
+          - proxmox_vm_gpu_said.msg is search('make destroy gpu-finished')
+        fail_msg: "writes: {{ side_effect_writes }}; said: {{ proxmox_vm_gpu_said }}"
+        quiet: true
+
+    # 3. A second new VM on gpu1 while gpu-a runs: fails at once, and the way out.
+    - name: Read the request log before gpu-b
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Try to create gpu-b on the GPU gpu-a holds
+      block:
+        - name: Note the time
+          ansible.builtin.set_fact:
+            proxmox_vm_gpu_started_at: "{{ now().timestamp() }}"
+
+        - name: Run the role for gpu-b with the GPU
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_name: gpu-b
+            proxmox_vm_id: 9403
+            proxmox_vm_gpu: true
+            proxmox_vm_gpu_mapping: gpu1
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: gpu-b started on a GPU gpu-a holds.
+      rescue:
+        - name: Assert it failed at once, naming the VM that holds the GPU
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search("PCI device '0000:01:00.0' already in use by VMID '9401'")
+              - ansible_failed_result.msg is search('ANSIBLE_ARGS="-e vm_gpu=false"')
+              - now().timestamp() - proxmox_vm_gpu_started_at | float < 120
+            fail_msg: "Expected a fast GPU refusal, got: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Read gpu-b's config
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/9403/config"
+        headers: "{{ side_effect_headers }}"
+      delegate_to: localhost
+      register: proxmox_vm_gpu_b
+
+    - name: Read gpu-b's status
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/9403/status/current"
+        headers: "{{ side_effect_headers }}"
+      delegate_to: localhost
+      register: proxmox_vm_gpu_b_status
+
+    - name: Assert gpu-b was left stopped, unfinished, with the GPU
+      ansible.builtin.assert:
+        that:
+          - proxmox_vm_gpu_b_status.json.data.status == 'stopped'
+          - proxmox_vm_gpu_b.json.data.tags is search('claude-on-proxmox-unfinished')
+          - proxmox_vm_gpu_b.json.data.hostpci0 == 'mapping=gpu1'
+        fail_msg: "gpu-b: {{ proxmox_vm_gpu_b.json.data }}, {{ proxmox_vm_gpu_b_status.json.data.status }}"
+        quiet: true
+
+    - name: Read the request log before gpu-b's run without the GPU
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Run gpu-b again with vm_gpu off
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-b
+        proxmox_vm_gpu: false
+        proxmox_vm_gpu_mapping: gpu1
+
+    - name: Read the request log after it
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_after
+      become: true
+
+    - name: Assert the GPU came off in one write, and gpu-b started and finished
+      vars:
+        side_effect_vmid: 9403
+        side_effect_starts: "{{ side_effect_writes | selectattr('path', 'search', '/status/start$') | list }}"
+      ansible.builtin.assert:
+        that:
+          - side_effect_writes | selectattr('params.delete', 'defined') | map(attribute='params.delete') | list == ['hostpci0']
+          - side_effect_starts | length == 1
+          - side_effect_starts[0].agent is not search('ansible-httpget')
+          - proxmox_vm_gpu_unset_said is not skipped
+          - (side_effect_writes | last).params.tags == 'claude-on-proxmox'
+          - proxmox_vm_address | length > 0
+        fail_msg: "gpu-b's writes: {{ side_effect_writes | map(attribute='params') | list }}"
+        quiet: true
+
+    # 4. An unfinished VM that has started already: treated as finished for the GPU.
+    - name: Clone the two VMs that started on their first run
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/9000/clone"
+        method: POST
+        headers: "{{ side_effect_headers }}"
+        body_format: form-urlencoded
+        body:
+          newid: "{{ item.vmid }}"
+          name: "{{ item.name }}"
+      loop:
+        - {vmid: 9404, name: gpu-started}
+        - {vmid: 9405, name: gpu-started-held}
+      delegate_to: localhost
+
+    - name: Give them their settings, gpu-started-held gpu2 among them
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/{{ item.vmid }}/config"
+        method: PUT
+        headers: "{{ side_effect_headers }}"
+        body_format: form-urlencoded
+        body: "{{ item.body | combine({'tags': 'claude-on-proxmox,claude-on-proxmox-unfinished', 'ciuser': 'dev'}) }}"
+      loop:
+        - {vmid: 9404, body: {}}
+        - {vmid: 9405, body: {hostpci0: mapping=gpu2}}
+      delegate_to: localhost
+
+    - name: Start them, as a run that died after the start would have
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/{{ item }}/status/start"
+        method: POST
+        headers: "{{ side_effect_headers }}"
+      loop: [9404, 9405]
+      delegate_to: localhost
+
+    - name: Read the request log before their runs
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Run gpu-started with vm_gpu
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-started
+        proxmox_vm_gpu: true
+        proxmox_vm_gpu_mapping: gpu1
+
+    - name: Assert it was warned about as started
+      ansible.builtin.assert:
+        that: proxmox_vm_gpu_said.msg is search('^gpu-started has already started, so vm_gpu did not attach gpu1')
+        fail_msg: "said: {{ proxmox_vm_gpu_said }}"
+        quiet: true
+
+    - name: Run gpu-started-held with vm_gpu off
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-started-held
+        proxmox_vm_gpu: false
+        proxmox_vm_gpu_mapping: gpu2
+
+    - name: Assert it kept its GPU, said nothing, and was not started again
+      ansible.builtin.assert:
+        that: proxmox_vm_gpu_said is skipped
+        quiet: true
+
+    - name: Read the request log after both
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_after
+      become: true
+
+    - name: Assert neither had a hostpci0 written or taken off
+      vars:
+        side_effect_vmid: "(9404|9405)"
+      ansible.builtin.assert:
+        that:
+          - side_effect_writes | selectattr('params.hostpci0', 'defined') | list | length == 0
+          - side_effect_writes | selectattr('params.delete', 'defined') | list | length == 0
+          - side_effect_writes | selectattr('path', 'search', '/status/start$') | list | length == 0
+          - >-
+            side_effect_writes | selectattr('path', 'search', '/qemu/9405/config$')
+            | selectattr('params.balloon', 'defined') | map(attribute='params.balloon') | list == ['8192']
+        fail_msg: "writes: {{ side_effect_writes | map(attribute='path') | zip(side_effect_writes | map(attribute='params')) | list }}"
+        quiet: true
+
+    # 3, again: a mapping on hostpci0 that is not proxmox_gpu_mapping, on a VM
+    # still on its first run and stopped, is not the role's to take off.
+    - name: Clone gpu-other, and give it gpu3 and its first-run settings
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/{{ item.path }}"
+        method: "{{ item.method }}"
+        headers: "{{ side_effect_headers }}"
+        body_format: form-urlencoded
+        body: "{{ item.body }}"
+      loop:
+        - {path: 9000/clone, method: POST, body: {newid: 9408, name: gpu-other}}
+        - path: 9408/config
+          method: PUT
+          body: {tags: "claude-on-proxmox,claude-on-proxmox-unfinished", ciuser: dev, hostpci0: mapping=gpu3}
+      delegate_to: localhost
+
+    - name: Read the request log before gpu-other's run
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Run gpu-other with vm_gpu off and gpu1 configured
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: gpu-other
+        proxmox_vm_gpu: false
+        proxmox_vm_gpu_mapping: gpu1
+
+    - name: Read the request log after it
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_after
+      become: true
+
+    - name: Assert gpu3 stayed, and gpu-other started with it through the API
+      vars:
+        side_effect_vmid: 9408
+        side_effect_starts: "{{ side_effect_writes | selectattr('path', 'search', '/status/start$') | list }}"
+      ansible.builtin.assert:
+        that:
+          - side_effect_writes | selectattr('params.delete', 'defined') | list | length == 0
+          - side_effect_starts | length == 1
+          - side_effect_starts[0].agent is search('ansible-httpget')
+          - (side_effect_writes | last).params.tags == 'claude-on-proxmox'
+        fail_msg: "gpu-other's writes: {{ side_effect_writes | map(attribute='params') | list }}"
+        quiet: true
+
+    # 8, as a device: hostpci0 attached by its address, which only root may
+    # change, on a VM still on its first run. vm_gpu is refused over it.
+    - name: Clone gpu-hostdev, and attach a device by its address as root would
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ side_effect_api }}/{{ item.path }}"
+        method: "{{ item.method }}"
+        headers: "{{ side_effect_headers }}"
+        body_format: form-urlencoded
+        body: "{{ item.body }}"
+      loop:
+        - {path: 9000/clone, method: POST, body: {newid: 9409, name: gpu-hostdev}}
+        - path: 9409/config
+          method: PUT
+          body: {tags: claude-on-proxmox, hostpci0: "0000:05:00.0", fake-root: 1}
+      delegate_to: localhost
+
+    - name: Read the request log before gpu-hostdev's run
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Try to give gpu-hostdev the GPU over its device
+      block:
+        - name: Run the role for gpu-hostdev with the GPU
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_name: gpu-hostdev
+            proxmox_vm_gpu: true
+            proxmox_vm_gpu_mapping: gpu1
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: gpu-hostdev's device was written over.
+      rescue:
+        - name: Assert it refused, naming the device
+          ansible.builtin.assert:
+            that: ansible_failed_result.msg is search('attached by its address \\(0000:05:00.0\\)')
+            fail_msg: "Expected the device refusal, got: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Read the request log after it
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_after
+      become: true
+
+    - name: Assert nothing was written to gpu-hostdev
+      vars:
+        side_effect_vmid: 9409
+      ansible.builtin.assert:
+        that: side_effect_writes | length == 0
+        fail_msg: "gpu-hostdev's writes: {{ side_effect_writes | map(attribute='params') | list }}"
+        quiet: true
+
+    # 5. Refused before any API call.
+    - name: Read the request log before the refused mappings
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_before
+      become: true
+
+    - name: Try vm_gpu with no mapping
+      block:
+        - name: Run the role with no mapping
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_name: gpu-refused
+            proxmox_vm_gpu: true
+            proxmox_vm_gpu_mapping: ""
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: proxmox_vm went on with vm_gpu and no mapping.
+      rescue:
+        - name: Assert it refused the empty mapping
+          ansible.builtin.assert:
+            that: ansible_failed_result.msg is search('vm_gpu is on, but proxmox_gpu_mapping is ""')
+            fail_msg: "Expected the mapping refusal, got: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Try vm_gpu with a mapping that names an address
+      block:
+        - name: Run the role with it
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_name: gpu-refused
+            proxmox_vm_gpu: true
+            proxmox_vm_gpu_mapping: x,host=0000:01:00.0
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: proxmox_vm went on with a mapping that names an address.
+      rescue:
+        - name: Assert it refused the address
+          ansible.builtin.assert:
+            that: ansible_failed_result.msg is search('proxmox_gpu_mapping is "x,host=0000:01:00.0"')
+            fail_msg: "Expected the mapping refusal, got: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Read the request log after the refusals
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: proxmox_vm_gpu_after
+      become: true
+
+    - name: Assert neither refusal reached the API
+      ansible.builtin.assert:
+        that: >-
+          (proxmox_vm_gpu_after.content | b64decode).splitlines() | length
+          == (proxmox_vm_gpu_before.content | b64decode).splitlines() | length
+        fail_msg: A refused mapping still sent requests to the API.
+        quiet: true
+
+    # 6. A token without Mapping.Use.
+    - name: Try to create gpu-denied with a token that may not use the mapping
+      block:
+        - name: Run the role with the nogpu token
+          ansible.builtin.include_role:
+            name: proxmox_vm
+          vars:
+            proxmox_vm_name: gpu-denied
+            proxmox_vm_id: 9406
+            proxmox_vm_api_token_id: nogpu
+            proxmox_vm_gpu: true
+            proxmox_vm_gpu_mapping: gpu1
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: gpu-denied was given the GPU by a token without Mapping.Use.
+      rescue:
+        - name: Assert the failure names the privilege and the mapping
+          ansible.builtin.assert:
+            that: ansible_failed_result.msg is search('/mapping/pci/gpu1, Mapping.Use')
+            fail_msg: "Expected Mapping.Use, got: {{ ansible_failed_result.msg }}"
+            quiet: true
+
+    - name: Remove the GPU scenario's VMs
+      ansible.builtin.include_role:
+        name: proxmox_vm
+      vars:
+        proxmox_vm_name: "{{ side_effect_gpu_vm }}"
+        proxmox_vm_state: absent
+      loop: [gpu-a, gpu-none, gpu-finished, gpu-b, gpu-started, gpu-started-held, gpu-other, gpu-hostdev, gpu-denied]
+      loop_control:
+        loop_var: side_effect_gpu_vm

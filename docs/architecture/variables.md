@@ -55,7 +55,7 @@ RSA or ECDSA gets the role's actionable "set vm_ssh_public_keys" message rather 
 
 ## 6.3 Computed internals
 
-`roles/proxmox_vm/vars/main.yml` holds nine expressions, most of which read registers set by tasks. They are
+`roles/proxmox_vm/vars/main.yml` holds twenty-two expressions, most of which read registers set by tasks. They are
 **vars, not facts**, and that is load-bearing:
 
 | Var | Derived from | Purpose |
@@ -67,8 +67,19 @@ RSA or ECDSA gets the role's actionable "set vm_ssh_public_keys" message rather 
 | `proxmox_vm_found_tags` | `proxmox_vm_lookup` | tags as a list, lowercased, `;`/`,` both handled |
 | `proxmox_vm_sent_tags` | `proxmox_vm_tags` | the same list lowercased, as Proxmox stores it |
 | `proxmox_vm_unfinished_tag` | `proxmox_vm_sent_tags[0]` | `claude-on-proxmox-unfinished`, carried from the settings call until the start succeeds |
-| `proxmox_vm_needs_configuration` | existence + the lookup's `ciuser` and tags + `force_update` | see [§8](convergence.md) |
+| `proxmox_vm_first_run` | existence + the lookup's `ciuser` and tags | the VM has not finished its first run; see [§8](convergence.md) |
+| `proxmox_vm_needs_configuration` | `proxmox_vm_first_run` + `force_update` | the settings, resize and start are due |
+| `proxmox_vm_gpu_config` | `proxmox_vm_lookup` alone, `{}` for a VM about to be cloned | the config every GPU decision reads, never the previous run's `proxmox_vm_config` |
+| `proxmox_vm_gpu_mappings` | that config, through `hostpci_mappings` | `{slot: mapping id}`, `""` for a device of no mapping |
+| `proxmox_vm_gpu_attached` | those + `proxmox_vm_gpu_mapping` | the VM has the mapping already |
+| `proxmox_vm_gpu_changeable` | first run + the lookup's status | a GPU may be added or taken off: first run, stopped |
+| `proxmox_vm_gpu_set`, `proxmox_vm_gpu_unset` | changeable + `proxmox_vm_gpu` (+ a mapping on `hostpci0`) | the settings call sends `hostpci0`, or a call of its own deletes it |
+| `proxmox_vm_gpu_mismatch` | not changeable + `proxmox_vm_gpu` + not attached | `vm_gpu` asks for a GPU this run may not give: said |
+| `proxmox_vm_has_gpu` | set, or a device kept | balloon equal to the memory, and the start through the API |
+| `proxmox_vm_gpu_starts` | needs configuration or `start_existing`, a GPU, not running | the API start's condition |
+| `proxmox_vm_api_url`, `proxmox_vm_api_headers` | the `proxmox_vm_api_*` role vars | that start's request; the header carries the token |
 | `proxmox_vm_forget_address` | the agent's reported address | which host key to drop; empty for a stopped VM, which destroy cannot address |
+| `proxmox_vm_forget_names` | that address + `proxmox_vm_known_hosts_domain` | every name the host key may be held under |
 
 > **Do not convert these to `set_fact`.** The role can run more than once for the same host in one
 > play — the role scenario's `side_effect.yml` includes it back to back — and a `set_fact` survives a
