@@ -57,14 +57,15 @@ and `LOG_DIR` moves the run logs or, empty, turns them off.
 | &emsp;`TYPE=check` | Dry-run configure against the VMs (--check --diff; every tagged VM, unless named) |
 | &emsp;`TYPE=ssh-config` | Refresh the SSH aliases of the VMs this project created; without names, also prune those of VMs that are gone |
 | &emsp;`TAGS=<role>,...` | Configure only these roles: beside VM names as TYPE=configure, else with TYPE=configure or check (make deploy alpha TAGS=claude_code) |
-| `make code <name>` | Open a VM in VS Code with a Claude terminal |
+| `make code <name>` | Open a VM in VS Code with a Claude terminal, this machine's recent Claude sessions copied there |
 | &emsp;`PROJECT=<repo>` | Open one project folder on the VM rather than the whole projects directory |
+| &emsp;`SESSION=<id>` | Continue one of this machine's Claude Code sessions there: its checkout brought to the session's pushed commit, then claude --resume |
 | `make login [<name>...]` | Sign the VM(s) in to Claude, GitHub and Tailscale, or report how each is signed in |
 | &emsp;`TYPE=claude` | Sign Claude Code in by the browser, then start Remote Control |
 | &emsp;`TYPE=github` | Sign gh in to GitHub by the device flow, then clone the private repositories |
 | &emsp;`TYPE=tailscale` | Join Tailscale by its web login |
 | `make list [<name>...]` | Show the VMs this project created, and their addresses |
-| `make destroy [<name>...]` | Release the VM(s) from Claude, GitHub and Tailscale, then delete them |
+| `make destroy [<name>...]` | Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them |
 | `make logs` | List the run logs in .logs/, newest first |
 
 ### Develop

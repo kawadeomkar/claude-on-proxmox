@@ -1,0 +1,25 @@
+---
+# Entry point for playbooks/destroy.yml, before it saves what of the VM's
+# Claude Code sessions is only there: Remote Control writes the transcript of
+# the session it serves as it works, so it stops first and the save has that
+# session's last line. The path unit first, as release.yml stops them, since
+# it starts the service. release_resume.yml starts again what this stopped,
+# for a VM destroy then keeps; release.yml's report says Remote Control was
+# stopped whichever stopped it. destroy.yml runs it only where sudo works, and
+# a unit that will not stop fails nothing: the save goes on.
+- name: release_pause | Look for Remote Control's units
+  ansible.builtin.stat:
+    path: /etc/systemd/system/{{ claude_code_remote_control_service }}.{{ item }}
+  loop: [path, service]
+  register: claude_code_release_pause_units
+
+- name: release_pause | Stop Remote Control while the sessions are saved
+  ansible.builtin.systemd_service:
+    name: "{{ claude_code_remote_control_service }}.{{ item.item }}"
+    state: stopped
+  loop: >-
+    {{ claude_code_release_pause_units.results | selectattr('stat.exists') | list }}
+  loop_control:
+    label: "{{ claude_code_remote_control_service }}.{{ item.item }}"
+  register: claude_code_release_paused
+  failed_when: false
