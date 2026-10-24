@@ -773,6 +773,75 @@ def test_only_code_takes_a_project(tmp_path: Path, recipe: str) -> None:
     assert "does not have option `--project`" in output or NOT_MATCHED in output
 
 
+# ---------------------------------------------------------------- --session ----
+
+# One Claude Code session ID, lowercase hex in groups of 8-4-4-4-12, as Claude
+# Code names a transcript. Only just code takes it.
+SESSION_ID = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
+SESSION_ERROR = "--session is a Claude Code session ID"
+
+
+def test_code_passes_a_session_as_its_own_json_extra_var(tmp_path: Path) -> None:
+    run = _playbook(tmp_path, "code", "alpha", "--project", "repo", "--session", SESSION_ID)
+    assert run[run.index('{"vm_name": "alpha"}') + 1 : run.index('{"vm_name": "alpha"}') + 5] == [
+        "-e",
+        '{"vm_project": "repo"}',
+        "-e",
+        f'{{"vm_session": "{SESSION_ID}"}}',
+    ], run
+
+
+def test_code_without_a_session_passes_none(tmp_path: Path) -> None:
+    assert not any("vm_session" in arg for arg in _playbook(tmp_path, "code", "alpha", "--project", "repo"))
+
+
+BAD_SESSIONS = [
+    pytest.param(SESSION_ID.upper(), id="uppercase"),
+    pytest.param(SESSION_ID + "0", id="too-long"),
+    pytest.param(SESSION_ID[:-1], id="too-short"),
+    pytest.param(SESSION_ID.replace("-", ""), id="no-dashes"),
+    pytest.param("../" + SESSION_ID, id="path"),
+    pytest.param(SESSION_ID + "' -e 'x=1", id="quote"),
+    pytest.param(SESSION_ID + '"}', id="json"),
+    pytest.param("$(x)", id="command-substitution"),
+    pytest.param(SESSION_ID + "\nother", id="newline"),
+    pytest.param("-" * 36, id="dashes"),
+]
+
+
+@pytest.mark.parametrize("value", BAD_SESSIONS)
+def test_code_refuses_a_bad_session_before_the_playbook(tmp_path: Path, value: str) -> None:
+    assert NOT_MATCHED in _refused(tmp_path, "code", "alpha", "--session", value)
+
+
+@pytest.mark.parametrize("value", BAD_SESSIONS)
+def test_the_session_check_holds_the_json_whatever_reaches_it(value: str) -> None:
+    # The script's own check, behind the pattern: tools/check session.
+    result = subprocess.run(
+        [str(REPO / "tools" / "check"), "session", value], capture_output=True, text=True, check=False
+    )
+    assert result.returncode != 0 and SESSION_ERROR in result.stderr, value
+
+
+@pytest.mark.parametrize("value", [SESSION_ID, ""])
+def test_the_session_check_takes_a_session_id_or_none(value: str) -> None:
+    assert subprocess.run([str(REPO / "tools" / "check"), "session", value], check=False).returncode == 0
+
+
+def test_a_project_or_session_is_never_run_as_code(tmp_path: Path) -> None:
+    ran = tmp_path / "ran"
+    for option in ("--project", "--session"):
+        _refused(tmp_path, "code", "alpha", option, f"$(touch {ran})")
+        _refused(tmp_path, "code", "alpha", option, f"`touch {ran}`")
+    assert not ran.exists()
+
+
+@pytest.mark.parametrize("recipe", ["deploy", "login", "list", "destroy"])
+def test_only_code_takes_a_session(tmp_path: Path, recipe: str) -> None:
+    output = _refused(tmp_path, recipe, "alpha", "--session", SESSION_ID)
+    assert "does not have option `--session`" in output or NOT_MATCHED in output
+
+
 # ---------------------------------------------------------------- a terminal, or none ----
 
 OFF = '{"login_desktop":false,"deploy_sign_in":false}'

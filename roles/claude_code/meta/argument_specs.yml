@@ -184,3 +184,21 @@ argument_specs:
         type: str
         default: dev
       claude_code_remote_control_service: *cc_remote_control_service
+
+  # tasks_from: release_pause and release_resume, which playbooks/destroy.yml
+  # runs around its save of the VM's Claude Code sessions.
+  release_pause:
+    short_description: Stop Remote Control while destroy saves the VM's Claude Code sessions
+    description:
+      - Stops the path unit that starts Remote Control, then the service, so that the transcript of the session it
+        serves is whole when just destroy saves it. Nothing here fails the run. The release entry point's report says
+        Remote Control was stopped.
+    options:
+      claude_code_remote_control_service: *cc_remote_control_service
+  release_resume:
+    short_description: Start again what release_pause stopped, on a VM destroy keeps
+    description:
+      - Starts the service, then the path unit, that release_pause stopped in the same run, for a VM whose sessions
+        could not be saved and that just destroy therefore neither releases nor deletes.
+    options:
+      claude_code_remote_control_service: *cc_remote_control_service

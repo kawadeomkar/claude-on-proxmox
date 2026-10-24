@@ -34,6 +34,8 @@ vault*.json
 # Run logs (the justfile's LOG_DIR): they name hosts and addresses.
 .logs/
 *.log
+# Claude Code sessions just destroy saved from a VM: they hold whatever their tools printed.
+.sessions/
 # A committed template carries no real values.
 !*.example
 

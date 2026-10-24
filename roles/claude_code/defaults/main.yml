@@ -70,7 +70,7 @@ claude_code_remote_control_service: claude-remote-control
 # login starts on the VM with no terminal, its sign-in page opens in the browser
 # on this machine, and once you authorise, the browser comes back to claude on
 # the VM by itself - or, where it cannot, the page shows a code to paste at a
-# prompt in the terminal running make. Set by the playbooks.
+# prompt in the terminal running just. Set by the playbooks.
 claude_code_login_interactive: false
 # Open the sign-in page in this machine's browser. Off in every test.
 claude_code_login_desktop: true

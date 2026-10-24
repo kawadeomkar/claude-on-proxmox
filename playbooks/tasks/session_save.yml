@@ -1,0 +1,165 @@
+---
+# What of the VM's Claude Code sessions exists only there, saved on this
+# machine before just destroy releases and deletes the VM
+# (docs/architecture/lifecycle.md §4.5). Claude Code keeps a session on the
+# disk of the machine it runs on, the only copy it can resume, and auto
+# memory is machine-local too, so deleting the VM would end them: every
+# session that began on the VM, every copy just code made that was continued
+# there, the folder of subagents and tool results beside each, and every auto
+# memory folder. A copy just code wrote that is still as written is left: this
+# machine has that session.
+#
+# Into <destroy_sessions_dir>/<vm>-<time>/projects/, laid out as on the VM and
+# edited in nothing, with sessions.json beside it naming each session and the
+# command that continues it here: `claude --resume <path>` resumes a
+# transcript where it lies, and writes to it there.
+#
+# What the VM sends is not trusted: it is the VM's to make up. The names to
+# save are held to Claude Code's own (claude_sessions_saved), and
+# claude_sessions_fetch runs tar there and unpacks what comes back itself,
+# plain files and folders only, 0600 and 0700, at those names and nowhere
+# else - never a link, which rsync would have made here and a later write or
+# chmod would have followed out of the folder. Every task that reads a
+# transcript is no_log, and nothing here names more than files. A failure
+# fails this file: destroy.yml then keeps the VM, neither released nor
+# deleted.
+#
+# The tasks on the VM run as the VM user, whose files these are, never
+# through sudo, so a VM whose sudo now asks for a password is still saved.
+# One that stops answering part way fails here, rather than leave the run
+# unseen, which an unreachable host does: destroy.yml then keeps it.
+#
+# Inputs: the VM as the host, as destroy.yml's release play reaches it;
+# vm_user, vm_projects_dir, vscode_workspaces_dir and destroy_sessions_dir.
+# Sets claude_vm_sessions_said, for the report.
+
+- name: session_save | Read the VM user's home
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ vm_user }}"
+  become: false
+  register: claude_vm_save_user
+  ignore_unreachable: true
+
+- name: session_save | Fail when the VM stopped answering
+  ansible.builtin.assert:
+    that: not (claude_vm_save_user.unreachable | default(false))
+    fail_msg: "it stopped answering over SSH: {{ claude_vm_save_user.msg | default('no reason given') | plain_text }}"
+    quiet: true
+
+# Once, so that every task below names the same folder: a var holding now()
+# is a new time each time it is read. How to reach the VM as Ansible does, from
+# its host variables, for the ssh claude_sessions_fetch runs here; none where
+# the VM is this machine, as in the tests.
+- name: session_save | Settle where on each machine
+  vars:
+    claude_vm_save_home: "{{ claude_vm_save_user.ansible_facts.getent_passwd[vm_user][4] }}"
+  ansible.builtin.set_fact:
+    claude_vm_save_claude: "{{ claude_vm_save_home }}/.claude"
+    claude_vm_save_projects: >-
+      {{ (vm_projects_dir | default('', true) or claude_vm_save_home ~ '/projects') | regex_replace('(.)/+$', '\1') }}
+    claude_vm_save_ssh: >-
+      {{ {} if ansible_connection | default('ssh') == 'local'
+         else {'user': ansible_user | default(vm_user), 'host': ansible_host | default(inventory_hostname),
+               'port': ansible_port | default('') | string,
+               'private_key_file': ansible_ssh_private_key_file | default(ansible_private_key_file | default('')),
+               'args': ansible_ssh_common_args | default('') ~ ' ' ~ ansible_ssh_extra_args | default('')} }}
+    claude_vm_save_dir: >-
+      {{ (destroy_sessions_dir | default('', true) | expanduser or (playbook_dir | dirname) ~ '/.sessions')
+         | regex_replace('(.)/+$', '\1') ~ '/' ~ inventory_hostname ~ '-' ~ now(fmt='%Y%m%d-%H%M%S') }}
+
+# destroy.yml's first play refuses a relative destroy_sessions_dir before
+# anything starts; this repeats it for a run of this file alone, since a
+# relative path would land wherever the module ran.
+- name: session_save | Refuse a folder here that is not an absolute path
+  ansible.builtin.assert:
+    that: claude_vm_save_dir is match('/')
+    fail_msg: >-
+      destroy_sessions_dir is a folder on this machine and must be an absolute path (or start with ~),
+      not "{{ destroy_sessions_dir }}".
+    quiet: true
+
+# just code's manifest says which copies are still as it wrote them, from the
+# directory just code keeps on the VM, as code.yml names it.
+- name: session_save | Read what of the VM's Claude Code sessions is only there
+  claude_sessions_info:
+    path: "{{ claude_vm_save_claude }}"
+    all: true
+    manifest: >-
+      {{ claude_vm_save_projects | make_code_dir(vscode_workspaces_dir | default('', true)) }}/claude-sessions/manifest.json
+    memory: true
+  become: false
+  register: claude_vm_save_found
+  ignore_unreachable: true
+  no_log: true
+
+- name: session_save | Fail when the VM stopped answering as its sessions were read
+  ansible.builtin.assert:
+    that: not (claude_vm_save_found.unreachable | default(false))
+    fail_msg: "it stopped answering over SSH as its sessions were read"
+    quiet: true
+
+- name: session_save | Settle what to save
+  ansible.builtin.set_fact:
+    claude_vm_save: "{{ claude_vm_save_found.sessions | claude_sessions_saved(claude_vm_save_found.memory, claude_vm_save_dir) }}"
+
+# Into a folder of its own, made here and 0700 before anything arrives; the
+# folder above it may be the user's own already. Over SSH as Ansible reached
+# the VM, never asking for anything. The file's contents are never returned.
+- name: session_save | Bring them here
+  claude_sessions_fetch:
+    dest: "{{ claude_vm_save_dir }}/projects"
+    root: "{{ claude_vm_save_claude }}/projects"
+    names: "{{ claude_vm_save.files }}"
+    ssh: "{{ claude_vm_save_ssh or omit }}"
+  delegate_to: localhost
+  become: false
+  register: claude_vm_save_brought
+  when: claude_vm_save.files | length > 0
+
+- name: session_save | List them beside them
+  ansible.builtin.copy:
+    dest: "{{ claude_vm_save_dir }}/sessions.json"
+    content: >-
+      {{ {'vm': inventory_hostname,
+          'note': 'Written on ' ~ inventory_hostname ~ ' and saved as it sent them, plain files only: what they say,'
+                  ~ " and what resuming one asks to run, is that VM's, never checked here. Each resumes with a Claude"
+                  ~ ' Code at least as new as its version.',
+          'newest_version': claude_vm_save.newest,
+          'sessions': claude_vm_save.sessions,
+          'memory': claude_vm_save.memory | map('regex_replace', '^', claude_vm_save_dir ~ '/projects/')
+                    | map('regex_replace', '$', '/memory') | list} | to_nice_json }}
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: claude_vm_save.files | length > 0
+
+# Nothing to say for a VM with none of its own: the report says only what it
+# saved, and what of the VM's it left out.
+- name: session_save | Say what was saved
+  vars:
+    claude_vm_save_counts: >-
+      {{ ([claude_vm_save.started ~ ' started there'] if claude_vm_save.started else [])
+         + ([claude_vm_save.continued ~ ' continued there'] if claude_vm_save.continued else []) }}
+    claude_vm_save_memory: >-
+      {{ 'the auto memory of ' ~ claude_vm_save.memory | length
+         ~ (' project' if claude_vm_save.memory | length == 1 else ' projects') }}
+    claude_vm_save_left: >-
+      {{ claude_vm_save_brought.left_out_count | default(0) + claude_vm_save.refused }}
+    claude_vm_save_left_said: >-
+      {{ '' if claude_vm_save_left | int == 0
+         else '; left out ' ~ claude_vm_save_left ~ (' entry' if claude_vm_save_left | int == 1 else ' entries')
+              ~ ' of the VM that ' ~ ('was' if claude_vm_save_left | int == 1 else 'were')
+              ~ ' a link, not a plain file or folder, or not named as Claude Code names its own' }}
+  ansible.builtin.set_fact:
+    claude_vm_sessions_said: >-
+      {{ ('' if claude_vm_save_left | int == 0 else 'none saved' ~ claude_vm_save_left_said)
+         if claude_vm_save.files | length == 0
+         else ((claude_vm_save.sessions | length ~ ' saved (' ~ claude_vm_save_counts | join(', ') ~ ')'
+                ~ (', with ' ~ claude_vm_save_memory ~ ',' if claude_vm_save.memory else '')
+                ~ ' in ' ~ claude_vm_save_dir ~ ' - its sessions.json has the `claude --resume <path>` that continues'
+                ~ ' each here' ~ (', with Claude Code ' ~ claude_vm_save.newest ~ ' or newer' if claude_vm_save.newest else '')
+                ~ ", and what they hold is the VM's writing")
+               if claude_vm_save.sessions
+               else 'none, but ' ~ claude_vm_save_memory ~ ' is saved in ' ~ claude_vm_save_dir)
+              ~ claude_vm_save_left_said }}

@@ -12,7 +12,7 @@
 # browser on this machine to open the page, just itself run over SSH (a page
 # opened on another machine redirects to that machine's localhost), a port
 # taken here - the printed page opens instead, the code it shows is pasted at a
-# prompt in the terminal running make, and it reaches claude through a named
+# prompt in the terminal running just, and it reaches claude through a named
 # pipe. Authorising is the person's part, and the only part.
 #
 # What it rests on, probed against Claude Code 2.1.296 (docs/architecture/roles.md §5.5):

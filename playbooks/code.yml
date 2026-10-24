@@ -30,12 +30,23 @@
 # run beside the Claude task, which opens a page about the VM beside the
 # terminal each time the window opens, its "Signed in" section read from the
 # VM then (docs/guides/vscode.md). The workspace file and those notes are
-# all that is written on the VM, in a directory of its own beside the projects
+# written on the VM in a directory of its own beside the projects
 # (<projects>/.claude-on-proxmox/), never in a repository; cloud-init placed
 # the key at provisioning, so nothing else needs changing. VS Code runs the
 # tasks only in a window the user has trusted, and only once they have
 # allowed automatic tasks; this playbook reads their VS Code settings to say
 # which of those to expect, and never writes them (docs/guides/vscode.md).
+#
+# With vscode_claude_sessions (the default) it also copies this machine's
+# Claude Code sessions of the last 30 days to the VM, the ones of the
+# repositories the VM has checked out, so that /resume there lists them
+# (Ctrl+A); --session <id> (vm_session) has the Claude terminal resume that
+# one, with the VM's checkout first brought to the commit its branch is at
+# here, by fast-forward only. The copies go in ~/.claude/projects/ on the VM,
+# under the folders they have here, beside a mirror of them in that directory
+# of its own, and the fast-forward is the one write in a repository. Nothing
+# is written on this machine (tasks/session_read.yml, tasks/session_write.yml,
+# docs/architecture/lifecycle.md §4.9).
 #
 # vm_project (PROJECT) is one folder name, as a GitHub repository is named,
 # and is checked again here so that a direct ansible-playbook run cannot point
@@ -63,6 +74,38 @@
     code_terminal: "{{ vscode_claude_terminal | default(true) | bool }}"
     # The session notes need the workspace file's tasks: they come with the terminal.
     code_notes: "{{ code_terminal and vscode_session_notes | default(true) | bool }}"
+
+    # The session handoff (tasks/session_read.yml, tasks/session_write.yml):
+    # the sync, on unless vscode_claude_sessions is false, and SESSION, which
+    # copies its one session with the sync off too. Claude Code's directory
+    # here is CLAUDE_CONFIG_DIR's when the shell running just sets it; on the
+    # VM, the VM user's ~/.claude. Every test points both at a directory of its
+    # own: what is read and written there is a developer's own otherwise
+    # (tests/unit/test_code_session.py holds that).
+    code_sessions: "{{ vscode_claude_sessions | default(true) | bool }}"
+    code_session_id: "{{ vm_session | default('', true) | string }}"
+    code_session_on: "{{ code_sessions or code_session_id | length > 0 }}"
+    code_session_days: 30
+    code_session_here: >-
+      {{ code_session_source_dir | default('', true)
+         or lookup('ansible.builtin.env', 'CLAUDE_CONFIG_DIR') or code_here_home ~ '/.claude' }}
+    code_session_there: "{{ code_session_dest_dir | default('', true) or code_vm_home ~ '/.claude' }}"
+    # just code's own directory on the VM holds the mirror rsync brings and the
+    # manifest of the copies written from it. A VM reached locally, as the
+    # provision scenario reaches its stand-in, is a local path to rsync.
+    code_session_dir: "{{ code_ws_dir }}/claude-sessions"
+    code_session_mirror_target: >-
+      {{ ('' if hostvars[claude_vm_names[0]].ansible_connection | default('ssh') == 'local'
+          else claude_vm_names[0] ~ ':') ~ code_session_dir ~ '/mirror' }}
+    # --session's branch here: the commit the VM checkout is brought to, and the branch of origin it tracks.
+    code_session_commit: "{{ code_session_git_here.checkouts[0].branch_head }}"
+    code_session_upstream: "{{ code_session_git_here.checkouts[0].upstream_branch }}"
+    # Where the code lives on the VM, read there as configure reads it: the VM
+    # user's home, unless vm_projects_dir says it outright. A trailing "/" is
+    # dropped so the path VS Code is given is the one listed.
+    code_vm_home: "{{ code_home.ansible_facts.getent_passwd[vm_user][4] }}"
+    code_projects_dir: >-
+      {{ (vm_projects_dir | default('', true) or code_vm_home ~ '/projects') | regex_replace('(.)/+$', '\1') }}
 
     # The workspace file, built as data and written with to_nice_json so no
     # path or message can break its JSON. Absolute paths throughout:
@@ -136,6 +179,7 @@
         - "{{ code_notes_file if code_notes | bool else '' }}"
         - "{{ code_remote_control_unit }}"
         - "{{ code_timezone }}"
+        - "{{ code_session_id }}"
       options:
         cwd: "{{ code_target }}"
       runOptions:
@@ -194,14 +238,15 @@
          | map('default', '', true) | map('trim') | map('regex_replace', '^:?(?:.*/zoneinfo/)?(?:posix/|right/)?', '')
          | select('match', '^[A-Za-z0-9_+-]{1,32}(?:/[A-Za-z0-9_+-]{1,32}){0,3}$') | first | default('UTC', true) }}
 
-    # What the task runs: `bash -lc <this> make-code <$1> ... <$12>`, the
+    # What the task runs: `bash -lc <this> make-code <$1> ... <$13>`, the
     # arguments being, in order: what to say without claude; the line a
     # sign-in here ends with where the claude_code role's path unit watches
     # for the login, and so starts Remote Control, and the line where nothing
     # does; that unit's file; GitHub's line, empty to leave GitHub alone; the
-    # git protocol and the scopes for gh; the VM's name; and the session notes'
+    # git protocol and the scopes for gh; the VM's name; the session notes'
     # helper, their path, the Remote Control unit and the time zone, the helper
-    # empty without notes - reached by shift, since ${10} is VS Code's to resolve. A login shell,
+    # empty without notes - reached by shift, since ${10} is VS Code's to resolve;
+    # and SESSION, empty without one, read first as the last argument. A login shell,
     # because tasks start non-login shells and claude is on the login PATH
     # only. `claude auth status` exits non-zero until the VM is signed in, by
     # claude.ai or by an API key; `claude auth login` is the browser flow, and
@@ -228,20 +273,28 @@
     # helper runs once more in the background, refresh-only: it ran as the
     # window opened and wrote "not signed in", and the preview follows the file.
     # It ignores Ctrl-C, which in this terminal is meant for claude, and
-    # prints nothing here. --continue picks the folder's latest conversation up:
+    # prints nothing here. With SESSION, claude --resume continues that one
+    # session, copied from this machine, under its own ID - never a fork, which
+    # every reload would start afresh from the copy - and nothing else: a
+    # resume that fails says why and starts no other claude. Otherwise
+    # --continue picks the folder's latest conversation up:
     # a task terminal does not survive a window reload, after which the task
     # runs again, so without it a reload would end the conversation (/clear
     # starts a fresh one). Where there is none to continue - a VM nobody has
     # talked to Claude on yet, whose only session may be Remote Control's -
     # Claude Code 2.1 says "No conversation found to continue" and exits 1 at
     # once, so a --continue that fails within its first seconds starts a fresh
-    # claude instead; one that ran and then failed is not started again. No
+    # claude instead; one that ran and then failed is not started again. A copy
+    # of this machine's sessions never answers --continue: it is filed under
+    # the folder name it has here, not the checkout's. No
     # exec, so the script ends with exit 0 whatever claude did. Anything variable is an
     # argument, never script text, and a stop ends with exit 0: on a non-zero
     # exit VS Code prints the whole command line, script and messages
-    # included, under the line that matters.
+    # included, under the line that matters. The last argument is read with a
+    # for loop, which leaves its variable at the last word: no ${13}.
     code_terminal_script: |-
       set -o pipefail
+      for resume; do :; done
       if ! command -v claude >/dev/null 2>&1; then
         printf '%s\n' "$1"
         exit 0
@@ -280,6 +333,10 @@
         vm=$8
         shift 8
         ( trap '' INT; bash -c "$1" session-notes "$2" "$vm" "$3" "$4" refresh-only ) </dev/null >/dev/null 2>&1 &
+      fi
+      if [ -n "$resume" ]; then
+        claude --resume "$resume"
+        exit 0
       fi
       started=$SECONDS
       claude --continue
@@ -668,7 +725,7 @@
             that: code_vm_tagged | length == 1
             fail_msg: >-
               {{ 'No VM named ' ~ claude_vm_names[0] ~ ' is tagged "' ~ claude_vm_tag ~ '".'
-                 ~ (' A VM of that name exists but is not tagged, so it is not this project\'s to open.'
+                 ~ (" A VM of that name exists but is not tagged, so it is not this project's to open."
                     if code_same_name | length > 0 else ' `just list` shows what this project created.')
                  if code_vm_tagged | length == 0
                  else 'More than one VM tagged "' ~ claude_vm_tag ~ '" is named ' ~ claude_vm_names[0]
@@ -718,7 +775,8 @@
 
         # Where the code lives, read on the VM as configure reads it: the VM
         # user's home, so nothing is guessed from this machine. Not needed when
-        # vm_projects_dir says it outright.
+        # vm_projects_dir says it outright, and the sessions' directory there
+        # is given too or not needed.
         - name: Look up the VM user's home on the VM
           ansible.builtin.getent:
             database: passwd
@@ -726,7 +784,9 @@
           delegate_to: "{{ claude_vm_names[0] }}"
           register: code_home
           ignore_unreachable: true
-          when: vm_projects_dir | default('', true) | length == 0
+          when: >-
+            vm_projects_dir | default('', true) | length == 0
+            or (code_session_on | bool and code_session_dest_dir | default('', true) | length == 0)
 
         - name: Fail when SSH to the VM does not work
           vars:
@@ -736,26 +796,26 @@
             fail_msg: "{{ code_ssh_failed }}"
             quiet: true
 
-        # The workspace, or one project in it. A trailing "/" on vm_projects_dir
-        # is dropped so the path VS Code is given is the one listed below. The
-        # task's own names differ from the facts it sets, which would outrank
-        # them if it ever ran again.
+        # Which of this machine's sessions go to which checkout on the VM, and
+        # with SESSION whether it can be opened there; read-only at both ends.
+        - name: Read the sessions to carry to the VM
+          ansible.builtin.import_tasks: tasks/session_read.yml
+
+        # The workspace, or one project in it: --project's, or --session's
+        # checkout, which session_read.yml found by its origin. The task's own
+        # names differ from the facts it sets, which would outrank them if it
+        # ever ran again.
         - name: Settle the folder to open
           vars:
-            code_workspace: >-
-              {{ vm_projects_dir | default('', true)
-                 or code_home.ansible_facts.getent_passwd[vm_user][4] ~ '/projects' }}
-            code_root_given: "{{ code_workspace | regex_replace('(.)/+$', '\\1') }}"
-            # A folded scalar keeps its backslashes, so the group is written once:
-            # '\\1' here would reach the regex as a backslash and a 1.
-            code_ws_dir_given: >-
-              {{ (vscode_workspaces_dir | default('', true) or code_root_given ~ '/.claude-on-proxmox')
-                 | regex_replace('(.)/+$', '\1') }}
+            code_root_given: "{{ code_projects_dir }}"
+            code_project_given: "{{ vm_project | default('', true) | string or code_session_project | default('') }}"
+            # make_code_dir, which just destroy's save reads the session copies'
+            # manifest by too (tasks/session_save.yml).
+            code_ws_dir_given: "{{ code_root_given | make_code_dir(vscode_workspaces_dir | default('', true)) }}"
           ansible.builtin.set_fact:
-            code_project: "{{ vm_project | default('', true) | string }}"
+            code_project: "{{ code_project_given }}"
             code_root: "{{ code_root_given }}"
-            code_target: >-
-              {{ code_root_given ~ ('/' ~ vm_project if vm_project | default('', true) | string | length > 0 else '') }}
+            code_target: "{{ code_root_given ~ ('/' ~ code_project_given if code_project_given | length > 0 else '') }}"
             code_ws_dir: "{{ code_ws_dir_given }}"
             # The session notes, one file per VM, in a directory of their own.
             code_notes_dir: "{{ code_ws_dir_given ~ '/session' }}"
@@ -764,7 +824,7 @@
             # projects directory's name cannot collide with the whole directory's.
             code_ws_file: >-
               {{ code_ws_dir_given
-                 ~ ('/project/' ~ vm_project if vm_project | default('', true) | string | length > 0
+                 ~ ('/project/' ~ code_project_given if code_project_given | length > 0
                     else '/' ~ (code_root_given | basename or 'projects'))
                  ~ '.code-workspace' }}
 
@@ -781,13 +841,14 @@
         # The workspace files' directory is not a project, though a PROJECT can
         # name it, and is not the projects directory either: its files would sit
         # among the repositories, and project/ would be listed as one. Only with
-        # the terminal on, which is when the directory is used at all.
+        # the terminal or the sessions on, which is when the directory is used at all; it
+        # is the folder opened only for the terminal, whose workspace files it holds.
         - name: Refuse a workspace directory that is not absolute, is the projects directory, or is the folder
           ansible.builtin.assert:
             that:
               - code_ws_dir is match('/')
               - code_ws_dir != code_root
-              - code_target != code_ws_dir
+              - code_target != code_ws_dir or not code_terminal
             fail_msg: >-
               {{ 'vscode_workspaces_dir is a path on the VM, and must be an absolute one, not "' ~ code_ws_dir
                  ~ '": VS Code is handed it as written.'
@@ -798,7 +859,7 @@
                  else code_ws_dir ~ ' on ' ~ claude_vm_names[0]
                       ~ ' is where just code keeps its VS Code workspace files, not a project.' }}
             quiet: true
-          when: code_terminal
+          when: code_terminal or code_session_on | bool
 
         - name: Refresh the alias
           ansible.builtin.import_tasks: tasks/ssh_config.yml
@@ -898,6 +959,11 @@
             argv: [code, --install-extension, ms-vscode-remote.remote-ssh]
           when: "'ms-vscode-remote.remote-ssh' not in (code_extensions.stdout_lines | map('lower') | list)"
           changed_when: true
+
+        # The first writes on the VM, after every refusal above: the session
+        # copies, and with SESSION the checkout's fast-forward.
+        - name: Carry the sessions to the VM
+          ansible.builtin.import_tasks: tasks/session_write.yml
 
         # The writes on the VM, as the VM user, last: every refusal above
         # leaves the VM as it was. An unchanged file is not rewritten, so a run
@@ -1046,6 +1112,85 @@
                     if code_vscode_auto_tasks == 'off' else 'A shell in the same folder opens to its left.')
                    if code_terminal else '' }}
               - "{{ code_notes_said }}"
+              - "{{ code_sessions_said }}"
+              - "{{ code_session_said }}"
+            # The sessions carried over: IDs by their first eight characters, as
+            # /resume lists them, and nothing of a transcript but IDs, folders,
+            # branches and counts.
+            code_copies: "{{ code_session_copied.written + code_session_copied.unchanged + code_session_copied.continued }}"
+            # rsync's failure, which the sync goes on past (tasks/session_write.yml): what it printed names
+            # files, never what is in them.
+            code_sync_failed: "{{ code_session_sent.rc | default(0) != 0 }}"
+            code_sync_why: >-
+              {{ (code_session_sent.stderr | default('', true) or code_session_sent.msg | default('', true))
+                 | plain_text | regex_replace('\s+', ' ') | trim }}
+            # An ID up to its first "-": its first eight characters.
+            code_short: "-.*$"
+            code_sessions_said: >-
+              {{ '' if not (code_sessions | bool)
+                 else 'Claude Code is not installed on ' ~ claude_vm_names[0] ~ ' yet, so no session of this machine was'
+                      ~ ' copied there.'
+                 if not code_session_plan.claude
+                 else ((code_copies | length ~ " of this machine's Claude Code sessions of the last "
+                        ~ code_session_days ~ ' days, of ' ~ code_session_plan.repositories | join(', ') ~ ', '
+                        ~ ('is' if code_copies | length == 1 else 'are') ~ ' on ' ~ claude_vm_names[0]
+                        ~ ' (' ~ code_session_copied.written | length ~ ' copied now): in claude there, /resume'
+                        ~ ' and then Ctrl+A lists them.')
+                       if code_copies | length > 0
+                       else 'No Claude Code session of this machine was copied to ' ~ claude_vm_names[0] ~ '.'
+                       if code_session_plan.newer or code_session_plan.ambiguous or code_session_plan.twice
+                          or code_session_plan.open or code_session_copied.unreadable or code_session_copied.diverged
+                       else "No Claude Code session of this machine's from the last " ~ code_session_days
+                            ~ ' days is of a repository ' ~ claude_vm_names[0] ~ ' has checked out, so none was copied.')
+                      ~ (' Left as they are, continued on ' ~ claude_vm_names[0] ~ ' since they were copied: '
+                         ~ code_session_copied.continued | map('regex_replace', code_short, '') | join(', ') ~ '.'
+                         if code_session_copied.continued else '')
+                      ~ (' Left as they are, changed both there and here since they were copied: '
+                         ~ code_session_copied.diverged | map('regex_replace', code_short, '') | join(', ')
+                         ~ '; a copy moved out of the way is copied again.'
+                         if code_session_copied.diverged else '')
+                      ~ (' Not copied, written by a Claude Code newer than ' ~ claude_vm_names[0] ~ "'s "
+                         ~ code_session_vm.version ~ ': ' ~ code_session_plan.newer | map('regex_replace', code_short, '')
+                         | join(', ') ~ '.'
+                         if code_session_plan.newer else '')
+                      ~ (' Not copied, of a repository ' ~ claude_vm_names[0] ~ ' has more than one checkout of: '
+                         ~ code_session_plan.ambiguous | map(attribute='id') | map('regex_replace', code_short, '')
+                         | join(', ') ~ '.'
+                         if code_session_plan.ambiguous else '')
+                      ~ (' Not copied, in more than one folder here, so claude --resume could not tell which: '
+                         ~ code_session_plan.twice | map('regex_replace', code_short, '') | join(', ') ~ '.'
+                         if code_session_plan.twice else '')
+                      ~ (' Left as they are, open in a claude on ' ~ claude_vm_names[0] ~ ': '
+                         ~ code_session_plan.open | map('regex_replace', code_short, '') | join(', ') ~ '.'
+                         if code_session_plan.open else '')
+                      ~ (' Not copied: ' ~ code_session_copied.unreadable
+                         | map(attribute='id') | map('regex_replace', code_short, '') | join(', ')
+                         ~ ', ' ~ code_session_copied.unreadable | map(attribute='why') | unique | join('; ') ~ '.'
+                         if code_session_copied.unreadable else '')
+                      ~ (' rsync could not send them all to ' ~ claude_vm_names[0] ~ ' (it exited '
+                         ~ code_session_sent.rc | default('') ~ (': ' ~ code_sync_why if code_sync_why else '')
+                         ~ '), so a session it did not send is there as an earlier run left it, or not at all.'
+                         if code_sync_failed | bool else '')
+                      ~ ' vscode_claude_sessions: false turns the copying off.' }}
+            # SESSION: what the terminal resumes, and what that took.
+            code_session_moved: >-
+              {{ code_session_id | length > 0
+                 and code_session_git_there.checkouts[0].head != code_session_commit }}
+            code_session_said: >-
+              {{ '' if code_session_id | length == 0
+                 else 'The Claude terminal resumes session ' ~ code_session_id ~ ' in ' ~ code_target ~ ', on '
+                      ~ code_session_plan.session.branch ~ ' at ' ~ code_session_commit[:12]
+                      ~ (', where just code moved it' if code_session_moved | bool else '') ~ '.'
+                      ~ ' The first time claude opens there it asks whether you trust the folder, and its first answer'
+                      ~ " reads the whole conversation again, uncached: its recorded prompt now names the VM's memory folder."
+                      ~ ' If that window is open already, VS Code only brings it to the front: reload it'
+                      ~ ' ("Developer: Reload Window") to resume the session.'
+                      ~ (' Remote Control runs on ' ~ claude_vm_names[0] ~ ': a session it started works from ' ~ code_root
+                         ~ ', where just code cannot see it, so make sure none was editing ' ~ code_target ~ '.'
+                         if code_session_remote_control.rc | default(1) == 0 else '')
+                      ~ (' github_projects_update_existing is on, so the next just deploy ' ~ claude_vm_names[0]
+                         ~ ' --only configure switches ' ~ code_target ~ ' back to its default branch.'
+                         if github_projects_update_existing | default(false) | bool else '') }}
           ansible.builtin.debug:
             msg: "{{ code_said | select | join(' ') | trim }}"
 

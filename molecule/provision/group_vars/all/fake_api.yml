@@ -29,6 +29,11 @@ proxmox_vm_agent_delay: 1
 claude_ssh_config_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/claude-on-proxmox.conf"
 claude_ssh_user_config: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ssh_config"
 claude_ssh_config_include: false
+# destroy.yml saves what a VM holds of its Claude Code sessions on the
+# controller before deleting it. The fake's VMs never answer over SSH, so none
+# is saved, but should one: into the ephemeral directory, never this checkout's
+# .sessions/. tests/unit/test_release.py checks it.
+destroy_sessions_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/sessions"
 
 # The sign-ins read this switch from each VM, and the VMs here exist only
 # through add_host, so it is set for all of them, not on localhost: a deploy

@@ -1,4 +1,4 @@
-"""playbooks/tasks/remote_tmp.yml, run as make's runs run it: with pipelining, before any module needs remote_tmp.
+"""playbooks/tasks/remote_tmp.yml, run as just's runs run it: with pipelining, before any module needs remote_tmp.
 
 With pipelining (ansible.cfg) a module that transfers no file gets no per-task
 temporary directory, so the first one running as root that needs one makes

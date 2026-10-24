@@ -145,3 +145,95 @@ The blocks are bright yellow through `Display`, plain under `ANSIBLE_NOCOLOR` or
 log gets them plain, but never destroy's question, which `vars_prompt` reads with `input()`. The harness
 shows custom stats (`ANSIBLE_SHOW_CUSTOM_STATS=1`), so each role's own tests read what it recorded from the
 JSON report (`_left_to_do`), in every state they already run.
+
+## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
+
+What `just code` carries of this machine's Claude Code sessions to a VM
+([§4.9](lifecycle.md#49-playbookscodeyml), **The session handoff**), and what `just destroy` brings
+back of a VM's own before deleting it ([§4.5](lifecycle.md#45-playbooksdestroyyml--confirm-release-delete)).
+Four modules, each in `playbooks/library/` beside the playbook that runs them, read and write the
+files; the filters decide from what they read, and touch no file.
+
+**`claude_sessions_info`** — the transcripts under `<dir>/projects/<folder>/<id>.jsonl` of a Claude
+Code configuration directory, written in the last `days`, named in `ids`, or with `all` every one: per
+session its folder, time and size, its first `cwd`, the newest `version`, the last `gitBranch`, whether
+it holds a user or assistant message, whether it has `tool-results/` or any folder beside it, and the
+pid of a live `claude` that `sessions/` says has it open - one whose command line, from `/proc` or `ps`,
+is still claude's, never a pid another program took since its entry was left. With `registry`, that
+registry alone, whatever the transcripts: the VM's, for which copies a `claude` there has open. Every complete line is parsed and only those
+values kept, so nothing that was said comes back. With `manifest`, just code's on that machine, whether
+it was copied there (by ID, in whatever folder it is now) and whether it is still the copy as written
+(by digest); with `memory`, the folders whose auto memory folder holds a file; with `repo_paths`,
+`githubRepoPaths` from Claude Code's `.claude.json`, and nothing else of that file; with `claude`, the
+version of the first of those executables there is - only those, never `PATH`. Run here and on the VM.
+
+**`git_checkouts_info`** — for each directory asked about, or each checkout directly inside one,
+the checkout's top level and `origin` URL as configured, never as a `url.<base>.insteadOf` rewrites it,
+and without what precedes the host, which can be a token; each path and branch as written, never with
+its `~` or `$VAR` expanded; with `status`, whether `git status --porcelain --untracked-files=normal
+--ignore-submodules=none` prints nothing, whatever the checkout's config would hide, the branch and `HEAD`, and whether a
+branch, remote-tracking branch or tag holds `HEAD`'s commit (`head_kept`); with `branch`, that branch's
+commit and the remote, branch and commit it tracks, after `git check-ref-format --branch` and a refusal
+of a leading `-`, since the name comes from a transcript; with `target`, a full commit ID, the paths git
+does not track that a move of the tree to it would replace (`overwrites`: what it adds where something
+is, or a file where it has a folder, unless `HEAD` tracks that and the move removes it); with `busy`,
+the pids from `/proc` of this user's `claude` processes working inside. Every command is
+`git --no-optional-locks`, which takes no index lock.
+
+**`claude_sessions_copy`** — each session's copy on the VM, from the mirror rsync left: its complete
+lines with the four edits and nothing else (the memory folder in `prompt_snapshot` attachments, the
+session's `tool-results/` folder in user entries, a cleared `worktree-state` after a bound one, a
+`relocated` entry last), 0600 in 0700 folders, with the mirror's time while that is within 14 days and
+the time of writing otherwise, renewed at 14 days (Claude Code sweeps a transcript at 30), its
+`tool-results/` after it, and never a subagent's transcript. Claude Code's records of the requests it
+sent stay as they are: a resume sends the recorded prompt, never them. A copy is written where there is
+none, or where it is still what the manifest says the last run wrote; one that is already what would be
+written is left, and any other is the VM's and left too, said as continued when nothing new came from
+the other machine and as diverged otherwise - and so is one that is gone while its ID is in another
+folder of the VM's, where `/cd` moved it (`held` names that folder), unless the copy there is the
+module's own, still as written: the session moved on the other machine, and its copy moves with it
+(`moved`). The manifest is written after each copy. Sessions that are no longer asked for leave the
+mirror. Check mode writes nothing.
+
+**`claude_sessions_fetch`** — run on the controller, for `just destroy`'s save: `tar -cf - -T -` on the
+VM over SSH (`ssh` given as user, host, port, key and Ansible's SSH arguments, with `BatchMode`; none
+where the VM is this machine, as in the tests), the names on stdin each after `./`, so that none reads
+as an option, and the stream unpacked by Python's `tarfile` into a folder it creates: plain files and
+folders only, at the names asked for - `<folder>/<id>.jsonl`, `<folder>/<id>`, `<folder>/memory` -
+or inside one of the folders, with no `..`, absolute path or empty component, never through a link
+(`O_EXCL | O_NOFOLLOW`, in folders it made), 0600 and 0700, with the archive's times. A link, hard link,
+device or pipe is left out and named in `left_out`. It fails on SSH or tar failing, an archive cut short
+(a byte count that is no number of 512-byte blocks: `tarfile` reads one cut after its first header as
+one that ended) or a name asked for that did not arrive. Nothing of the content is returned.
+
+**`claude_sessions_plan(sessions, here, there, version, repo_paths, dest, wanted, project, vm)`** —
+the decision as data: `sessions` to copy, each with the checkout it continues in and the memory folder
+its prompt is pointed at; `files` for rsync; `newer`, `ambiguous`, `twice` (an ID in two folders here)
+and `open` (one a `claude` on the VM has open, given as `open_there`) and a count of `unmatched`; and with
+`wanted` (`--session`), its entry and the `problem` that refuses it, or `""`. A session's repository is
+its first directory's origin, else its gone worktree's checkout's, else `githubRepoPaths`; the VM's
+checkout of it is the one whose GitHub origin names it, of two the one named after it.
+**`git_repository(url)`** is `owner/repo`, lowercased, of https, ssh and scp-like URLs and local paths
+alike, the host not compared: this machine's side, where a clone may reach GitHub by an SSH alias.
+**`github_repository(url)`** is the same of a GitHub origin only, and `""` of any other: the VM's side,
+whose checkouts just deploy cloned from GitHub, so that a local path or another host's repository there
+claims nothing. **`make_code_dir(projects, given)`** is just code's own directory on a VM -
+`vscode_workspaces_dir`, else `.claude-on-proxmox` in the projects directory - for code.yml and for
+destroy's save, which reads the manifest there. **`claude_project_folder(path)`** is Claude Code's folder name for a path - every character
+but an ASCII letter or digit as `-` - refusing one over 200 characters, which Claude Code shortens with
+a hash of its own. **`claude_session_dirs(sessions)`** is the directories to ask git about for them:
+each first directory, and the checkout of a Claude worktree's, which a gone worktree leaves behind.
+
+**`claude_sessions_saved(sessions, memory, dest)`** — what of a VM's sessions `just destroy` saves into
+`dest`, from `claude_sessions_info`'s reading of the VM with its manifest: every session that holds a
+message and is not a copy still as just code wrote it, with the folder beside it, and every auto memory
+folder. A folder not named as Claude Code names one or an ID that is not a session's - the VM's to make
+up - is left out and counted in `refused`, never handed to tar. Returns `files` for
+`claude_sessions_fetch`; `sessions` for `sessions.json`, each with its first directory, branch, last
+write, the version that wrote it (its digits alone), whether it began on the VM, and the `claude --resume
+<path>` that continues it, the path quoted; `newest`, the newest version, which resuming them needs at
+least; `started` and `continued`; and the `memory` folders.
+
+Covered by `tests/unit/test_session_handoff.py`, with real git checkouts and canned transcripts, by
+the window step's runs in `tests/unit/test_code_session.py`, and by destroy's release play, run in
+`tests/unit/test_release.py`.

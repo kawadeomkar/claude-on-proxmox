@@ -1,0 +1,196 @@
+---
+# The reads of the session handoff, imported by code.yml's window step once
+# the VM answers and before the folder to open is settled
+# (docs/architecture/lifecycle.md §4.9). They decide which of this machine's
+# Claude Code sessions go to which of the VM's checkouts - by the git origin
+# of the directory each session ran in, matched against the origin of each
+# checkout on the VM - and with SESSION, whether that one can be opened there:
+# found once, closed on both machines, its work committed and pushed here,
+# and a VM checkout free to be brought to the same commit. Nothing is
+# written anywhere; session_write.yml does that after every refusal just code
+# has.
+#
+# Every task that reads a transcript is no_log: claude_sessions_info returns
+# only what a session says about itself (its first directory, branch,
+# version), never what was said, but a transcript holds whatever its tools
+# printed, and no output of a mistake here may carry it.
+#
+# Inputs: code.yml's play vars code_sessions (the sync is on), code_session_id
+# (SESSION, "" without), code_session_here and code_session_there (Claude
+# Code's directory on this machine and on the VM), code_session_days and
+# code_projects_dir. Sets code_session_plan, and with SESSION
+# code_session_project, the folder the window opens.
+
+- name: session_read | Refuse a SESSION that is not a session ID
+  ansible.builtin.assert:
+    that: code_session_id is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    fail_msg: >-
+      SESSION is the ID of one of this machine's Claude Code sessions, the name of its transcript under
+      ~/.claude/projects/ (/resume shows it, and so does /status in the session), such as
+      0a608ad8-1b2c-4d3e-8f90-123456789abc. "{{ code_session_id }}" is not one.
+    quiet: true
+  when: code_session_id | length > 0
+
+- name: session_read | Refuse SESSION without the Claude terminal
+  ansible.builtin.assert:
+    that: code_terminal | bool
+    fail_msg: >-
+      SESSION opens the session in the window's Claude terminal, which vscode_claude_terminal: false turns
+      off. Without it, run `claude --resume {{ code_session_id }}` in the project's folder on {{ claude_vm_names[0] }}.
+    quiet: true
+  when: code_session_id | length > 0
+
+- name: session_read | Read the Claude Code sessions on this machine
+  claude_sessions_info:
+    path: "{{ code_session_here }}"
+    days: "{{ code_session_days if code_sessions | bool else 0 }}"
+    ids: "{{ [code_session_id] if code_session_id | length > 0 else [] }}"
+    repo_paths: true
+  register: code_session_found
+  no_log: true
+  when: code_session_on | bool
+
+# git reads only, as git --no-optional-locks: a plain git status here would
+# refresh .git/index under index.lock and could collide with the user's own
+# git, editor or Claude in that checkout.
+- name: session_read | Read the git checkouts those sessions ran in
+  git_checkouts_info:
+    paths: "{{ code_session_found.sessions | claude_session_dirs }}"
+  register: code_session_dirs_here
+  when: code_session_on | bool
+
+- name: session_read | Read the origin of each project on the VM
+  git_checkouts_info:
+    under: "{{ code_projects_dir }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_projects
+  when: code_session_on | bool
+
+# The VM installs Claude Code's stable channel, which can trail this machine's:
+# a session written by a newer one is left here. Where the native installer
+# puts it, beside the ~/.claude given, then where npm's global prefix does.
+# And the sessions a claude there has open, whose copies are left as they are.
+- name: session_read | Read Claude Code on the VM
+  claude_sessions_info:
+    path: "{{ code_session_there }}"
+    registry: true
+    claude:
+      - "{{ code_session_there | dirname }}/.local/bin/claude"
+      - /usr/local/bin/claude
+      - /usr/bin/claude
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_vm
+  no_log: true
+  when: code_session_on | bool
+
+- name: session_read | Settle which sessions go to which checkout
+  ansible.builtin.set_fact:
+    code_session_plan: >-
+      {{ code_session_found.sessions
+         | claude_sessions_plan(code_session_dirs_here.checkouts, code_session_projects.checkouts,
+                                code_session_vm.version, code_session_found.repo_paths, code_session_there,
+                                code_session_id, vm_project | default('', true) | string, claude_vm_names[0],
+                                code_session_vm.registered | list) }}
+  when: code_session_on | bool
+
+- name: session_read | Refuse a session that cannot be opened on the VM
+  ansible.builtin.assert:
+    that: code_session_plan.session.problem | length == 0
+    fail_msg: "{{ code_session_plan.session.problem }}"
+    quiet: true
+  when: code_session_id | length > 0
+
+# Its work reaches the VM through git alone: the transcript describes edits the
+# VM checkout must already hold, so they must be committed, and pushed to the
+# origin the VM fetches from.
+- name: session_read | Read the checkout the session ran in, and its branch
+  git_checkouts_info:
+    paths: ["{{ code_session_plan.session.dir }}"]
+    status: true
+    branch: "{{ code_session_plan.session.branch }}"
+  register: code_session_git_here
+  when: code_session_id | length > 0
+
+- name: session_read | Refuse work that is not committed and pushed
+  vars:
+    code_git: "{{ code_session_git_here.checkouts[0] }}"
+    code_branch: "{{ code_session_plan.session.branch }}"
+  ansible.builtin.assert:
+    that:
+      - code_git.clean
+      - code_git.branch_head | length > 0
+      - code_git.upstream_remote == 'origin'
+      - code_git.upstream_head == code_git.branch_head
+    fail_msg: >-
+      {{ code_git.toplevel ~ ' has changes that are not committed, which ' ~ claude_vm_names[0] ~ ' would not see.'
+         ~ ' Commit them (or stash them), push, and run this again.'
+         if not code_git.clean
+         else 'The branch session ' ~ code_session_id ~ ' last ran on, ' ~ code_branch ~ ', is not in '
+              ~ code_git.toplevel ~ ' any more.'
+         if code_git.branch_head | length == 0
+         else code_branch ~ ' in ' ~ code_git.toplevel ~ ' has never been pushed: git push -u origin ' ~ code_branch
+              ~ ', then run this again.'
+         if code_git.upstream_remote | length == 0
+         else code_branch ~ ' in ' ~ code_git.toplevel ~ ' tracks a branch of ' ~ code_git.upstream_remote
+              ~ ', not of origin, which is what ' ~ claude_vm_names[0] ~ ' fetches from.'
+         if code_git.upstream_remote != 'origin'
+         else code_branch ~ ' in ' ~ code_git.toplevel ~ ' is not where origin/' ~ code_git.upstream_branch
+              ~ ' is here: push it (or pull), then run this again.' }}
+    quiet: true
+  when: code_session_id | length > 0
+
+# The VM checkout moves only when nothing could be lost: a clean tree, a HEAD
+# that a branch or another ref holds - a switch away from a detached HEAD
+# leaves its commits to git's garbage collection, and --quiet would not say
+# so - and no claude of the VM user's working in it. Remote Control's sessions
+# start in the projects directory, above it, where this cannot see them; the
+# run says so when that service is running.
+- name: session_read | Read the VM's checkout of the session's repository
+  git_checkouts_info:
+    paths: ["{{ code_session_plan.session.checkout }}"]
+    status: true
+    branch: "{{ code_session_plan.session.branch }}"
+    busy: true
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_git_there
+  when: code_session_id | length > 0
+
+- name: session_read | Ask whether Remote Control runs on the VM
+  ansible.builtin.command:
+    argv: [systemctl, is-active, --quiet, "{{ code_remote_control_unit }}"]
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_remote_control
+  changed_when: false
+  failed_when: false
+  when: code_session_id | length > 0
+
+- name: session_read | Refuse a VM checkout that is not free to move
+  vars:
+    code_git: "{{ code_session_git_there.checkouts[0] }}"
+    code_open: "{{ code_session_vm.registered[code_session_id] | default(0) }}"
+  ansible.builtin.assert:
+    that:
+      - code_open | int == 0
+      - code_git.clean
+      - code_git.head_kept
+      - code_git.busy | length == 0
+    fail_msg: >-
+      {{ 'Session ' ~ code_session_id ~ ' is open on ' ~ claude_vm_names[0] ~ ' (claude, pid '
+         ~ code_open ~ '). Exit it there first: a session continues in one place at a time.'
+         if code_open | int > 0
+         else code_git.path ~ ' on ' ~ claude_vm_names[0] ~ ' has changes of its own. Commit, push or discard them there,'
+              ~ ' then run this again: just code moves a checkout only when nothing in it would be lost.'
+         if not code_git.clean
+         else code_git.path ~ ' on ' ~ claude_vm_names[0] ~ ' is on a detached HEAD at ' ~ code_git.head[:12]
+              ~ ', which no branch, remote-tracking branch or tag holds, so moving it would lose that commit. Make a'
+              ~ ' branch of it there (git switch --create <name>), then run this again.'
+         if not code_git.head_kept
+         else 'claude is running in ' ~ code_git.path ~ ' on ' ~ claude_vm_names[0] ~ ' (pid '
+              ~ code_git.busy | join(', ') ~ '). Exit it first: just code moves a checkout only when nobody is working in it.' }}
+    quiet: true
+  when: code_session_id | length > 0
+
+- name: session_read | Keep the folder the session opens in
+  ansible.builtin.set_fact:
+    code_session_project: "{{ code_session_plan.session.name }}"
+  when: code_session_id | length > 0

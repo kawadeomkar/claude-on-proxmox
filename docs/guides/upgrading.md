@@ -143,6 +143,7 @@ its name, and settings (`ANSIBLE_ARGS`, `LOG_DIR`, `PYTHON`) are exported or go 
 | `make deploy alpha TAGS=claude_code` | `just deploy alpha --tags claude_code` (or `-t`) |
 | `make deploy alpha ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"` | `just deploy alpha --start` |
 | `make code alpha PROJECT=repo` | `just code alpha --project repo` |
+| `make code alpha SESSION=<id>` | `just code alpha --session <id>` |
 | `make login alpha TYPE=github` | `just login alpha --only github` |
 | `make list`, `make destroy alpha`, `make logs`, `make vault` | `just list`, `just destroy alpha`, `just logs`, `just vault` |
 | `make init HOST=pve.lan GITHUB_USER=octocat PROMPT=no` | `just init --host pve.lan --github-user octocat --no-prompt` (each `NAME=` is a `--name`) |

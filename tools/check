@@ -9,6 +9,7 @@
 #   tools/check collections <bin>      the Galaxy collections are requirements.yml's pins
 #   tools/check names <name>...        VM names: letters, digits and . _ - , only, from a letter or digit
 #   tools/check project <name>         one repository folder's name
+#   tools/check session <id>           one Claude Code session ID, or none
 set -eu
 # The character sets below are spelt out rather than written as ranges, so
 # no locale can widen them (a UTF-8 one may collate accented letters into
@@ -75,8 +76,21 @@ project)
   esac
   test "${#2}" -le 100 || { echo "error: --project is longer than the 100 characters a repository name can be" >&2; exit 1; }
   ;;
+session)
+  # A Claude Code session ID, as Claude Code names a transcript: 32 lowercase
+  # hex digits in groups of 8-4-4-4-12. Empty is none: the folder's latest
+  # conversation continues.
+  h='[0123456789abcdef]'
+  case "$2" in
+  '' | $h$h$h$h$h$h$h$h-$h$h$h$h-$h$h$h$h-$h$h$h$h-$h$h$h$h$h$h$h$h$h$h$h$h) ;;
+  *)
+    echo "error: --session is a Claude Code session ID such as 0a608ad8-1b2c-4d3e-8f90-123456789abc, as /resume lists it (got: [$2])" >&2
+    exit 1
+    ;;
+  esac
+  ;;
 *)
-  echo "usage: tools/check checkout <directory> | vault <file> | collections <bin> | names <name>... | project <name>" >&2
+  echo "usage: tools/check checkout <directory> | vault <file> | collections <bin> | names <name>... | project <name> | session <id>" >&2
   exit 2
   ;;
 esac

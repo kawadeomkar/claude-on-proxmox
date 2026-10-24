@@ -24,7 +24,10 @@
     claude_vm_release_query: >-
       {{ claude_vm_all.json.data | selectattr('type', 'equalto', 'qemu') | selectattr('name', 'defined')
          | selectattr('name', 'in', claude_vm_names) | list }}
-    claude_vm_releasing: "{{ destroy_release | default(true) | bool }}"
+    # Whether to reach each VM before deleting it: to release it, or to save
+    # what of its Claude Code sessions is only there, which destroy_release:
+    # false still does unless destroy_save_sessions is off too.
+    claude_vm_reaching: "{{ destroy_release | default(true) | bool or destroy_save_sessions | default(true) | bool }}"
     # The names the prompt below says. A vars_prompt is templated before any
     # host is in scope, with the play's vars and the extra vars only: an
     # inventory variable - claude_vm_names, claude_vm_default_name,
@@ -124,6 +127,20 @@
           it is not clear which one to delete, and nothing was. Rename or remove the duplicates, then run this again.
         quiet: true
 
+    # The sessions a VM's save brings back go into a folder of this machine,
+    # which a relative path would leave wherever the module ran: refused here,
+    # before any VM is started, rather than VM by VM.
+    - name: Refuse a folder for the saved sessions that is not an absolute path
+      ansible.builtin.assert:
+        that: destroy_sessions_dir | default('', true) | expanduser is match('/')
+        fail_msg: >-
+          destroy_sessions_dir is a folder on this machine and must be an absolute path (or start with ~), not
+          "{{ destroy_sessions_dir }}"; empty, it is .sessions/ in this checkout. Nothing was deleted.
+        quiet: true
+      when:
+        - destroy_save_sessions | default(true) | bool
+        - destroy_sessions_dir | default('', true) | length > 0
+
     # Releasing a VM - signing it out of Claude and GitHub, taking it off the
     # tailnet - happens on the VM, over SSH, since what it signed in with is on
     # its disk: a stopped VM is started for it. One that does not start is
@@ -143,7 +160,7 @@
       loop_control:
         loop_var: claude_vm_item
         label: "{{ claude_vm_item.name }}"
-      when: claude_vm_releasing | bool
+      when: claude_vm_reaching | bool
 
     # Read by the rescue below and by the last play: a VM started here is
     # stopped again whenever the run then fails to delete it, so a failed
@@ -224,7 +241,7 @@
           vars:
             claude_vm_query: "{{ claude_vm_release_query }}"
             claude_vm_just_started: "{{ claude_vm_release_started | map(attribute='vmid') | list }}"
-          when: claude_vm_releasing | bool
+          when: claude_vm_reaching | bool
 
         # How the release play below reaches the VM: host variables, never
         # play variables. A play's vars apply to its delegated tasks too, so SSH
@@ -236,7 +253,7 @@
             claude_vm_release_found: >-
               {{ claude_vm_addressed | default([]) | selectattr('name', 'equalto', claude_vm_name_item)
                  | map(attribute='address') | first | default('', true) }}
-            claude_vm_release_here: "{{ (claude_vm_release_found or '') if claude_vm_releasing | bool else '' }}"
+            claude_vm_release_here: "{{ (claude_vm_release_found or '') if claude_vm_reaching | bool else '' }}"
           ansible.builtin.add_host:
             name: "{{ claude_vm_name_item }}"
             groups: claude_vm_doomed
@@ -276,12 +293,13 @@
       ansible.builtin.meta: end_host
       when: claude_vm_release_address | default('', true) | length == 0
 
-    # A VM that answers but fails - no Python, a sudo that asks for a password
-    # - is left as one that does not answer is: failed here, it would leave
-    # the run, and a run whose every VM fails a play ends there, with no
-    # deletion and no report.
+    # As the VM user, without sudo, which the save does not need: a VM that
+    # answers but fails here - no Python - is left as one that does not answer
+    # is: failed here, it would leave the run, and a run whose every VM fails a
+    # play ends there, with no deletion and no report.
     - name: Reach the VM
       ansible.builtin.ping:
+      become: false
       register: claude_vm_release_reached
       ignore_unreachable: true
       failed_when: false
@@ -291,6 +309,71 @@
       when: >-
         claude_vm_release_reached.unreachable | default(false) | bool
         or claude_vm_release_reached.ping | default('') != 'pong'
+
+    # The releases, and Remote Control's pause for the save, stop services and
+    # sign out as root. A sudo that asks for a password or refuses fails the
+    # task outright - failed_when never sees it - so a rescue records why: that
+    # VM is saved, then deleted unreleased, and the report says so.
+    - name: Ask whether sudo works on the VM
+      block:
+        - name: Reach the VM as root
+          ansible.builtin.ping:
+          register: claude_vm_release_root
+      rescue:
+        - name: Remember why the VM is not released
+          ansible.builtin.set_fact:
+            claude_vm_release_blocked: >-
+              sudo on it failed ({{ ansible_failed_result.msg | default('no reason given', true) | plain_text
+              | regex_replace('\s+', ' ') | trim | regex_replace('[.]$', '') | truncate(200) }})
+
+    # Before anything is released, while the VM is as it was: what Claude Code
+    # keeps there, the only copy it can resume - the sessions begun or continued there, and
+    # their auto memory - is saved on this machine (tasks/session_save.yml).
+    # Not best effort like the releases below: a VM whose save fails is kept,
+    # neither released nor deleted, and the last play fails the run with why,
+    # since once deleted they are gone for good. Remote Control, which writes
+    # the transcript of the session it serves, stops for it first, and starts
+    # again on a VM kept.
+    - name: Save what of the VM's Claude Code sessions is only there
+      block:
+        - name: Stop Remote Control while the sessions are saved
+          ansible.builtin.include_role:
+            name: claude_code
+            tasks_from: release_pause
+          when:
+            - destroy_save_sessions | default(true) | bool
+            - claude_vm_release_blocked is not defined
+
+        - name: Run the save
+          ansible.builtin.import_tasks: tasks/session_save.yml
+          when: destroy_save_sessions | default(true) | bool
+      rescue:
+        - name: Keep the VM, whose sessions could not be saved
+          ansible.builtin.set_fact:
+            claude_vm_delete_failure: >-
+              {{ inventory_hostname }} was neither released nor deleted: its Claude Code sessions could not be saved
+              ({{ ansible_failed_task.name | default('a task') }}: {{ (ansible_failed_result.stderr | default('', true)
+              or ansible_failed_result.msg | default('failed', true)) | plain_text | regex_replace('\s+', ' ') | trim
+              | regex_replace('[.]$', '') }}). Run just destroy again once that is fixed, or set destroy_save_sessions:
+              false to delete it without them.
+
+        - name: Start Remote Control again on the VM kept
+          ansible.builtin.include_role:
+            name: claude_code
+            tasks_from: release_resume
+          when: claude_vm_release_blocked is not defined
+
+        - name: Leave the VM as it is
+          ansible.builtin.meta: end_host
+
+    # destroy_release: false reaches the VM for the save alone.
+    - name: Leave the VM signed in, as destroy_release asks
+      ansible.builtin.meta: end_host
+      when: not (destroy_release | default(true) | bool)
+
+    - name: Leave a VM whose sudo failed unreleased
+      ansible.builtin.meta: end_host
+      when: claude_vm_release_blocked is defined
 
     # Claude first: Remote Control's session goes offline in the app before
     # anything else of the VM's goes.
@@ -356,6 +439,11 @@
   # in which every VM fails ends the run, and the play below would never stop
   # again a VM this run started, nor say what is left of the rest.
   tasks:
+    # Kept by the release play: its sessions could not be saved.
+    - name: Leave a VM whose sessions could not be saved as it is
+      ansible.builtin.meta: end_host
+      when: claude_vm_delete_failure is defined
+
     - name: Delete the VM, or remember why not
       block:
         - name: Run proxmox_vm with the VM absent
@@ -426,25 +514,39 @@
         claude_release_claude: "{{ claude_release_vm.claude_code_release_said | default('') }}"
         claude_release_github: "{{ claude_release_vm.github_projects_release_said | default('') }}"
         claude_release_tailscale: "{{ claude_release_vm.tailscale_release_said | default('') }}"
+        claude_release_sessions: >-
+          {{ claude_release_vm.claude_vm_sessions_said | default('')
+             if claude_release_vm.destroy_save_sessions | default(true) | bool
+             else 'not saved (destroy_save_sessions: false)' }}
         claude_release_parts: >-
           {{ (['Claude Code: ' ~ claude_release_claude] if claude_release_claude | length > 0 else [])
              + (['GitHub: ' ~ claude_release_github] if claude_release_github | length > 0 else [])
              + (['Tailscale: ' ~ claude_release_tailscale] if claude_release_tailscale | length > 0 else [])
+             + (['Claude Code sessions: ' ~ claude_release_sessions] if claude_release_sessions | length > 0 else [])
              + claude_release_vm.claude_vm_release_failures | default([]) }}
+        # Said only where the save ran: a VM not reached, or with the save off, kept nothing.
+        claude_release_saved: "{{ claude_release_vm.claude_vm_sessions_said is defined }}"
         claude_release_left: >-
           {{ 'its Tailscale device, if it was on your tailnet, stays until you delete it ' ~ claude_release_where
              ~ ' (or a VM built again under its name joins as <name>-1); a GitHub token its sign-in made stays valid until'
              ~ ' revoked at https://github.com/settings/applications, under GitHub CLI (which signs out every gh); and'
-             ~ ' Anthropic has no way to revoke its Claude Code login from outside.' }}
+             ~ ' Anthropic has no way to revoke its Claude Code login from outside.'
+             ~ (' Claude Code sessions: ' ~ claude_release_sessions ~ '.'
+                if claude_release_saved | bool and claude_release_sessions | length > 0
+                else '' if claude_release_saved | bool
+                else ' Its Claude Code sessions and auto memory, if it had any, were not saved'
+                     ~ (' (destroy_save_sessions: false).'
+                        if not (claude_release_vm.destroy_save_sessions | default(true) | bool) else '.')) }}
       ansible.builtin.debug:
         msg: >-
           {{ claude_release_name }}:
           {{ ('released - ' ~ (claude_release_parts | join('; ')) ~ '.') if claude_release_vm.claude_vm_released | default(false) | bool
                                                                        and claude_release_parts | length > 0
              else 'released - it had nothing signed in to end.' if claude_release_vm.claude_vm_released | default(false) | bool
-             else ('deleted as it was (destroy_release: false): ' ~ claude_release_left)
+             else ('deleted without being released (destroy_release: false): ' ~ claude_release_left)
              if not (destroy_release | default(true) | bool)
-             else ('could not be reached, so it was not released: ' ~ claude_release_left) }}
+             else ((claude_release_vm.claude_vm_release_blocked | default('could not be reached'))
+                   ~ ', so it was not released: ' ~ claude_release_left) }}
       loop: >-
         {{ groups['claude_vm_doomed'] | default([]) | map('extract', hostvars)
            | selectattr('claude_vm_deleted', 'defined') | map(attribute='inventory_hostname') | list }}

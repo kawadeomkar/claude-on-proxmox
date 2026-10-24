@@ -98,6 +98,29 @@ restate them are not treated as vulnerabilities:
   repository; no command the task runs prints a token, and what the VM reports is stripped of escape
   sequences and control characters before it is written. A window it would put back in Restricted
   Mode never gets the notes' folder: the project does not change what a window you trusted covers.
+- `just code` copies this machine's Claude Code sessions of the last 30 days to the VM it opens
+  (`vscode_claude_sessions`, on by default): the transcripts of the repositories that VM has checked
+  out, matched by git origin. A transcript holds whatever its tools printed - command output, the
+  contents of files, tokens - so every VM you open gets those of its repositories' sessions, in the VM
+  user's `~/.claude` (0600 files, 0700 folders), never in a repository, and as rsync's unedited mirror of
+  them in `just code`'s own directory there (`<projects>/.claude-on-proxmox/claude-sessions/`, 0700);
+  `false` keeps them here from then on, and leaves what is on the VM already - mirror and copies - for you
+  to delete, or for `just destroy` to take with the VM.
+  `just code` copies nothing back, the copy's own tasks print nothing a transcript holds, and a session
+  continued on the VM is never overwritten. `--session <id>` moves the VM's checkout of that session's
+  repository to the commit it is pushed at, by fast-forward only: never over changes of the VM's own, an
+  ignored file the commit would replace, or commits a detached `HEAD` alone holds, and never while a
+  `claude` works in it. A VM chooses which of this machine's sessions it gets only through the GitHub
+  origins of its checkouts: a local path or another host's URL there matches none. Claude Code's question whether to trust that folder is
+  left for you to answer.
+- `just destroy` saves the Claude Code sessions and auto memory that exist only on a VM into
+  `.sessions/` in your checkout before deleting it (`destroy_save_sessions`, on by default): plaintext
+  transcripts holding whatever their tools printed, in 0600 files and 0700 folders readable by you alone,
+  ignored by git and refused by the tracked-file guard. They stay until you delete them; `false` deletes
+  them with the VM. What the VM sends is not trusted, since a VM's root can make up anything: only plain
+  files and folders under the names Claude Code gives its own are written, never a link and never outside
+  that folder, and nothing on this machine is read or changed through one. A saved transcript is still the
+  VM's writing - treat what it says, and what resuming it here asks to run, as you would the VM itself.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
   once - and the next `just deploy` then sends it your SSH keys, GitHub token and Anthropic API key. The

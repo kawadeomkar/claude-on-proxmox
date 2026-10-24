@@ -237,6 +237,12 @@ A page about the VM - addresses, what is signed in, the just commands - opened b
 |---|---|---|
 | `vscode_session_notes` | `true` |  |
 
+Copy this machine's Claude Code sessions of the VM's repositories, the last 30 days of them, to the VM on every just code, so /resume there lists them. Their transcripts hold whatever their tools printed: false keeps them here.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `vscode_claude_sessions` | `true` |  |
+
 The VS Code settings read (never written) to say whether the terminal starts on its own. Empty: where stock VS Code keeps them on macOS and Linux; set it for Insiders, VSCodium, or a VS Code on Windows driven from WSL.
 
 | Setting | Default | Notes |
@@ -309,11 +315,23 @@ Open the VM in VS Code at the end of a one-VM just deploy.
 |---|---|---|
 | `deploy_code` | `true` |  |
 
-Before just destroy deletes a VM, sign it out of Claude and of gh, and take it off your tailnet. A stopped VM is started for it. false deletes the VMs as they are.
+Before just destroy deletes a VM, sign it out of Claude and of gh, and take it off your tailnet. A stopped VM is started for it. false deletes the VMs without releasing them, their sessions still saved first.
 
 | Setting | Default | Notes |
 |---|---|---|
 | `destroy_release` | `true` |  |
+
+And before that, save the Claude Code sessions and auto memory that exist only on the VM into destroy_sessions_dir here; a VM whose save fails is kept. false deletes them with the VM.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `destroy_save_sessions` | `true` |  |
+
+A folder per VM and run, an absolute path or one starting with ~. Empty: .sessions/ in this checkout (git-ignored). The transcripts hold whatever their tools printed, and stay until you delete them.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `destroy_sessions_dir` | `""` |  |
 
 Open the sign-in pages (and copy GitHub's code) on this machine. Off, the run only prints them, for a controller with no desktop.
 

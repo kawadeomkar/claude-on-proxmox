@@ -127,7 +127,11 @@ name, so one `just test` is one file.
 
 The project writes exactly two things outside the repository,
 `~/.ssh/known_hosts` and the managed SSH config, plus one `Include` line at the top of
-`~/.ssh/config` ([§4.8](lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml)). Every
+`~/.ssh/config` ([§4.8](lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml)) - and,
+only where you point `destroy_sessions_dir` outside it, the Claude Code sessions `just destroy` saves
+([§4.5](lifecycle.md#45-playbooksdestroyyml--confirm-release-delete)), which otherwise go into the
+checkout's git-ignored `.sessions/`. Those are the VM's writing and are unpacked as plain files and
+folders only, never a link the VM made. Every
 alias write is validated by the real ssh client before it lands, an
 alias the user's own config already names is refused, and the Molecule scenarios point the managed
 file into the ephemeral directory with the `Include` off, guarded by a unit test, because the

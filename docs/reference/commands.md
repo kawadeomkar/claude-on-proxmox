@@ -23,6 +23,8 @@ The words a recipe takes, and how they are checked:
   [Naming and multiple VMs](../guides/vms.md#naming-and-multiple-vms). `just deploy configure` is refused,
   rather than creating a VM so named: a stage is given with `--only`.
 - **`--project`**, for `just code` only: one repository folder in the VM's projects directory.
+- **`--session`**, for `just code` only: one of this machine's Claude Code sessions, by its ID - lowercase
+  hex in groups of 8-4-4-4-12, as `/resume` lists it.
 - **`--tags`** narrows configuration to some roles, and beside VM names means `--only configure`
   ([Re-running one part of it](../guides/vms.md#re-running-one-part-of-it)); **`--role`** narrows `just
   test` to some roles' scenarios. Both are checked against the role names.
@@ -58,15 +60,16 @@ environment where `python3` is not it.
 | &emsp;`-t, --tags ROLES` | Configure only these roles, comma-separated: beside VM names it means --only configure (just deploy alpha --tags claude_code) |
 | &emsp;`--start` | Start a VM this run would leave stopped (proxmox_vm_start_existing) |
 | &emsp;`<name>` | The VMs; none means claude-on-proxmox-default, or every VM this project created for configure, --check and ssh-config |
-| `just code <name>` | Open a VM in VS Code with a Claude terminal |
+| `just code <name>` | Open a VM in VS Code with a Claude terminal, this machine's recent Claude sessions copied there |
 | &emsp;`--project PROJECT` | Open one project folder on the VM rather than the whole projects directory |
+| &emsp;`--session SESSION` | Continue one of this machine's Claude Code sessions there, by its ID as /resume lists it: its checkout brought to the session's pushed commit, then claude --resume |
 | &emsp;`<name>` | The one VM to open |
 | `just login [<name>...]` | Sign the VM(s) in to Claude, GitHub and Tailscale, or report how each is signed in |
 | &emsp;`--only SIGN_IN` | One sign-in: claude (by the browser, then Remote Control), github (the device flow, then the private repositories) or tailscale (its web login) |
 | &emsp;`<name>` | The VMs to sign in, one after another; none reports every VM this project created |
 | `just list [<name>...]` | Show the VMs this project created, and their addresses |
 | &emsp;`<name>` | Only these VMs; none lists every VM this project created |
-| `just destroy [<name>...]` | Release the VM(s) from Claude, GitHub and Tailscale, then delete them |
+| `just destroy [<name>...]` | Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them |
 | &emsp;`<name>` | The VMs; none means claude-on-proxmox-default |
 | `just logs` | List the run logs in .logs/, newest first |
 

@@ -348,24 +348,29 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
     exec {{ run_logged }} "$name" "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} "$playbook"
 
 # One VM at a time: VS Code opens one window per workspace, and "open it in
-# the editor" does not mean a fleet.
+# the editor" does not mean a fleet. --session is one of this machine's Claude
+# Code sessions to continue there: its ID, the name of its transcript in
+# ~/.claude/projects/, lowercase hex in groups of 8-4-4-4-12 and nothing else.
+# Without it the folder's latest conversation continues, as before.
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The one VM to open')]
 [arg('PROJECT', long='project', pattern='([A-Za-z0-9._-]{1,100})?', help='Open one project folder on the VM rather than the whole projects directory')]
+[arg('SESSION', long='session', pattern='([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?', help="Continue one of this machine's Claude Code sessions there, by its ID as /resume lists it: its checkout brought to the session's pushed commit, then claude --resume")]
 [continue]
-[doc('Open a VM in VS Code with a Claude terminal')]
+[doc("Open a VM in VS Code with a Claude terminal, this machine's recent Claude sessions copied there")]
 [group('use')]
 [no-exit-message]
 [positional-arguments]
 [script]
-code PROJECT='' *NAMES:
+code PROJECT='' SESSION='' *NAMES:
     {{ guard }}
-    project=$1
-    shift
+    project=$1 session=$2
+    shift 2
     [ "$#" -gt 0 ] || { echo "error: code opens one VM: just code <name>" >&2; exit 1; }
     tools/check names "$@"
     names=$(IFS=,; printf %s "$*")
     case "$names" in *,*) echo "error: code opens one VM at a time, not [$*]" >&2; exit 1 ;; esac
     tools/check project "$project"
+    tools/check session "$session"
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
@@ -373,6 +378,7 @@ code PROJECT='' *NAMES:
     {{ vault_args }}
     set -- "$@" -e "{\"vm_name\": \"$names\"}"
     [ -z "$project" ] || set -- "$@" -e "{\"vm_project\": \"$project\"}"
+    [ -z "$session" ] || set -- "$@" -e "{\"vm_session\": \"$session\"}"
     exec {{ run_logged }} code "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/code.yml
 
 # The sign-ins only the person can make, each a page in the browser: Claude's
@@ -428,7 +434,7 @@ list *NAMES:
 
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default')]
 [continue]
-[doc('Release the VM(s) from Claude, GitHub and Tailscale, then delete them')]
+[doc("Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them")]
 [group('use')]
 [no-exit-message]
 [positional-arguments]

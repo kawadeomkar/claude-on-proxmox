@@ -618,7 +618,11 @@
           {{ verify_playbook_cmd
              + ['--extra-vars', {'vm_name': 'beta', 'proxmox_template_name': verify_template,
                                  'vscode_user_settings_file': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
-                                                              ~ '/vscode/settings.json'} | to_json,
+                                                              ~ '/vscode/settings.json',
+                                 'code_session_source_dir': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                            ~ '/here/.claude',
+                                 'code_session_dest_dir': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                          ~ '/vm-home/.claude'} | to_json,
                 playbook_dir ~ '/../../deploy.yml'] }}
       environment: "{{ verify_playbook_env }}"
       register: verify_deploy_runs
@@ -666,7 +670,11 @@
           {{ verify_playbook_cmd
              + ['--extra-vars', verify_deploy_case
                                 | combine({'vscode_user_settings_file': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
-                                                                        ~ '/vscode/settings.json'}) | to_json,
+                                                                        ~ '/vscode/settings.json',
+                                           'code_session_source_dir': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                                      ~ '/here/.claude',
+                                           'code_session_dest_dir': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                                    ~ '/vm-home/.claude'}) | to_json,
                 playbook_dir ~ '/../../deploy.yml'] }}
       environment: "{{ verify_playbook_env }}"
       register: verify_deploy_windows
@@ -1120,6 +1128,11 @@
       ansible_python_interpreter: "{{ ansible_playbook_python }}"
       # Never the developer's own: what just code says depends on it.
       vscode_user_settings_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/vscode/settings.json"
+      # Nor the developer's Claude Code at either end: the sessions are read from an empty ~/.claude of
+      # the scenario's own and copied into another, beside a stand-in for the VM's claude. Copying
+      # itself is tested in tests/unit/test_code_session.py, between real checkouts.
+      code_session_source_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/here/.claude"
+      code_session_dest_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/vm-home/.claude"
     verify_code_ws_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/projects/.claude-on-proxmox"
     verify_code_env: >-
       {{ verify_playbook_env | combine({'PATH': verify_ssh_dir ~ '/bin:' ~ lookup('ansible.builtin.env', 'PATH')}) }}
@@ -1301,6 +1314,18 @@
         mode: "0644"
         content: ""
 
+    - name: Make the directory of the VM's stand-in claude
+      ansible.builtin.file:
+        path: "{{ verify_code_vars.code_session_dest_dir | dirname }}/.local/bin"
+        state: directory
+        mode: "0755"
+
+    - name: Put a stand-in for the VM's claude where the native installer would
+      ansible.builtin.copy:
+        dest: "{{ verify_code_vars.code_session_dest_dir | dirname }}/.local/bin/claude"
+        mode: "0755"
+        content: "#!/bin/sh\necho '2.1.308 (Claude Code)'\n"
+
     # The runs below assume no settings file, an empty log and no workspace
     # files: made so, not assumed, in case an earlier run was cut short.
     - name: Start just code's runs from nothing
@@ -1370,6 +1395,9 @@
                                              ~ '/session/alpha-session.md).') | regex_escape)
           - verify_runs[0].stdout is not search('VS Code may ask once')
           - verify_runs[2].stdout is search("VS Code may ask once whether to open them, as a file outside this window's folder")
+          # The sessions: none in the scenario's own ~/.claude, so none copied, and the VM's left as it was.
+          - verify_runs[0].stdout is search("No Claude Code session of this machine's from the last 30 days is of a repository")
+          - not (verify_code_vars.code_session_dest_dir ~ '/projects') is exists
         fail_msg: >-
           just code exited {{ verify_runs | map(attribute='rc') | list }} and asked for {{ verify_code_log }}:
           {{ verify_runs | map(attribute='stdout') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
@@ -1431,7 +1459,7 @@
           - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4],
                                  verify_task.args[5], '/etc/systemd/system/claude-remote-control.path', verify_task.args[7],
                                  'https', 'workflow', 'alpha', verify_notes_script, verify_notes, 'claude-remote-control',
-                                 'Asia/Kolkata']
+                                 'Asia/Kolkata', '']
           - verify_task.args[3] is search('just deploy alpha --only configure,')
           # What a sign-in there says: Remote Control started by the path unit that watches for the login, or not.
           - verify_task.args[4] is search('starts by itself.* just deploy alpha --tags claude_code$')
@@ -1668,7 +1696,11 @@
           # ssh, which as an extra var would reach the controller's own tasks
           # too; without the local override, only the VM is reached over SSH.
           - expect: 'alpha is running at 192\.0\.2\.51, but SSH to it as\s+dev failed'
-            base: {vm_name: alpha, vscode_user_settings_file: "{{ verify_code_vars.vscode_user_settings_file }}"}
+            base:
+              vm_name: alpha
+              vscode_user_settings_file: "{{ verify_code_vars.vscode_user_settings_file }}"
+              code_session_source_dir: "{{ verify_code_vars.code_session_source_dir }}"
+              code_session_dest_dir: "{{ verify_code_vars.code_session_dest_dir }}"
             vars: {ansible_ssh_timeout: 3}
       ansible.builtin.command:
         argv: >-

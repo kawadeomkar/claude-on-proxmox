@@ -2,7 +2,7 @@
 
 | Where | What |
 |-------|------|
-| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core) in a virtualenv of its own for this project, [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+, [just](https://github.com/casey/just) 1.59+ (from its own releases: `brew install just`, `cargo install just`, or the release archive, checked against its `SHA256SUMS`), SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `just code` (optional) |
+| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core) in a virtualenv of its own for this project, [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+, [just](https://github.com/casey/just) 1.59+ (from its own releases: `brew install just`, `cargo install just`, or the release archive, checked against its `SHA256SUMS`), `git`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `just code` (optional), and `rsync` for the Claude Code sessions it copies to the VM (macOS has it; a Linux controller may need `apt install rsync`) |
 | Proxmox VE 8.x or 9.x | Root SSH access (template build only) and an API token, see [Proxmox access](proxmox-access.md) |
 | Testing (optional) | Docker Engine for Molecule; Vagrant + VirtualBox for a full VM test |
 
