@@ -32,7 +32,7 @@ dev = [
     "ruff==0.17.0",
     # The uv CI runs: .github/actions/setup installs the version uv.lock pins, so Dependabot
     # bumps it with everything else.
-    "uv==0.13.0",
+    "uv==0.13.4",
 ]
 # The wiki in docs/: docsible renders each role's reference page - its variables, tasks and a
 # flowchart of each task file - with tools/templates/role.md.j2 (make docs), and Zensical builds the
