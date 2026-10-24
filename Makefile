@@ -228,8 +228,12 @@ endif
 # on whitespace, so VM_NAME="alpha beta" silently became just alpha and only
 # half the fleet was created. As JSON the value arrives whole and reaches the
 # name check in the proxmox_vm role, which explains the problem. vm-name-check
-# has already rejected anything that could break out of this quoting.
-VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
+# has already rejected anything that could break out of this quoting. Read
+# with $(value), as every value typed on the command line is: this assignment
+# is expanded while make reads the Makefile, before any check has run, and
+# $(VM_NAME) would run a $(shell ...) typed into it right here. VM_ARGS keeps
+# the text as typed, and a simply expanded variable is never expanded again.
+VM_ARGS    := $(if $(value VM_NAME),-e '{"vm_name": "$(value VM_NAME)"}',)
 # A run with no terminal on stdin has nobody to approve a sign-in: no page
 # opens and nothing reaches the clipboard, since nobody is there to use them,
 # and make deploy skips its sign-ins, which would otherwise start by themselves
@@ -242,7 +246,13 @@ NO_TTY_ARGS = $$([ -t 0 ] || printf '%s' '-e {"login_desktop":false,"deploy_sign
 # same reason as VM_NAME, after project-name-check has refused anything that
 # could break out of the quoting or out of the projects directory.
 PROJECT    ?=
-PROJECT_ARGS := $(if $(PROJECT),-e '{"vm_project": "$(PROJECT)"}',)
+PROJECT_ARGS := $(if $(value PROJECT),-e '{"vm_project": "$(value PROJECT)"}',)
+# One of this machine's Claude Code sessions for `make code` to continue on the
+# VM: its ID, the name of its transcript in ~/.claude/projects/. Only `make code`
+# reads it. Passed as JSON like PROJECT, after session-name-check has refused
+# anything but a session ID.
+SESSION    ?=
+SESSION_ARGS := $(if $(value SESSION),-e '{"vm_session": "$(value SESSION)"}',)
 # The answers make init takes on the command line instead of asking for them
 # (docs/getting-started/first-deploy.md, "Without a terminal, or scripted"),
 # each checked by init-args-check and passed on as one JSON extra var,
@@ -262,6 +272,12 @@ STORAGE           :=
 BRIDGE            :=
 TAILSCALE         :=
 PROMPT            :=
+# make exports every variable set on its command line into the environment of
+# each recipe it runs, and expands it to do so - before the first recipe, which
+# is not the check: VM_NAME='$(shell ...)' ran as vault-check started. Never
+# exported, then: each check reads the value through a variable of its own,
+# exported as typed ($(value)), and every recipe passes it on as JSON.
+unexport VM_NAME PROJECT SESSION HOST TOKEN_USER TOKEN_NAME TOKEN_SECRET_FILE GITHUB_USER STORAGE BRIDGE TAILSCALE PROMPT
 ifneq ($(filter command,$(origin TOKEN_SECRET) $(origin CLAUDE_ON_PROXMOX_TOKEN_SECRET)),)
 $(error the token secret never goes on make's command line, which every command a recipe runs inherits (MAKEFLAGS) and the shell's history keeps: put it in a file only you can read, make init TOKEN_SECRET_FILE=<file>, or export CLAUDE_ON_PROXMOX_TOKEN_SECRET from wherever your secrets live - a CI secret, or read -rs at a prompt - never typed into the command)
 endif
@@ -482,12 +498,13 @@ endif
 # the editor" does not mean a fleet. Read through the environment like
 # vm-name-check, so the value is never interpolated into the recipe.
 #: PROJECT=<repo>  Open one project folder on the VM rather than the whole projects directory
+#: SESSION=<id>    Continue one of this machine's Claude Code sessions there: its checkout brought to the session's pushed commit, then claude --resume
 .PHONY: code
 code: export VM_NAME_CHECK := $(value VM_NAME)
-code: vault-check vm-name-check project-name-check collections-check log-setup ## Open a VM in VS Code with a Claude terminal
+code: vault-check vm-name-check project-name-check session-name-check collections-check log-setup ## Open a VM in VS Code with a Claude terminal, this machine's recent Claude sessions copied there
 	@test -n "$$VM_NAME_CHECK" || { echo "error: code opens one VM: make code VM_NAME=<name>"; exit 1; }
 	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
-	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(PROJECT_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
+	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(PROJECT_ARGS) $(SESSION_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml
 
 # The sign-ins only the person can make, each a page in the browser: Claude's
 # (Remote Control needs a claude.ai login on the VM, and Anthropic supports no
@@ -510,7 +527,7 @@ list: vault-check vm-name-check collections-check log-setup ## Show the VMs this
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/list.yml
 
 .PHONY: destroy
-destroy: vault-check vm-name-check collections-check log-setup ## Release the VM(s) from Claude, GitHub and Tailscale, then delete them
+destroy: vault-check vm-name-check collections-check log-setup ## Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 
 .PHONY: logs
@@ -715,6 +732,21 @@ project-name-check:
 	  .|..) echo "error: PROJECT names one project folder, not [$$PROJECT_CHECK]"; exit 1;; \
 	esac
 	@test "$${#PROJECT_CHECK}" -le 100 || { echo "error: PROJECT is longer than the 100 characters a repository name can be"; exit 1; }
+
+# SESSION is a Claude Code session ID, as Claude Code names a transcript: 32
+# lowercase hex digits in groups of 8-4-4-4-12. Nothing else, so it sits whole in
+# the single-quoted JSON of SESSION_ARGS. Read the same way as VM_NAME, for the
+# same reasons. Empty (no SESSION) is fine: the folder's latest conversation
+# continues, as without it.
+SESSION_SHAPE := $(subst x,[0-9a-f],xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+.PHONY: session-name-check
+session-name-check: export SESSION_CHECK := $(value SESSION)
+session-name-check: export LC_ALL := C
+session-name-check:
+	@case "$$SESSION_CHECK" in \
+	  ""|$(SESSION_SHAPE)) ;; \
+	  *) echo "error: SESSION is a Claude Code session ID such as 0a608ad8-1b2c-4d3e-8f90-123456789abc, as /resume lists it (got: [$$SESSION_CHECK])"; exit 1;; \
+	esac
 
 # What make init takes on the command line, each read through the environment
 # like VM_NAME and refused, before anything is installed, when it holds a

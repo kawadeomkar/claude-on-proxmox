@@ -70,6 +70,22 @@ Stops the Remote Control service and the path unit that starts it, then runs `cl
 
 Also takes, as described under `main`: `claude_code_user`, `claude_code_remote_control_service`.
 
+## Entry point `release_pause`
+
+**Stop Remote Control while destroy saves the VM's Claude Code sessions**
+
+Stops the path unit that starts Remote Control, then the service, so that the transcript of the session it serves is whole when make destroy saves it. Nothing here fails the run. The release entry point's report says Remote Control was stopped.
+
+Also takes, as described under `main`: `claude_code_remote_control_service`.
+
+## Entry point `release_resume`
+
+**Start again what release_pause stopped, on a VM destroy keeps**
+
+Starts the service, then the path unit, that release_pause stopped in the same run, for a VM whose sessions could not be saved and that make destroy therefore neither releases nor deletes.
+
+Also takes, as described under `main`: `claude_code_remote_control_service`.
+
 ## Internal values
 
 Set in `roles/claude_code/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. 43 of the 49 are computed during a run, from earlier tasks' results.
@@ -122,7 +138,7 @@ Set in `roles/claude_code/vars/main.yml`. These are not settings: Ansible ranks 
 | `claude_code_remote_control_stay_up_seconds` | `20` |
 | `claude_code_release_state` | <code>{{ (claude_code_release_status.stdout &#124; from_json) if (claude_code_release_status.stdout &#124; default('') &#124; trim)[:1] == '{' else {} }}</code> |
 | `claude_code_release_signed_in` | <code>{{ claude_code_release_state.loggedIn &#124; default(false) &#124; bool }}</code> |
-| `claude_code_release_rc_stopped` | <code>{{ claude_code_release_stopped.results &#124; default([]) &#124; selectattr('changed', 'defined') &#124; selectattr('changed') &#124; selectattr('item.item', 'equalto', 'service') &#124; list &#124; length > 0 }}</code> |
+| `claude_code_release_rc_stopped` | <code>{{ (claude_code_release_stopped.results &#124; default([]) + claude_code_release_paused.results &#124; default([])) &#124; selectattr('changed', 'defined') &#124; selectattr('changed') &#124; selectattr('item.item', 'equalto', 'service') &#124; list &#124; length > 0 }}</code> |
 | `claude_code_release_why` | <code>{{ (claude_code_release_logout.stderr &#124; default('') &#124; plain_text &#124; regex_replace('\s+', ' ') &#124; trim) or 'no reason given' }}</code> |
 | `claude_code_release_summary` | <code>{{ ((['Remote Control stopped (its session stays in the Claude app, offline)'] if claude_code_release_rc_stopped &#124; bool else []) + ([('signed out' if (claude_code_release_logout.rc &#124; default(1)) == 0 else 'could not sign out (' ~ claude_code_release_why ~ ')')] if claude_code_release_signed_in &#124; bool else [])) &#124; join('; ') }}</code> |
 
@@ -460,6 +476,52 @@ classDef rescue stroke:#665352,stroke-width:2px;
   release___Read_the_login2-->|Task| release___Sign_claude_out3[release   sign claude out<br>When: **claude code release signed in   bool**]:::task
   release___Sign_claude_out3-->|Task| release___Record_what_became_of_the_login4[release   record what became of the login]:::task
   release___Record_what_became_of_the_login4-->End
+```
+
+### `release_pause.yml` - entry point `release_pause`
+
+| Task | Module | When |
+|---|---|---|
+| Look for Remote Control's units | `ansible.builtin.stat` |  |
+| Stop Remote Control while the sessions are saved | `ansible.builtin.systemd_service` |  |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| release_pause___Look_for_Remote_Control_s_units0[release pause   look for remote control s units]:::task
+  release_pause___Look_for_Remote_Control_s_units0-->|Task| release_pause___Stop_Remote_Control_while_the_sessions_are_saved1[release pause   stop remote control while the<br>sessions are saved]:::task
+  release_pause___Stop_Remote_Control_while_the_sessions_are_saved1-->End
+```
+
+### `release_resume.yml` - entry point `release_resume`
+
+| Task | Module | When |
+|---|---|---|
+| Start Remote Control again | `ansible.builtin.systemd_service` |  |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| release_resume___Start_Remote_Control_again0[release resume   start remote control again]:::task
+  release_resume___Start_Remote_Control_again0-->End
 ```
 
 ### `remote_control.yml`

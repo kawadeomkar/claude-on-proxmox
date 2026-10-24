@@ -1,0 +1,15 @@
+---
+# Entry point for playbooks/destroy.yml, for a VM it keeps because its
+# sessions could not be saved: what release_pause.yml stopped starts again,
+# the service before the path unit that would start it, so the VM is left
+# as it was found.
+- name: release_resume | Start Remote Control again
+  ansible.builtin.systemd_service:
+    name: "{{ claude_code_remote_control_service }}.{{ item.item.item }}"
+    state: started
+  loop: >-
+    {{ claude_code_release_paused.results | default([]) | selectattr('changed', 'defined') | selectattr('changed')
+       | reverse | list }}
+  loop_control:
+    label: "{{ claude_code_remote_control_service }}.{{ item.item.item }}"
+  failed_when: false

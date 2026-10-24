@@ -210,6 +210,32 @@ def test_vm_name_check_rejects_anything_else(value: str) -> None:
     assert NAME_ERROR in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    ("target", "names"),
+    [
+        ("code", ["VM_NAME", "PROJECT", "SESSION"]),
+        ("init", ["HOST", "TOKEN_USER", "TOKEN_NAME", "TOKEN_SECRET_FILE", "GITHUB_USER", "PROMPT"]),
+    ],
+)
+@pytest.mark.parametrize("dry_run", [False, True], ids=["run", "dry-run"])
+def test_no_value_typed_on_the_command_line_runs_before_its_check(
+    tmp_path: Path, target: str, names: list[str], dry_run: bool
+) -> None:
+    # make expands a := assignment while it reads the Makefile, and every variable set on its command
+    # line as it exports it to the first recipe it runs - both before any check: a $(shell ...) typed as
+    # one of these ran there, even under make -n for the first.
+    marks = {name: tmp_path / name for name in names}
+    result = _make(
+        *(["-n"] if dry_run else []),
+        target,
+        *(f"{name}=$(shell touch {mark})" for name, mark in marks.items()),
+        *_safe_overrides(tmp_path),
+    )
+    assert not [name for name, mark in marks.items() if mark.exists()], result.stdout + result.stderr
+    if not dry_run:
+        assert result.returncode != 0
+
+
 def test_provision_passes_vm_name_as_one_json_extra_var() -> None:
     result = _make("-n", "deploy", "TYPE=provision", "VM_NAME=alpha,beta")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -862,6 +888,59 @@ def test_only_code_reads_project(args: list[str]) -> None:
     assert "vm_project" not in result.stdout
 
 
+# SESSION: one Claude Code session ID, lowercase hex in groups of 8-4-4-4-12, as
+# Claude Code names a transcript. Only `make code` reads it.
+SESSION_ID = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
+SESSION_ERROR = "SESSION is a Claude Code session ID"
+
+
+@pytest.mark.parametrize("value", [SESSION_ID, ""])
+def test_session_name_check_accepts_a_session_id(value: str) -> None:
+    result = _make("session-name-check", f"SESSION={value}")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(SESSION_ID.upper(), id="uppercase"),
+        pytest.param(SESSION_ID + "0", id="too-long"),
+        pytest.param(SESSION_ID[:-1], id="too-short"),
+        pytest.param(SESSION_ID.replace("-", ""), id="no-dashes"),
+        pytest.param("../" + SESSION_ID, id="path"),
+        pytest.param(SESSION_ID + "' -e 'x=1", id="quote"),
+        pytest.param("$(x)", id="make-expansion"),
+        pytest.param(SESSION_ID + "\nother", id="newline"),
+        pytest.param("-" * 36, id="dashes"),
+    ],
+)
+def test_session_name_check_rejects_anything_else(value: str) -> None:
+    result = _make("session-name-check", f"SESSION={value}")
+    assert result.returncode != 0, "accepted " + repr(value)
+    assert SESSION_ERROR in result.stdout + result.stderr
+
+
+def test_code_passes_session_as_its_own_json_extra_var() -> None:
+    result = _make("-n", "code", "VM_NAME=alpha", f"SESSION={SESSION_ID}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"""-e '{{"vm_session": "{SESSION_ID}"}}'""" in result.stdout
+
+
+def test_code_refuses_a_bad_session_before_the_playbook(tmp_path: Path) -> None:
+    result = _make("code", "VM_NAME=alpha", "SESSION=../etc", *_safe_overrides(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert SESSION_ERROR in output
+    assert "ansible-playbook" not in output
+
+
+@pytest.mark.parametrize("args", [["deploy"], ["deploy", "TYPE=configure"], ["login"], ["list"]])
+def test_only_code_reads_session(args: list[str]) -> None:
+    result = _make("-n", *args, "VM_NAME=alpha", f"SESSION={SESSION_ID}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "vm_session" not in result.stdout
+
+
 # A run with no terminal - `make deploy </dev/null`, an IDE task, an agent's
 # shell - has nobody to approve a sign-in: the sign-ins' browser and clipboard
 # steps are turned off there, and make deploy's sign-ins, which start by
@@ -924,17 +1003,25 @@ def test_a_run_at_a_terminal_leaves_the_desktop_steps_on(tmp_path: Path, args: l
 
 # make vault: the file's state says which - a plaintext vault is encrypted, an
 # encrypted one edited, a missing one sent to make init. A stand-in
-# ansible-vault records what it was asked.
+# ansible-vault records what it was asked. VAULT_PASS points into tmp_path,
+# never the checkout's .vault_pass, which a developer's checkout has: there,
+# make vault passed it on and the test saw arguments it did not expect.
+@pytest.mark.parametrize("password", [False, True], ids=["no-password-file", "password-file"])
 @pytest.mark.parametrize(
     ("content", "action"), [("vault_proxmox_api_token_secret: x\n", "encrypt"), (VAULT_HEADER, "edit")]
 )
-def test_vault_encrypts_a_plaintext_vault_and_edits_an_encrypted_one(tmp_path: Path, content: str, action: str) -> None:
-    venv, record, vault = tmp_path / "venv", tmp_path / "args", tmp_path / "vault.yml"
+def test_vault_encrypts_a_plaintext_vault_and_edits_an_encrypted_one(
+    tmp_path: Path, content: str, action: str, password: bool
+) -> None:
+    venv, record, vault, vault_pass = tmp_path / "venv", tmp_path / "args", tmp_path / "vault.yml", tmp_path / "pass"
     _stand_in(venv, "ansible-vault", record)
     vault.write_text(content)
-    result = _make("vault", f"BIN={venv / 'bin'}", f"VAULT_FILE={vault}")
+    if password:
+        vault_pass.write_text("stand-in\n")
+    result = _make("vault", f"BIN={venv / 'bin'}", f"VAULT_FILE={vault}", f"VAULT_PASS={vault_pass}")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert record.read_text().splitlines() == [action, str(vault)]
+    given = ["--vault-password-file", str(vault_pass)] if password else []
+    assert record.read_text().splitlines() == [action, *given, str(vault)]
 
 
 def test_vault_names_make_init_when_the_vault_is_missing(tmp_path: Path) -> None:
