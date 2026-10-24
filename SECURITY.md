@@ -107,8 +107,12 @@ restate them are not treated as vulnerabilities:
   `false` keeps them here from then on, and leaves what is on the VM already - mirror and copies - for you
   to delete, or for `make destroy` to take with the VM.
   `make code` copies nothing back, the copy's own tasks print nothing a transcript holds, and a session
-  continued on the VM is never overwritten. A VM chooses which of this machine's sessions it gets only
-  through the GitHub origins of its checkouts: a local path or another host's URL there matches none.
+  continued on the VM is never overwritten. `SESSION=<id>` moves the VM's checkout of that session's
+  repository to the commit it is pushed at, by fast-forward only: never over changes of the VM's own, an
+  ignored file the commit would replace, or commits a detached `HEAD` alone holds, and never while a
+  `claude` works in it. A VM chooses which of this machine's sessions it gets only through the GitHub
+  origins of its checkouts: a local path or another host's URL there matches none. Claude Code's question whether to trust that folder is
+  left for you to answer.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
   once - and the next `make deploy` then sends it your SSH keys, GitHub token and Anthropic API key. The

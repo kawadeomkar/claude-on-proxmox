@@ -14,6 +14,7 @@ make deploy VM_NAME=alpha          # ends by opening alpha in VS Code; configura
 #   alpha: ssh alpha   |   make code VM_NAME=alpha   (opens /home/dev/projects)
 make code VM_NAME=alpha            # later: refresh the alias from Proxmox, then open the VM in VS Code
 make code VM_NAME=alpha PROJECT=discord-music-bot   # just that project, in a window of its own
+make code VM_NAME=alpha SESSION=0a608ad8-1b2c-4d3e-8f90-123456789abc   # go on with a Claude session from this machine
 ```
 
 `make deploy` runs `make code` itself as its last step, for a run for one VM - the one `VM_NAME`
@@ -206,7 +207,8 @@ Reload Window*, or the *Reload Required* an extension install can ask for) ends 
 and runs the task again, so nothing is lost but the reply in flight; `/clear` starts a fresh
 conversation. Opening a window that is already open focuses it rather than starting a second
 session; two windows on one project would share the conversation. Quitting `claude` ends the task;
-*Tasks: Run Task*, *Claude* starts another.
+*Tasks: Run Task*, *Claude* starts another. After `make code ... SESSION=<id>` the terminal runs
+`claude --resume <id>` instead, until a `make code` for the same project without `SESSION` (below).
 
 ### Switches
 
@@ -263,8 +265,8 @@ What a copy is. The transcript, its complete lines only - a session open here wh
 comes over as far as it was written - and its `tool-results/` folder, in the VM's `~/.claude/projects/`
 under the folder name it has here, 0600 in 0700 folders. It keeps its file time here while that is
 within 14 days; an older one's copy gets the time it was copied, renewed every 14 days, since Claude Code
-deletes a transcript 30 days after its file time and would otherwise take a session copied at 29 days
-the day after. Each copy gets four edits and nothing else, so that it resumes as the VM's own:
+deletes a transcript 30 days after its file time and would otherwise take a session you asked for by ID
+before you resumed it. Each copy gets four edits and nothing else, so that it resumes as the VM's own:
 
 - The memory folder its recorded system prompt names becomes the checkout's on the VM. Claude Code
     records the prompt it started with and sends it again on every resume until the conversation is
@@ -299,9 +301,44 @@ first answer in a copied session reads the whole conversation again, uncached: t
 Anthropic's, not this machine's, but a copy's recorded system prompt names the VM's memory folder,
 which makes it another prompt, and a cache entry lasts only minutes after its last request anyway.
 
+### Continuing one session
+
+`make code VM_NAME=alpha SESSION=<id>` opens one session in the Claude terminal, in the window of
+its project, and copies it whatever its age. It needs that terminal: with `vscode_claude_terminal: false`
+it refuses, naming the `claude --resume <id>` to run there yourself. The ID is its transcript's name, as `/resume` and
+`/status` show it. The session's code comes through git, not the transcript, so before anything is
+written `make code` checks, and refuses with what to do:
+
+- The session is in one folder here, has messages, and is not open in a `claude` here or on the VM.
+- Its checkout here has no uncommitted or untracked change, and the branch it last ran on is pushed:
+    where `origin`'s is. Every git command here runs as `git --no-optional-locks`, so none takes the
+    index lock a git, an editor or a Claude of yours could be holding.
+- The VM's checkout of the repository has a clean tree, is on a branch - or on a detached `HEAD` that a
+    branch or tag holds, so moving it loses no commit - and has no `claude` working in it.
+
+It then fetches the branch on the VM and brings the checkout to the same commit, by fast-forward
+only: switched to the branch, created at that commit to track `origin`'s where the VM has none, and a
+branch of the VM's own with commits not here is left as it is, and refused. So is a move that would
+replace a file git does not track there - an ignored one, which `git status` does not show and git
+overwrites without asking - named, for you to move out of the way. That is the one write
+`make code` makes in a repository. The terminal runs `claude --resume <id>`: the same session under its
+own ID, never a fork, and a resume that fails says why and starts no other `claude`. The window's task
+resumes it again on every reload, even after `/clear`, until a `make code` for the same project without
+`SESSION` - each project's window has a workspace file of its own, and a run for another project, or for
+the whole directory, leaves this one's as it is. Three
+things to know:
+
+- Claude Code asks whether to trust the project's folder the first time it runs there; that answer
+    is yours, as on any machine.
+- If the project's window is open already, VS Code only brings it to the front: reload it
+    (*Developer: Reload Window*) to resume the session.
+- With `github_projects_update_existing` on, the next `make deploy TYPE=configure` checks the default
+    branch out again. Remote Control's sessions start in `~/projects`, above the checkout, where the
+    check for a `claude` working in it cannot see them; the run says when Remote Control is running.
+
 A transcript holds whatever its tools printed - command output, tokens, the contents of files - so
 every VM `make code` opens gets those of its repositories' sessions. `vscode_claude_sessions: false` in
-`local.yml` keeps them here.
+`local.yml` keeps them here; `SESSION` still copies its one session.
 
 ## Session notes
 

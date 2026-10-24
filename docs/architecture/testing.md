@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1612 tests. By file:
+pytest over `tests/unit/`: 1696 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -72,7 +72,7 @@ pytest over `tests/unit/`: 1612 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 148): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 192): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine, followed
   through every import its task files make. The
@@ -82,12 +82,14 @@ pytest over `tests/unit/`: 1612 tests. By file:
   cannot find - the refresh after a sign-in in the terminal, the zone `code.yml` finds (`TZ`, the
   `/etc/localtime` link on Linux and macOS, `/etc/timezone`, else UTC, shell syntax and paths refused),
   and the workspace each window gets: the notes' folder only where its own folder holds them.
-- **The session handoff** (`test_session_handoff.py` 97): the plan - by origin in every URL form here,
+- **The session handoff** (`test_session_handoff.py` 120): the plan - by origin in every URL form here,
   a GitHub one only on the VM, a renamed clone, a gone worktree's checkout, `githubRepoPaths`, another
-  owner's repository of the same name refused - the transcripts read without their content, an open
-  session only at a pid that is still a claude's, the registry whatever the transcripts, a transcript
-  gone as it is listed, the git reads against real checkouts (the origin as configured and without its
-  credential, a path holding `$` or `~`), an ID in two folders here or open on the VM left out,
+  owner's repository of the same name refused, `SESSION`'s reasons - the transcripts read without their
+  content, an open session only at a pid that is still a claude's, the registry whatever the
+  transcripts, a transcript gone as it is listed, the git reads against real checkouts (the origin as configured and without its
+  credential, a detached `HEAD` no ref holds, the ignored files a move would replace, untracked files a
+  config hides, a path or branch holding `$` or `~`) and a branch name or commit git would take as an
+  option refused, an ID in two folders here or open on the VM left out,
   the four edits byte for byte with the records of requests sent, an assistant's signed thinking and
   another project's memory folder left as they are, the manifest's rule and its write after each copy, a copy moved to another folder on the VM
   never written again and one moved here following, the time a copy is given against the 30-day sweep,
@@ -95,8 +97,11 @@ pytest over `tests/unit/`: 1612 tests. By file:
   the VM's with a GitHub origin: the copies and their edits, a second run changing nothing, the sync
   off, a sync whose rsync fails opening the window all the same, syncs
   that leave their one session out - open on the VM, in two folders here, changed on both - saying so
-  and never that none is of the VM's repositories, and no run printing the marker the transcripts
-  carry.
+  and never that none is of the VM's repositories,
+  `SESSION`'s fast-forward from a VM branch behind it, on it or not, and each refusal - open on either
+  machine, changed on both, unpushed, tracking another remote, gone, a fetch that fails, a detached `HEAD`,
+  an ignored file in the way, an rsync that fails - leaving the VM's checkout where it was, and no run
+  printing the marker the transcripts carry.
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
@@ -155,9 +160,10 @@ pytest over `tests/unit/`: 1612 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 389): `vm-name-check` accepts DNS-like names and refuses
-  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; a
-  `$(shell ...)` typed as `VM_NAME`, `PROJECT` or one of `make init`'s values never run, by make
+- **The Makefile** (`test_makefile.py` 406): `vm-name-check` accepts DNS-like names and refuses
+  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII, and
+  `session-name-check` anything but a lowercase session ID, `make code` alone passing it on; a
+  `$(shell ...)` typed as `VM_NAME`, `PROJECT`, `SESSION` or one of `make init`'s values never run, by make
   reading the Makefile or exporting them to the first recipe, `-n` or not; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as

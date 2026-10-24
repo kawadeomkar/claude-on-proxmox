@@ -12,6 +12,10 @@
 # wrote, so a session continued on the VM is never overwritten. Nothing is
 # written on this machine. The copy is no_log, and rsync names files, never
 # what is in them.
+#
+# With SESSION, the VM's checkout of its repository is then brought to the
+# commit the session's branch is at here, by fast-forward only: the one write
+# make code makes inside a repository.
 
 # The VM user's alone, as what is in it is: 0700, the files rsync brings
 # keeping this machine's modes inside it.
@@ -27,10 +31,10 @@
 # local path where Ansible reaches the VM locally, as the provision scenario
 # does. -r because --files-from turns off what -a implies for directories.
 # macOS's rsync has no --chmod for the modes, which the directory above sets.
-# A failure is said, and the window opens with the copies there are: rsync's
-# 23 and 24 are a file it could not read or one that vanished as it ran, the
-# rest sent, and the copy names a session that did not arrive; anything else
-# - no rsync on either machine among them - sent nothing new.
+# rsync's 23 and 24 are a file it could not read or one that vanished as it
+# ran: the rest was sent, and the copy names a session that did not arrive.
+# Any other failure - no rsync on either machine among them - fails SESSION
+# alone: the sync says it, and the window opens with the copies there are.
 - name: session_write | Send the sessions to the VM
   ansible.builtin.command:
     argv:
@@ -46,7 +50,7 @@
     stdin: "{{ code_session_plan.files | join('\n') }}"
   register: code_session_sent
   changed_when: code_session_sent.stdout | default('') | trim | length > 0
-  failed_when: false
+  failed_when: code_session_sent.rc | default(1) not in [0, 23, 24] and code_session_id | length > 0
   when: code_session_plan.sessions | default([]) | length > 0
 
 # Run whenever the sync is on, so that sessions which left the window also
@@ -61,4 +65,199 @@
   delegate_to: "{{ claude_vm_names[0] }}"
   register: code_session_copied
   no_log: true
-  when: code_sessions | bool
+  when: code_session_on | bool
+
+# A copy left as it is because both machines added to it since the last run
+# is not the session asked for: the terminal would resume the VM's.
+- name: session_write | Refuse a session that changed on both machines
+  vars:
+    code_unread: "{{ code_session_copied.unreadable | selectattr('id', 'equalto', code_session_id) | list }}"
+  ansible.builtin.assert:
+    that:
+      - code_session_id in code_session_copied.written + code_session_copied.unchanged + code_session_copied.continued
+    fail_msg: >-
+      {{ 'Session ' ~ code_session_id ~ ' was not copied to ' ~ claude_vm_names[0] ~ ': ' ~ code_unread[0].why ~ '.'
+         if code_unread | length > 0
+         else 'Session ' ~ code_session_id ~ ' was continued on ' ~ claude_vm_names[0] ~ ' and here since make code'
+              ~ ' last copied it, so its copy there was left as it is. To continue the one here on '
+              ~ claude_vm_names[0] ~ ', move that copy away first: '
+              ~ code_session_there ~ '/projects/'
+              ~ code_session_copied.held[code_session_id] | default(code_session_plan.session.folder)
+              ~ '/' ~ code_session_id ~ '.jsonl.' }}
+    quiet: true
+  when: code_session_id | length > 0
+
+# The branch as origin has it, into the remote-tracking ref only: a refspec,
+# which can never read as an option. gh is git's credential helper on the
+# VM, so a private repository needs GitHub's sign-in there.
+- name: session_write | Fetch the session's branch on the VM
+  ansible.builtin.command:
+    argv:
+      - git
+      - --no-optional-locks
+      - -C
+      - "{{ code_session_plan.session.checkout }}"
+      - fetch
+      - --quiet
+      - origin
+      - "+refs/heads/{{ code_session_upstream }}:refs/remotes/origin/{{ code_session_upstream }}"
+  environment:
+    GIT_TERMINAL_PROMPT: "0"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_fetched
+  changed_when: false
+  failed_when: false
+  when: code_session_id | length > 0
+
+- name: session_write | Fail when the VM cannot fetch the branch
+  ansible.builtin.assert:
+    that: code_session_fetched.rc == 0
+    fail_msg: >-
+      {{ claude_vm_names[0] }} could not fetch {{ code_session_upstream }} from origin in
+      {{ code_session_plan.session.checkout }}: {{ code_session_fetched.stderr | default('') | plain_text
+      | regex_replace('\s+', ' ') | trim }} A private repository needs GitHub's sign-in there:
+      make login {{ claude_vm_names[0] }} TYPE=github.
+    quiet: true
+  when: code_session_id | length > 0
+
+# git replaces an ignored file, which git status does not show, without
+# asking when the commit tracks one at its path: refused before anything is
+# switched, naming the first few. The paths are the VM's, said as plain text.
+- name: session_write | Read what moving the VM checkout would overwrite
+  git_checkouts_info:
+    paths: ["{{ code_session_plan.session.checkout }}"]
+    target: "{{ code_session_commit }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_overwrites
+  when: code_session_id | length > 0
+
+- name: session_write | Refuse a move that would overwrite files git does not track
+  vars:
+    code_paths: "{{ code_session_overwrites.checkouts[0].overwrites | map('plain_text') | list }}"
+  ansible.builtin.assert:
+    that: code_paths | length == 0
+    fail_msg: >-
+      Moving {{ code_session_plan.session.checkout }} on {{ claude_vm_names[0] }} to {{ code_session_commit[:12] }}
+      would overwrite what git does not track there, ignored files among them: {{ code_paths[:5] | join(', ') }}{{
+      ' and ' ~ (code_paths | length - 5) ~ ' more' if code_paths | length > 5 else '' }}. Move them out of the way
+      there, then run this again.
+    quiet: true
+  when: code_session_id | length > 0
+
+# A VM branch of the same name moves only forward, to the commit: one with
+# commits of its own is left as it is, before anything is switched.
+- name: session_write | Ask whether the VM's branch is behind the session's commit
+  ansible.builtin.command:
+    argv:
+      - git
+      - --no-optional-locks
+      - -C
+      - "{{ code_session_plan.session.checkout }}"
+      - merge-base
+      - --is-ancestor
+      - "{{ code_session_git_there.checkouts[0].branch_head }}"
+      - "{{ code_session_commit }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_behind
+  changed_when: false
+  failed_when: code_session_behind.rc not in [0, 1]
+  when:
+    - code_session_id | length > 0
+    - code_session_git_there.checkouts[0].branch_head not in ['', code_session_commit]
+
+- name: session_write | Refuse a VM branch with commits of its own
+  ansible.builtin.assert:
+    that: code_session_behind.rc | default(0) == 0
+    fail_msg: >-
+      {{ code_session_plan.session.branch }} in {{ code_session_plan.session.checkout }} on {{ claude_vm_names[0] }}
+      has commits that are not on this machine's, so it was left as it is. Push or drop them there, then run this again.
+    quiet: true
+  when: code_session_id | length > 0
+
+- name: session_write | Switch the VM checkout to the session's branch
+  ansible.builtin.command:
+    argv:
+      - git
+      - --no-optional-locks
+      - -C
+      - "{{ code_session_plan.session.checkout }}"
+      - switch
+      - --quiet
+      - "{{ code_session_plan.session.branch }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  changed_when: true
+  when:
+    - code_session_id | length > 0
+    - code_session_git_there.checkouts[0].branch_head | length > 0
+    - code_session_git_there.checkouts[0].head_branch != code_session_plan.session.branch
+
+- name: session_write | Bring the VM's branch to the session's commit
+  ansible.builtin.command:
+    argv:
+      - git
+      - --no-optional-locks
+      - -C
+      - "{{ code_session_plan.session.checkout }}"
+      - merge
+      - --ff-only
+      - --quiet
+      - "{{ code_session_commit }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  changed_when: true
+  when:
+    - code_session_id | length > 0
+    - code_session_git_there.checkouts[0].branch_head not in ['', code_session_commit]
+
+# A branch the VM does not have yet starts at the commit itself, then tracks
+# origin's, as a clone of it would.
+- name: session_write | Create the session's branch on the VM at its commit
+  ansible.builtin.command:
+    argv:
+      - git
+      - --no-optional-locks
+      - -C
+      - "{{ code_session_plan.session.checkout }}"
+      - switch
+      - --quiet
+      - --create
+      - "{{ code_session_plan.session.branch }}"
+      - "{{ code_session_commit }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  changed_when: true
+  when:
+    - code_session_id | length > 0
+    - code_session_git_there.checkouts[0].branch_head | length == 0
+
+- name: session_write | Make the new branch track origin's
+  ansible.builtin.command:
+    argv:
+      - git
+      - --no-optional-locks
+      - -C
+      - "{{ code_session_plan.session.checkout }}"
+      - branch
+      - --quiet
+      - "--set-upstream-to=origin/{{ code_session_upstream }}"
+      - "{{ code_session_plan.session.branch }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  changed_when: true
+  when:
+    - code_session_id | length > 0
+    - code_session_git_there.checkouts[0].branch_head | length == 0
+
+- name: session_write | Read where the VM checkout is now
+  ansible.builtin.command:
+    argv: [git, --no-optional-locks, -C, "{{ code_session_plan.session.checkout }}", rev-parse, HEAD]
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_head
+  changed_when: false
+  when: code_session_id | length > 0
+
+- name: session_write | Fail unless the VM checkout is at the session's commit
+  ansible.builtin.assert:
+    that: code_session_head.stdout | trim == code_session_commit
+    fail_msg: >-
+      {{ code_session_plan.session.checkout }} on {{ claude_vm_names[0] }} is at {{ code_session_head.stdout | trim }},
+      not at {{ code_session_commit }}, where {{ code_session_plan.session.branch }} is here.
+    quiet: true
+  when: code_session_id | length > 0

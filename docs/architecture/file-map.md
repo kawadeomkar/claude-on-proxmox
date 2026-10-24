@@ -42,8 +42,8 @@ playbooks/
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
   tasks/ssh_config.yml            one blockinfile block per VM in ~/.ssh/claude-on-proxmox.conf, Include once
-  tasks/session_read.yml          which of this machine's sessions go to which VM checkout
-  tasks/session_write.yml         rsync to the VM's mirror, then the copies
+  tasks/session_read.yml          which of this machine's sessions go to which VM checkout; SESSION's checks
+  tasks/session_write.yml         rsync to the VM's mirror, the copies, SESSION's checks after the fetch and fast-forward
   tasks/remote_tmp.yml            root's remote_tmp, made before a module makes it and warns (template, configure)
   tasks/init_ask.yml              one make init question: a value given, or asked, held to its kind, asked once more
   tasks/init_local_setting.yml    one setting written into local.yml in place of its commented example line

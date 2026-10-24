@@ -114,18 +114,22 @@ def _under(path, top):
 
 
 def _repository(session, here, repo_paths):
-    """The repository a session belongs to, or "".
+    """The repository a session belongs to, the directory that says so, and how: (repo, dir, how).
 
     Its first directory's origin; for a directory that is gone, the origin of the checkout its worktree
-    belonged to, then the repository githubRepoPaths in ~/.claude.json lists it under.
+    belonged to, then the repository githubRepoPaths in ~/.claude.json lists it under. ``how`` says
+    why there is none when ``repo`` is "".
     """
     cwd = session.get("cwd") or ""
     if not cwd:
-        return ""
+        return "", "", "no directory is recorded in it"
     for path in (cwd, _worktree_checkout(cwd)):
         found = here.get(path) if path else None
         if found and found.get("exists"):
-            return git_repository(found.get("origin"))
+            repo = git_repository(found.get("origin"))
+            if repo:
+                return repo, path, "origin"
+            return "", path, f"{path} is not a git checkout with an origin"
     listed = sorted(
         {
             str(repo).lower()
@@ -134,12 +138,16 @@ def _repository(session, here, repo_paths):
             if _under(cwd, str(listed_path))
         }
     )
-    return listed[0] if len(listed) == 1 else ""
+    if len(listed) == 1:
+        return listed[0], "", "githubRepoPaths"
+    return "", "", f"{cwd} is gone"
 
 
-def _checkout(repo, by_repo):
+def _checkout(repo, by_repo, project):
     """The VM's checkout of ``repo``, or None and why: the one, or of several the one named like the repository."""
     found = by_repo.get(repo, [])
+    if project:
+        found = [checkout for checkout in found if checkout["name"] == project]
     if len(found) == 1:
         return found[0], ""
     if not found:
@@ -150,7 +158,9 @@ def _checkout(repo, by_repo):
     return None, ", ".join(sorted(checkout["name"] for checkout in found))
 
 
-def claude_sessions_plan(sessions, here, there, version, repo_paths=None, dest="", open_there=None):
+def claude_sessions_plan(
+    sessions, here, there, version, repo_paths=None, dest="", wanted="", project="", vm="the VM", open_there=None
+):
     """Decide which of this machine's sessions go to which checkout on the VM.
 
     ``sessions`` is claude_sessions_info's list for this machine, ``here`` git_checkouts_info's for
@@ -158,9 +168,10 @@ def claude_sessions_plan(sessions, here, there, version, repo_paths=None, dest="
     repository only by a GitHub origin (github_repository): here any origin names one, since a
     clone here may reach GitHub through an SSH alias of the user's own - ``version``
     the VM's Claude Code ("" without one), ``repo_paths`` githubRepoPaths from this machine's
-    ~/.claude.json, ``dest`` the VM's Claude configuration directory. ``open_there`` holds the IDs a
-    running claude on the VM has open (claude_sessions_info's ``registered`` there): such a copy is
-    left, never replaced under the claude holding it.
+    ~/.claude.json, ``dest`` the VM's Claude configuration directory. ``wanted`` is SESSION, which is
+    planned whatever its age, and ``project`` PROJECT, which with it must name the checkout.
+    ``open_there`` holds the IDs a running claude on the VM has open (claude_sessions_info's
+    ``registered`` there): such a copy is left, never replaced under the claude holding it.
 
     Returns ``sessions``, one item per session to copy, as claude_sessions_copy takes it: its ID, its
     folder here - kept on the VM, so that --continue in a checkout never picks a copy up - the
@@ -168,7 +179,8 @@ def claude_sessions_plan(sessions, here, there, version, repo_paths=None, dest="
     what rsync sends for them, relative to the projects folder; ``repositories`` their repositories.
     ``newer``, ``ambiguous``, ``twice`` (an ID in more than one folder here, which ``claude --resume
     <id>`` could not choose between) and ``open`` are the sessions left out for a reason worth saying;
-    one of no repository the VM has cloned is in none.
+    one of no repository the VM has cloned is in none. ``session`` is SESSION's own entry, with
+    ``problem`` the reason it cannot be opened, or "".
     """
     here = {item["path"]: item for item in here or [] if item.get("path")}
     by_repo = {}
@@ -184,6 +196,7 @@ def claude_sessions_plan(sessions, here, there, version, repo_paths=None, dest="
         "ambiguous": [],
         "twice": [],
         "open": [],
+        "session": {},
     }
     folders_of = {}
     for session in sessions or []:
@@ -191,17 +204,31 @@ def claude_sessions_plan(sessions, here, there, version, repo_paths=None, dest="
     open_there = {str(sid) for sid in open_there or []}
     plan["claude"], repositories = vm_version is not None, set()
     for session in sorted(sessions or [], key=lambda item: (item.get("id", ""), item.get("folder", ""))):
-        repo = _repository(session, here, repo_paths)
-        checkout, why = _checkout(repo, by_repo) if repo else (None, "none")
+        repo, path, how = _repository(session, here, repo_paths)
+        own = session.get("id") == wanted
+        checkout, why = _checkout(repo, by_repo, project if own else "") if repo else (None, "none")
         newer = (_version(session.get("version")) or ()) > (vm_version or ())
+        if own:
+            plan["session"] = {
+                "id": wanted,
+                "folder": session.get("folder", ""),
+                "cwd": session.get("cwd") or "",
+                "dir": path,
+                "how": how,
+                "repository": repo,
+                "branch": session.get("branch") or "",
+                "checkout": checkout["path"] if checkout else "",
+                "name": checkout["name"] if checkout else "",
+            }
         # Without Claude Code on the VM there is nothing to resume a copy with: none is made, and the run says why.
         if not session.get("conversation") or vm_version is None:
             continue
-        if len(folders_of[session["id"]]) > 1:
+        # SESSION's own cases are refused with their reason instead (_session_problem, session_read.yml).
+        if not own and len(folders_of[session["id"]]) > 1:
             if session["id"] not in plan["twice"]:
                 plan["twice"].append(session["id"])
             continue
-        if session["id"] in open_there:
+        if not own and session["id"] in open_there:
             plan["open"].append(session["id"])
             continue
         if checkout and not newer:
@@ -221,8 +248,55 @@ def claude_sessions_plan(sessions, here, there, version, repo_paths=None, dest="
             plan["newer"].append(session["id"])
         elif why != "none":
             plan["ambiguous"].append({"id": session["id"], "repository": repo, "names": why})
+    if wanted:
+        plan["session"]["problem"] = _session_problem(plan["session"], sessions, wanted, by_repo, project, version, vm)
     plan["repositories"] = sorted(repositories)
     return plan
+
+
+def _session_problem(entry, sessions, wanted, by_repo, project, version, vm):
+    """Why SESSION cannot be opened on the VM, or "". The git checks come after, in session_read.yml."""
+    found = [session for session in sessions or [] if session.get("id") == wanted]
+    if not found:
+        return f"There is no session {wanted} on this machine: no {wanted}.jsonl in a folder of Claude Code's projects."
+    if len(found) > 1:
+        folders = ", ".join(sorted(session.get("folder", "") for session in found))
+        return f"Session {wanted} is in more than one folder here ({folders}), so which one to continue is unclear."
+    session, repo = found[0], entry.get("repository", "")
+    names = ", ".join(sorted(checkout["name"] for checkout in by_repo.get(repo, [])))
+    if not session.get("conversation"):
+        return f"Session {wanted} has no messages to continue."
+    if session.get("open"):
+        return (
+            f"Session {wanted} is open on this machine (claude, pid {session['open']}). Exit it here first: a session"
+            " continues in one place at a time."
+        )
+    if not repo:
+        return f"Session {wanted} belongs to no repository {vm} could have: {entry.get('how')}."
+    if not entry.get("dir"):
+        return (
+            f"Session {wanted} ran in {entry.get('cwd')}, which is gone, so whether its work is committed and pushed"
+            " cannot be checked."
+        )
+    if _version(version) is None:
+        return f"Claude Code is not installed on {vm} yet: make deploy {vm} TYPE=configure installs it."
+    if not entry.get("checkout") and project and names:
+        return f"PROJECT={project} on {vm} is not a checkout of {repo}; {names} is."
+    if not entry.get("checkout") and names:
+        return f"{vm} has more than one checkout of {repo} ({names}): name the one to open with PROJECT=<folder>."
+    if not entry.get("checkout"):
+        return (
+            f"{vm} has no checkout of {repo}. make deploy {vm} TYPE=configure clones your own repositories; one of"
+            " another owner's, or a fork, is not cloned."
+        )
+    if (_version(session.get("version")) or ()) > _version(version):
+        return (
+            f"Session {wanted} was last written by Claude Code {session.get('version')}, newer than {vm}'s {version}."
+            " Update it there (claude update), then run this again."
+        )
+    if entry.get("branch") in ("", "HEAD"):
+        return f"Session {wanted} last ran on no branch (a detached HEAD), so there is no branch to bring {vm} to."
+    return ""
 
 
 def claude_sessions_listed(rows):

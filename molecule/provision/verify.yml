@@ -1459,7 +1459,7 @@
           - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4],
                                  verify_task.args[5], '/etc/systemd/system/claude-remote-control.path', verify_task.args[7],
                                  'https', 'workflow', 'alpha', verify_notes_script, verify_notes, 'claude-remote-control',
-                                 'Asia/Kolkata']
+                                 'Asia/Kolkata', '']
           - verify_task.args[3] is search('make deploy VM_NAME=alpha TYPE=configure,')
           # What a sign-in there says: Remote Control started by the path unit that watches for the login, or not.
           - verify_task.args[4] is search('starts by itself.* make deploy VM_NAME=alpha TAGS=claude_code$')

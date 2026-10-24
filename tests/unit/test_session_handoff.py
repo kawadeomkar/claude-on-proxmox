@@ -292,17 +292,63 @@ def test_two_checkouts_of_one_repository_take_the_one_named_after_it_or_neither(
 HERE_DEMO = [{"path": "/Users/me/demo", "exists": True, "origin": "https://github.com/octo/demo.git"}]
 
 
+@pytest.mark.parametrize(
+    ("sessions", "kwargs", "problem"),
+    [
+        ([], {}, f"There is no session {ID} on this machine"),
+        ([_session(), {**_session(), "folder": "-Users-me-demo2"}], {}, "is in more than one folder here"),
+        ([_session(conversation=False)], {}, "has no messages to continue"),
+        ([_session(open=4242)], {}, "is open on this machine (claude, pid 4242)"),
+        ([_session(cwd="/Users/me/elsewhere")], {}, "belongs to no repository alpha could have"),
+        ([_session(version="2.2.0")], {}, "newer than alpha's 2.1.308"),
+        ([_session(branch="HEAD")], {}, "a detached HEAD"),
+        ([_session()], {"project": "other"}, "PROJECT=other on alpha is not a checkout of octo/demo; demo is."),
+        ([_session()], {"version": ""}, "Claude Code is not installed on alpha yet"),
+    ],
+)
+def test_session_is_refused_with_its_reason(sessions, kwargs, problem):
+    version = kwargs.pop("version", "2.1.308")
+    plan = _plan(sessions, HERE_DEMO, version=version, wanted=ID, vm="alpha", **kwargs)
+    assert problem in plan["session"]["problem"]
+
+
+def test_session_outside_the_window_is_planned_and_names_its_checkout():
+    plan = _plan([_session(branch="feat/x")], HERE_DEMO, wanted=ID, project="demo", vm="alpha")
+    assert plan["session"] == {
+        "id": ID,
+        "folder": "-Users-me-demo",
+        "cwd": "/Users/me/demo",
+        "dir": "/Users/me/demo",
+        "how": "origin",
+        "repository": "octo/demo",
+        "branch": "feat/x",
+        "checkout": CHECKOUT,
+        "name": "demo",
+        "problem": "",
+    }
+    assert [item["id"] for item in plan["sessions"]] == [ID]
+
+
 def test_an_id_in_two_folders_here_is_left_out_and_named():
     # claude --resume <id> resumes from neither once both are on the VM.
     twice = {**_session(), "folder": "-Users-me-demo-src"}
     plan = _plan([_session(), twice, _session(OTHER)], HERE_DEMO)
     assert plan["twice"] == [ID] and [item["id"] for item in plan["sessions"]] == [OTHER]
+    # SESSION's own is refused with its reason instead.
+    assert "is in more than one folder here" in _plan([_session(), twice], HERE_DEMO, wanted=ID)["session"]["problem"]
 
 
 def test_a_session_a_claude_on_the_vm_has_open_is_left_as_it_is():
     # Replaced under the claude holding it, the copy would take that claude's next lines onto other content.
     plan = _plan([_session(), _session(OTHER)], HERE_DEMO, open_there=[ID])
     assert plan["open"] == [ID] and [item["id"] for item in plan["sessions"]] == [OTHER]
+    # SESSION's own stays planned: session_read.yml refuses it, saying where it is open.
+    assert [item["id"] for item in _plan([_session()], HERE_DEMO, wanted=ID, open_there=[ID])["sessions"]] == [ID]
+
+
+def test_a_vm_without_the_repository_is_named_with_the_run_that_clones_it():
+    plan = _plan([_session()], HERE_DEMO, there=[], wanted=ID, vm="alpha")
+    assert plan["session"]["problem"].startswith("alpha has no checkout of octo/demo. make deploy alpha TYPE=configure")
 
 
 # ------------------------------------------------------------------------ claude_sessions_info ---
@@ -323,7 +369,7 @@ def _claude_dir(tmp_path, files, *, old=()):
 def test_a_transcript_is_summarized_and_nothing_it_says_is_kept(tmp_path):
     root = _claude_dir(tmp_path, {("-Users-me-demo", ID): transcript(branch="feat/x", partial=True)})
     (root / "projects" / "-Users-me-demo" / ID / "tool-results").mkdir(parents=True)
-    found = info.list_sessions(str(root), 30)
+    found = info.list_sessions(str(root), 30, [])
     assert found == [
         {
             "id": ID,
@@ -344,20 +390,21 @@ def test_a_transcript_is_summarized_and_nothing_it_says_is_kept(tmp_path):
 def test_the_newest_version_is_kept_whatever_its_place(tmp_path):
     data = transcript(version="2.1.310") + transcript(version="2.1.9")
     root = _claude_dir(tmp_path, {("-Users-me-demo", ID): data})
-    assert info.list_sessions(str(root), 30)[0]["version"] == "2.1.310"
+    assert info.list_sessions(str(root), 30, [])[0]["version"] == "2.1.310"
 
 
-def test_only_the_sessions_of_the_window_are_listed(tmp_path):
+def test_only_the_window_and_the_ids_asked_for_are_listed(tmp_path):
     root = _claude_dir(
         tmp_path,
         {("-Users-me-demo", ID): transcript(), ("-Users-me-demo", OTHER): transcript(OTHER), ("-x", "notes"): b"{}\n"},
         old=(OTHER,),
     )
-    assert [item["id"] for item in info.list_sessions(str(root), 30)] == [ID]
-    assert info.list_sessions(str(root), 0) == []
+    assert [item["id"] for item in info.list_sessions(str(root), 30, [])] == [ID]
+    assert [item["id"] for item in info.list_sessions(str(root), 0, [OTHER])] == [OTHER]
+    assert info.list_sessions(str(root), 0, []) == []
     # A stub with no message is listed, and says so; the plan leaves it out.
     root = _claude_dir(tmp_path / "stub", {("-Users-me-demo", ID): transcript(conversation=False)})
-    assert info.list_sessions(str(root), 30)[0]["conversation"] is False
+    assert info.list_sessions(str(root), 30, [])[0]["conversation"] is False
 
 
 @pytest.fixture
@@ -382,7 +429,7 @@ def test_an_open_session_is_one_a_running_claude_registered(tmp_path, a_claude):
     # A pid another program took since: this very pytest.
     (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": third}))
     (sessions / "3.json").write_text("not json")
-    found = {item["id"]: item["open"] for item in info.list_sessions(str(root), 30)}
+    found = {item["id"]: item["open"] for item in info.list_sessions(str(root), 30, [])}
     assert found == {ID: a_claude, OTHER: 0, third: 0}
     # The registry alone, whatever transcripts there are.
     assert info.open_sessions(str(root)) == {ID: a_claude}
@@ -426,7 +473,7 @@ def test_a_transcript_that_goes_as_it_is_listed_is_not_listed(tmp_path, monkeypa
         return entries + [Gone()] if str(path).endswith("-Users-me-demo") else entries
 
     monkeypatch.setattr(info.os, "scandir", scandir)
-    assert [item["id"] for item in info.list_sessions(str(root), 30)] == [ID]
+    assert [item["id"] for item in info.list_sessions(str(root), 30, [])] == [ID]
 
 
 def test_github_repo_paths_come_from_the_claude_json_beside_the_directory_and_only_they(tmp_path):
@@ -507,6 +554,52 @@ def test_a_directory_asked_about_is_reported_from_a_subfolder_or_gone(tmp_path, 
     }
 
 
+def test_status_and_branch_say_whether_the_work_is_committed_and_pushed(tmp_path, patch_module):
+    bare = tmp_path / "remotes" / "octo" / "demo.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", str(bare)], check=True)
+    repo = _repository(tmp_path / "demo", str(bare))
+    _git(repo, "push", "--quiet", "-u", "origin", "main")
+    ask = {"paths": [str(repo)], "status": True, "branch": "main"}
+    item = run_main(checkouts.main, ask)["checkouts"][0]
+    assert item["clean"] and item["head_branch"] == "main"
+    assert item["branch_head"] == item["upstream_head"] == item["head"] and item["upstream_remote"] == "origin"
+    assert item["upstream_branch"] == "main"
+    (repo / "README").write_text("changed\n")
+    assert run_main(checkouts.main, ask)["checkouts"][0]["clean"] is False
+    _git(repo, "commit", "--quiet", "-am", "second")
+    item = run_main(checkouts.main, ask)["checkouts"][0]
+    assert item["clean"] and item["branch_head"] != item["upstream_head"]
+    assert run_main(checkouts.main, {**ask, "branch": "gone"})["checkouts"][0]["branch_head"] == ""
+
+
+@pytest.mark.parametrize("branch", ["--upload-pack=touch /tmp/x", "a..b", "-x"])
+def test_a_branch_git_would_not_take_is_refused(tmp_path, patch_module, branch):
+    from conftest import fail_main
+
+    repo = _repository(tmp_path / "demo", "")
+    assert "not a branch name" in fail_main(checkouts.main, {"paths": [str(repo)], "branch": branch})["msg"]
+
+
+def test_a_claude_process_is_told_by_its_argv():
+    assert checkouts._claude([b"claude", b"--resume", b"x"])
+    assert checkouts._claude([b"/home/dev/.local/bin/claude", b""])
+    assert checkouts._claude([b"node", b"/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"])
+    assert not checkouts._claude([b"bash", b"-l"])
+
+
+def test_busy_names_the_claude_processes_working_inside(tmp_path):
+    proc = tmp_path / "proc"
+    for pid, argv, cwd in (
+        (11, b"claude\0", "/home/dev/projects/demo/src"),
+        (12, b"bash\0", "/home/dev/projects/demo"),
+    ):
+        (proc / str(pid)).mkdir(parents=True)
+        (proc / str(pid) / "cmdline").write_bytes(argv)
+        (proc / str(pid) / "cwd").symlink_to(cwd)
+    assert checkouts.claude_processes(str(proc)) == [(11, "/home/dev/projects/demo/src")]
+    assert checkouts.claude_processes(str(tmp_path / "none")) == []
+
+
 def test_the_origin_is_the_url_configured_never_one_insteadof_rewrote(tmp_path, patch_module):
     # A url.<base>.insteadOf says where git connects to; the repository is the URL the remote names.
     repo = _repository(tmp_path / "demo", "https://github.com/octo/demo.git")
@@ -515,6 +608,14 @@ def test_the_origin_is_the_url_configured_never_one_insteadof_rewrote(tmp_path, 
     assert run_main(checkouts.main, {"paths": [str(repo)]})["checkouts"][0]["origin"] == (
         "https://github.com/octo/demo.git"
     )
+
+
+def test_untracked_files_count_whatever_the_checkout_s_config_hides(tmp_path, patch_module):
+    repo = _repository(tmp_path / "demo", "")
+    _git(repo, "config", "status.showUntrackedFiles", "no")
+    (repo / "notes.txt").write_text("not committed\n")
+    assert _git(repo, "status", "--porcelain") == ""
+    assert run_main(checkouts.main, {"paths": [str(repo)], "status": True})["checkouts"][0]["clean"] is False
 
 
 @pytest.mark.parametrize(
@@ -534,10 +635,65 @@ def test_no_credential_in_an_origin_is_reported(tmp_path, patch_module, configur
     assert filters.github_repository(reported) == "octo/demo"
 
 
-def test_a_path_holding_a_dollar_or_tilde_is_taken_as_written(tmp_path, patch_module):
+def test_a_path_or_branch_holding_a_dollar_or_tilde_is_taken_as_written(tmp_path, patch_module):
     repo = _repository(tmp_path / "$HOME-demo", "")
-    found = run_main(checkouts.main, {"paths": [str(repo)]})["checkouts"][0]
-    assert found["exists"] and found["git"]
+    _git(repo, "branch", "x$HOME")
+    found = run_main(checkouts.main, {"paths": [str(repo)], "branch": "x$HOME"})["checkouts"][0]
+    assert found["exists"] and found["git"] and found["branch_head"] == _git(repo, "rev-parse", "HEAD")
+
+
+def test_a_detached_head_is_kept_only_while_a_ref_holds_its_commit(tmp_path, patch_module):
+    repo = _repository(tmp_path / "demo", "")
+    ask = {"paths": [str(repo)], "status": True}
+    assert run_main(checkouts.main, ask)["checkouts"][0]["head_kept"] is True
+    _git(repo, "switch", "--quiet", "--detach")
+    assert run_main(checkouts.main, ask)["checkouts"][0]["head_kept"] is True  # main holds it
+    (repo / "x").write_text("x\n")
+    _git(repo, "add", "x")
+    _git(repo, "commit", "--quiet", "-m", "on no branch")
+    item = run_main(checkouts.main, ask)["checkouts"][0]
+    assert item["head_branch"] == "" and item["head_kept"] is False
+    _git(repo, "tag", "kept")
+    assert run_main(checkouts.main, ask)["checkouts"][0]["head_kept"] is True
+
+
+def test_overwrites_names_what_git_does_not_track_that_a_move_would_replace(tmp_path, patch_module):
+    repo = _repository(tmp_path / "demo", "")
+    (repo / ".gitignore").write_text("build/\n*.log\nlinked\n")
+    (repo / "tracked").write_text("a file\n")
+    _git(repo, "add", ".gitignore", "tracked")
+    _git(repo, "commit", "--quiet", "-m", "ignore")
+    _git(repo, "switch", "--quiet", "--create", "next")
+    (repo / "build").mkdir()
+    (repo / "build" / "out.txt").write_text("built\n")
+    (repo / "app.log").write_text("logged\n")
+    (repo / "linked").mkdir()
+    (repo / "linked" / "inner").write_text("x\n")
+    # A tracked file that becomes a folder: git's own business, never named.
+    _git(repo, "rm", "--quiet", "tracked")
+    (repo / "tracked").mkdir()
+    (repo / "tracked" / "inner").write_text("y\n")
+    _git(repo, "add", "--force", "build/out.txt", "app.log", "linked/inner", "tracked/inner")
+    _git(repo, "commit", "--quiet", "-m", "next")
+    target = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "--quiet", "main")
+    ask = {"paths": [str(repo)], "status": True, "target": target}
+    assert run_main(checkouts.main, ask)["checkouts"][0]["overwrites"] == []
+    (repo / "build").mkdir()
+    (repo / "build" / "out.txt").write_text("mine\n")
+    (repo / "app.log").write_text("mine\n")
+    (repo / "linked").symlink_to(tmp_path)
+    item = run_main(checkouts.main, ask)["checkouts"][0]
+    # The tree reads clean all the same: every one of them is ignored.
+    assert item["clean"] and item["overwrites"] == ["app.log", "build/out.txt", "linked"]
+
+
+@pytest.mark.parametrize("target", ["HEAD", "--output=/tmp/x", "abc123"])
+def test_a_target_that_is_not_a_full_commit_id_is_refused(tmp_path, patch_module, target):
+    from conftest import fail_main
+
+    repo = _repository(tmp_path / "demo", "")
+    assert "not a full commit ID" in fail_main(checkouts.main, {"paths": [str(repo)], "target": target})["msg"]
 
 
 # ------------------------------------------------------------------------- claude_sessions_copy ---

@@ -24,10 +24,10 @@ reads the user's own VS Code settings and must never write them. On this
 machine a task may assert, fail, debug, set facts, add the host, import the
 project's task files, or run `which`, `code` and rsync; on the VM, reached only
 through `delegate_to`, it may stat, getent and find, make its directories and
-files, and write the session copies. The session handoff's own task files are
-followed and held to the same list; the shared ones (the alias, the Proxmox
-reads) to their own tests, and `code --install-extension` fills VS Code's own
-extension store, by design.
+files, write the session copies, and run git in SESSION's checkout. The session
+handoff's own task files are followed and held to the same list; the shared
+ones (the alias, the Proxmox reads) to their own tests, and `code
+--install-extension` fills VS Code's own extension store, by design.
 
 The session handoff is run too, between two directories standing for this
 machine and the VM, with real git checkouts at both ends and a marker in the
@@ -95,6 +95,10 @@ case "$1 $2" in
     [ -z "$CONTINUE_SLEEP" ] || /bin/sleep "$CONTINUE_SLEEP"
     echo "No conversation found to continue"
     exit "$CONTINUE_RC";;
+  "--resume "*)
+    [ -n "$RESUME_RC" ] || exit 0
+    echo "No conversation found with session ID: $2"
+    exit "$RESUME_RC";;
 esac
 exit 0
 """
@@ -153,6 +157,8 @@ def _terminal(
     github_signed_in=GITHUB_SIGNED_IN,
     continue_rc=None,
     continue_sleep=None,
+    session="",
+    resume_rc=None,
 ) -> tuple[list[str], dict]:
     """The script's command line and environment, with the stand-ins in place."""
     bin_dir = tmp_path / "bin"
@@ -182,8 +188,10 @@ def _terminal(
         "GH_LOGIN_RC": str(gh_login_rc),
         "CONTINUE_RC": "" if continue_rc is None else str(continue_rc),
         "CONTINUE_SLEEP": "" if continue_sleep is None else str(continue_sleep),
+        "RESUME_RC": "" if resume_rc is None else str(resume_rc),
     }
-    return [*argv, "https", "workflow", "alpha"], env
+    # Then the session notes' four, off here, and SESSION, last as the task passes them.
+    return [*argv, "https", "workflow", "alpha", "", "", "claude-remote-control", "UTC", session], env
 
 
 def _asked(tmp_path: Path) -> list[str]:
@@ -262,6 +270,21 @@ def test_with_nothing_to_continue_a_fresh_claude_starts(tmp_path):
 
 
 SESSION_ID = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
+
+
+def test_a_session_handed_over_is_resumed_under_its_own_id(tmp_path):
+    # SESSION: the copy this machine's session became, never a fork, and never --continue.
+    result, asked = _run(tmp_path, status_rc=0, session=SESSION_ID)
+    assert result.returncode == 0
+    assert asked == ["claude auth status", GITHUB_STATUS, f"claude --resume {SESSION_ID}"]
+
+
+def test_a_resume_that_fails_starts_no_other_claude(tmp_path):
+    # Claude Code's own reason is said; a fresh claude would look like the session.
+    result, asked = _run(tmp_path, status_rc=0, session=SESSION_ID, resume_rc=1)
+    assert result.returncode == 0
+    assert asked == ["claude auth status", GITHUB_STATUS, f"claude --resume {SESSION_ID}"]
+    assert f"No conversation found with session ID: {SESSION_ID}" in result.stdout
 
 
 def test_a_continued_session_that_ends_badly_is_not_started_again(tmp_path):
@@ -415,6 +438,8 @@ def test_the_task_passes_the_script_and_its_messages_as_arguments():
         "{{ code_notes_file if code_notes | bool else '' }}",
         "{{ code_remote_control_unit }}",
         "{{ code_timezone }}",
+        # SESSION, last: the script reads it as the last argument.
+        "{{ code_session_id }}",
     ]
     assert task["runOptions"] == {"runOn": "folderOpen"}
 
@@ -950,14 +975,16 @@ COMMANDS_HERE = {
 READS_ON_VM = {"ansible.builtin.getent", "ansible.builtin.stat", "ansible.builtin.find", "ansible.builtin.slurp"}
 # The session handoff's readers (playbooks/library/), run here and on the VM alike: they change nothing.
 READS_EITHER = {"claude_sessions_info", "git_checkouts_info"}
+# On the VM: whether Remote Control runs, and with SESSION, git in the one checkout it moves.
+COMMANDS_ON_VM = {("systemctl", "is-active"), ("git", "--no-optional-locks")}
 WRITES_ON_VM = {"ansible.builtin.file", "ansible.builtin.copy", "claude_sessions_copy"}
 # What each writer runs under: the workspace with the terminal; the notes with it and their own
-# switch; the sessions' directory when there is a session to copy, and the copies with the sync.
+# switch; the sessions' directory when there is a session to copy, and the copies with the sync or SESSION.
 WRITERS_WHEN = (
     "code_terminal",
     "code_notes | bool",
     "code_session_plan.sessions | default([]) | length > 0",
-    "code_sessions | bool",
+    "code_session_on | bool",
 )
 # The task files code.yml imports that other playbooks import too, each held to its own tests: the
 # Proxmox API reads and the alias (test_ssh_config.py). Every other import is code.yml's own, and
@@ -1024,8 +1051,10 @@ def test_every_task_reads_this_machine_or_is_delegated_to_the_vm(task):
     assert "ansible_connection" not in (task.get("vars") or {})
     if action in READS_HERE:
         assert "delegate_to" not in task
+    elif action == "ansible.builtin.command" and "delegate_to" in task:
+        assert task["delegate_to"] == ON_VM
+        assert tuple(task[action]["argv"][:2]) in COMMANDS_ON_VM
     elif action == "ansible.builtin.command":
-        assert "delegate_to" not in task
         assert tuple(task[action]["argv"][:2]) in COMMANDS_HERE
     elif action in READS_ON_VM:
         assert task.get("delegate_to") == ON_VM
@@ -1082,6 +1111,27 @@ def test_make_code_writes_exactly_the_directory_and_the_file():
         "Make the directory for the session notes on the VM",
         "Write the session notes on the VM",
     ]
+
+
+def test_git_on_the_vm_runs_only_for_session_and_moves_its_checkout_only_forward():
+    # The one write make code makes in a repository: SESSION's checkout, fast-forward only. Every
+    # git command on the VM is SESSION's, and none of them resets, rebases, stashes or pushes.
+    on_vm = [t for t in _every_task() if _action(t) == "ansible.builtin.command" and "delegate_to" in t]
+    git = [t for t in on_vm if t["ansible.builtin.command"]["argv"][0] == "git"]
+    assert [t["ansible.builtin.command"]["argv"][4] for t in git] == [
+        "fetch",
+        "merge-base",
+        "switch",
+        "merge",
+        "switch",
+        "branch",
+        "rev-parse",
+    ]
+    for task in git:
+        when = task["when"] if isinstance(task["when"], list) else [task["when"]]
+        assert when[0] == "code_session_id | length > 0", task["name"]
+    merge = next(t for t in git if t["ansible.builtin.command"]["argv"][4] == "merge")
+    assert "--ff-only" in merge["ansible.builtin.command"]["argv"]
 
 
 def test_every_task_that_reads_a_transcript_is_no_log():
@@ -1205,7 +1255,8 @@ def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a
     }
     assert claude["label"] == "Claude" and "dependsOn" not in claude
     assert claude["runOptions"] == {"runOn": "folderOpen"}
-    assert claude["args"][-4:] == [notes["args"][1], f"{SESSION}/alpha-session.md", "claude-remote-control", "UTC"]
+    # Then SESSION, none here.
+    assert claude["args"][-5:] == [notes["args"][1], f"{SESSION}/alpha-session.md", "claude-remote-control", "UTC", ""]
     # A shell beside Claude's terminal, on its left: one presentation group
     # splits a terminal in the order its tasks start, which is the order listed.
     assert (shell["label"], shell["command"], shell["args"]) == ("Shell", "/bin/bash", ["-l"])
@@ -1273,7 +1324,7 @@ def test_with_the_notes_off_the_workspace_is_as_it_was(windows):
     shell, claude = workspace["tasks"]["tasks"]
     assert (shell["label"], claude["label"]) == ("Shell", "Claude")
     assert "dependsOn" not in claude
-    assert claude["args"][-4:] == ["", "", "claude-remote-control", "UTC"]
+    assert claude["args"][-5:] == ["", "", "claude-remote-control", "UTC", ""]
     assert "session notes" not in run["opened"]
 
 
@@ -1608,7 +1659,7 @@ def _signing_in(tmp_path: Path, helper: str | None, **case):
     (tmp_path / "bin" / "bash").symlink_to("/bin/bash")
     marker = tmp_path / "helper.log"
     script = "" if helper is None else f'printf "%s\\n" "$0 $*" >> "{marker}"'
-    argv = [*argv, script, str(tmp_path / "alpha-session.md"), "claude-remote-control", "Asia/Kolkata"]
+    argv = [*argv[:-5], script, str(tmp_path / "alpha-session.md"), "claude-remote-control", "Asia/Kolkata", ""]
     result = subprocess.run(argv, env=env, capture_output=True, text=True, check=False, timeout=30)
     deadline = time.monotonic() + 5
     while helper is not None and not marker.exists() and time.monotonic() < deadline:
@@ -1781,7 +1832,7 @@ def _handoff(world: dict, run: str, sessions=True, **extra) -> dict:
         vm_projects_dir=str(world["vm"] / "projects"),
         code_session_source_dir=str(world["here"] / ".claude"),
         code_session_dest_dir=str(world["vm"] / ".claude"),
-        show="code_target",
+        show="[code_target, code_claude_task.args[-1]]",
         **extra,
     )
 
@@ -1795,15 +1846,46 @@ def _sync_twice(root: Path) -> dict:
     return {"world": world, "first": _handoff(world, "first"), "second": _handoff(world, "second")}
 
 
+def _session_twice(root: Path) -> dict:
+    world = _world(root)
+    first = _handoff(world, "first", vm_session=SESSION_ID)
+    return {"world": world, "first": first, "second": _handoff(world, "second", vm_session=SESSION_ID)}
+
+
 def _off(root: Path) -> dict:
     world = _world(root)
     return {"world": world, "off": _handoff(world, "off", sessions=False)}
+
+
+def _head(path: Path) -> tuple[str, str]:
+    """Where a checkout is: its commit, and its branch or "" for a detached HEAD."""
+    branch = subprocess.run(
+        ["git", "-C", str(path), "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    return _git(path, "rev-parse", "HEAD"), branch
+
+
+def _refused(root: Path, spoil) -> dict:
+    world = _world(root)
+    spoil(world)
+    before = _head(world["checkout"])
+    return {"world": world, "before": before, "run": _handoff(world, "run", vm_session=SESSION_ID)}
+
+
+def _moved(root: Path, place) -> dict:
+    world = _world(root)
+    place(world)
+    return {"world": world, "run": _handoff(world, "run", vm_session=SESSION_ID)}
 
 
 def _sync_failing(root: Path) -> dict:
     world = _world(root)
     _no_mirror(world)
     return {"world": world, "run": _handoff(world, "run")}
+
+
+def _untracked(path: Path) -> None:
+    (path / "notes.txt").write_text("not committed\n")
 
 
 def _no_mirror(world: dict) -> None:
@@ -1834,6 +1916,79 @@ def _register(claude_dir: Path) -> None:
     )
 
 
+def _open_on_the_vm(world: dict) -> None:
+    # Copied by an earlier run, and resumed there by a claude still running.
+    _handoff(world, "before")
+    _register(world["vm"] / ".claude")
+
+
+def _fetch_fails(world: dict) -> None:
+    checkout = world["checkout"]
+    _git(checkout, "config", "--remove-section", f"url.{world['bare']}")
+    _git(checkout, "config", f"url.{world['root']}/nowhere.git.insteadOf", "https://github.com/octo/demo.git")
+
+
+def _other_remote(world: dict) -> None:
+    _git(world["demo"], "remote", "add", "fork", str(world["bare"]))
+    _git(world["demo"], "fetch", "--quiet", "fork")
+    _git(world["demo"], "branch", "--quiet", "--set-upstream-to=fork/feat/x")
+
+
+def _ignored_on_the_vm(world: dict) -> None:
+    # The session's commit adds "work"; the VM's git ignores the one there, so its tree reads clean.
+    (world["checkout"] / ".git" / "info" / "exclude").write_text("work\n")
+    (world["checkout"] / "work").write_text("the VM's own\n")
+
+
+REFUSALS = {
+    "dirty here": (lambda w: _untracked(w["demo"]), "has changes that are not committed, which alpha would not see"),
+    "not pushed": (lambda w: _commit(w["demo"], "more"), "feat/x in {demo} is not where origin/feat/x is here"),
+    "dirty on the vm": (lambda w: _untracked(w["checkout"]), "{checkout} on alpha has changes of its own"),
+    "vm branch ahead": (
+        lambda w: (_git(w["checkout"], "switch", "--quiet", "--create", "feat/x"), _commit(w["checkout"], "vm-only")),
+        "feat/x in {checkout} on alpha has commits that are not on this machine's",
+    ),
+    "open here": (
+        lambda w: _register(w["here"] / ".claude"),
+        f"Session {SESSION_ID} is open on this machine (claude, pid {{pid}})",
+    ),
+    "unknown": (
+        lambda w: (w["folder"] / f"{SESSION_ID}.jsonl").rename(w["folder"] / "moved.jsonl"),
+        f"There is no session {SESSION_ID} on this machine",
+    ),
+    "open on the vm": (_open_on_the_vm, f"Session {SESSION_ID} is open on alpha (claude, pid {{pid}})"),
+    "changed on both": (
+        _changed_on_both,
+        f"Session {SESSION_ID} was continued on alpha and here since make code last copied it",
+    ),
+    "fetch fails": (_fetch_fails, "alpha could not fetch feat/x from origin in {checkout}"),
+    "never pushed": (
+        lambda w: _git(w["demo"], "branch", "--quiet", "--unset-upstream"),
+        "feat/x in {demo} has never been pushed: git push -u origin feat/x",
+    ),
+    "other remote": (_other_remote, "feat/x in {demo} tracks a branch of fork, not of origin"),
+    "branch gone here": (
+        lambda w: (_git(w["demo"], "switch", "--quiet", "main"), _git(w["demo"], "branch", "--quiet", "-D", "feat/x")),
+        f"The branch session {SESSION_ID} last ran on, feat/x, is not in {{demo}} any more.",
+    ),
+    "detached on the vm": (
+        lambda w: (_git(w["checkout"], "switch", "--quiet", "--detach"), _commit(w["checkout"], "lost")),
+        "{checkout} on alpha is on a detached HEAD at",
+    ),
+    "ignored on the vm": (
+        _ignored_on_the_vm,
+        "would overwrite what git does not track there, ignored files among them: work.",
+    ),
+    "rsync fails": (_no_mirror, "`rsync -az -r --files-from=- --itemize-changes"),
+}
+# The VM checkout brought forward by a fast-forward: on the session's branch behind its commit, or
+# on main with that branch behind it.
+MOVES = {
+    "behind on it": lambda w: _git(w["checkout"], "switch", "--quiet", "--create", "feat/x"),
+    "behind elsewhere": lambda w: _git(w["checkout"], "branch", "--quiet", "feat/x"),
+}
+
+
 def _sync_with(root: Path, place) -> dict:
     world = _world(root)
     place(world)
@@ -1847,7 +2002,7 @@ def _in_two_folders(world: dict) -> None:
     (twice / f"{SESSION_ID}.jsonl").write_bytes((world["folder"] / f"{SESSION_ID}.jsonl").read_bytes())
 
 
-# Syncs whose one session is left out, each for what the run says of it.
+# Syncs without SESSION whose one session is left out, each for what the run says of it.
 SYNCS = {
     "open there": (lambda w: _register(w["vm"] / ".claude"), "Left as they are, open in a claude on alpha: 0a608ad8."),
     "in two folders": (
@@ -1863,7 +2018,7 @@ SYNCS = {
 
 @pytest.fixture(scope="module")
 def handoffs(tmp_path_factory):
-    """Every session run, side by side: the sync twice, off, failing, and each that leaves its session out."""
+    """Every session run, side by side: the sync twice, SESSION twice, and each refusal, in worlds of their own."""
     root = tmp_path_factory.mktemp("handoffs")
     claude = subprocess.Popen(["claude", "3600"], executable="/bin/sleep")
     CLAUDE["pid"] = claude.pid
@@ -1878,8 +2033,13 @@ def _every_handoff(root: Path) -> dict:
     with ThreadPoolExecutor(max_workers=8) as pool:
         runs = {
             "sync": pool.submit(_sync_twice, root / "sync"),
+            "session": pool.submit(_session_twice, root / "session"),
             "off": pool.submit(_off, root / "off"),
         }
+        for name, (spoil, _) in REFUSALS.items():
+            runs[name] = pool.submit(_refused, root / re.sub(r"\W+", "-", name), spoil)
+        for name, place in MOVES.items():
+            runs[name] = pool.submit(_moved, root / re.sub(r"\W+", "-", name), place)
         runs["sync fails"] = pool.submit(_sync_failing, root / "sync-fails")
         for name, (place, _) in SYNCS.items():
             runs[name] = pool.submit(_sync_with, root / re.sub(r"\W+", "-", name), place)
@@ -1912,7 +2072,7 @@ def test_the_sync_copies_the_vm_s_repositories_sessions_with_their_edits(handoff
     )
     # The default sync changes no git state, and opens the whole directory.
     assert _git(world["checkout"], "symbolic-ref", "--short", "HEAD") == "main"
-    assert run["shown"] == str(world["vm"] / "projects")
+    assert run["shown"] == [str(world["vm"] / "projects"), ""]
 
 
 def test_a_second_sync_of_unchanged_sessions_changes_nothing(handoffs):
@@ -1934,6 +2094,42 @@ def test_no_run_says_anything_a_transcript_holds(handoffs):
         for key, run in runs.items():
             if key not in ("world", "before"):
                 assert MARKER not in run["output"], (name, key)
+
+
+def test_session_brings_the_vm_checkout_to_its_commit_and_the_terminal_resumes_it(handoffs):
+    world, run = handoffs["session"]["world"], handoffs["session"]["first"]
+    assert run["rc"] == 0, run["output"]
+    assert _git(world["checkout"], "symbolic-ref", "--short", "HEAD") == "feat/x"
+    assert _git(world["checkout"], "rev-parse", "HEAD") == world["commit"]
+    assert _git(world["checkout"], "rev-parse", "--abbrev-ref", "feat/x@{upstream}") == "origin/feat/x"
+    # The project's window, its Claude terminal handed the ID.
+    assert run["shown"] == [str(world["checkout"]), SESSION_ID]
+    assert f"The Claude terminal resumes session {SESSION_ID} in {world['checkout']}, on feat/x at" in run["opened"]
+    assert "where make code moved it" in run["opened"] and "reload it" in run["opened"]
+
+
+def test_session_again_changes_nothing(handoffs):
+    run = handoffs["session"]["second"]
+    assert run["rc"] == 0 and _changed(run) == 0, run["output"]
+    assert "where make code moved it" not in run["opened"]
+
+
+@pytest.mark.parametrize("name", REFUSALS)
+def test_session_refuses_what_it_cannot_carry_and_leaves_the_vm_checkout_as_it_was(handoffs, name):
+    world, run = handoffs[name]["world"], handoffs[name]["run"]
+    said = REFUSALS[name][1].format(demo=world["demo"], checkout=world["checkout"], pid=CLAUDE["pid"])
+    assert run["rc"] != 0 and any(said in failure for failure in _failures(run["output"])), run["output"]
+    assert not run["reached"]
+    assert _head(world["checkout"]) == handoffs[name]["before"]
+    assert MARKER not in run["output"]
+
+
+@pytest.mark.parametrize("name", MOVES)
+def test_session_fast_forwards_a_vm_branch_behind_its_commit(handoffs, name):
+    world, run = handoffs[name]["world"], handoffs[name]["run"]
+    assert run["rc"] == 0, run["output"]
+    assert _head(world["checkout"]) == (world["commit"], "feat/x")
+    assert "where make code moved it" in run["opened"]
 
 
 @pytest.mark.parametrize("name", SYNCS)

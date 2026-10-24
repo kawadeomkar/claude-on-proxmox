@@ -26,8 +26,8 @@ description:
     O(sessions[].checkout) is appended last, so that the C(/resume) picker opens it there.
   - A copy keeps the other machine's file time while that is in the last 14 days, and is otherwise given
     the time it is written, renewed once that is 14 days old: Claude Code's sweep deletes a transcript
-    here 30 days after its file time (cleanupPeriodDays), which would take a session copied at 29 days
-    the day after, before it was resumed.
+    here 30 days after its file time (cleanupPeriodDays), which would take a session asked for by ID,
+    whatever its age, before it was resumed.
   - The records Claude Code keeps of each request it sent (C(api-request-shape), C(api-request-blob),
     since 2.1.300) name the other machine's memory folder too, and stay as they are: a resume sends the
     C(prompt_snapshot), never them (2.1.308, held by the configure scenario).

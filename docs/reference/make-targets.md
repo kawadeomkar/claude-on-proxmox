@@ -59,6 +59,7 @@ and `LOG_DIR` moves the run logs or, empty, turns them off.
 | &emsp;`TAGS=<role>,...` | Configure only these roles: beside VM names as TYPE=configure, else with TYPE=configure or check (make deploy alpha TAGS=claude_code) |
 | `make code <name>` | Open a VM in VS Code with a Claude terminal, this machine's recent Claude sessions copied there |
 | &emsp;`PROJECT=<repo>` | Open one project folder on the VM rather than the whole projects directory |
+| &emsp;`SESSION=<id>` | Continue one of this machine's Claude Code sessions there: its checkout brought to the session's pushed commit, then claude --resume |
 | `make login [<name>...]` | Sign the VM(s) in to Claude, GitHub and Tailscale, or report how each is signed in |
 | &emsp;`TYPE=claude` | Sign Claude Code in by the browser, then start Remote Control |
 | &emsp;`TYPE=github` | Sign gh in to GitHub by the device flow, then clone the private repositories |

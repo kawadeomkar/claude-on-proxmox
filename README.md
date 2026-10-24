@@ -119,7 +119,7 @@ rather than skipped. `make vault` changes a secret. The usual first-run snags ar
 | Command | What it does |
 |---|---|
 | `make deploy alpha beta` | Create and configure VMs and sign them in, then open VS Code on a lone one. Re-run it after changing a setting (VM size applies when a VM is created) |
-| `make code alpha [PROJECT=repo]` | Open a VM, or one repository on it, in VS Code with a Claude terminal; this machine's recent Claude sessions are copied there |
+| `make code alpha [PROJECT=repo] [SESSION=<id>]` | Open a VM, or one repository on it, in VS Code with a Claude terminal; this machine's recent Claude sessions are copied there, and `SESSION` goes on with one of them |
 | `make login alpha` | Sign the VM in to Claude, GitHub and Tailscale where a sign-in was skipped; `TYPE=claude`, `github` or `tailscale` for one of them |
 | `make list` | The VMs this project created, and their addresses |
 | `make destroy alpha` | Sign the VM out of Claude, GitHub and Tailscale, then delete it |

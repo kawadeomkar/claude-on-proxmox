@@ -213,7 +213,7 @@ def test_vm_name_check_rejects_anything_else(value: str) -> None:
 @pytest.mark.parametrize(
     ("target", "names"),
     [
-        ("code", ["VM_NAME", "PROJECT"]),
+        ("code", ["VM_NAME", "PROJECT", "SESSION"]),
         ("init", ["HOST", "TOKEN_USER", "TOKEN_NAME", "TOKEN_SECRET_FILE", "GITHUB_USER", "PROMPT"]),
     ],
 )
@@ -886,6 +886,59 @@ def test_only_code_reads_project(args: list[str]) -> None:
     result = _make("-n", *args, "VM_NAME=alpha", "PROJECT=discord-music-bot")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "vm_project" not in result.stdout
+
+
+# SESSION: one Claude Code session ID, lowercase hex in groups of 8-4-4-4-12, as
+# Claude Code names a transcript. Only `make code` reads it.
+SESSION_ID = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
+SESSION_ERROR = "SESSION is a Claude Code session ID"
+
+
+@pytest.mark.parametrize("value", [SESSION_ID, ""])
+def test_session_name_check_accepts_a_session_id(value: str) -> None:
+    result = _make("session-name-check", f"SESSION={value}")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(SESSION_ID.upper(), id="uppercase"),
+        pytest.param(SESSION_ID + "0", id="too-long"),
+        pytest.param(SESSION_ID[:-1], id="too-short"),
+        pytest.param(SESSION_ID.replace("-", ""), id="no-dashes"),
+        pytest.param("../" + SESSION_ID, id="path"),
+        pytest.param(SESSION_ID + "' -e 'x=1", id="quote"),
+        pytest.param("$(x)", id="make-expansion"),
+        pytest.param(SESSION_ID + "\nother", id="newline"),
+        pytest.param("-" * 36, id="dashes"),
+    ],
+)
+def test_session_name_check_rejects_anything_else(value: str) -> None:
+    result = _make("session-name-check", f"SESSION={value}")
+    assert result.returncode != 0, "accepted " + repr(value)
+    assert SESSION_ERROR in result.stdout + result.stderr
+
+
+def test_code_passes_session_as_its_own_json_extra_var() -> None:
+    result = _make("-n", "code", "VM_NAME=alpha", f"SESSION={SESSION_ID}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"""-e '{{"vm_session": "{SESSION_ID}"}}'""" in result.stdout
+
+
+def test_code_refuses_a_bad_session_before_the_playbook(tmp_path: Path) -> None:
+    result = _make("code", "VM_NAME=alpha", "SESSION=../etc", *_safe_overrides(tmp_path))
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert SESSION_ERROR in output
+    assert "ansible-playbook" not in output
+
+
+@pytest.mark.parametrize("args", [["deploy"], ["deploy", "TYPE=configure"], ["login"], ["list"]])
+def test_only_code_reads_session(args: list[str]) -> None:
+    result = _make("-n", *args, "VM_NAME=alpha", f"SESSION={SESSION_ID}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "vm_session" not in result.stdout
 
 
 # A run with no terminal - `make deploy </dev/null`, an IDE task, an agent's

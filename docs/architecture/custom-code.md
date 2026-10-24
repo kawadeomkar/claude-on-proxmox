@@ -154,7 +154,7 @@ Three modules, each in `playbooks/library/` beside the playbook that runs them, 
 files; the filters decide from what they read, and touch no file.
 
 **`claude_sessions_info`** — the transcripts under `<dir>/projects/<folder>/<id>.jsonl` of a Claude
-Code configuration directory, written in the last `days`: per
+Code configuration directory, written in the last `days` or named in `ids`: per
 session its folder and time, its first `cwd`, the newest `version`, the last `gitBranch`, whether
 it holds a user or assistant message, whether it has `tool-results/` or any folder beside it, and the
 pid of a live `claude` that `sessions/` says has it open - one whose command line, from `/proc` or `ps`,
@@ -167,8 +167,16 @@ and on the VM.
 
 **`git_checkouts_info`** — for each directory asked about, or else each checkout directly inside one,
 the checkout's top level and `origin` URL as configured, never as a `url.<base>.insteadOf` rewrites it,
-and without what precedes the host, which can be a token; each path as written, never with its `~` or
-`$VAR` expanded. Every command is `git --no-optional-locks`, which takes no index lock.
+and without what precedes the host, which can be a token; each path and branch as written, never with
+its `~` or `$VAR` expanded; with `status`, whether `git status --porcelain --untracked-files=normal
+--ignore-submodules=none` prints nothing, whatever the checkout's config would hide, the branch and `HEAD`, and whether a
+branch, remote-tracking branch or tag holds `HEAD`'s commit (`head_kept`); with `branch`, that branch's
+commit and the remote, branch and commit it tracks, after `git check-ref-format --branch` and a refusal
+of a leading `-`, since the name comes from a transcript; with `target`, a full commit ID, the paths git
+does not track that a move of the tree to it would replace (`overwrites`: what it adds where something
+is, or a file where it has a folder, unless `HEAD` tracks that and the move removes it); with `busy`,
+the pids from `/proc` of this user's `claude` processes working inside. Every command is
+`git --no-optional-locks`, which takes no index lock.
 
 **`claude_sessions_copy`** — each session's copy on the VM, from the mirror rsync left: its complete
 lines with the four edits and nothing else (the memory folder in `prompt_snapshot` attachments, the
@@ -185,11 +193,12 @@ module's own, still as written: the session moved on the other machine, and its 
 The manifest is written after each copy. Sessions that are no longer asked for leave the
 mirror. Check mode writes nothing.
 
-**`claude_sessions_plan(sessions, here, there, version, repo_paths, dest, open_there)`** —
+**`claude_sessions_plan(sessions, here, there, version, repo_paths, dest, wanted, project, vm)`** —
 the decision as data: `sessions` to copy, each with the checkout it continues in and the memory folder
 its prompt is pointed at; `files` for rsync; `newer`, `ambiguous`, `twice` (an ID in two folders here)
 and `open` (one a `claude` on the VM has open, given as `open_there`), one of no repository the VM
-has in none. A session's repository is
+has in none; and with
+`wanted` (`SESSION`), its entry and the `problem` that refuses it, or `""`. A session's repository is
 its first directory's origin, else its gone worktree's checkout's, else `githubRepoPaths`; the VM's
 checkout of it is the one whose GitHub origin names it, of two the one named after it.
 **`git_repository(url)`** is `owner/repo`, lowercased, of https, ssh and scp-like URLs and local paths

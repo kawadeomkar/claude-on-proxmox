@@ -24,9 +24,14 @@ options:
     type: path
     required: true
   days:
-    description: The sessions written in the last this many days. C(0) lists none.
+    description: The sessions written in the last this many days. C(0) lists none by age.
     type: int
     default: 0
+  ids:
+    description: These sessions too, whatever their age.
+    type: list
+    elements: str
+    default: []
   repo_paths:
     description:
       - Also return C(githubRepoPaths) from Claude Code's C(.claude.json), the one in O(path) or the one beside
@@ -111,7 +116,7 @@ import time
 
 from ansible.module_utils.basic import AnsibleModule
 
-# A session's ID, what Claude Code names a transcript.
+# A session's ID: what make code accepts as SESSION, and what Claude Code names a transcript.
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 VERSION = re.compile(r"\d+(?:\.\d+)+")
 
@@ -226,13 +231,13 @@ def open_sessions(path, proc="/proc"):
     return found
 
 
-def list_sessions(path, days, now=None, opened=None):
-    """Every transcript under ``path``/projects written in the last ``days`` days.
+def list_sessions(path, days, ids, now=None, opened=None):
+    """Every transcript under ``path``/projects written in the last ``days`` days, or named in ``ids``.
 
     ``opened`` is open_sessions'.
     """
     now = time.time() if now is None else now
-    projects, sessions = os.path.join(path, "projects"), []
+    projects, wanted, sessions = os.path.join(path, "projects"), set(ids), []
     opened = open_sessions(path) if opened is None else opened
     try:
         folders = sorted(
@@ -255,7 +260,7 @@ def list_sessions(path, days, now=None, opened=None):
                 stat = item.stat(follow_symlinks=False)
             except OSError:
                 continue
-            if not (days > 0 and now - stat.st_mtime <= days * 86400):
+            if session not in wanted and not (days > 0 and now - stat.st_mtime <= days * 86400):
                 continue
             try:
                 summary = summarize(item.path)
@@ -316,6 +321,7 @@ def main():
         argument_spec={
             "path": {"type": "path", "required": True},
             "days": {"type": "int", "default": 0},
+            "ids": {"type": "list", "elements": "str", "default": []},
             "repo_paths": {"type": "bool", "default": False},
             "claude": {"type": "list", "elements": "path", "default": []},
         },
@@ -325,7 +331,7 @@ def main():
     opened = open_sessions(params["path"])
     module.exit_json(
         changed=False,
-        sessions=list_sessions(params["path"], params["days"], opened=opened),
+        sessions=list_sessions(params["path"], params["days"], params["ids"], opened=opened),
         registered=opened,
         repo_paths=repo_paths(params["path"]) if params["repo_paths"] else {},
         version=claude_version(params["claude"]) if params["claude"] else "",
