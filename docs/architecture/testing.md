@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1726 tests. By file:
+pytest over `tests/unit/`: 1742 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -19,7 +19,7 @@ pytest over `tests/unit/`: 1726 tests. By file:
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
-  94), both ways.
+  96), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins that fail a run that reaches for them, no terminal).
@@ -61,17 +61,25 @@ pytest over `tests/unit/`: 1726 tests. By file:
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
   that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
-- **Destroy's release** (`test_release.py` 31): `destroy.yml`'s release play and report against the
+- **Destroy's release** (`test_release.py` 44): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
   Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
   pasted by hand signed out and told apart, the vault token even under a marker claiming it, and a logout
   gh refuses said as such; a
   device deleted by an API token and by an OAuth client, refused, already gone, and never when the ID the
-  VM reports names another device; a VM that could not be reached, with what is left of it named; every
+  VM reports names another device; a VM that could not be reached, with what is left of it named; the
+  Claude Code sessions a VM alone holds saved first, byte for byte and 0700/0600 with their `sessions.json`,
+  never a copy make code made still as written nor a transcript without a message, never a link the VM
+  holds nor a folder not named as Claude Code names one - the file a link points at here left as it was -
+  make code's manifest read where `vscode_workspaces_dir` puts it, the save turned off, the save without
+  the release under `destroy_release: false`, a VM whose sudo refuses saved and then deleted unreleased,
+  said so, and one that fails keeping the VM neither released nor deleted, with no transcript in the
+  output, the save's tasks held to an allowlist that keeps them off sudo and unreachable-safe; every
   canned credential searched for in the output; and, read from `destroy.yml`, a name two VMs share
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
-  against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
+  against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address,
+  and a relative `destroy_sessions_dir` refused before any VM is started.
 - **`make code`** (`test_code_session.py` 192): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine, followed
@@ -82,7 +90,7 @@ pytest over `tests/unit/`: 1726 tests. By file:
   cannot find - the refresh after a sign-in in the terminal, the zone `code.yml` finds (`TZ`, the
   `/etc/localtime` link on Linux and macOS, `/etc/timezone`, else UTC, shell syntax and paths refused),
   and the workspace each window gets: the notes' folder only where its own folder holds them.
-- **The session handoff** (`test_session_handoff.py` 150): the plan - by origin in every URL form here,
+- **The session handoff** (`test_session_handoff.py` 151): the plan - by origin in every URL form here,
   a GitHub one only on the VM, a renamed clone, a gone worktree's checkout, `githubRepoPaths`, another
   owner's repository of the same name refused, `SESSION`'s reasons - the transcripts read without their
   content, an open session only at a pid that is still a claude's, the registry whatever the
@@ -94,7 +102,7 @@ pytest over `tests/unit/`: 1726 tests. By file:
   the four edits byte for byte with the records of requests sent, an assistant's signed thinking and
   another project's memory folder left as they are, the manifest's rule and its write after each copy, a copy moved to another folder on the VM
   never written again and one moved here following, the time a copy is given against the 30-day sweep,
-  check mode, and what of a VM's sessions to save - every one with `all`, make code's copies told
+  check mode, and what of a VM's sessions destroy saves - every one with `all`, make code's copies told
   apart by the manifest, the memory folders, names the VM made up left out, the command that continues
   each, its path quoted - and how: archives with absolute paths, `..`, links, hard links, devices and
   names not asked for unpacked into nothing outside the folder, an archive cut short, GNU tar's exit 2
@@ -267,7 +275,7 @@ that no build started.
 | Scenario | What it proves |
 |---|---|
 | `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `make deploy TYPE=configure` needs nothing stored locally |
-| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM; then the sign-ins, `make code`'s session handoff with the real `claude` against a stand-in Messages API - copies resumed as the VM's own, `--continue` never picking one up, the records of requests sent left unsent |
+| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM; then the sign-ins, `make code`'s session handoff with the real `claude` against a stand-in Messages API - copies resumed as the VM's own, `--continue` never picking one up, the records of requests sent left unsent, a saved copy resumed by its path - and `make destroy`'s pause of Remote Control around its save, with the real systemd |
 
 Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scenario inventory, so the
 actual variable wiring is exercised rather than a copy. Test overrides live in `host_vars/`. The

@@ -65,7 +65,7 @@ and `LOG_DIR` moves the run logs or, empty, turns them off.
 | &emsp;`TYPE=github` | Sign gh in to GitHub by the device flow, then clone the private repositories |
 | &emsp;`TYPE=tailscale` | Join Tailscale by its web login |
 | `make list [<name>...]` | Show the VMs this project created, and their addresses |
-| `make destroy [<name>...]` | Release the VM(s) from Claude, GitHub and Tailscale, then delete them |
+| `make destroy [<name>...]` | Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them |
 | `make logs` | List the run logs in .logs/, newest first |
 
 ### Develop

@@ -39,7 +39,7 @@ make test TYPE=provision       # one playbook scenario (TYPE=integration is the 
 make deploy          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (make deploy alpha: that VM)
 make deploy alpha TYPE=configure   # one stage of it: template, provision, configure, check (dry run) or ssh-config (fleet-wide also prunes)
 make deploy alpha TAGS=claude_code # re-run one role, e.g. to push an API key (TAGS means TYPE=configure)
-make destroy alpha   # release the VM from Claude, GitHub and Tailscale, then delete it
+make destroy alpha   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
 make login alpha     # Claude, GitHub, Tailscale in deploy's order, one VM after another (TYPE=claude, github or tailscale: one)
 make list            # read-only: the VMs this project created, and their addresses
 make code VM_NAME=alpha [PROJECT=repo] [SESSION=<id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
@@ -249,6 +249,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
 - **The project writes exactly two things outside the repo on the controller:** `~/.ssh/known_hosts`
   and the managed SSH config `~/.ssh/claude-on-proxmox.conf`, plus one `Include` line at the top of
   `~/.ssh/config` that is added once and never removed. Nothing else in `~/.ssh` is ever edited.
+  (The Claude Code sessions `make destroy` saves go into the checkout's `.sessions/`, inside the repo,
+  unless the user points `destroy_sessions_dir` elsewhere.)
   Everything goes through `playbooks/tasks/ssh_config.yml`, which validates each write with
   `ssh -G`, refuses an alias the user's own config already names, and refuses a name or address that
   is not one plain word. A VM's address is whatever its guest agent reports, which the VM chooses:
@@ -327,14 +329,35 @@ token; `github_auth_method: token` still fails. The status JSON carries
   as it is, and so is an ID in two folders here; origins are reported without credentials, and no path or
   branch is expanded (`expand_user_and_vars=False`). The copies' records of each request sent (`api-request-shape`, `api-request-blob`) keep
   this machine's memory folder: resume sends the snapshot, never them, which the `configure` scenario holds.
+- **`make destroy` saves what of a VM's Claude Code sessions exists only there before releasing it.**
+  `tasks/session_save.yml`, under `destroy_save_sessions` (on by default): `claude_sessions_info` on the VM
+  with `all` and make code's manifest (in `make_code_dir`, as code.yml names it), `claude_sessions_saved`
+  keeping each session with a message that is not a copy still as written, with the folder beside it, and
+  every auto memory folder. Nothing the VM sends is trusted: a folder or ID not named as Claude Code names
+  them is left out, and `claude_sessions_fetch` (delegated here) runs `tar` there over SSH as Ansible
+  reaches the VM - port, key and SSH arguments included - and unpacks the stream itself, plain files and
+  folders only, at the names asked for, never through a link or outside the folder: never rsync, which
+  made the VM's links here as links, nor a `file` with `recurse`, whose `follow` chmodded their targets.
+  Into `destroy_sessions_dir` (absolute or `~`, refused otherwise before any VM starts;
+  `.sessions/<vm>-<time>/` in the checkout: git-ignored, refused by `tests/check_no_local_files.sh`, inside
+  the repo, so the controller still writes only the two SSH files outside it), edited in nothing,
+  0700/0600, with `sessions.json` naming the `claude --resume <path>` that continues each, its version and
+  that its content is the VM's. The save runs as the VM user, never through sudo, Remote Control paused
+  for it (`claude_code`'s `release_pause`, `release_resume` on a VM kept), and a VM that stops answering
+  part way fails into the rescue (`ignore_unreachable` and an assert), never out of the run unseen. A
+  failed save keeps the VM, neither released nor deleted; an unreachable VM is deleted as before and said
+  to have gone unsaved; `destroy_release: false` still saves, and releases nothing; a VM whose sudo fails
+  is saved, then deleted unreleased, said so: sudo is asked for in a block before the save, since a failed
+  sudo is an error `failed_when` never sees (docs/architecture/lifecycle.md §4.5).
 - **Tests never read or write the developer's `~/.claude`.** `make code` reads this machine's sessions
   and, in every scenario and harness, the "VM" is this machine too. Every run of `code.yml` points
   `code_session_source_dir` and `code_session_dest_dir` into its own directory (`_window_extra` in
   `tests/unit/test_code_session.py`, `verify_code_vars` and every `deploy.yml` run in the `provision`
-  scenario), the VM's `claude` is a stand-in beside the latter - looked for only at the installers'
+  scenario), destroy's save reads only stand-in homes and writes into the test's own directory
+  (`_destroy_tail` in `tests/unit/test_release.py` pins `destroy_sessions_dir`), the VM's `claude` is a stand-in beside the latter - looked for only at the installers'
   paths, never on `PATH` - and git runs there with `GIT_CONFIG_GLOBAL=/dev/null`, since the developer's
   config (a `status.showUntrackedFiles`, an `insteadOf`, a hook) changes what git says and does. The guards in
-  `test_code_session.py` fail if one stops.
+  `test_code_session.py`, and for destroy's pin `test_release.py`, fail if one stops.
 - **Tests never write into the developer's `~/.ssh`.** The `configure` scenario runs the real
   playbook and its `localhost` is the developer's machine, so every playbook scenario points
   `claude_ssh_config_file` and `claude_ssh_user_config` into `MOLECULE_EPHEMERAL_DIRECTORY` with
@@ -380,16 +403,17 @@ runs the role across them so Ansible fans out over `forks`, play 3 publishes. A 
 
 **`destroy.yml` has the same shape.** A localhost play prompts, lists the cluster, checks every name
 and adds each as a placeholder host - refusing, before anything starts, a name two VMs carry, since the
-release finds a VM by name; with `destroy_release` it first starts each stopped VM through the API and
+release finds a VM by name; with `destroy_release` or `destroy_save_sessions` (`claude_vm_reaching`) it first starts each stopped VM through the API and
 reads every VM's address from its agent - asking the ones it started whatever the cluster listing says
 (`claude_vm_just_started`). A VM it started is stopped again (`tasks/vm_stop.yml`) when the
 run then fails before deleting (a rescue in that play) or its deletion fails: the delete play rescues a
 failed deletion and the last play raises it, after the stop and the report - a play in which every host
 fails ends the run, which once left a lone VM running. A release play then connects to each VM over SSH
-(`add_host` gives each VM its SSH settings as host vars; the delete play forces `ansible_connection: local`)
-and runs the `release` entry point of
-`claude_code`, `github_projects` and `tailscale`, each in a block whose rescue records a failure: a
-release never stops a deletion. A VM with no address or that does not answer is ended and deleted as it
+(`add_host` gives each VM its SSH settings as host vars; the delete play forces `ansible_connection: local`),
+saves first what of its Claude Code sessions exists only there (`tasks/session_save.yml`, below), and runs the
+`release` entry point of `claude_code`, `github_projects` and `tailscale`, each in a block whose rescue
+records a failure: a release never stops a deletion. A save does: one that fails sets
+`claude_vm_delete_failure` and ends the host, so the VM is neither released nor deleted. A VM with no address or that does not answer is ended and deleted as it
 is. Each entry point leaves one clause in a `*_release_said` fact, and the last play says per VM what it
 was released from or what is left of it. GitHub's release only signs gh out and revokes no token:
 revoking the one this project's device flow made, through `POST /credentials/revoke`, ended every

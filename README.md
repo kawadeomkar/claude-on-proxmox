@@ -122,7 +122,7 @@ rather than skipped. `make vault` changes a secret. The usual first-run snags ar
 | `make code alpha [PROJECT=repo] [SESSION=<id>]` | Open a VM, or one repository on it, in VS Code with a Claude terminal; this machine's recent Claude sessions are copied there, and `SESSION` goes on with one of them |
 | `make login alpha` | Sign the VM in to Claude, GitHub and Tailscale where a sign-in was skipped; `TYPE=claude`, `github` or `tailscale` for one of them |
 | `make list` | The VMs this project created, and their addresses |
-| `make destroy alpha` | Sign the VM out of Claude, GitHub and Tailscale, then delete it |
+| `make destroy alpha` | Save the Claude sessions only the VM has, sign it out of Claude, GitHub and Tailscale, then delete it |
 | `make logs` | The log of every run, newest first |
 | `ssh alpha` | The alias `make deploy` and `make code` keep pointed at the VM's address, in `~/.ssh/claude-on-proxmox.conf` (one `Include` line added to `~/.ssh/config`) |
 

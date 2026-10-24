@@ -317,8 +317,10 @@ claude_code_release_state: >-
 claude_code_release_signed_in: "{{ claude_code_release_state.loggedIn | default(false) | bool }}"
 # The service, not the path unit that waits for a login: only a running
 # server had a session to take offline.
+# Stopped by release_pause.yml, for destroy's save or for this release.
 claude_code_release_rc_stopped: >-
-  {{ claude_code_release_stopped.results | default([]) | selectattr('changed', 'defined') | selectattr('changed')
+  {{ claude_code_release_paused.results | default([])
+     | selectattr('changed', 'defined') | selectattr('changed')
      | selectattr('item.item', 'equalto', 'service') | list | length > 0 }}
 # One clause for destroy's report on the VM; empty where Claude Code had no
 # login and no Remote Control to end.

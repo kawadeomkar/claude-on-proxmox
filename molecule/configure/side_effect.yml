@@ -49,6 +49,8 @@
 # writes the VM's copies, under the laptop's folder name; then claude in the
 # VM's checkout resumes each. The laptop's checkout and worktree are still
 # there, the hardest case: a copy left bound refuses to resume into them.
+# Last, the copy continued there, saved as make destroy saves one, resumes by
+# its path from the laptop's checkout, as the save's sessions.json says.
 - name: Resume a session copied as make code copies one, with the real claude
   hosts: claude_vms
   become: true
@@ -59,6 +61,9 @@
     side_effect_handoff_worktree: /home/dev/handoff/laptop/demo/.claude/worktrees/fix
     side_effect_handoff_checkout: /home/dev/handoff/vm/demo
     side_effect_handoff_api: /home/dev/handoff/requests.jsonl
+    # Where make destroy would save it on the laptop: <destroy_sessions_dir>/<vm>-<time>/projects/<folder>/<id>.jsonl.
+    side_effect_handoff_saved: >-
+      /home/dev/handoff/saved/claude-dev-20261023-150000/projects/{{ side_effect_handoff_folder }}/{{ side_effect_handoff_ids[0] }}.jsonl
     # The folder Claude Code files each directory's sessions under.
     side_effect_handoff_folder: "{{ side_effect_handoff_laptop | claude_project_folder }}"
     side_effect_handoff_wt_folder: "{{ side_effect_handoff_worktree | claude_project_folder }}"
@@ -252,6 +257,71 @@
           {{ side_effect_handoff_runs | map(attribute='stderr') | map('truncate', 300) | list }}
         quiet: true
 
+    # Then back, as make destroy saves a session continued on the VM: the
+    # transcript where it lies, outside any Claude configuration directory, and
+    # resumed by its path from the laptop's checkout, as its sessions.json says.
+    - name: Make a folder for the saved session, as make destroy does
+      ansible.builtin.file:
+        path: "{{ side_effect_handoff_saved | dirname }}"
+        state: directory
+        mode: "0700"
+
+    - name: Save the copy continued on the VM
+      ansible.builtin.copy:
+        src: "{{ side_effect_handoff_dir }}/vm-claude/projects/{{ side_effect_handoff_folder }}/{{ side_effect_handoff_ids[0] }}.jsonl"
+        dest: "{{ side_effect_handoff_saved }}"
+        remote_src: true
+        mode: "0600"
+
+    - name: Resume the saved session by its path
+      ansible.builtin.command:
+        argv:
+          - "{{ side_effect_handoff_claude }}"
+          - -p
+          - --output-format
+          - json
+          - --resume
+          - "{{ side_effect_handoff_saved }}"
+          - And last, HANDOFF-THREE?
+        chdir: "{{ side_effect_handoff_laptop }}"
+      environment: "{{ side_effect_handoff_env | combine({'CLAUDE_CONFIG_DIR': side_effect_handoff_dir ~ '/after-claude'}) }}"
+      register: side_effect_handoff_by_path
+      changed_when: false
+      failed_when: false
+
+    - name: Read what the stand-in was sent, and the saved transcript
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - "{{ side_effect_handoff_api }}"
+        - "{{ side_effect_handoff_saved }}"
+      register: side_effect_handoff_after
+
+    - name: Look for a transcript of the session in the configuration directory it resumed with
+      ansible.builtin.find:
+        paths: "{{ side_effect_handoff_dir }}/after-claude/projects"
+        patterns: "{{ side_effect_handoff_ids[0] }}.jsonl"
+        recurse: true
+      register: side_effect_handoff_elsewhere
+
+    - name: Assert the saved session resumed where it lies, with all it was told on both machines
+      vars:
+        side_effect_handoff_last: >-
+          {{ (side_effect_handoff_after.results[0].content | b64decode).splitlines()
+             | select('search', 'HANDOFF-THREE') | map('from_json') | list }}
+      ansible.builtin.assert:
+        that:
+          - side_effect_handoff_by_path.rc == 0
+          - (side_effect_handoff_by_path.stdout | from_json).session_id == side_effect_handoff_ids[0]
+          - side_effect_handoff_last | length > 0
+          - side_effect_handoff_last[0].messages | string is search('HANDOFF-ONE')
+          - side_effect_handoff_last[0].messages | string is search('HANDOFF-TWO')
+          # Written where it lies, and nowhere else.
+          - side_effect_handoff_after.results[1].content | b64decode is search('HANDOFF-THREE')
+          - side_effect_handoff_elsewhere.matched == 0
+        fail_msg: "{{ side_effect_handoff_by_path.rc }} {{ side_effect_handoff_by_path.stderr | truncate(300) }}"
+        quiet: true
+
     - name: Stop the stand-in Messages API
       ansible.builtin.command:
         argv: [pkill, -f, fake_anthropic_api.py]
@@ -312,6 +382,47 @@
   vars:
     vm_name: claude-dev
     claude_code_login_code: fake-code#fake-state
+
+# make destroy's pause around its save of the VM's sessions, against the real
+# systemd and the Remote Control the sign-in just started: stopped while the
+# sessions are read, then started again as for a VM the save failed on and
+# destroy keeps. verify.yml then finds it running, as the sign-in left it.
+- name: Pause Remote Control as make destroy's save does, and start it again
+  hosts: claude_vms
+  become: true
+  tasks:
+    - name: Stop it as the save does
+      ansible.builtin.include_role:
+        name: claude_code
+        tasks_from: release_pause
+
+    - name: Read the service once paused
+      ansible.builtin.command:
+        argv: [systemctl, is-active, claude-remote-control.service]
+      register: side_effect_paused
+      changed_when: false
+      failed_when: false
+
+    - name: Start it again as for a VM destroy keeps
+      ansible.builtin.include_role:
+        name: claude_code
+        tasks_from: release_resume
+
+    - name: Read the service once started again
+      ansible.builtin.command:
+        argv: [systemctl, is-active, claude-remote-control.service]
+      register: side_effect_resumed
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the pause stopped it and the resume started it
+      ansible.builtin.assert:
+        that:
+          - claude_code_release_paused.results | selectattr('changed') | map(attribute='item.item') | list == ['service']
+          - side_effect_paused.stdout | trim == 'inactive'
+          - side_effect_resumed.stdout | trim == 'active'
+        fail_msg: "{{ side_effect_paused.stdout }} then {{ side_effect_resumed.stdout }}"
+        quiet: true
 
 # Then gh, which has no token in this scenario: what make login TYPE=github does for
 # one VM, against the container.

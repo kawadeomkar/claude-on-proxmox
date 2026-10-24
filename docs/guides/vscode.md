@@ -283,7 +283,9 @@ Never copied: subagent transcripts (resume does not need them, and they are much
 subagent of the session cannot be looked into or resumed on the VM),
 credentials, the list of running sessions, shell snapshots, the file history - so `/rewind` on the VM
 rewinds the conversation but restores no file edited before the handoff - and `~/.claude.json`.
-`make code` copies nothing back from the VM and writes nothing on this machine.
+`make code` copies nothing back from the VM and writes nothing on this machine; what the VM has of its
+own, `make destroy` saves here before it deletes the VM
+([Its Claude Code sessions](destroy.md#its-claude-code-sessions)).
 
 A copy continued on the VM is never overwritten. `make code` records the digest of each copy it writes
 (`~/projects/.claude-on-proxmox/claude-sessions/manifest.json`) and replaces a copy only while it is

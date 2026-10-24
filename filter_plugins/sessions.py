@@ -1,4 +1,4 @@
-"""Filters for the Claude Code sessions make code carries from this machine to a VM, and for a VM's own.
+"""Filters for the Claude Code sessions make code carries from this machine to a VM, and make destroy brings back.
 
 playbooks/tasks/session_read.yml reads both ends with the modules in
 playbooks/library/ and decides here, from what they read, which session goes
@@ -6,8 +6,8 @@ to which checkout on the VM. A session belongs to the repository its first
 recorded directory is a checkout of, by that checkout's git origin: never by
 a folder's name, which a renamed clone, a subfolder or another owner's
 repository of the same name all get wrong (docs/architecture/lifecycle.md §4.9).
-claude_sessions_saved decides what of a VM's sessions exists only there, for a
-save of them before the VM is deleted.
+playbooks/tasks/session_save.yml decides here what of a VM's sessions exists
+only there, before make destroy deletes it (§4.5).
 Nothing here reads a file: the modules do, and only these values reach a filter.
 """
 
@@ -25,7 +25,7 @@ _FOLDER_LENGTH = 200
 # A Claude Code worktree: <checkout>/.claude/worktrees/<name>, or a folder inside one.
 _WORKTREE = re.compile(r"^(?P<checkout>/.+?)/\.claude/worktrees/[^/]+(?:/.*)?$")
 _VERSION = re.compile(r"^(\d+(?:\.\d+)*)")
-# What a VM's sessions are saved by: a folder as Claude Code names one, and a session's ID. Anything else
+# What make destroy saves by: a folder as Claude Code names one, and a session's ID. Anything else
 # a VM reports is left out, since the names travel to tar and become paths on this machine.
 _SAVED_FOLDER = re.compile(r"^[A-Za-z0-9-]+$")
 _SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -88,6 +88,16 @@ def github_repository(url):
     if not found or found.group("owner") in (".", "..") or found.group("repo") in ("", ".", ".."):
         return ""
     return f"{found.group('owner')}/{found.group('repo')}".lower()
+
+
+def make_code_dir(projects, given=""):
+    """make code's own directory on a VM: ``given`` (vscode_workspaces_dir), else .claude-on-proxmox in ``projects``.
+
+    code.yml keeps the workspace files and the session copies' manifest there, and make destroy's
+    save reads the manifest from it: one definition, so the two cannot disagree. No trailing "/".
+    """
+    path = str(given or "") or f"{str(projects).rstrip('/')}/.claude-on-proxmox"
+    return path.rstrip("/") or "/"
 
 
 def _worktree_checkout(path):
@@ -315,7 +325,7 @@ def _written(mtime):
 
 
 def claude_sessions_saved(sessions, memory, dest):
-    """What of a VM's Claude Code sessions to save into ``dest``, and the list kept beside them.
+    """What of a VM's Claude Code sessions make destroy saves into ``dest``, and the list kept beside them.
 
     ``sessions`` and ``memory`` are claude_sessions_info's for the VM, read with its manifest. Saved:
     every session that holds a message and is not a copy make code wrote that is still as written -
@@ -395,4 +405,5 @@ class FilterModule:
             "claude_sessions_saved": claude_sessions_saved,
             "git_repository": git_repository,
             "github_repository": github_repository,
+            "make_code_dir": make_code_dir,
         }

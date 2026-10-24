@@ -113,6 +113,14 @@ restate them are not treated as vulnerabilities:
   `claude` works in it. A VM chooses which of this machine's sessions it gets only through the GitHub
   origins of its checkouts: a local path or another host's URL there matches none. Claude Code's question whether to trust that folder is
   left for you to answer.
+- `make destroy` saves the Claude Code sessions and auto memory that exist only on a VM into
+  `.sessions/` in your checkout before deleting it (`destroy_save_sessions`, on by default): plaintext
+  transcripts holding whatever their tools printed, in 0600 files and 0700 folders readable by you alone,
+  ignored by git and refused by the tracked-file guard. They stay until you delete them; `false` deletes
+  them with the VM. What the VM sends is not trusted, since a VM's root can make up anything: only plain
+  files and folders under the names Claude Code gives its own are written, never a link and never outside
+  that folder, and nothing on this machine is read or changed through one. A saved transcript is still the
+  VM's writing - treat what it says, and what resuming it here asks to run, as you would the VM itself.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
   once - and the next `make deploy` then sends it your SSH keys, GitHub token and Anthropic API key. The

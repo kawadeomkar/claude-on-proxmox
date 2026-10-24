@@ -26,6 +26,11 @@ and the [security model](../architecture/security-model.md) is how each is enfor
   `dev`. Which sessions go is decided by the GitHub origins of the VM's checkouts, which the VM reports:
   one that makes up a checkout of another of your repositories gets that one's sessions too, so treat a
   VM you open as able to read any of your recent sessions. `vscode_claude_sessions: false` stops it.
+- `make destroy` brings back what the VM alone holds of them
+  ([Its Claude Code sessions](destroy.md#its-claude-code-sessions)) - the VM's own writing, which a VM
+  with root can have made up. Only plain files and folders under Claude Code's own names arrive, never a
+  link, so nothing on this machine is read or changed through one; what a saved transcript says, and asks
+  to run when you resume it, is as trustworthy as the VM was.
 
 ## See also
 

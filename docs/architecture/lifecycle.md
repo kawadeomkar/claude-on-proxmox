@@ -197,7 +197,9 @@ against 41 s.
    or set `proxmox_vm_allow_untagged_delete`, which widens the check to untagged VMs — the role's
    escape hatch for VMs created before this project tagged its own, which this check used to make
    unreachable. A template is never admitted, with the flag or without.
-3. With `destroy_release` (the default), start each stopped VM through the API (`status/start`), wait
+3. With `destroy_release` or `destroy_save_sessions` (both the default: `claude_vm_reaching`), refuse a
+   `destroy_sessions_dir` that is not an absolute path after `~` - the module that writes the saved
+   sessions would put a relative one wherever it ran - then start each stopped VM through the API (`status/start`), wait
    for its agent to report an IPv4 address on `proxmox_nic` - by the MAC its config gives, as
    `vm_addresses.yml` pairs them, so a bridge the guest grew (`docker0`, `tailscale0`) cannot end the wait
    before DHCP has answered - list the cluster again and read every requested VM's address
@@ -218,9 +220,43 @@ against 41 s.
 **Release (`claude_vm_doomed`).** Over SSH to that address as `vm_user` - host vars from the `add_host`
 above, never play vars, which would apply to the release's delegated calls to Tailscale's API too and run
 them, credential included, on the VM - all VMs at once: a VM with no address, or one a `ping` with
-`ignore_unreachable` finds unreachable or failing (`failed_when: false`: a failed host leaves the run, and
-a play in which every host fails ends it), is ended and deleted as it is. Then the `release` entry point of
-`claude_code` (stop Remote Control's path unit and service, `claude auth logout`), `github_projects`
+`ignore_unreachable` and no sudo finds unreachable or failing (`failed_when: false`: a failed host leaves
+the run, and a play in which every host fails ends it), is ended and deleted as it is. A second `ping`, as
+root, in a block: a sudo that asks for a password or refuses is an error `failed_when` never sees, and
+would take the host out of the run unsaved and unreported, so the rescue records it
+(`claude_vm_release_blocked`), and that VM is saved, then ended before any release, and deleted, the report
+saying "sudo on it failed". Then, with `destroy_save_sessions`
+(the default) and before anything is released, `claude_code`'s `release_pause` entry point stops Remote
+Control, which writes the transcript of the session it serves as it works, where sudo works, and
+`tasks/session_save.yml` saves what of the VM's Claude Code
+sessions exists only there: Claude Code keeps a session on the disk of the machine it runs on, the only
+copy it can resume, and auto memory is machine-local too, so the deletion would end them.
+`claude_sessions_info` reads the VM's `~/.claude` with every session whatever its age and make code's
+manifest, from make code's own directory as code.yml names it (the `make_code_dir` filter, which follows
+`vscode_workspaces_dir`), and `claude_sessions_saved` keeps each session that holds a message and is not
+a copy still as make code wrote it - this machine has that one - with the folder beside it (subagents,
+tool results, MCP tasks), and every auto memory folder. What the VM reports is the VM's to make up, so
+nothing it names is trusted: a folder not named as Claude Code names one (ASCII letters, digits and `-`)
+or an ID that is not a session's is left out and counted, never handed on. `claude_sessions_fetch`,
+delegated here, then runs `tar -cf - -T -` on the VM over SSH as Ansible reaches it - its user, address,
+`ansible_port`, `ansible_ssh_private_key_file` and SSH arguments, with `BatchMode` - and unpacks the stream
+itself into `destroy_sessions_dir` (`.sessions/` in the checkout, git-ignored and refused by the
+tracked-file guard), `<vm>-<YYYYMMDD-HHMMSS>/projects/` laid out as on the VM and edited in nothing:
+plain files and folders only, 0600 and 0700, at the names asked for or inside one, never through a link,
+never outside that folder. A link, hard link, device or pipe in the archive is left out and counted;
+rsync made the VM's links here as links, and the `chmod -R` after it followed them out of the folder. A
+`sessions.json` beside them names each, the Claude Code version that wrote it and the newest of them,
+says that what they hold is the VM's and unchecked, and gives the `claude --resume <path>` that continues
+each here: given a
+transcript's path, Claude Code resumes it where it lies and writes to it there, whatever this machine
+holds of the same ID (the `configure` scenario holds that against the real claude). Not best effort like
+the releases: a failed save - SSH or tar failing, an archive cut short, a name asked for that did not
+arrive, or the VM no longer answering, which its VM tasks take with `ignore_unreachable` and an assert,
+never leaving the run unseen - sets `claude_vm_delete_failure`, starts Remote Control again
+(`release_resume`) and ends the host, so the VM is neither released nor deleted and the last play fails
+the run with why. Its VM tasks run as the VM user, never through sudo, whose files they read. With
+`destroy_release: false` the host ends there, saved and not released. Then the `release` entry
+point of `claude_code` (stop Remote Control's path unit and service, `claude auth logout`), `github_projects`
 (`gh auth logout`, and no token revoked: revoking the one this project's device flow made, through
 GitHub's `POST /credentials/revoke`, ended every GitHub CLI sign-in of the account, the controller's own
 included - seen live - so the report says where to revoke it and what that does; the digest that flow
@@ -233,7 +269,8 @@ records the failure: a release never stops a deletion. Each leaves one clause in
 set on every run of its file.
 
 **Delete (`claude_vm_doomed`).** With play vars `ansible_connection: local` and this machine's Python
-(`ansible_playbook_python`), since its hosts now carry SSH settings for the release. The role with `proxmox_vm_state: absent` across the
+(`ansible_playbook_python`), since its hosts now carry SSH settings for the release. A VM the release
+kept, its sessions unsaved, ends first. The role with `proxmox_vm_state: absent` across the
 placeholders, fanning out over `forks`; it looks each VM up again and applies the ownership check per
 VM. Its `known_hosts` task is `throttle: 1`, because parallel deletes would otherwise each rewrite
 the same file and restore a key another had just removed.
@@ -245,10 +282,11 @@ whose deletion failed - a stop that timed out, protection on, an API error - kee
 because it is still there to connect to, and the run names it. A run refused in play 1 never
 reaches play 3; removing a block that is not there is a no-op. A localhost play rather than a task in the role, so the role stays free of the controller's
 ssh config and the one writer per run needs no throttle. The same play says, for every VM it deleted,
-what the release did - joining the three clauses - or, for a VM it could not reach or with
-`destroy_release: false`, what is left of it to remove by hand and where: the Tailscale device (which keeps
-its name, so a VM built again under it would join as `<name>-1`), a GitHub token its sign-in made, and a
-Claude Code login, which Anthropic offers no way to revoke from outside.
+what the release did - joining the three clauses, and where its sessions were saved and how many entries
+of the VM's were left out - or, for a VM it could not reach or with `destroy_release: false`, what is left
+of it to remove by hand and where: the Tailscale device (which keeps its name, so a VM built again under
+it would join as `<name>-1`), a GitHub token its sign-in made, and a Claude Code login, which Anthropic
+offers no way to revoke from outside - and where its sessions were saved, or that they were not.
 
 ## 4.6 `playbooks/list.yml`
 
@@ -614,8 +652,8 @@ Claude Code's own Agent SDK documents. The rules:
   days, and is otherwise given the time it is written, renewed once that is 14 days old: Claude Code
   deletes a transcript 30 days after its file time, which would take a `SESSION` copy of an older session
   before it was resumed, and a session copied at 29 days the next day.
-- **One way.** The sync only ever goes to the VM. What a VM holds of its own - sessions begun there,
-  copies continued there, auto memory - goes with it when `make destroy` deletes it (§4.5).
+- **Back before a destroy.** The sync only ever goes to the VM. What a VM holds of its own - sessions
+  begun there, copies continued there, auto memory - `make destroy` saves here first (§4.5).
 - **The transport.** `rsync -az --files-from=-` over the alias, as VS Code reaches the VM, with
   `BatchMode`, into a mirror in that directory (0700; macOS's `openrsync` has no `--chmod`), which
   later runs only add to; to a local path where Ansible reaches the VM locally, as in the `provision`
@@ -645,7 +683,8 @@ carries the recorded prompt too, and the window's task runs again on every reloa
 afresh from the copy each time. `tests/unit/test_session_handoff.py` holds the filter and the modules,
 `tests/unit/test_code_session.py` runs the tasks between two real checkouts with a marker string in
 the transcripts that must reach no output, and the `configure` scenario resumes a copy with the real
-`claude` before its stand-in replaces it.
+`claude` before its stand-in replaces it, then a copy continued there, saved as `make destroy` saves one,
+by its path.
 
 ## 4.10 `playbooks/tailscale_login.yml`
 

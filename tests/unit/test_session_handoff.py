@@ -184,6 +184,14 @@ def test_a_vm_checkout_names_its_repository_only_by_a_github_origin():
     assert [item["checkout"] for item in _plan([_session()], here)["sessions"]] == [CHECKOUT]
 
 
+def test_make_code_s_own_directory_on_the_vm_is_one_definition_for_code_and_destroy():
+    assert filters.make_code_dir("/home/dev/projects/") == "/home/dev/projects/.claude-on-proxmox"
+    assert filters.make_code_dir("/home/dev/projects", "/home/dev/workspaces/") == "/home/dev/workspaces"
+    # code.yml and session_save.yml both read it through the filter.
+    for path in ("playbooks/code.yml", "playbooks/tasks/session_save.yml"):
+        assert "| make_code_dir(vscode_workspaces_dir | default('', true))" in (REPO / path).read_text(), path
+
+
 def test_the_sessions_left_out_are_said_list_by_list_by_their_first_eight_characters():
     rows = [[" Kept: ", [ID, OTHER], "."], [" Not copied: ", [], "."], [" Open: ", [OTHER], "; why."]]
     assert filters.claude_sessions_listed(rows) == f" Kept: {ID[:8]}, {OTHER[:8]}. Open: {OTHER[:8]}; why."

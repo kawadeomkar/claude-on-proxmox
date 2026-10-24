@@ -149,8 +149,8 @@ JSON report (`_left_to_do`), in every state they already run.
 ## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
 
 What `make code` carries of this machine's Claude Code sessions to a VM
-([§4.9](lifecycle.md#49-playbookscodeyml), **The session handoff**), and the reading and unpacking of
-a VM's own sessions that a save of them before `make destroy` is built on.
+([§4.9](lifecycle.md#49-playbookscodeyml), **The session handoff**), and what `make destroy` brings
+back of a VM's own before deleting it ([§4.5](lifecycle.md#45-playbooksdestroyyml--confirm-release-delete)).
 Four modules, each in `playbooks/library/` beside the playbook that runs them, read and write the
 files; the filters decide from what they read, and touch no file.
 
@@ -197,7 +197,7 @@ module's own, still as written: the session moved on the other machine, and its 
 The manifest is written after each copy. Sessions that are no longer asked for leave the
 mirror. Check mode writes nothing.
 
-**`claude_sessions_fetch`** — run on the controller, to save a VM's own sessions: `tar -cf - -T -` on the
+**`claude_sessions_fetch`** — run on the controller, for `make destroy`'s save: `tar -cf - -T -` on the
 VM over SSH (`ssh` given as user, host, port, key and Ansible's SSH arguments, with `BatchMode`; none
 where the VM is this machine, as in the tests), the names on stdin each after `./`, so that none reads
 as an option, and the stream unpacked by Python's `tarfile` into a folder it creates: plain files and
@@ -220,14 +220,16 @@ checkout of it is the one whose GitHub origin names it, of two the one named aft
 alike, the host not compared: this machine's side, where a clone may reach GitHub by an SSH alias.
 **`github_repository(url)`** is the same of a GitHub origin only, and `""` of any other: the VM's side,
 whose checkouts make deploy cloned from GitHub, so that a local path or another host's repository there
-claims nothing. **`claude_project_folder(path)`** is Claude Code's folder name for a path - every character
+claims nothing. **`make_code_dir(projects, given)`** is make code's own directory on a VM -
+`vscode_workspaces_dir`, else `.claude-on-proxmox` in the projects directory - for code.yml and for
+destroy's save, which reads the manifest there. **`claude_project_folder(path)`** is Claude Code's folder name for a path - every character
 but an ASCII letter or digit as `-` - refusing one over 200 characters, which Claude Code shortens with
 a hash of its own. **`claude_session_dirs(sessions)`** is the directories to ask git about for them:
 each first directory, and the checkout of a Claude worktree's, which a gone worktree leaves behind.
 **`claude_sessions_listed(rows)`** is make code's words for the sessions it left out, each
 `[before, ids, after]` that has IDs, each ID by its first eight characters as `/resume` lists them.
 
-**`claude_sessions_saved(sessions, memory, dest)`** — what of a VM's sessions to save into
+**`claude_sessions_saved(sessions, memory, dest)`** — what of a VM's sessions `make destroy` saves into
 `dest`, from `claude_sessions_info`'s reading of the VM with its manifest: every session that holds a
 message and is not a copy still as make code wrote it, with the folder beside it, and every auto memory
 folder. A folder not named as Claude Code names one or an ID that is not a session's - the VM's to make
@@ -237,5 +239,6 @@ write, the version that wrote it (its digits alone), whether it began on the VM,
 <path>` that continues it, the path quoted; `newest`, the newest version, which resuming them needs at
 least; `started` and `continued`; and the `memory` folders.
 
-Covered by `tests/unit/test_session_handoff.py`, with real git checkouts and canned transcripts, and by
-the window step's runs in `tests/unit/test_code_session.py`.
+Covered by `tests/unit/test_session_handoff.py`, with real git checkouts and canned transcripts, by
+the window step's runs in `tests/unit/test_code_session.py`, and by destroy's release play, run in
+`tests/unit/test_release.py`.

@@ -527,7 +527,7 @@ list: vault-check vm-name-check collections-check log-setup ## Show the VMs this
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/list.yml
 
 .PHONY: destroy
-destroy: vault-check vm-name-check collections-check log-setup ## Release the VM(s) from Claude, GitHub and Tailscale, then delete them
+destroy: vault-check vm-name-check collections-check log-setup ## Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(ANSIBLE_ARGS) playbooks/destroy.yml
 
 .PHONY: logs

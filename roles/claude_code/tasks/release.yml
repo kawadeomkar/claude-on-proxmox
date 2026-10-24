@@ -4,23 +4,12 @@
 # mid-turn - and claude signs out on the VM. Anthropic has no way to revoke a
 # Claude Code login from outside, nor a list of them to clean up: the session
 # stays in the app's list, offline, and destroy's report says so.
-- name: release | Look for Remote Control's units
-  ansible.builtin.stat:
-    path: /etc/systemd/system/{{ claude_code_remote_control_service }}.{{ item }}
-  loop: [path, service]
-  register: claude_code_release_units
-
 # The path unit first: it starts the service when a login lands, and the
-# logout below changes the login.
+# logout below changes the login. Where destroy saved the VM's sessions,
+# release_pause.yml stopped them for that already.
 - name: release | Stop Remote Control, and what starts it
-  ansible.builtin.systemd_service:
-    name: "{{ claude_code_remote_control_service }}.{{ item.item }}"
-    state: stopped
-  loop: "{{ claude_code_release_units.results | selectattr('stat.exists') | list }}"
-  loop_control:
-    label: "{{ claude_code_remote_control_service }}.{{ item.item }}"
-  register: claude_code_release_stopped
-  failed_when: false
+  ansible.builtin.include_tasks: release_pause.yml
+  when: claude_code_release_paused is not defined
 
 - name: release | Read the login
   ansible.builtin.command:

@@ -810,11 +810,9 @@
           vars:
             code_root_given: "{{ code_projects_dir }}"
             code_project_given: "{{ vm_project | default('', true) | string or code_session_project | default('') }}"
-            # A folded scalar keeps its backslashes, so the group is written once:
-            # '\\1' here would reach the regex as a backslash and a 1.
-            code_ws_dir_given: >-
-              {{ (vscode_workspaces_dir | default('', true) or code_root_given ~ '/.claude-on-proxmox')
-                 | regex_replace('(.)/+$', '\1') }}
+            # make_code_dir, which make destroy's save reads the session copies'
+            # manifest by too (tasks/session_save.yml).
+            code_ws_dir_given: "{{ code_root_given | make_code_dir(vscode_workspaces_dir | default('', true)) }}"
           ansible.builtin.set_fact:
             code_project: "{{ code_project_given }}"
             code_root: "{{ code_root_given }}"

@@ -4,6 +4,7 @@
 ansible.cfg                       inventory dir, accept-new host keys, forks, the stdout callback, YAML results
 callback_plugins/claude_on_proxmox.py   the default output, the waits set apart, NEXT STEPS after the recap (§7.5)
 .logs/                            one log per make run that used Ansible (git-ignored, 0700, pruned after 14 days)
+.sessions/                        the Claude sessions make destroy saved from each VM (git-ignored, 0700, kept until deleted)
 deploy.yml                        template (when missing) + provision + configure + the three sign-ins + VS Code
 CLAUDE.md                         agent-facing operating rules
 README.md                         getting started; everything else is in docs/
@@ -31,20 +32,22 @@ playbooks/
   configure.yml                   discover, then common → vscode_server → dev_tools → claude_code → github_projects,
                                   then tailscale in a rescued block, then an SSH alias per configured VM on the
                                   controller, and a last play failing what the rescue recorded
-  destroy.yml                     confirm, verify ownership, release (Claude, GitHub, Tailscale), delete in parallel, forget each alias
+  destroy.yml                     confirm, verify ownership, save each VM's own Claude sessions, release (Claude, GitHub,
+                                  Tailscale), delete in parallel, forget each alias
   ssh_config.yml                  refresh every alias from the fleet; fleet-wide, prune the vanished
   code.yml                        refresh one alias, copy this machine's Claude sessions, write the Claude workspace
                                   file and the session notes, open it
-  library/                        make code's session handoff: claude_sessions_info, git_checkouts_info (reads, here
-                                  and on the VM), claude_sessions_copy (the VM's copies, their four edits, the
-                                  manifest) and claude_sessions_fetch (a VM's sessions by tar, unpacked here as plain
-                                  files and folders only)
+  library/                        make code's session handoff and destroy's save: claude_sessions_info, git_checkouts_info
+                                  (reads, here and on the VM), claude_sessions_copy (the VM's copies, their four
+                                  edits, the manifest) and claude_sessions_fetch (destroy's tar from the VM, unpacked
+                                  here as plain files and folders only)
   templates/vm_session.md.j2      the session notes: a page about one VM, opened beside the Claude terminal
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
   tasks/ssh_config.yml            one blockinfile block per VM in ~/.ssh/claude-on-proxmox.conf, Include once
   tasks/session_read.yml          which of this machine's sessions go to which VM checkout; SESSION's checks
   tasks/session_write.yml         rsync to the VM's mirror, the copies, SESSION's checks after the fetch and fast-forward
+  tasks/session_save.yml          destroy's save of what of a VM's Claude sessions is only there, into .sessions/
   tasks/remote_tmp.yml            root's remote_tmp, made before a module makes it and warns (template, configure)
   tasks/init_ask.yml              one make init question: a value given, or asked, held to its kind, asked once more
   tasks/init_local_setting.yml    one setting written into local.yml in place of its commented example line
@@ -58,7 +61,8 @@ roles/                            one role per concern, each with defaults/, met
   dev_tools/                      Node.js, Docker, gh, uv  (files/*.asc are vendored signing keys)
   claude_code/                    native or npm install, settings.json, Remote Control and the path unit that
                                   starts it when a login lands; tasks/login.yml, browser_login.yml (the sign-in),
-                                  after_login.yml, path_unit_absent.yml
+                                  after_login.yml, path_unit_absent.yml; release.yml, and release_pause.yml and
+                                  release_resume.yml around destroy's save of the VM's sessions
   github_projects/                tasks/auth.yml (gh sign-in, credential helper), clone.yml, login.yml,
                                   device_flow.yml (the sign-in); library/github_repos.py, the custom module
   tailscale/                      tasks/ownership.yml, install.yml, status.yml, connect.yml (the key), settings.yml,
@@ -75,9 +79,9 @@ filter_plugins/settings.py        init_answer, the rule each make init answer fo
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
                                   and github_repository, owner/repo of a remote URL here and of a GitHub one on the VM;
-                                  claude_project_folder, Claude Code's folder for a path; claude_session_dirs;
-                                  claude_sessions_saved, what of a VM's sessions to save; claude_sessions_listed,
-                                  how make code says the sessions it left out
+                                  claude_project_folder, Claude Code's folder for a path; claude_session_dirs; make_code_dir,
+                                  make code's own directory on a VM; claude_sessions_saved, what of a VM's sessions destroy saves;
+                                  claude_sessions_listed, how make code says the sessions it left out
 inventory/
   hosts.yml.example               the only address anyone supplies
   controller.yml                  localhost, so it picks up group_vars/all
