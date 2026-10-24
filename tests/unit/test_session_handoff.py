@@ -10,11 +10,14 @@ session_write.yml) is run in test_code_session.py.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import io
 import json
 import os
 import stat
 import subprocess
+import tarfile
 import time
 from pathlib import Path
 
@@ -29,6 +32,7 @@ _SPEC.loader.exec_module(filters)
 info = load_module("playbooks/library/claude_sessions_info.py")
 checkouts = load_module("playbooks/library/git_checkouts_info.py")
 copy = load_module("playbooks/library/claude_sessions_copy.py")
+fetch = load_module("playbooks/library/claude_sessions_fetch.py")
 
 ID = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
 OTHER = "bc0e637b-2c3d-4e4f-9a01-23456789abcd"
@@ -378,6 +382,8 @@ def test_a_transcript_is_summarized_and_nothing_it_says_is_kept(tmp_path):
             "open": 0,
             "tools": True,
             "dir": True,
+            "recorded": False,
+            "copied": False,
             "cwd": "/Users/me/demo",
             "version": "2.1.308",
             "branch": "feat/x",
@@ -405,6 +411,50 @@ def test_only_the_window_and_the_ids_asked_for_are_listed(tmp_path):
     # A stub with no message is listed, and says so; the plan leaves it out.
     root = _claude_dir(tmp_path / "stub", {("-Users-me-demo", ID): transcript(conversation=False)})
     assert info.list_sessions(str(root), 30, [])[0]["conversation"] is False
+
+
+def test_all_lists_every_session_whatever_its_age(tmp_path):
+    root = _claude_dir(tmp_path, {("-x", ID): transcript(), ("-x", OTHER): transcript(OTHER)}, old=(ID, OTHER))
+    assert info.list_sessions(str(root), 30, []) == []
+    assert [item["id"] for item in info.list_sessions(str(root), 0, [], every=True)] == [ID, OTHER]
+
+
+def test_the_manifest_tells_make_code_s_copies_still_as_written_from_the_rest(tmp_path):
+    # Copied and untouched; copied and continued; copied, then moved to another folder by /cd; the VM's own.
+    third = "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
+    own = "d4e5f6a7-8b9c-4d0e-9f1a-2b3c4d5e6f70"
+    written = {sid: transcript(sid) for sid in (ID, OTHER, third)}
+    root = _claude_dir(
+        tmp_path,
+        {
+            ("-Users-me-demo", ID): written[ID],
+            ("-Users-me-demo", OTHER): written[OTHER] + transcript(OTHER),
+            ("-home-dev-projects-other", third): written[third],
+            ("-home-dev-projects-demo", own): transcript(own),
+        },
+    )
+    manifest = {f"-Users-me-demo/{sid}.jsonl": hashlib.sha256(data).hexdigest() for sid, data in written.items()}
+    found = {
+        item["id"]: (item["recorded"], item["copied"])
+        for item in info.list_sessions(str(root), 30, [], manifest=manifest)
+    }
+    assert found == {ID: (True, True), OTHER: (True, False), third: (True, False), own: (False, False)}
+    # A manifest that is not there, or not one, records nothing.
+    assert info.read_manifest(str(tmp_path / "none.json")) == {}
+    (tmp_path / "bad.json").write_text("[1]")
+    assert info.read_manifest(str(tmp_path / "bad.json")) == {}
+
+
+def test_memory_is_listed_by_the_folders_whose_memory_holds_a_file(tmp_path):
+    root = _claude_dir(tmp_path, {})
+    for folder, files in {"-a": ["MEMORY.md"], "-b": [], "-c": ["topics/x.md"]}.items():
+        (root / "projects" / folder / "memory").mkdir(parents=True)
+        for name in files:
+            (root / "projects" / folder / "memory" / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / "projects" / folder / "memory" / name).write_text("- a note\n")
+    (root / "projects" / "-d").mkdir()
+    assert info.memory_folders(str(root)) == ["-a", "-c"]
+    assert info.memory_folders(str(tmp_path / "none")) == []
 
 
 @pytest.fixture
@@ -503,7 +553,119 @@ def test_the_module_reports_and_changes_nothing(tmp_path, patch_module):
     root = _claude_dir(tmp_path, {("-Users-me-demo", ID): transcript()})
     result = run_main(info.main, {"path": str(root), "days": 30})
     assert result["changed"] is False and [item["id"] for item in result["sessions"]] == [ID]
-    assert result["version"] == "" and result["repo_paths"] == {}
+    assert result["version"] == "" and result["repo_paths"] == {} and result["memory"] == []
+    (root / "projects" / "-Users-me-demo" / "memory").mkdir()
+    (root / "projects" / "-Users-me-demo" / "memory" / "MEMORY.md").write_text("- a note\n")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"format": 1, "sessions": {f"-Users-me-demo/{ID}.jsonl": "0" * 64}}))
+    result = run_main(info.main, {"path": str(root), "all": True, "manifest": str(manifest), "memory": True})
+    assert [(item["recorded"], item["copied"]) for item in result["sessions"]] == [(True, False)]
+    assert result["memory"] == ["-Users-me-demo"]
+    # A manifest of another format is read as claude_sessions_copy reads it: as none.
+    manifest.write_text(json.dumps({"format": 2, "sessions": {f"-Users-me-demo/{ID}.jsonl": "0" * 64}}))
+    result = run_main(info.main, {"path": str(root), "all": True, "manifest": str(manifest)})
+    assert [(item["recorded"], item["copied"]) for item in result["sessions"]] == [(False, False)]
+
+
+# ------------------------------------------------------------------ claude_sessions_saved ---
+def _found(sid, folder, **fields):
+    return {
+        "id": sid,
+        "folder": folder,
+        "mtime": 0.0,
+        "cwd": "/home/dev/projects/demo",
+        "branch": "main",
+        "conversation": True,
+        "recorded": False,
+        "copied": False,
+        "dir": False,
+        **fields,
+    }
+
+
+SAVED = "/Users/me/claude-on-proxmox/.sessions/alpha-20261023-153000"
+
+
+def test_only_what_the_vm_alone_has_is_saved_with_the_command_that_continues_it():
+    saved = filters.claude_sessions_saved(
+        [
+            _found(ID, "-home-dev-projects-demo", dir=True),
+            _found(OTHER, "-Users-me-demo", recorded=True, cwd="/Users/me/demo"),
+            _found("c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f", "-Users-me-demo", recorded=True, copied=True),
+            _found("d4e5f6a7-8b9c-4d0e-9f1a-2b3c4d5e6f70", "-home-dev-projects-demo", conversation=False),
+        ],
+        ["-home-dev-projects-demo"],
+        SAVED,
+    )
+    assert saved["files"] == [
+        f"-Users-me-demo/{OTHER}.jsonl",
+        f"-home-dev-projects-demo/{ID}.jsonl",
+        f"-home-dev-projects-demo/{ID}",
+        "-home-dev-projects-demo/memory",
+    ]
+    assert (saved["started"], saved["continued"], saved["memory"]) == (1, 1, ["-home-dev-projects-demo"])
+    started = saved["sessions"][1]
+    assert started == {
+        "id": ID,
+        "folder": "-home-dev-projects-demo",
+        "cwd": "/home/dev/projects/demo",
+        "branch": "main",
+        "version": "",
+        "written": "1970-01-01T00:00:00+00:00",
+        "started_on_the_vm": True,
+        "transcript": f"{SAVED}/projects/-home-dev-projects-demo/{ID}.jsonl",
+        "resume": f"claude --resume {SAVED}/projects/-home-dev-projects-demo/{ID}.jsonl",
+    }
+
+
+def test_the_command_that_continues_a_session_quotes_its_path():
+    (item,) = filters.claude_sessions_saved([_found(ID, "-x")], [], "/Users/me/my repo/.sessions/a-1")["sessions"]
+    assert item["resume"] == f"claude --resume '/Users/me/my repo/.sessions/a-1/projects/-x/{ID}.jsonl'"
+
+
+def test_a_vm_with_nothing_of_its_own_saves_nothing():
+    copied = _found(ID, "-Users-me-demo", recorded=True, copied=True)
+    assert filters.claude_sessions_saved([copied], [], "/x") == {
+        "files": [],
+        "sessions": [],
+        "started": 0,
+        "continued": 0,
+        "memory": [],
+        "refused": 0,
+        "newest": "",
+    }
+
+
+@pytest.mark.parametrize(
+    ("folder", "sid"),
+    [
+        ("../../..", ID),
+        ("-home-dev-x\nevil", ID),
+        ("-home-dev x", ID),
+        ("/etc", ID),
+        ("-home-dev-x", "../../etc/passwd"),
+        ("-home-dev-x", ID.upper()),
+    ],
+)
+def test_what_the_vm_names_otherwise_than_claude_code_is_left_out_and_counted(folder, sid):
+    # The VM reports these: never handed to tar, never a path here.
+    saved = filters.claude_sessions_saved([_found(sid, folder, dir=True)], ["-home-dev-y", "../y"], "/x")
+    assert saved["files"] == ["-home-dev-y/memory"] and saved["sessions"] == []
+    assert saved["refused"] == 2 and saved["memory"] == ["-home-dev-y"]
+
+
+def test_each_saved_session_names_the_claude_code_that_wrote_it_and_the_newest_of_them():
+    saved = filters.claude_sessions_saved(
+        [_found(ID, "-x", version="2.1.310"), _found(OTHER, "-x", version="2.1.9; rm -rf /")], [], "/x"
+    )
+    assert [item["version"] for item in saved["sessions"]] == ["2.1.310", "2.1.9"]
+    assert saved["newest"] == "2.1.310"
+    assert filters.claude_sessions_saved([_found(ID, "-x")], [], "/x")["newest"] == ""
+
+
+def test_a_time_the_vm_makes_up_is_no_failure():
+    (item,) = filters.claude_sessions_saved([_found(ID, "-x", mtime=1e300)], [], "/x")["sessions"]
+    assert item["written"] == ""
 
 
 # --------------------------------------------------------------------------- git_checkouts_info ---
@@ -1018,3 +1180,202 @@ def test_the_module_takes_only_a_session_s_folder_and_id(tmp_path, patch_module)
         "sessions": [{"id": ID, "folder": "../../etc", "checkout": CHECKOUT, "memory": VM_MEMORY}],
     }
     assert "is not a session's folder and ID" in fail_main(copy.main, args)["msg"]
+
+
+# ------------------------------------------------------------------------ claude_sessions_fetch ---
+FOLDER = "-home-dev-projects-demo"
+ASKED = [f"{FOLDER}/{ID}.jsonl", f"{FOLDER}/{ID}", f"{FOLDER}/memory"]
+
+
+def _member(name, kind=tarfile.REGTYPE, data=b"", **fields):
+    info = tarfile.TarInfo(name)
+    info.type, info.size, info.mtime = kind, len(data), 1_700_000_000
+    for key, value in fields.items():
+        setattr(info, key, value)
+    return info, io.BytesIO(data) if kind in (tarfile.REGTYPE, tarfile.AREGTYPE) else None
+
+
+def _archive(*members):
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for info, data in members:
+            archive.addfile(info, data)
+    out.seek(0)
+    return out
+
+
+def _tree(path):
+    return sorted(str(item.relative_to(path)) for item in path.rglob("*"))
+
+
+def test_only_plain_files_and_folders_at_the_names_asked_for_are_unpacked(tmp_path):
+    # Whatever the VM sends: nothing lands outside the folder, and nothing there is a link.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "target").write_text("mine\n")
+    dest = tmp_path / "dest"
+    dest.mkdir(mode=0o700)
+    stream = _archive(
+        _member(f"./{FOLDER}/{ID}.jsonl", data=b'{"type":"user"}\n'),
+        _member(f"./{FOLDER}/{ID}", tarfile.DIRTYPE),
+        _member(f"./{FOLDER}/{ID}/subagents/agent-1.jsonl", data=b"{}\n"),
+        _member(f"./{FOLDER}/memory/MEMORY.md", data=b"- a note\n"),
+        _member(f"{tmp_path}/outside/abs", data=b"x"),
+        _member(f"./{FOLDER}/../../outside/up", data=b"x"),
+        _member(f"./{FOLDER}/{ID}/link", tarfile.SYMTYPE, linkname=str(outside / "target")),
+        _member(f"./{FOLDER}/{ID}/hard", tarfile.LNKTYPE, linkname=f"./{FOLDER}/{ID}.jsonl"),
+        _member(f"./{FOLDER}/memory/pipe", tarfile.FIFOTYPE),
+        _member(f"./{FOLDER}/memory/null", tarfile.CHRTYPE, devmajor=1, devminor=3),
+        _member(f"./{FOLDER}/{OTHER}.jsonl", data=b"not asked for\n"),
+        _member(f"./{FOLDER}/{ID}.jsonl/inside", data=b"x"),
+        _member(f"./{FOLDER}/{ID}.jsonl", data=b"twice\n"),
+    )
+    files, left_out, arrived = fetch.unpack(stream, str(dest), ASKED)
+    assert files == 3 and arrived == {f"{FOLDER}/{ID}.jsonl", f"{FOLDER}/{ID}"}
+    assert _tree(dest) == [
+        FOLDER,
+        f"{FOLDER}/{ID}",
+        f"{FOLDER}/{ID}.jsonl",
+        f"{FOLDER}/{ID}/subagents",
+        f"{FOLDER}/{ID}/subagents/agent-1.jsonl",
+        f"{FOLDER}/memory",
+        f"{FOLDER}/memory/MEMORY.md",
+    ]
+    assert (dest / FOLDER / f"{ID}.jsonl").read_bytes() == b'{"type":"user"}\n'
+    assert not any(path.is_symlink() for path in dest.rglob("*"))
+    assert _tree(outside) == ["target"] and (outside / "target").read_text() == "mine\n"
+    assert [item["why"] for item in left_out] == [
+        "not a path inside the folder",
+        "not a path inside the folder",
+        "a link",
+        "a link",
+        "not a plain file or folder",
+        "not a plain file or folder",
+        "not asked for",
+        "not asked for",
+        "named twice, or a folder of that name came first",
+    ]
+    for path in dest.rglob("*"):
+        assert stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600), path
+    assert int((dest / FOLDER / f"{ID}.jsonl").stat().st_mtime) == 1_700_000_000
+
+
+def test_a_transcript_asked_for_must_arrive_as_a_file_and_a_folder_as_a_folder(tmp_path):
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    stream = _archive(_member(f"./{FOLDER}/{ID}.jsonl", tarfile.DIRTYPE), _member(f"./{FOLDER}/memory", data=b"x"))
+    _, left_out, arrived = fetch.unpack(stream, str(dest), ASKED)
+    assert arrived == set() and _tree(dest) == []
+    assert [item["why"] for item in left_out] == [
+        "a folder where a transcript is asked for",
+        "a file where a folder is asked for",
+    ]
+
+
+def _vm_projects(tmp_path):
+    projects = tmp_path / "vm" / ".claude" / "projects"
+    (projects / FOLDER / ID / "subagents").mkdir(parents=True)
+    (projects / FOLDER / f"{ID}.jsonl").write_bytes(transcript())
+    (projects / FOLDER / ID / "subagents" / "agent-1.jsonl").write_text("{}\n")
+    (projects / FOLDER / "memory").mkdir()
+    (projects / FOLDER / "memory" / "MEMORY.md").write_text("- a note\n")
+    return projects
+
+
+def test_a_link_the_vm_holds_is_left_there_and_what_it_points_at_here_is_untouched(tmp_path):
+    projects = _vm_projects(tmp_path)
+    secret = tmp_path / "secret"
+    secret.write_text("mine\n")
+    secret.chmod(0o644)
+    (projects / FOLDER / ID / "subagents" / "link").symlink_to(secret)
+    (projects / FOLDER / "memory" / "home").symlink_to(tmp_path)
+    dest = tmp_path / "saved" / "alpha-1" / "projects"
+    result = fetch.fetch(str(dest), str(projects), ASKED)
+    assert result["files"] == 3 and sorted(item["why"] for item in result["left_out"]) == ["a link", "a link"]
+    assert not any(path.is_symlink() for path in dest.rglob("*"))
+    assert stat.S_IMODE(secret.stat().st_mode) == 0o644 and secret.read_text() == "mine\n"
+    assert stat.S_IMODE(dest.parent.stat().st_mode) == 0o700
+
+
+def test_a_name_that_did_not_arrive_or_a_folder_already_there_fails_the_fetch(tmp_path):
+    projects = _vm_projects(tmp_path)
+    with pytest.raises(RuntimeError, match=f"{FOLDER}/{OTHER}.jsonl did not arrive"):
+        fetch.fetch(str(tmp_path / "a" / "projects"), str(projects), [*ASKED, f"{FOLDER}/{OTHER}.jsonl"])
+    with pytest.raises(FileExistsError):
+        fetch.fetch(str(tmp_path / "a" / "projects"), str(projects), ASKED)
+
+
+@pytest.mark.parametrize("name", ["../etc/passwd", f"{FOLDER}/{ID}/x", "-x/notes.txt", f"a b/{ID}.jsonl", "/etc/x"])
+def test_only_a_transcript_a_session_s_folder_or_a_memory_folder_is_asked_for(tmp_path, name):
+    with pytest.raises(RuntimeError, match="is not a Claude Code transcript"):
+        fetch.fetch(str(tmp_path / "a" / "projects"), "/home/dev/.claude/projects", [name])
+    assert not (tmp_path / "a").exists()
+
+
+def _stand_in_ssh(tmp_path, monkeypatch, body):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "ssh").write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{tmp_path}/ssh-argv"\n{body}\n')
+    (bin_dir / "ssh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+
+def test_over_ssh_as_ansible_reaches_the_vm_never_asking(tmp_path, monkeypatch):
+    projects = _vm_projects(tmp_path)
+    # The stand-in runs the command it is handed, as the VM's shell would.
+    _stand_in_ssh(tmp_path, monkeypatch, 'for last; do :; done\nexec sh -c "$last"')
+    reach = {"user": "dev", "host": "192.0.2.10", "port": "2222", "private_key_file": "/k", "args": "-o Foo='a b'"}
+    result = fetch.fetch(str(tmp_path / "a" / "projects"), str(projects), ASKED, reach)
+    assert result["files"] == 3
+    argv = (tmp_path / "ssh-argv").read_text().splitlines()
+    assert argv[:8] == [
+        "-T",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=15",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+    ]
+    assert argv[9:] == ["-p", "2222", "-i", "/k", "-o", "Foo=a b", "dev@192.0.2.10", f"tar -cf - -C {projects} -T -"]
+
+
+def test_an_archive_that_ends_early_or_an_ssh_that_fails_fails_the_fetch(tmp_path, monkeypatch):
+    projects = _vm_projects(tmp_path)
+    reach = {"user": "dev", "host": "192.0.2.10"}
+    _stand_in_ssh(tmp_path, monkeypatch, f'tar -cf - -C "{projects}" "./{FOLDER}" | head -c 700')
+    with pytest.raises(RuntimeError, match="not a whole archive"):
+        fetch.fetch(str(tmp_path / "a" / "projects"), str(projects), ASKED, reach)
+    _stand_in_ssh(tmp_path, monkeypatch, 'echo "Permission denied (publickey)." >&2\nexit 255')
+    with pytest.raises(RuntimeError, match=r"Permission denied \(publickey\)"):
+        fetch.fetch(str(tmp_path / "b" / "projects"), str(projects), ASKED, reach)
+
+
+# The VM's tar is GNU tar, which sends what it can find and exits 2; this machine's may be bsdtar, which exits 1.
+def test_gnu_tar_s_2_names_the_session_that_did_not_arrive_or_fails_the_fetch_as_tar_s(tmp_path, monkeypatch):
+    projects = _vm_projects(tmp_path)
+    reach = {"user": "dev", "host": "192.0.2.10"}
+    sent = f'tar -cf - -C "{projects}" ' + " ".join(f'"./{name}"' for name in ASKED)
+    gone = f"tar: ./{FOLDER}/{OTHER}.jsonl: Cannot stat: No such file or directory"
+    _stand_in_ssh(tmp_path, monkeypatch, f'{sent}\necho "{gone}" >&2\nexit 2')
+    with pytest.raises(RuntimeError, match=f"^{FOLDER}/{OTHER}.jsonl did not arrive: tar: "):
+        fetch.fetch(str(tmp_path / "a" / "projects"), str(projects), [*ASKED, f"{FOLDER}/{OTHER}.jsonl"], reach)
+    _stand_in_ssh(tmp_path, monkeypatch, f'{sent}\necho "tar: x: Cannot open: Permission denied" >&2\nexit 2')
+    with pytest.raises(RuntimeError, match="^tar exited 2: tar: x: Cannot open"):
+        fetch.fetch(str(tmp_path / "b" / "projects"), str(projects), ASKED, reach)
+
+
+@pytest.mark.parametrize("reach", [{"host": "-oProxyCommand=x"}, {"host": "a b"}, {"host": "h", "user": "-l"}])
+def test_a_host_or_user_ssh_could_read_as_an_option_is_refused(reach):
+    with pytest.raises(ValueError, match="is not a user and a host"):
+        fetch.ssh_argv(reach, "true")
+
+
+def test_the_fetch_module_in_check_mode_writes_nothing(tmp_path, patch_module):
+    from conftest import fail_main
+
+    args = {"dest": str(tmp_path / "a" / "projects"), "root": "/home/dev/.claude/projects", "names": ASKED}
+    assert run_main(fetch.main, {**args, "_ansible_check_mode": True})["changed"] is True
+    assert not (tmp_path / "a").exists()
+    assert "could not be brought here" in fail_main(fetch.main, {**args, "names": ["../x"]})["msg"]

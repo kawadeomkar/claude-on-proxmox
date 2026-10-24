@@ -36,8 +36,9 @@ playbooks/
   code.yml                        refresh one alias, copy this machine's Claude sessions, write the Claude workspace
                                   file and the session notes, open it
   library/                        make code's session handoff: claude_sessions_info, git_checkouts_info (reads, here
-                                  and on the VM) and claude_sessions_copy (the VM's copies, their four edits, the
-                                  manifest)
+                                  and on the VM), claude_sessions_copy (the VM's copies, their four edits, the
+                                  manifest) and claude_sessions_fetch (a VM's sessions by tar, unpacked here as plain
+                                  files and folders only)
   templates/vm_session.md.j2      the session notes: a page about one VM, opened beside the Claude terminal
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
@@ -75,7 +76,8 @@ filter_plugins/settings.py        init_answer, the rule each make init answer fo
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
                                   and github_repository, owner/repo of a remote URL here and of a GitHub one on the VM;
                                   claude_project_folder, Claude Code's folder for a path; claude_session_dirs;
-                                  claude_sessions_listed, how make code says the sessions it left out
+                                  claude_sessions_saved, what of a VM's sessions to save; claude_sessions_listed,
+                                  how make code says the sessions it left out
 inventory/
   hosts.yml.example               the only address anyone supplies
   controller.yml                  localhost, so it picks up group_vars/all

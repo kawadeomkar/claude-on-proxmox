@@ -1,4 +1,4 @@
-"""Filters for the Claude Code sessions make code carries from this machine to a VM.
+"""Filters for the Claude Code sessions make code carries from this machine to a VM, and for a VM's own.
 
 playbooks/tasks/session_read.yml reads both ends with the modules in
 playbooks/library/ and decides here, from what they read, which session goes
@@ -6,12 +6,16 @@ to which checkout on the VM. A session belongs to the repository its first
 recorded directory is a checkout of, by that checkout's git origin: never by
 a folder's name, which a renamed clone, a subfolder or another owner's
 repository of the same name all get wrong (docs/architecture/lifecycle.md §4.9).
+claude_sessions_saved decides what of a VM's sessions exists only there, for a
+save of them before the VM is deleted.
 Nothing here reads a file: the modules do, and only these values reach a filter.
 """
 
 from __future__ import annotations
 
 import re
+import shlex
+from datetime import datetime, timezone
 
 from ansible.errors import AnsibleFilterError
 
@@ -21,6 +25,10 @@ _FOLDER_LENGTH = 200
 # A Claude Code worktree: <checkout>/.claude/worktrees/<name>, or a folder inside one.
 _WORKTREE = re.compile(r"^(?P<checkout>/.+?)/\.claude/worktrees/[^/]+(?:/.*)?$")
 _VERSION = re.compile(r"^(\d+(?:\.\d+)*)")
+# What a VM's sessions are saved by: a folder as Claude Code names one, and a session's ID. Anything else
+# a VM reports is left out, since the names travel to tar and become paths on this machine.
+_SAVED_FOLDER = re.compile(r"^[A-Za-z0-9-]+$")
+_SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # GitHub as a clone's origin names it: https, ssh, scp-like, and ssh over port 443.
 _GITHUB = re.compile(
     r"^(?:(?:https|ssh)://(?:[^@/]+@)?(?:ssh\.)?github\.com(?::\d+)?/|(?:[^@/:]+@)?github\.com:)"
@@ -299,6 +307,74 @@ def _session_problem(entry, sessions, wanted, by_repo, project, version, vm):
     return ""
 
 
+def _written(mtime):
+    try:
+        return datetime.fromtimestamp(float(mtime or 0), timezone.utc).isoformat(timespec="seconds")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
+def claude_sessions_saved(sessions, memory, dest):
+    """What of a VM's Claude Code sessions to save into ``dest``, and the list kept beside them.
+
+    ``sessions`` and ``memory`` are claude_sessions_info's for the VM, read with its manifest. Saved:
+    every session that holds a message and is not a copy make code wrote that is still as written -
+    this machine has that one - with the folder beside it, and every auto memory folder. What the VM
+    reports is not trusted: a session or folder not named as Claude Code names them is left out and
+    counted, never handed on. Returns ``files``, relative to the VM's projects folder, for
+    claude_sessions_fetch; ``sessions``, one item per session saved for sessions.json, with the
+    command that continues it here and the newest Claude Code that wrote it; ``newest``, the newest of
+    those, which resuming them here needs at least; ``started`` and ``continued``, how many began on the
+    VM and how many are copies continued there; ``memory``, the folders saved; ``refused``, how many
+    were left out.
+    """
+    refused = 0
+    kept = []
+    for session in sorted(sessions or [], key=lambda item: (str(item.get("folder", "")), str(item.get("id", "")))):
+        if not session.get("conversation") or session.get("copied"):
+            continue
+        if not _SAVED_FOLDER.match(str(session.get("folder", ""))) or not _SESSION_ID.match(str(session.get("id", ""))):
+            refused += 1
+            continue
+        kept.append(session)
+    files, listed = [], []
+    for session in kept:
+        key = f"{session['folder']}/{session['id']}"
+        files.append(f"{key}.jsonl")
+        if session.get("dir"):
+            files.append(key)
+        transcript = f"{dest}/projects/{key}.jsonl"
+        listed.append(
+            {
+                "id": session["id"],
+                "folder": session["folder"],
+                "cwd": str(session.get("cwd") or ""),
+                "branch": str(session.get("branch") or ""),
+                # Its digits alone: the VM reports it.
+                "version": ".".join(map(str, _version(session.get("version")) or ())),
+                "written": _written(session.get("mtime")),
+                "started_on_the_vm": not session.get("recorded"),
+                "transcript": transcript,
+                "resume": f"claude --resume {shlex.quote(transcript)}",
+            }
+        )
+    folders = sorted(str(folder) for folder in memory or [])
+    refused += sum(1 for folder in folders if not _SAVED_FOLDER.match(folder))
+    folders = [folder for folder in folders if _SAVED_FOLDER.match(folder)]
+    files += [f"{folder}/memory" for folder in folders]
+    started = sum(1 for item in listed if item["started_on_the_vm"])
+    versions = [item["version"] for item in listed if item["version"]]
+    return {
+        "files": files,
+        "sessions": listed,
+        "newest": max(versions, key=_version) if versions else "",
+        "started": started,
+        "continued": len(listed) - started,
+        "memory": folders,
+        "refused": refused,
+    }
+
+
 def claude_sessions_listed(rows):
     """make code's words for the sessions it left out: each ``[before, ids, after]`` with IDs, the IDs between.
 
@@ -316,6 +392,7 @@ class FilterModule:
             "claude_session_dirs": claude_session_dirs,
             "claude_sessions_listed": claude_sessions_listed,
             "claude_sessions_plan": claude_sessions_plan,
+            "claude_sessions_saved": claude_sessions_saved,
             "git_repository": git_repository,
             "github_repository": github_repository,
         }

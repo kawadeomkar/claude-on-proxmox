@@ -149,21 +149,25 @@ JSON report (`_left_to_do`), in every state they already run.
 ## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
 
 What `make code` carries of this machine's Claude Code sessions to a VM
-([§4.9](lifecycle.md#49-playbookscodeyml), **The session handoff**).
-Three modules, each in `playbooks/library/` beside the playbook that runs them, read and write the
+([§4.9](lifecycle.md#49-playbookscodeyml), **The session handoff**), and the reading and unpacking of
+a VM's own sessions that a save of them before `make destroy` is built on.
+Four modules, each in `playbooks/library/` beside the playbook that runs them, read and write the
 files; the filters decide from what they read, and touch no file.
 
 **`claude_sessions_info`** — the transcripts under `<dir>/projects/<folder>/<id>.jsonl` of a Claude
-Code configuration directory, written in the last `days` or named in `ids`: per
+Code configuration directory, written in the last `days`, named in `ids`, or with `all` every one: per
 session its folder and time, its first `cwd`, the newest `version`, the last `gitBranch`, whether
 it holds a user or assistant message, whether it has `tool-results/` or any folder beside it, and the
 pid of a live `claude` that `sessions/` says has it open - one whose command line, from `/proc` or `ps`,
 is still claude's, never a pid another program took since its entry was left; and that registry
 whole, whatever the transcripts (`registered`): the VM's, for which copies a `claude` there has open.
 Every complete line is parsed and only those values kept, so nothing that was said comes back. With
-`repo_paths`, `githubRepoPaths` from Claude Code's `.claude.json`, and nothing else of that file; with
-`claude`, the version of the first of those executables there is - only those, never `PATH`. Run here
-and on the VM.
+`manifest`, make code's on that machine, whether it was copied there (by ID, in whatever folder it is
+now) and whether it is still the copy as written (by digest); with `memory`, the folders whose auto
+memory folder holds a file; with `repo_paths`, `githubRepoPaths` from Claude Code's `.claude.json`, and
+nothing else of that file; with `claude`, the version of the first of those executables there is - only
+those, never `PATH`. A manifest of another format than `claude_sessions_copy` writes reads as none. Run
+here and on the VM.
 
 **`git_checkouts_info`** — for each directory asked about, or else each checkout directly inside one,
 the checkout's top level and `origin` URL as configured, never as a `url.<base>.insteadOf` rewrites it,
@@ -193,6 +197,17 @@ module's own, still as written: the session moved on the other machine, and its 
 The manifest is written after each copy. Sessions that are no longer asked for leave the
 mirror. Check mode writes nothing.
 
+**`claude_sessions_fetch`** — run on the controller, to save a VM's own sessions: `tar -cf - -T -` on the
+VM over SSH (`ssh` given as user, host, port, key and Ansible's SSH arguments, with `BatchMode`; none
+where the VM is this machine, as in the tests), the names on stdin each after `./`, so that none reads
+as an option, and the stream unpacked by Python's `tarfile` into a folder it creates: plain files and
+folders only, at the names asked for - `<folder>/<id>.jsonl`, `<folder>/<id>`, `<folder>/memory` -
+or inside one of the folders, with no `..`, absolute path or empty component, never through a link
+(`O_EXCL | O_NOFOLLOW`, in folders it made), 0600 and 0700, with the archive's times. A link, hard link,
+device or pipe is left out and named in `left_out`. It fails on SSH or tar failing, an archive cut short
+(a byte count that is no number of 512-byte blocks: `tarfile` reads one cut after its first header as
+one that ended) or a name asked for that did not arrive. Nothing of the content is returned.
+
 **`claude_sessions_plan(sessions, here, there, version, repo_paths, dest, wanted, project, vm)`** —
 the decision as data: `sessions` to copy, each with the checkout it continues in and the memory folder
 its prompt is pointed at; `files` for rsync; `newer`, `ambiguous`, `twice` (an ID in two folders here)
@@ -211,6 +226,16 @@ a hash of its own. **`claude_session_dirs(sessions)`** is the directories to ask
 each first directory, and the checkout of a Claude worktree's, which a gone worktree leaves behind.
 **`claude_sessions_listed(rows)`** is make code's words for the sessions it left out, each
 `[before, ids, after]` that has IDs, each ID by its first eight characters as `/resume` lists them.
+
+**`claude_sessions_saved(sessions, memory, dest)`** — what of a VM's sessions to save into
+`dest`, from `claude_sessions_info`'s reading of the VM with its manifest: every session that holds a
+message and is not a copy still as make code wrote it, with the folder beside it, and every auto memory
+folder. A folder not named as Claude Code names one or an ID that is not a session's - the VM's to make
+up - is left out and counted in `refused`, never handed to tar. Returns `files` for
+`claude_sessions_fetch`; `sessions` for `sessions.json`, each with its first directory, branch, last
+write, the version that wrote it (its digits alone), whether it began on the VM, and the `claude --resume
+<path>` that continues it, the path quoted; `newest`, the newest version, which resuming them needs at
+least; `started` and `continued`; and the `memory` folders.
 
 Covered by `tests/unit/test_session_handoff.py`, with real git checkouts and canned transcripts, and by
 the window step's runs in `tests/unit/test_code_session.py`.
