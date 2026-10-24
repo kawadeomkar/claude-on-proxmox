@@ -310,12 +310,15 @@ def fetch(dest, root, names, ssh=None):
             feeder.join()
         rc = process.wait()
         said = _said(errors)
-    # tar's 1 is a file that changed as it was read, which it still sent; 255 is ssh's own failure.
-    if rc not in (0, 1):
-        raise RuntimeError(f"{'ssh' if rc == 255 and ssh else 'tar'} exited {rc}{said}")
+    # 255 is ssh's own failure. GNU tar, the VM's, exits 2 for a name it cannot find and sends the
+    # rest, so that is said as the name; tar's 1 is a file that changed as it was read, still sent.
+    if rc == 255 and ssh:
+        raise RuntimeError(f"ssh exited {rc}{said}")
     missing = sorted(set(names) - arrived)
     if missing:
         raise RuntimeError(f"{', '.join(missing)} did not arrive{said}")
+    if rc not in (0, 1):
+        raise RuntimeError(f"tar exited {rc}{said}")
     return {"files": files, "folders": folders + 1, "left_out": left_out[:LISTED], "left_out_count": len(left_out)}
 
 

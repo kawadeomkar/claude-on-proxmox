@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1740 tests. By file:
+pytest over `tests/unit/`: 1741 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -90,7 +90,7 @@ pytest over `tests/unit/`: 1740 tests. By file:
   cannot find - the refresh after a sign-in in the terminal, the zone `code.yml` finds (`TZ`, the
   `/etc/localtime` link on Linux and macOS, `/etc/timezone`, else UTC, shell syntax and paths refused),
   and the workspace each window gets: the notes' folder only where its own folder holds them.
-- **The session handoff** (`test_session_handoff.py` 149): the plan - by origin in every URL form here,
+- **The session handoff** (`test_session_handoff.py` 150): the plan - by origin in every URL form here,
   a GitHub one only on the VM, a renamed clone, a gone worktree's checkout, `githubRepoPaths`, another
   owner's repository of the same name refused, `SESSION`'s reasons - the transcripts read without their
   content, an open session only at a pid that is still a claude's, the registry alone, a transcript gone
@@ -104,10 +104,11 @@ pytest over `tests/unit/`: 1740 tests. By file:
   check mode, and what of a VM's sessions destroy saves - every one with `all`, make code's copies told
   apart by the manifest, the memory folders, names the VM made up left out, the command that continues
   each, its path quoted - and how: archives with absolute paths, `..`, links, hard links, devices and
-  names not asked for unpacked into nothing outside the folder, an archive cut short, a failing or a
-  stand-in `ssh` given the port, key and arguments. In `test_code_session.py`, the window step's session
-  tasks between two real checkouts, the VM's with a GitHub origin: the copies and their edits, a second
-  run changing nothing, the sync off, a sync whose rsync fails opening the window all the same, syncs
+  names not asked for unpacked into nothing outside the folder, an archive cut short, GNU tar's exit 2
+  for a name it cannot find said as that name, a failing or a stand-in `ssh` given the port, key and
+  arguments. In `test_code_session.py`, the window step's session tasks between two real checkouts,
+  the VM's with a GitHub origin: the copies and their edits, a second run changing nothing, the sync
+  off, a sync whose rsync fails opening the window all the same, syncs
   that leave their one session out - open on the VM, in two folders here, changed on both - saying so
   and never that none is of the VM's repositories,
   `SESSION`'s fast-forward from a VM branch behind it, on it or not, and each refusal - open on either

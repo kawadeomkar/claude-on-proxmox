@@ -1349,6 +1349,20 @@ def test_an_archive_that_ends_early_or_an_ssh_that_fails_fails_the_fetch(tmp_pat
         fetch.fetch(str(tmp_path / "b" / "projects"), str(projects), ASKED, reach)
 
 
+# The VM's tar is GNU tar, which sends what it can find and exits 2; this machine's may be bsdtar, which exits 1.
+def test_gnu_tar_s_2_names_the_session_that_did_not_arrive_or_fails_the_fetch_as_tar_s(tmp_path, monkeypatch):
+    projects = _vm_projects(tmp_path)
+    reach = {"user": "dev", "host": "192.0.2.10"}
+    sent = f'tar -cf - -C "{projects}" ' + " ".join(f'"./{name}"' for name in ASKED)
+    gone = f"tar: ./{FOLDER}/{OTHER}.jsonl: Cannot stat: No such file or directory"
+    _stand_in_ssh(tmp_path, monkeypatch, f'{sent}\necho "{gone}" >&2\nexit 2')
+    with pytest.raises(RuntimeError, match=f"^{FOLDER}/{OTHER}.jsonl did not arrive: tar: "):
+        fetch.fetch(str(tmp_path / "a" / "projects"), str(projects), [*ASKED, f"{FOLDER}/{OTHER}.jsonl"], reach)
+    _stand_in_ssh(tmp_path, monkeypatch, f'{sent}\necho "tar: x: Cannot open: Permission denied" >&2\nexit 2')
+    with pytest.raises(RuntimeError, match="^tar exited 2: tar: x: Cannot open"):
+        fetch.fetch(str(tmp_path / "b" / "projects"), str(projects), ASKED, reach)
+
+
 @pytest.mark.parametrize("reach", [{"host": "-oProxyCommand=x"}, {"host": "a b"}, {"host": "h", "user": "-l"}])
 def test_a_host_or_user_ssh_could_read_as_an_option_is_refused(reach):
     with pytest.raises(ValueError, match="is not a user and a host"):
