@@ -615,7 +615,7 @@ Claude Code's own Agent SDK documents. The rules:
   conversation. A session written by a Claude Code newer than the VM's (`claude --version` there,
   from the native installer's path or npm's, never `PATH`) is left here and named. So is a session in
   two folders here (`twice`), which `claude --resume <id>` would resume from neither once both were on
-  the VM, and one a `claude` on the VM has open (its `sessions/` registry there, read with `registry`),
+  the VM, and one a `claude` on the VM has open (its `sessions/` registry there, `registered`),
   whose copy is never replaced under the claude holding it.
 - **Four edits, nothing else** (`claude_sessions_copy`): the memory folder in each `prompt_snapshot`
   attachment becomes `<VM ~/.claude>/projects/<checkout's folder>/memory/` - read from the entry's

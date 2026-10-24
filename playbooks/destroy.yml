@@ -58,6 +58,20 @@
         fail_msg: "Destroy not confirmed."
         quiet: true
 
+    # The sessions a VM's save brings back go into a folder of this machine,
+    # which a relative path would leave wherever the module ran: refused first,
+    # before Proxmox is asked anything, rather than VM by VM.
+    - name: Refuse a folder for the saved sessions that is not an absolute path
+      ansible.builtin.assert:
+        that: destroy_sessions_dir | default('', true) | expanduser is match('/')
+        fail_msg: >-
+          destroy_sessions_dir is a folder on this machine and must be an absolute path (or start with ~), not
+          "{{ destroy_sessions_dir }}"; empty, it is .sessions/ in this checkout. Nothing was deleted.
+        quiet: true
+      when:
+        - destroy_save_sessions | default(true) | bool
+        - destroy_sessions_dir | default('', true) | length > 0
+
     - name: List every VM in the cluster
       ansible.builtin.import_tasks: tasks/cluster_vms.yml
 
@@ -126,20 +140,6 @@
           More than one VM is named {{ claude_vm_duplicated | join(', ') }} (VMIDs {{ claude_vm_duplicate_ids }}), so
           it is not clear which one to delete, and nothing was. Rename or remove the duplicates, then run this again.
         quiet: true
-
-    # The sessions a VM's save brings back go into a folder of this machine,
-    # which a relative path would leave wherever the module ran: refused here,
-    # before any VM is started, rather than VM by VM.
-    - name: Refuse a folder for the saved sessions that is not an absolute path
-      ansible.builtin.assert:
-        that: destroy_sessions_dir | default('', true) | expanduser is match('/')
-        fail_msg: >-
-          destroy_sessions_dir is a folder on this machine and must be an absolute path (or start with ~), not
-          "{{ destroy_sessions_dir }}"; empty, it is .sessions/ in this checkout. Nothing was deleted.
-        quiet: true
-      when:
-        - destroy_save_sessions | default(true) | bool
-        - destroy_sessions_dir | default('', true) | length > 0
 
     # Releasing a VM - signing it out of Claude and GitHub, taking it off the
     # tailnet - happens on the VM, over SSH, since what it signed in with is on
@@ -514,29 +514,26 @@
         claude_release_claude: "{{ claude_release_vm.claude_code_release_said | default('') }}"
         claude_release_github: "{{ claude_release_vm.github_projects_release_said | default('') }}"
         claude_release_tailscale: "{{ claude_release_vm.tailscale_release_said | default('') }}"
+        # What the save said, which is nothing for a VM with nothing of its own; a VM it did not run on
+        # kept nothing.
         claude_release_sessions: >-
-          {{ claude_release_vm.claude_vm_sessions_said | default('')
-             if claude_release_vm.destroy_save_sessions | default(true) | bool
-             else 'not saved (destroy_save_sessions: false)' }}
+          {{ claude_release_vm.claude_vm_sessions_said
+             if claude_release_vm.claude_vm_sessions_said is defined
+             else 'not saved (destroy_save_sessions: false)'
+             if not (claude_release_vm.destroy_save_sessions | default(true) | bool)
+             else 'not saved, nor its auto memory, if it had any' }}
         claude_release_parts: >-
           {{ (['Claude Code: ' ~ claude_release_claude] if claude_release_claude | length > 0 else [])
              + (['GitHub: ' ~ claude_release_github] if claude_release_github | length > 0 else [])
              + (['Tailscale: ' ~ claude_release_tailscale] if claude_release_tailscale | length > 0 else [])
              + (['Claude Code sessions: ' ~ claude_release_sessions] if claude_release_sessions | length > 0 else [])
              + claude_release_vm.claude_vm_release_failures | default([]) }}
-        # Said only where the save ran: a VM not reached, or with the save off, kept nothing.
-        claude_release_saved: "{{ claude_release_vm.claude_vm_sessions_said is defined }}"
         claude_release_left: >-
           {{ 'its Tailscale device, if it was on your tailnet, stays until you delete it ' ~ claude_release_where
              ~ ' (or a VM built again under its name joins as <name>-1); a GitHub token its sign-in made stays valid until'
              ~ ' revoked at https://github.com/settings/applications, under GitHub CLI (which signs out every gh); and'
              ~ ' Anthropic has no way to revoke its Claude Code login from outside.'
-             ~ (' Claude Code sessions: ' ~ claude_release_sessions ~ '.'
-                if claude_release_saved | bool and claude_release_sessions | length > 0
-                else '' if claude_release_saved | bool
-                else ' Its Claude Code sessions and auto memory, if it had any, were not saved'
-                     ~ (' (destroy_save_sessions: false).'
-                        if not (claude_release_vm.destroy_save_sessions | default(true) | bool) else '.')) }}
+             ~ (' Claude Code sessions: ' ~ claude_release_sessions ~ '.' if claude_release_sessions | length > 0 else '') }}
       ansible.builtin.debug:
         msg: >-
           {{ claude_release_name }}:

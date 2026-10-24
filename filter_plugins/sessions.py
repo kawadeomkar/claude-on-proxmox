@@ -197,7 +197,7 @@ def claude_sessions_plan(
     what rsync sends for them, relative to the projects folder; ``repositories`` their repositories.
     ``newer``, ``ambiguous``, ``twice`` (an ID in more than one folder here, which ``claude --resume
     <id>`` could not choose between) and ``open`` are the sessions left out for a reason worth saying;
-    ``unmatched`` counts the ones of no repository the VM has cloned. ``session`` is SESSION's own entry, with
+    one of no repository the VM has cloned is in none. ``session`` is SESSION's own entry, with
     ``problem`` the reason it cannot be opened, or "".
     """
     here = {item["path"]: item for item in here or [] if item.get("path")}
@@ -214,7 +214,6 @@ def claude_sessions_plan(
         "ambiguous": [],
         "twice": [],
         "open": [],
-        "unmatched": 0,
         "session": {},
     }
     folders_of = {}
@@ -267,8 +266,6 @@ def claude_sessions_plan(
             plan["newer"].append(session["id"])
         elif why != "none":
             plan["ambiguous"].append({"id": session["id"], "repository": repo, "names": why})
-        else:
-            plan["unmatched"] += 1
     if wanted:
         plan["session"]["problem"] = _session_problem(plan["session"], sessions, wanted, by_repo, project, version, vm)
     plan["repositories"] = sorted(repositories)
@@ -388,11 +385,22 @@ def claude_sessions_saved(sessions, memory, dest):
     }
 
 
+def claude_sessions_listed(rows):
+    """make code's words for the sessions it left out: each ``[before, ids, after]`` with IDs, the IDs between.
+
+    An ID is said by its first eight characters, as /resume lists it; nothing of a transcript is.
+    """
+    return "".join(
+        f"{before}{', '.join(str(sid).split('-')[0] for sid in ids)}{after}" for before, ids, after in rows or [] if ids
+    )
+
+
 class FilterModule:
     def filters(self):
         return {
             "claude_project_folder": claude_project_folder,
             "claude_session_dirs": claude_session_dirs,
+            "claude_sessions_listed": claude_sessions_listed,
             "claude_sessions_plan": claude_sessions_plan,
             "claude_sessions_saved": claude_sessions_saved,
             "git_repository": git_repository,

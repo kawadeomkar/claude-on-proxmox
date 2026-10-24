@@ -26,7 +26,7 @@ options:
     elements: str
     default: []
   under:
-    description: Also report on every git checkout directly inside this directory.
+    description: Report on every git checkout directly inside this directory instead of on O(paths).
     type: str
   status:
     description: Also report whether each tree is clean, the branch HEAD is on and HEAD's commit.
@@ -60,7 +60,7 @@ EXAMPLES = r"""
 
 RETURN = r"""
 checkouts:
-  description: One item per directory, O(paths) first, then O(under)'s checkouts by name.
+  description: One item per directory, in O(paths)' order or O(under)'s checkouts by name.
   returned: always
   type: list
   elements: dict
@@ -311,6 +311,7 @@ def main():
             "target": {"type": "str"},
             "busy": {"type": "bool", "default": False},
         },
+        mutually_exclusive=[["paths", "under"]],
         supports_check_mode=True,
     )
     params = module.params
@@ -325,20 +326,19 @@ def main():
     if target and not COMMIT.match(target):
         module.fail_json(msg=f"{target!r} is not a full commit ID.")
     processes = claude_processes() if params["busy"] else None
-    paths = list(params["paths"])
+    paths = params["paths"]
     if params["under"]:
         try:
             names = sorted(entry.name for entry in os.scandir(params["under"]) if entry.is_dir(follow_symlinks=False))
         except OSError:
             names = []
-        paths += [os.path.join(params["under"], name) for name in names]
+        paths = [os.path.join(params["under"], name) for name in names]
     found = [read(module, path, params["status"], branch, processes, target) for path in paths]
     if params["under"]:
-        under = len(params["paths"])
         # A checkout's own top level, compared resolved: git names it by its real path.
-        found = found[:under] + [
+        found = [
             item
-            for item in found[under:]
+            for item in found
             if item["git"] and os.path.realpath(item["toplevel"]) == os.path.realpath(item["path"])
         ]
     module.exit_json(changed=False, checkouts=found)

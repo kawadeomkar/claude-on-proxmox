@@ -138,7 +138,7 @@ Set in `roles/claude_code/vars/main.yml`. These are not settings: Ansible ranks 
 | `claude_code_remote_control_stay_up_seconds` | `20` |
 | `claude_code_release_state` | <code>{{ (claude_code_release_status.stdout &#124; from_json) if (claude_code_release_status.stdout &#124; default('') &#124; trim)[:1] == '{' else {} }}</code> |
 | `claude_code_release_signed_in` | <code>{{ claude_code_release_state.loggedIn &#124; default(false) &#124; bool }}</code> |
-| `claude_code_release_rc_stopped` | <code>{{ (claude_code_release_stopped.results &#124; default([]) + claude_code_release_paused.results &#124; default([])) &#124; selectattr('changed', 'defined') &#124; selectattr('changed') &#124; selectattr('item.item', 'equalto', 'service') &#124; list &#124; length > 0 }}</code> |
+| `claude_code_release_rc_stopped` | <code>{{ claude_code_release_paused.results &#124; default([]) &#124; selectattr('changed', 'defined') &#124; selectattr('changed') &#124; selectattr('item.item', 'equalto', 'service') &#124; list &#124; length > 0 }}</code> |
 | `claude_code_release_why` | <code>{{ (claude_code_release_logout.stderr &#124; default('') &#124; plain_text &#124; regex_replace('\s+', ' ') &#124; trim) or 'no reason given' }}</code> |
 | `claude_code_release_summary` | <code>{{ ((['Remote Control stopped (its session stays in the Claude app, offline)'] if claude_code_release_rc_stopped &#124; bool else []) + ([('signed out' if (claude_code_release_logout.rc &#124; default(1)) == 0 else 'could not sign out (' ~ claude_code_release_why ~ ')')] if claude_code_release_signed_in &#124; bool else [])) &#124; join('; ') }}</code> |
 
@@ -452,8 +452,7 @@ classDef rescue stroke:#665352,stroke-width:2px;
 
 | Task | Module | When |
 |---|---|---|
-| Look for Remote Control's units | `ansible.builtin.stat` |  |
-| Stop Remote Control, and what starts it | `ansible.builtin.systemd_service` |  |
+| Stop Remote Control, and what starts it | `ansible.builtin.include_tasks` | <code>claude_code_release_paused is not defined</code> |
 | Read the login | `ansible.builtin.command` |  |
 | Sign claude out | `ansible.builtin.command` | <code>claude_code_release_signed_in &#124; bool</code> |
 | Record what became of the login | `ansible.builtin.set_fact` |  |
@@ -470,12 +469,11 @@ classDef importRole stroke:#699ba7,stroke-width:2px;
 classDef includeVars stroke:#8e44ad,stroke-width:2px;
 classDef rescue stroke:#665352,stroke-width:2px;
 
-  Start-->|Task| release___Look_for_Remote_Control_s_units0[release   look for remote control s units]:::task
-  release___Look_for_Remote_Control_s_units0-->|Task| release___Stop_Remote_Control__and_what_starts_it1[release   stop remote control  and what starts it]:::task
-  release___Stop_Remote_Control__and_what_starts_it1-->|Task| release___Read_the_login2[release   read the login]:::task
-  release___Read_the_login2-->|Task| release___Sign_claude_out3[release   sign claude out<br>When: **claude code release signed in   bool**]:::task
-  release___Sign_claude_out3-->|Task| release___Record_what_became_of_the_login4[release   record what became of the login]:::task
-  release___Record_what_became_of_the_login4-->End
+  Start-->|Include task| release___Stop_Remote_Control__and_what_starts_it_release_pause_yml_0[release   stop remote control  and what starts it<br>When: **claude code release paused is not defined**<br>include_task: release pause yml]:::includeTasks
+  release___Stop_Remote_Control__and_what_starts_it_release_pause_yml_0-->|Task| release___Read_the_login1[release   read the login]:::task
+  release___Read_the_login1-->|Task| release___Sign_claude_out2[release   sign claude out<br>When: **claude code release signed in   bool**]:::task
+  release___Sign_claude_out2-->|Task| release___Record_what_became_of_the_login3[release   record what became of the login]:::task
+  release___Record_what_became_of_the_login3-->End
 ```
 
 ### `release_pause.yml` - entry point `release_pause`

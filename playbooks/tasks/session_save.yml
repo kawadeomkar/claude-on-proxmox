@@ -68,17 +68,6 @@
       {{ (destroy_sessions_dir | default('', true) | expanduser or (playbook_dir | dirname) ~ '/.sessions')
          | regex_replace('(.)/+$', '\1') ~ '/' ~ inventory_hostname ~ '-' ~ now(fmt='%Y%m%d-%H%M%S') }}
 
-# destroy.yml's first play refuses a relative destroy_sessions_dir before
-# anything starts; this repeats it for a run of this file alone, since a
-# relative path would land wherever the module ran.
-- name: session_save | Refuse a folder here that is not an absolute path
-  ansible.builtin.assert:
-    that: claude_vm_save_dir is match('/')
-    fail_msg: >-
-      destroy_sessions_dir is a folder on this machine and must be an absolute path (or start with ~),
-      not "{{ destroy_sessions_dir }}".
-    quiet: true
-
 # make code's manifest says which copies are still as it wrote them, from the
 # directory make code keeps on the VM, as code.yml names it.
 - name: session_save | Read what of the VM's Claude Code sessions is only there

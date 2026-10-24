@@ -585,8 +585,8 @@ def test_a_vm_that_could_not_be_reached_is_left_as_it_is_and_what_is_left_named(
         "unreached: could not be reached, so it was not released: its Tailscale device, if it was on your tailnet,"
         f" stays until you delete it at {ADMIN} (or a VM built again under its name joins as <name>-1); a GitHub token"
         " its sign-in made stays valid until revoked at https://github.com/settings/applications, under GitHub CLI"
-        " (which signs out every gh); and Anthropic has no way to revoke its Claude Code login from outside. Its"
-        " Claude Code sessions and auto memory, if it had any, were not saved."
+        " (which signs out every gh); and Anthropic has no way to revoke its Claude Code login from outside. Claude"
+        " Code sessions: not saved, nor its auto memory, if it had any."
     )
 
 
@@ -1076,9 +1076,10 @@ def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_sto
 
 
 @pytest.mark.parametrize("folder", ["saved-sessions", "./saved"])
-def test_a_relative_folder_for_the_saved_sessions_is_refused_before_anything_starts(tmp_path, fake_pve, folder):
-    # The module that writes them ran in playbooks/, where such a folder is not git-ignored.
-    root, playbook = _head(tmp_path, fake_pve)
+def test_a_relative_folder_for_the_saved_sessions_is_refused_before_anything_starts(tmp_path, folder):
+    # The module that writes them ran in playbooks/, where such a folder is not git-ignored. Refused
+    # before Proxmox is asked anything: nothing listens at the API's address.
+    root, playbook = _head(tmp_path, "https://127.0.0.1:9")
     extra = {"vm_name": "parked", "confirm_destroy": "yes", "destroy_sessions_dir": folder}
     report = _run(root, playbook, {}, "-e", json.dumps(extra), timeout=120)
     assert report["rc"] != 0
@@ -1086,5 +1087,4 @@ def test_a_relative_folder_for_the_saved_sessions_is_refused_before_anything_sta
     assert failure.startswith(
         "Refuse a folder for the saved sessions that is not an absolute path: destroy_sessions_dir"
     )
-    calls = [json.loads(line) for line in (tmp_path / "pve" / "calls.log").read_text().splitlines()]
-    assert not [c for c in calls if c["path"].endswith("/status/start")]
+    assert not [name for name, _, _ in _results_of(report) if name.startswith("cluster_vms |")]

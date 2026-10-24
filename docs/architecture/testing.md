@@ -93,8 +93,9 @@ pytest over `tests/unit/`: 1741 tests. By file:
 - **The session handoff** (`test_session_handoff.py` 150): the plan - by origin in every URL form here,
   a GitHub one only on the VM, a renamed clone, a gone worktree's checkout, `githubRepoPaths`, another
   owner's repository of the same name refused, `SESSION`'s reasons - the transcripts read without their
-  content, an open session only at a pid that is still a claude's, the registry alone, a transcript gone
-  as it is listed, the git reads against real checkouts (the origin as configured and without its
+  content, an open session only at a pid that is still a claude's, the registry whatever the
+  transcripts, a manifest of another format read as none, a transcript gone as it is listed, the git
+  reads against real checkouts (the origin as configured and without its
   credential, a detached `HEAD` no ref holds, the ignored files a move would replace, untracked files a
   config hides, a path or branch holding `$` or `~`) and a branch name or commit git would take as an
   option refused, an ID in two folders here or open on the VM left out,

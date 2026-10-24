@@ -192,6 +192,12 @@ def test_make_code_s_own_directory_on_the_vm_is_one_definition_for_code_and_dest
         assert "| make_code_dir(vscode_workspaces_dir | default('', true))" in (REPO / path).read_text(), path
 
 
+def test_the_sessions_left_out_are_said_list_by_list_by_their_first_eight_characters():
+    rows = [[" Kept: ", [ID, OTHER], "."], [" Not copied: ", [], "."], [" Open: ", [OTHER], "; why."]]
+    assert filters.claude_sessions_listed(rows) == f" Kept: {ID[:8]}, {OTHER[:8]}. Open: {OTHER[:8]}; why."
+    assert filters.claude_sessions_listed([[" Kept: ", [], "."]]) == ""
+
+
 def _session(sid=ID, cwd="/Users/me/demo", **extra):
     return {
         "id": sid,
@@ -213,6 +219,11 @@ def _plan(sessions, here, there=THERE, version="2.1.308", repo_paths=None, **kwa
     return filters.claude_sessions_plan(sessions, here, there, version, repo_paths or {}, "/home/dev/.claude", **kwargs)
 
 
+def _placed(plan):
+    """The sessions a plan copies, and those it leaves out for a reason make code says."""
+    return plan["sessions"] + plan["newer"] + plan["ambiguous"] + plan["twice"] + plan["open"]
+
+
 def test_a_session_goes_to_the_checkout_whose_origin_names_its_repository():
     here = [{"path": "/Users/me/demo", "exists": True, "origin": "git@github.com:Octo/Demo.git"}]
     plan = _plan([_session(tools=True)], here)
@@ -231,8 +242,7 @@ def test_a_session_goes_to_the_checkout_whose_origin_names_its_repository():
 )
 def test_another_repository_is_not_copied(origin):
     here = [{"path": "/Users/me/demo", "exists": True, "origin": origin}]
-    plan = _plan([_session()], here)
-    assert plan["sessions"] == [] and plan["unmatched"] == 1
+    assert _placed(_plan([_session()], here)) == []
 
 
 def test_a_folder_named_like_a_checkout_of_another_repository_does_not_match():
@@ -261,12 +271,11 @@ def test_a_gone_clone_resolves_through_github_repo_paths_and_nothing_else_does()
     here = [{"path": "/Users/me/old-demo", "exists": False, "origin": ""}]
     listed = {"Octo/Demo": ["/Users/me/old-demo"]}
     assert len(_plan([_session(cwd="/Users/me/old-demo")], here, repo_paths=listed)["sessions"]) == 1
-    assert _plan([_session(cwd="/Users/me/old-demo")], here)["unmatched"] == 1
+    assert _placed(_plan([_session(cwd="/Users/me/old-demo")], here)) == []
 
 
 def test_a_session_with_no_directory_or_no_message_is_not_copied():
-    plan = _plan([_session(cwd=""), _session(OTHER, conversation=False)], [])
-    assert plan["sessions"] == [] and plan["unmatched"] == 1
+    assert _placed(_plan([_session(cwd=""), _session(OTHER, conversation=False)], [])) == []
 
 
 def test_a_session_newer_than_the_vm_s_claude_is_left_and_named():
@@ -378,7 +387,6 @@ def test_a_transcript_is_summarized_and_nothing_it_says_is_kept(tmp_path):
             "id": ID,
             "folder": "-Users-me-demo",
             "mtime": found[0]["mtime"],
-            "size": len(transcript(branch="feat/x", partial=True)),
             "open": 0,
             "tools": True,
             "dir": True,
@@ -497,13 +505,12 @@ def test_a_claude_s_command_line_is_read_from_proc_where_there_is_one(tmp_path):
     assert info._argv(43, str(proc)) == []
 
 
-def test_the_registry_alone_is_read_with_registry(tmp_path, patch_module, a_claude):
+def test_the_registry_is_returned_whatever_the_transcripts(tmp_path, patch_module, a_claude):
     root = _claude_dir(tmp_path, {})
     (root / "sessions").mkdir()
     (root / "sessions" / f"{a_claude}.json").write_text(json.dumps({"pid": a_claude, "sessionId": ID}))
-    result = run_main(info.main, {"path": str(root), "registry": True})
+    result = run_main(info.main, {"path": str(root)})
     assert result["registered"] == {ID: a_claude} and result["sessions"] == []
-    assert run_main(info.main, {"path": str(root)})["registered"] == {}
 
 
 def test_a_transcript_that_goes_as_it_is_listed_is_not_listed(tmp_path, monkeypatch):
@@ -558,10 +565,14 @@ def test_the_module_reports_and_changes_nothing(tmp_path, patch_module):
     (root / "projects" / "-Users-me-demo" / "memory").mkdir()
     (root / "projects" / "-Users-me-demo" / "memory" / "MEMORY.md").write_text("- a note\n")
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({"sessions": {f"-Users-me-demo/{ID}.jsonl": "0" * 64}}))
+    manifest.write_text(json.dumps({"format": 1, "sessions": {f"-Users-me-demo/{ID}.jsonl": "0" * 64}}))
     result = run_main(info.main, {"path": str(root), "all": True, "manifest": str(manifest), "memory": True})
     assert [(item["recorded"], item["copied"]) for item in result["sessions"]] == [(True, False)]
     assert result["memory"] == ["-Users-me-demo"]
+    # A manifest of another format is read as claude_sessions_copy reads it: as none.
+    manifest.write_text(json.dumps({"format": 2, "sessions": {f"-Users-me-demo/{ID}.jsonl": "0" * 64}}))
+    result = run_main(info.main, {"path": str(root), "all": True, "manifest": str(manifest)})
+    assert [(item["recorded"], item["copied"]) for item in result["sessions"]] == [(False, False)]
 
 
 # ------------------------------------------------------------------ claude_sessions_saved ---
@@ -1087,7 +1098,7 @@ def test_a_session_moved_to_another_folder_here_takes_its_copy_along(tmp_path):
     os.renames(mirror / old[0] / ID, mirror / new[0] / ID)
     result, changed = _copy(tmp_path, mirror, [new])
     projects = tmp_path / "vm" / ".claude" / "projects"
-    assert changed and result["written"] == [ID] and result["moved"] == [ID] and result["held"] == {}
+    assert changed and result["written"] == [ID] and result["held"] == {}
     assert (projects / new[0] / f"{ID}.jsonl").exists() and not (projects / old[0]).exists()
     assert sorted(json.loads((tmp_path / "ws" / "manifest.json").read_text())["sessions"]) == [f"{new[0]}/{ID}.jsonl"]
     again, changed = _copy(tmp_path, mirror, [new])
@@ -1227,7 +1238,7 @@ def test_only_plain_files_and_folders_at_the_names_asked_for_are_unpacked(tmp_pa
         _member(f"./{FOLDER}/{ID}.jsonl/inside", data=b"x"),
         _member(f"./{FOLDER}/{ID}.jsonl", data=b"twice\n"),
     )
-    files, _, left_out, arrived = fetch.unpack(stream, str(dest), ASKED)
+    files, left_out, arrived = fetch.unpack(stream, str(dest), ASKED)
     assert files == 3 and arrived == {f"{FOLDER}/{ID}.jsonl", f"{FOLDER}/{ID}"}
     assert _tree(dest) == [
         FOLDER,
@@ -1261,7 +1272,7 @@ def test_a_transcript_asked_for_must_arrive_as_a_file_and_a_folder_as_a_folder(t
     dest = tmp_path / "dest"
     dest.mkdir()
     stream = _archive(_member(f"./{FOLDER}/{ID}.jsonl", tarfile.DIRTYPE), _member(f"./{FOLDER}/memory", data=b"x"))
-    _, _, left_out, arrived = fetch.unpack(stream, str(dest), ASKED)
+    _, left_out, arrived = fetch.unpack(stream, str(dest), ASKED)
     assert arrived == set() and _tree(dest) == []
     assert [item["why"] for item in left_out] == [
         "a folder where a transcript is asked for",

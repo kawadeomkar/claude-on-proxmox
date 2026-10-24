@@ -86,10 +86,6 @@ files:
   description: How many files were written.
   returned: always
   type: int
-folders:
-  description: How many folders were made, O(dest) among them.
-  returned: always
-  type: int
 left_out:
   description: Each entry of the archive not written, with why, by its name in the archive; the first 50.
   returned: always
@@ -160,7 +156,7 @@ def _relative(name):
     return parts
 
 
-def _folder(top, parts, made):
+def _folder(top, parts):
     """Make each folder of ``parts`` under ``top`` that is missing, 0700; one that is there must be a folder."""
     path = top
     for part in parts:
@@ -168,7 +164,6 @@ def _folder(top, parts, made):
         try:
             os.mkdir(path, 0o700)
             os.chmod(path, 0o700)
-            made.append(path)
         except FileExistsError:
             if not stat.S_ISDIR(os.lstat(path).st_mode):
                 raise Refused("a file stands where a folder of it is") from None
@@ -176,13 +171,13 @@ def _folder(top, parts, made):
 
 
 def unpack(stream, dest, names):
-    """Unpack the tar ``stream`` into the folder ``dest`` (there already, empty): (files, folders, left_out, arrived).
+    """Unpack the tar ``stream`` into the folder ``dest`` (there already, empty): (files, left_out, arrived).
 
     Only plain files and folders, and only at ``names`` or inside one of the folders among them: a
     transcript is a file, and nothing is inside it. Everything else is left out.
     """
     wanted = {tuple(name.split("/")): name.endswith(".jsonl") for name in names}
-    files, made, left_out, arrived = 0, [], [], set()
+    files, left_out, arrived = 0, [], set()
     with tarfile.open(fileobj=stream, mode="r|") as archive:
         for member in archive:
             try:
@@ -194,11 +189,11 @@ def unpack(stream, dest, names):
                 if member.isdir():
                     if exact and wanted[top]:
                         raise Refused("a folder where a transcript is asked for")
-                    _folder(dest, parts, made)
+                    _folder(dest, parts)
                 elif member.isreg():
                     if exact and not wanted[top]:
                         raise Refused("a file where a folder is asked for")
-                    _write(_folder(dest, parts[:-1], made), parts[-1], archive.extractfile(member), member.mtime)
+                    _write(_folder(dest, parts[:-1]), parts[-1], archive.extractfile(member), member.mtime)
                     files += 1
                 elif member.issym() or member.islnk():
                     raise Refused("a link")
@@ -208,7 +203,7 @@ def unpack(stream, dest, names):
                     arrived.add("/".join(top))
             except Refused as why:
                 left_out.append({"name": member.name, "why": str(why)})
-    return files, len(made), left_out, arrived
+    return files, left_out, arrived
 
 
 def _write(folder, name, data, mtime):
@@ -281,7 +276,7 @@ def fetch(dest, root, names, ssh=None):
         feeder.start()
         stream = _Counted(process.stdout)
         try:
-            files, folders, left_out, arrived = unpack(stream, dest, names)
+            files, left_out, arrived = unpack(stream, dest, names)
             # What follows the archive's end is tar's padding: read to the end, so that ssh never
             # writes to a pipe already closed, but no further than a record's worth would need.
             extra = 0
@@ -319,7 +314,7 @@ def fetch(dest, root, names, ssh=None):
         raise RuntimeError(f"{', '.join(missing)} did not arrive{said}")
     if rc not in (0, 1):
         raise RuntimeError(f"tar exited {rc}{said}")
-    return {"files": files, "folders": folders + 1, "left_out": left_out[:LISTED], "left_out_count": len(left_out)}
+    return {"files": files, "left_out": left_out[:LISTED], "left_out_count": len(left_out)}
 
 
 def main():
@@ -343,7 +338,7 @@ def main():
     )
     params = module.params
     if module.check_mode:
-        module.exit_json(changed=True, files=0, folders=0, left_out=[], left_out_count=0)
+        module.exit_json(changed=True, files=0, left_out=[], left_out_count=0)
     try:
         result = fetch(params["dest"], params["root"], params["names"], params["ssh"])
     except (RuntimeError, ValueError, OSError) as error:

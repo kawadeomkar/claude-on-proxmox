@@ -1125,8 +1125,22 @@
             code_sync_why: >-
               {{ (code_session_sent.stderr | default('', true) or code_session_sent.msg | default('', true))
                  | plain_text | regex_replace('\s+', ' ') | trim }}
-            # An ID up to its first "-": its first eight characters.
-            code_short: "-.*$"
+            # The sessions the sync left out, list by list: what is said before their IDs, the IDs, and after.
+            code_sessions_left: >-
+              {{ [[' Left as they are, continued on ' ~ claude_vm_names[0] ~ ' since they were copied: ',
+                   code_session_copied.continued, '.'],
+                  [' Left as they are, changed both there and here since they were copied: ',
+                   code_session_copied.diverged, '; a copy moved out of the way is copied again.'],
+                  [' Not copied, written by a Claude Code newer than ' ~ claude_vm_names[0] ~ "'s "
+                   ~ code_session_vm.version ~ ': ', code_session_plan.newer, '.'],
+                  [' Not copied, of a repository ' ~ claude_vm_names[0] ~ ' has more than one checkout of: ',
+                   code_session_plan.ambiguous | map(attribute='id') | list, '.'],
+                  [' Not copied, in more than one folder here, so claude --resume could not tell which: ',
+                   code_session_plan.twice, '.'],
+                  [' Left as they are, open in a claude on ' ~ claude_vm_names[0] ~ ': ', code_session_plan.open, '.'],
+                  [' Not copied: ', code_session_copied.unreadable | map(attribute='id') | list,
+                   ', ' ~ code_session_copied.unreadable | map(attribute='why') | unique | join('; ') ~ '.']] }}
+            code_sessions_listed: "{{ code_sessions_left | claude_sessions_listed }}"
             code_sessions_said: >-
               {{ '' if not (code_sessions | bool)
                  else 'Claude Code is not installed on ' ~ claude_vm_names[0] ~ ' yet, so no session of this machine was'
@@ -1139,35 +1153,10 @@
                         ~ ' and then Ctrl+A lists them.')
                        if code_copies | length > 0
                        else 'No Claude Code session of this machine was copied to ' ~ claude_vm_names[0] ~ '.'
-                       if code_session_plan.newer or code_session_plan.ambiguous or code_session_plan.twice
-                          or code_session_plan.open or code_session_copied.unreadable or code_session_copied.diverged
+                       if code_sessions_listed | length > 0
                        else "No Claude Code session of this machine's from the last " ~ code_session_days
                             ~ ' days is of a repository ' ~ claude_vm_names[0] ~ ' has checked out, so none was copied.')
-                      ~ (' Left as they are, continued on ' ~ claude_vm_names[0] ~ ' since they were copied: '
-                         ~ code_session_copied.continued | map('regex_replace', code_short, '') | join(', ') ~ '.'
-                         if code_session_copied.continued else '')
-                      ~ (' Left as they are, changed both there and here since they were copied: '
-                         ~ code_session_copied.diverged | map('regex_replace', code_short, '') | join(', ')
-                         ~ '; a copy moved out of the way is copied again.'
-                         if code_session_copied.diverged else '')
-                      ~ (' Not copied, written by a Claude Code newer than ' ~ claude_vm_names[0] ~ "'s "
-                         ~ code_session_vm.version ~ ': ' ~ code_session_plan.newer | map('regex_replace', code_short, '')
-                         | join(', ') ~ '.'
-                         if code_session_plan.newer else '')
-                      ~ (' Not copied, of a repository ' ~ claude_vm_names[0] ~ ' has more than one checkout of: '
-                         ~ code_session_plan.ambiguous | map(attribute='id') | map('regex_replace', code_short, '')
-                         | join(', ') ~ '.'
-                         if code_session_plan.ambiguous else '')
-                      ~ (' Not copied, in more than one folder here, so claude --resume could not tell which: '
-                         ~ code_session_plan.twice | map('regex_replace', code_short, '') | join(', ') ~ '.'
-                         if code_session_plan.twice else '')
-                      ~ (' Left as they are, open in a claude on ' ~ claude_vm_names[0] ~ ': '
-                         ~ code_session_plan.open | map('regex_replace', code_short, '') | join(', ') ~ '.'
-                         if code_session_plan.open else '')
-                      ~ (' Not copied: ' ~ code_session_copied.unreadable
-                         | map(attribute='id') | map('regex_replace', code_short, '') | join(', ')
-                         ~ ', ' ~ code_session_copied.unreadable | map(attribute='why') | unique | join('; ') ~ '.'
-                         if code_session_copied.unreadable else '')
+                      ~ code_sessions_listed
                       ~ (' rsync could not send them all to ' ~ claude_vm_names[0] ~ ' (it exited '
                          ~ code_session_sent.rc | default('') ~ (': ' ~ code_sync_why if code_sync_why else '')
                          ~ '), so a session it did not send is there as an earlier run left it, or not at all.'

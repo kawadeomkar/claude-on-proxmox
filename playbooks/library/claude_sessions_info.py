@@ -46,12 +46,6 @@ options:
     description: Also return the folders under C(projects/) whose auto memory folder holds a file.
     type: bool
     default: false
-  registry:
-    description:
-      - Also return every session C(sessions/) registers to a running claude, whatever its transcript: its ID
-        to the pid. Reads nothing under C(projects/) for it.
-    type: bool
-    default: false
   repo_paths:
     description:
       - Also return C(githubRepoPaths) from Claude Code's C(.claude.json), the one in O(path) or the one beside
@@ -93,9 +87,6 @@ sessions:
     mtime:
       description: When it was last written, in seconds since the epoch.
       type: float
-    size:
-      description: Its size in bytes.
-      type: int
     cwd:
       description: The first directory recorded in it, or "".
       type: str
@@ -129,7 +120,7 @@ memory:
   type: list
   elements: str
 registered:
-  description: Session ID to the pid of the running claude that has it open, from C(sessions/); {} without O(registry).
+  description: Every session C(sessions/) registers to a running claude, whatever its transcript, its ID to the pid.
   returned: always
   type: dict
 repo_paths:
@@ -154,6 +145,8 @@ from ansible.module_utils.basic import AnsibleModule
 # A session's ID: what make code accepts as SESSION, and what Claude Code names a transcript.
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 VERSION = re.compile(r"\d+(?:\.\d+)+")
+# claude_sessions_copy's manifest, read as it reads it.
+MANIFEST_FORMAT = 1
 
 
 def _version_key(text):
@@ -273,7 +266,7 @@ def read_manifest(path):
             found = json.load(handle)
     except (OSError, ValueError):
         return {}
-    copies = found.get("sessions") if isinstance(found, dict) else None
+    copies = found.get("sessions") if isinstance(found, dict) and found.get("format") == MANIFEST_FORMAT else None
     return {str(key): str(value) for key, value in copies.items()} if isinstance(copies, dict) else {}
 
 
@@ -301,15 +294,15 @@ def memory_folders(path):
     return found
 
 
-def list_sessions(path, days, ids, now=None, every=False, manifest=None):
+def list_sessions(path, days, ids, now=None, every=False, manifest=None, opened=None):
     """Every transcript under ``path``/projects written in the last ``days`` days, named in ``ids``, or with ``every``.
 
     With ``manifest`` - make code's record of its copies here, read_manifest's - each session also says
-    whether it was copied here and whether its copy is still as written.
+    whether it was copied here and whether its copy is still as written. ``opened`` is open_sessions'.
     """
     now = time.time() if now is None else now
     projects, wanted, sessions = os.path.join(path, "projects"), set(ids), []
-    opened = open_sessions(path)
+    opened = open_sessions(path) if opened is None else opened
     copied_ids = {os.path.basename(key)[: -len(".jsonl")] for key in manifest or {}}
     try:
         folders = sorted(
@@ -345,7 +338,6 @@ def list_sessions(path, days, ids, now=None, every=False, manifest=None):
                     "id": session,
                     "folder": folder.name,
                     "mtime": stat.st_mtime,
-                    "size": stat.st_size,
                     "open": opened.get(session, 0),
                     "tools": os.path.isdir(os.path.join(folder.path, session, "tool-results")),
                     "dir": os.path.isdir(os.path.join(folder.path, session)),
@@ -402,7 +394,6 @@ def main():
             "all": {"type": "bool", "default": False},
             "manifest": {"type": "path"},
             "memory": {"type": "bool", "default": False},
-            "registry": {"type": "bool", "default": False},
             "repo_paths": {"type": "bool", "default": False},
             "claude": {"type": "list", "elements": "path", "default": []},
         },
@@ -410,11 +401,14 @@ def main():
     )
     params = module.params
     manifest = read_manifest(params["manifest"]) if params["manifest"] else None
+    opened = open_sessions(params["path"])
     module.exit_json(
         changed=False,
-        sessions=list_sessions(params["path"], params["days"], params["ids"], every=params["all"], manifest=manifest),
+        sessions=list_sessions(
+            params["path"], params["days"], params["ids"], every=params["all"], manifest=manifest, opened=opened
+        ),
         memory=memory_folders(params["path"]) if params["memory"] else [],
-        registered=open_sessions(params["path"]) if params["registry"] else {},
+        registered=opened,
         repo_paths=repo_paths(params["path"]) if params["repo_paths"] else {},
         version=claude_version(params["claude"]) if params["claude"] else "",
     )

@@ -113,11 +113,6 @@ unchanged:
   returned: always
   type: list
   elements: str
-moved:
-  description: Of those written, the sessions moved to another folder on the other machine, their old copy removed.
-  returned: always
-  type: list
-  elements: str
 held:
   description: Each session left as it is because its copy is in another folder here, to that folder.
   returned: always
@@ -153,6 +148,7 @@ from ansible.module_utils.basic import AnsibleModule
 # since the folder is Claude Code's own name for the directory the session was started in.
 MEMORY_AT = re.compile(r"persistent file-based memory at `([^`\n]+)`")
 MANIFEST_FORMAT = 1
+SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # A copy keeps the other machine's file time while it is this recent; Claude Code sweeps a transcript
 # 30 days after its file time.
 FRESH = 14 * 86400
@@ -421,7 +417,6 @@ def copy_sessions(mirror, dest, manifest, sessions, here="", prune=True, check=F
     copies, saved = dict(recorded), dict(recorded)
     result = {
         "written": [],
-        "moved": [],
         "held": {},
         "unchanged": [],
         "continued": [],
@@ -484,7 +479,6 @@ def copy_sessions(mirror, dest, manifest, sessions, here="", prune=True, check=F
                 # one that is read as continued here.
                 copies[key] = digest
                 if mac_move:
-                    result["moved"].append(sid)
                     copies.pop(old, None)
                     if not check:
                         _remove_copy(dest, others[0], sid)
@@ -539,11 +533,7 @@ def main():
     )
     params = module.params
     for session in params["sessions"]:
-        if (
-            "/" in session["folder"]
-            or session["folder"] in ("", ".", "..")
-            or not re.fullmatch(r"[0-9a-f-]{36}", session["id"])
-        ):
+        if "/" in session["folder"] or session["folder"] in ("", ".", "..") or not SESSION_ID.fullmatch(session["id"]):
             module.fail_json(msg=f"{session['folder']}/{session['id']} is not a session's folder and ID.")
     result, changed = copy_sessions(
         params["mirror"],

@@ -156,18 +156,20 @@ files; the filters decide from what they read, and touch no file.
 
 **`claude_sessions_info`** — the transcripts under `<dir>/projects/<folder>/<id>.jsonl` of a Claude
 Code configuration directory, written in the last `days`, named in `ids`, or with `all` every one: per
-session its folder, time and size, its first `cwd`, the newest `version`, the last `gitBranch`, whether
+session its folder and time, its first `cwd`, the newest `version`, the last `gitBranch`, whether
 it holds a user or assistant message, whether it has `tool-results/` or any folder beside it, and the
 pid of a live `claude` that `sessions/` says has it open - one whose command line, from `/proc` or `ps`,
-is still claude's, never a pid another program took since its entry was left. With `registry`, that
-registry alone, whatever the transcripts: the VM's, for which copies a `claude` there has open. Every complete line is parsed and only those
-values kept, so nothing that was said comes back. With `manifest`, make code's on that machine, whether
-it was copied there (by ID, in whatever folder it is now) and whether it is still the copy as written
-(by digest); with `memory`, the folders whose auto memory folder holds a file; with `repo_paths`,
-`githubRepoPaths` from Claude Code's `.claude.json`, and nothing else of that file; with `claude`, the
-version of the first of those executables there is - only those, never `PATH`. Run here and on the VM.
+is still claude's, never a pid another program took since its entry was left; and that registry
+whole, whatever the transcripts (`registered`): the VM's, for which copies a `claude` there has open.
+Every complete line is parsed and only those values kept, so nothing that was said comes back. With
+`manifest`, make code's on that machine, whether it was copied there (by ID, in whatever folder it is
+now) and whether it is still the copy as written (by digest); with `memory`, the folders whose auto
+memory folder holds a file; with `repo_paths`, `githubRepoPaths` from Claude Code's `.claude.json`, and
+nothing else of that file; with `claude`, the version of the first of those executables there is - only
+those, never `PATH`. A manifest of another format than `claude_sessions_copy` writes reads as none. Run
+here and on the VM.
 
-**`git_checkouts_info`** — for each directory asked about, or each checkout directly inside one,
+**`git_checkouts_info`** — for each directory asked about, or else each checkout directly inside one,
 the checkout's top level and `origin` URL as configured, never as a `url.<base>.insteadOf` rewrites it,
 and without what precedes the host, which can be a token; each path and branch as written, never with
 its `~` or `$VAR` expanded; with `status`, whether `git status --porcelain --untracked-files=normal
@@ -191,8 +193,8 @@ none, or where it is still what the manifest says the last run wrote; one that i
 written is left, and any other is the VM's and left too, said as continued when nothing new came from
 the other machine and as diverged otherwise - and so is one that is gone while its ID is in another
 folder of the VM's, where `/cd` moved it (`held` names that folder), unless the copy there is the
-module's own, still as written: the session moved on the other machine, and its copy moves with it
-(`moved`). The manifest is written after each copy. Sessions that are no longer asked for leave the
+module's own, still as written: the session moved on the other machine, and its copy moves with it.
+The manifest is written after each copy. Sessions that are no longer asked for leave the
 mirror. Check mode writes nothing.
 
 **`claude_sessions_fetch`** — run on the controller, for `make destroy`'s save: `tar -cf - -T -` on the
@@ -209,7 +211,8 @@ one that ended) or a name asked for that did not arrive. Nothing of the content 
 **`claude_sessions_plan(sessions, here, there, version, repo_paths, dest, wanted, project, vm)`** —
 the decision as data: `sessions` to copy, each with the checkout it continues in and the memory folder
 its prompt is pointed at; `files` for rsync; `newer`, `ambiguous`, `twice` (an ID in two folders here)
-and `open` (one a `claude` on the VM has open, given as `open_there`) and a count of `unmatched`; and with
+and `open` (one a `claude` on the VM has open, given as `open_there`), one of no repository the VM
+has in none; and with
 `wanted` (`SESSION`), its entry and the `problem` that refuses it, or `""`. A session's repository is
 its first directory's origin, else its gone worktree's checkout's, else `githubRepoPaths`; the VM's
 checkout of it is the one whose GitHub origin names it, of two the one named after it.
@@ -223,6 +226,8 @@ destroy's save, which reads the manifest there. **`claude_project_folder(path)`*
 but an ASCII letter or digit as `-` - refusing one over 200 characters, which Claude Code shortens with
 a hash of its own. **`claude_session_dirs(sessions)`** is the directories to ask git about for them:
 each first directory, and the checkout of a Claude worktree's, which a gone worktree leaves behind.
+**`claude_sessions_listed(rows)`** is make code's words for the sessions it left out, each
+`[before, ids, after]` that has IDs, each ID by its first eight characters as `/resume` lists them.
 
 **`claude_sessions_saved(sessions, memory, dest)`** — what of a VM's sessions `make destroy` saves into
 `dest`, from `claude_sessions_info`'s reading of the VM with its manifest: every session that holds a

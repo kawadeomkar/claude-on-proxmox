@@ -73,7 +73,6 @@
 - name: session_read | Read Claude Code on the VM
   claude_sessions_info:
     path: "{{ code_session_there }}"
-    registry: true
     claude:
       - "{{ code_session_there | dirname }}/.local/bin/claude"
       - /usr/local/bin/claude
