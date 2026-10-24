@@ -148,9 +148,10 @@ JSON report (`_left_to_do`), in every state they already run.
 
 ## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
 
-Which of this machine's Claude Code sessions belong to which of a VM's checkouts: the decision `make
-code` carries the sessions over by. Two modules in `playbooks/library/` read the files and the git
-checkouts; the filters decide from what they read, and touch no file.
+Which of this machine's Claude Code sessions belong to which of a VM's checkouts, and what a copy of one
+on the VM is made of: the pieces `make code` carries the sessions over with. Three modules in
+`playbooks/library/` read and write the files; the filters decide from what they read, and touch no
+file.
 
 **`claude_sessions_info`** — the transcripts under `<dir>/projects/<folder>/<id>.jsonl` of a Claude
 Code configuration directory, written in the last `days`: per
@@ -169,6 +170,21 @@ the checkout's top level and `origin` URL as configured, never as a `url.<base>.
 and without what precedes the host, which can be a token; each path as written, never with its `~` or
 `$VAR` expanded. Every command is `git --no-optional-locks`, which takes no index lock.
 
+**`claude_sessions_copy`** — each session's copy on the VM, from the mirror rsync left: its complete
+lines with the four edits and nothing else (the memory folder in `prompt_snapshot` attachments, the
+session's `tool-results/` folder in user entries, a cleared `worktree-state` after a bound one, a
+`relocated` entry last), 0600 in 0700 folders, with the mirror's time while that is within 14 days and
+the time of writing otherwise, renewed at 14 days (Claude Code sweeps a transcript at 30), its
+`tool-results/` after it, and never a subagent's transcript. Claude Code's records of the requests it
+sent stay as they are: a resume sends the recorded prompt, never them. A copy is written where there is
+none, or where it is still what the manifest says the last run wrote; one that is already what would be
+written is left, and any other is the VM's and left too, said as continued when nothing new came from
+the other machine and as diverged otherwise - and so is one that is gone while its ID is in another
+folder of the VM's, where `/cd` moved it (`held` names that folder), unless the copy there is the
+module's own, still as written: the session moved on the other machine, and its copy moves with it.
+The manifest is written after each copy. Sessions that are no longer asked for leave the
+mirror. Check mode writes nothing.
+
 **`claude_sessions_plan(sessions, here, there, version, repo_paths, dest, open_there)`** —
 the decision as data: `sessions` to copy, each with the checkout it continues in and the memory folder
 its prompt is pointed at; `files` for rsync; `newer`, `ambiguous`, `twice` (an ID in two folders here)
@@ -185,4 +201,5 @@ but an ASCII letter or digit as `-` - refusing one over 200 characters, which Cl
 a hash of its own. **`claude_session_dirs(sessions)`** is the directories to ask git about for them:
 each first directory, and the checkout of a Claude worktree's, which a gone worktree leaves behind.
 
-Covered by `tests/unit/test_session_handoff.py`, with real git checkouts and canned transcripts.
+Covered by `tests/unit/test_session_handoff.py`, with real git checkouts and canned transcripts, and by
+the `configure` scenario, which resumes a copy with the real `claude`.

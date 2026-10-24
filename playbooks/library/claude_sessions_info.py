@@ -15,7 +15,7 @@ description:
     the first directory it ran in, the newest Claude Code version that wrote it, the branch it last ran
     on and whether it holds a message at all. Nothing of what was said is returned, only those values.
   - A line still being written, the last one without its newline, is not read.
-  - Read-only. Run on this machine and on the VM.
+  - Read-only. make code runs it on this machine and on the VM (playbooks/tasks/session_read.yml).
   - A session is open while C(sessions/) registers it to a running claude: a pid that now names another
     program is an entry a claude left behind, never an open session.
 options:

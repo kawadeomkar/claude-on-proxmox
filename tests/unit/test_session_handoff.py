@@ -1,9 +1,11 @@
 """The pieces of make code's session handoff: filter_plugins/sessions.py and the modules in playbooks/library/.
 
-Which session goes to which checkout on the VM. Every transcript, ~/.claude
-and checkout here is built for the test in its own directory, never the
-developer's; the git checkouts are real ones, with origins that only look like
-GitHub's.
+Which session goes to which checkout on the VM, what a copy is made of, and
+when an existing copy is left alone. Every transcript, ~/.claude and checkout
+here is built for the test in its own directory, never the developer's; the
+git checkouts are real ones, with origins that only look like GitHub's. The
+window step that runs these (playbooks/tasks/session_read.yml and
+session_write.yml) is run in test_code_session.py.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -25,6 +28,7 @@ filters = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(filters)
 info = load_module("playbooks/library/claude_sessions_info.py")
 checkouts = load_module("playbooks/library/git_checkouts_info.py")
+copy = load_module("playbooks/library/claude_sessions_copy.py")
 
 ID = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
 OTHER = "bc0e637b-2c3d-4e4f-9a01-23456789abcd"
@@ -74,6 +78,10 @@ def _own_git_config(monkeypatch):
     # Never the developer's own, which changes what git says: status.showUntrackedFiles, a hook, an alias.
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+def lines(data):
+    return [json.loads(line) for line in data.decode().splitlines()]
 
 
 # ------------------------------------------------------------------------------------------ the filters ---
@@ -524,3 +532,327 @@ def test_a_path_holding_a_dollar_or_tilde_is_taken_as_written(tmp_path, patch_mo
     repo = _repository(tmp_path / "$HOME-demo", "")
     found = run_main(checkouts.main, {"paths": [str(repo)]})["checkouts"][0]
     assert found["exists"] and found["git"]
+
+
+# ------------------------------------------------------------------------- claude_sessions_copy ---
+def test_the_four_edits_and_nothing_else():
+    data = transcript(worktree={"worktreePath": "/Users/me/demo/.claude/worktrees/fix-x"})
+    edited, why = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, HERE)
+    assert why == ""
+    before, after = data.decode().splitlines(), edited.decode().splitlines()
+    # The memory folder changes in the snapshot, and only there.
+    assert MAC_MEMORY in before[0] and after[0] == before[0].replace(MAC_MEMORY, VM_MEMORY)
+    assert after[1 : len(before)] == before[1:]
+    # A cleared worktree binding, then where the session continues.
+    assert [json.loads(line) for line in after[len(before) :]] == [
+        {"type": "worktree-state", "worktreeSession": None, "sessionId": ID},
+        {"type": "relocated", "relocatedCwd": CHECKOUT, "sessionId": ID},
+    ]
+
+
+def test_a_session_bound_to_no_worktree_gets_no_cleared_binding():
+    # Never bound, or bound and then cleared by the session itself (ExitWorktree).
+    cleared = json.dumps({"type": "worktree-state", "worktreeSession": None, "sessionId": ID}).encode() + b"\n"
+    for data in (transcript(snapshot=False), transcript(worktree={"worktreePath": "/x"}, snapshot=False) + cleared):
+        edited, _ = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY)
+        assert (
+            edited
+            == data
+            + b'{"type":"relocated","relocatedCwd":"/home/dev/projects/demo","sessionId":"'
+            + ID.encode()
+            + b'"}\n'
+        )
+
+
+def test_the_records_of_requests_sent_keep_the_memory_folder_they_name():
+    # A resume sends the snapshot, never these (the configure scenario holds that against the real claude).
+    shape = {"type": "api-request-shape", "sessionId": ID, "shapeHash": "ab12", "shape": {"system": [MAC_MEMORY]}}
+    record = json.dumps(shape, separators=(",", ":")).encode() + b"\n"
+    data = transcript() + record
+    edited, why = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, HERE)
+    assert why == "" and record in edited and edited.count(MAC_MEMORY.encode()) == 1
+
+
+def test_a_snapshot_without_a_memory_folder_is_copied_as_it_is():
+    # Auto memory off: the recorded prompt names none, and nothing needs rewriting.
+    data = transcript(snapshot=False)
+    edited, why = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, HERE)
+    assert why == "" and edited.startswith(data)
+
+
+def test_a_memory_folder_named_in_a_form_make_code_does_not_know_is_not_copied():
+    # A Claude Code that words the prompt otherwise: the folder of this machine's would be sent as it is.
+    data = transcript().replace(b"persistent file-based memory at", b"memory, kept at")
+    edited, why = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, HERE)
+    assert edited == b"" and "a form make code does not know" in why
+
+
+VM_RESULTS = f"/home/dev/.claude/projects/-Users-me-demo/{ID}/tool-results"
+
+
+def test_tool_results_are_named_where_the_copy_keeps_them_in_the_tool_results_alone():
+    # As Claude Code names a large output it saved: in the tool result, in any folder of this machine's (a
+    # session continued after /cd names the old one), and in what the assistant then asked for.
+    saved = f"{HERE}/projects/-Users-me-old/{ID}/tool-results/toolu_1.txt"
+    other = f"{HERE}/projects/-Users-me-demo/{OTHER}/tool-results/toolu_2.txt"
+    result = {
+        "type": "user",
+        "sessionId": ID,
+        "message": {"role": "user", "content": [{"type": "tool_result", "content": f"Output saved to: {saved}"}]},
+        "toolUseResult": {"stdout": f"{saved} and {other}"},
+    }
+    asked = {
+        "type": "assistant",
+        "sessionId": ID,
+        "message": {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": f"read {saved}", "signature": "c2lnbmVk"},
+                {"type": "tool_use", "name": "Read", "input": {"file_path": saved}},
+            ],
+        },
+    }
+    lines_in = [json.dumps(entry, separators=(",", ":")).encode() + b"\n" for entry in (result, asked)]
+    data = transcript() + b"".join(lines_in)
+    edited, why = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, HERE, VM_RESULTS)
+    assert why == ""
+    out = edited.splitlines(keepends=True)
+    tool_result, assistant = out[-3], out[-2]
+    assert tool_result == lines_in[0].replace(saved.encode(), f"{VM_RESULTS}/toolu_1.txt".encode())
+    # Another session's saved output is that session's; the assistant's entry, signed thinking and all, is as it was.
+    assert other.encode() in tool_result and assistant == lines_in[1]
+    # Without the other machine's directory, no tool result is rewritten.
+    assert lines_in[0] in copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, "", VM_RESULTS)[0]
+
+
+def test_another_project_s_memory_folder_a_prompt_quotes_is_left_as_text():
+    # A CLAUDE.md or MEMORY.md in the prompt can name another project's memory folder; only the session's
+    # own must be rewritten.
+    quoted = f"{HERE}/projects/-Users-me-elsewhere/memory/notes.md"
+    data = transcript().replace(b"This directory already exists.", f"See {quoted}.".encode())
+    edited, why = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, HERE, folder="-Users-me-demo")
+    assert why == "" and quoted.encode() in edited and MAC_MEMORY.encode() not in edited
+    # The session's own, named otherwise than the rewrite knows, is still refused.
+    other_form = transcript().replace(b"persistent file-based memory at", b"memory, kept at")
+    edited, why = copy.edit_transcript(other_form, ID, CHECKOUT, VM_MEMORY, HERE, folder="-Users-me-demo")
+    assert edited == b"" and "a form make code does not know" in why
+
+
+def test_only_complete_lines_are_copied():
+    assert copy.complete_lines(transcript(partial=True)) == transcript()
+    assert copy.complete_lines(b'{"type":"us') == b""
+
+
+@pytest.mark.parametrize(
+    ("current", "recorded", "digest", "action"),
+    [
+        (None, None, "new", "write"),  # no copy yet
+        ("old", "old", "new", "write"),  # the last copy, untouched: replaced
+        ("new", "old", "new", "unchanged"),
+        ("new", None, "new", "unchanged"),
+        ("vm", "old", "old", "continued"),  # continued on the VM; nothing new here
+        ("vm", "old", "new", "diverged"),  # continued on both
+        ("vm", None, "new", "diverged"),  # never this module's
+    ],
+)
+def test_a_copy_is_replaced_only_while_it_is_what_was_last_written(current, recorded, digest, action):
+    assert copy.classify(current, recorded, digest) == action
+
+
+@pytest.mark.parametrize(
+    ("recorded", "digest", "action"),
+    [("old", "old", "continued"), ("old", "new", "diverged"), (None, "new", "diverged")],
+)
+def test_a_copy_that_moved_to_another_folder_counts_as_changed_on_the_vm(recorded, digest, action):
+    assert copy.classify(None, recorded, digest, moved=True) == action
+
+
+def _mirror(tmp_path, sessions):
+    """The mirror rsync leaves: {(folder, id): bytes}, written an hour ago, with a tool result and a subagent each."""
+    mirror = tmp_path / "mirror"
+    then = time.time() - 3600
+    for (folder, sid), data in sessions.items():
+        path = mirror / folder / f"{sid}.jsonl"
+        (mirror / folder / sid / "tool-results").mkdir(parents=True)
+        (mirror / folder / sid / "subagents").mkdir()
+        (mirror / folder / sid / "tool-results" / "toolu_1.txt").write_text("output\n")
+        (mirror / folder / sid / "subagents" / "agent-1.jsonl").write_text("{}\n")
+        path.write_bytes(data)
+        os.utime(path, (then, then))
+    return mirror, then
+
+
+def _copy(tmp_path, mirror, sessions, check=False):
+    return copy.copy_sessions(
+        str(mirror),
+        str(tmp_path / "vm" / ".claude"),
+        str(tmp_path / "ws" / "manifest.json"),
+        [{"id": sid, "folder": folder, "checkout": CHECKOUT, "memory": VM_MEMORY} for folder, sid in sessions],
+        here=HERE,
+        check=check,
+    )
+
+
+def test_copies_are_written_with_their_time_and_modes_and_a_second_run_changes_nothing(tmp_path):
+    keys = [("-Users-me-demo", ID), ("-Users-me-demo--claude-worktrees-x", OTHER)]
+    mirror, then = _mirror(tmp_path, {keys[0]: transcript(partial=True), keys[1]: transcript(OTHER)})
+    result, changed = _copy(tmp_path, mirror, keys)
+    assert changed and sorted(result["written"]) == sorted([ID, OTHER])
+    target = tmp_path / "vm" / ".claude" / "projects" / "-Users-me-demo"
+    copied = target / f"{ID}.jsonl"
+    assert copied.read_bytes() == copy.edit_transcript(transcript(), ID, CHECKOUT, VM_MEMORY)[0]
+    assert int(copied.stat().st_mtime) == int(then)
+    assert stat.S_IMODE(copied.stat().st_mode) == 0o600 and stat.S_IMODE(target.stat().st_mode) == 0o700
+    assert (target / ID / "tool-results" / "toolu_1.txt").read_text() == "output\n"
+    assert not (target / ID / "subagents").exists()
+    manifest = json.loads((tmp_path / "ws" / "manifest.json").read_text())
+    assert sorted(manifest["sessions"]) == sorted(f"{folder}/{sid}.jsonl" for folder, sid in keys)
+    assert stat.S_IMODE((tmp_path / "ws" / "manifest.json").stat().st_mode) == 0o600
+    # Again, with nothing new: nothing written, nothing changed.
+    again, changed = _copy(tmp_path, mirror, keys)
+    assert not changed and sorted(again["unchanged"]) == sorted([ID, OTHER])
+
+
+def test_a_copy_continued_on_the_vm_is_left_and_one_that_grew_here_too_is_named(tmp_path):
+    key = ("-Users-me-demo", ID)
+    mirror, _ = _mirror(tmp_path, {key: transcript()})
+    _copy(tmp_path, mirror, [key])
+    copied = tmp_path / "vm" / ".claude" / "projects" / "-Users-me-demo" / f"{ID}.jsonl"
+    continued = copied.read_bytes() + b'{"type":"user","message":{"content":"on the VM"}}\n'
+    copied.write_bytes(continued)
+    result, changed = _copy(tmp_path, mirror, [key])
+    assert result["continued"] == [ID] and not changed and copied.read_bytes() == continued
+    # The session grew here as well: both left, and said apart.
+    (mirror / "-Users-me-demo" / f"{ID}.jsonl").write_bytes(transcript() + transcript())
+    result, _ = _copy(tmp_path, mirror, [key])
+    assert result["diverged"] == [ID] and copied.read_bytes() == continued
+
+
+def test_a_copy_moved_to_another_folder_on_the_vm_is_never_written_again(tmp_path):
+    # /cd in the resumed session moves its transcript to the new directory's folder.
+    key = ("-Users-me-demo", ID)
+    mirror, _ = _mirror(tmp_path, {key: transcript()})
+    _copy(tmp_path, mirror, [key])
+    projects = tmp_path / "vm" / ".claude" / "projects"
+    manifest = (tmp_path / "ws" / "manifest.json").read_bytes()
+    (projects / "-home-dev-projects-other").mkdir()
+    moved = projects / "-home-dev-projects-other" / f"{ID}.jsonl"
+    (projects / "-Users-me-demo" / f"{ID}.jsonl").rename(moved)
+    result, changed = _copy(tmp_path, mirror, [key])
+    assert result["continued"] == [ID] and not changed
+    assert not (projects / "-Users-me-demo" / f"{ID}.jsonl").exists()
+    assert (tmp_path / "ws" / "manifest.json").read_bytes() == manifest
+    # The session grew here as well: still one folder, and said apart.
+    (mirror / "-Users-me-demo" / f"{ID}.jsonl").write_bytes(transcript() + transcript())
+    result, _ = _copy(tmp_path, mirror, [key])
+    assert result["diverged"] == [ID] and not (projects / "-Users-me-demo" / f"{ID}.jsonl").exists()
+
+
+def test_a_copy_still_as_written_is_replaced_when_the_session_grows_here(tmp_path):
+    key = ("-Users-me-demo", ID)
+    mirror, _ = _mirror(tmp_path, {key: transcript()})
+    _copy(tmp_path, mirror, [key])
+    (mirror / "-Users-me-demo" / f"{ID}.jsonl").write_bytes(transcript() + transcript())
+    result, changed = _copy(tmp_path, mirror, [key])
+    assert result["written"] == [ID] and changed
+
+
+def test_a_session_moved_to_another_folder_here_takes_its_copy_along(tmp_path):
+    # /cd on this machine: the session's folder changed here, and the VM's copy in the old one is still as written.
+    old, new = ("-Users-me-demo", ID), ("-Users-me-demo-src", ID)
+    mirror, _ = _mirror(tmp_path, {old: transcript()})
+    _copy(tmp_path, mirror, [old])
+    os.renames(mirror / old[0] / f"{ID}.jsonl", mirror / new[0] / f"{ID}.jsonl")
+    os.renames(mirror / old[0] / ID, mirror / new[0] / ID)
+    result, changed = _copy(tmp_path, mirror, [new])
+    projects = tmp_path / "vm" / ".claude" / "projects"
+    assert changed and result["written"] == [ID] and result["held"] == {}
+    assert (projects / new[0] / f"{ID}.jsonl").exists() and not (projects / old[0]).exists()
+    assert sorted(json.loads((tmp_path / "ws" / "manifest.json").read_text())["sessions"]) == [f"{new[0]}/{ID}.jsonl"]
+    again, changed = _copy(tmp_path, mirror, [new])
+    assert not changed and again["unchanged"] == [ID]
+
+
+def test_a_session_moved_here_whose_old_copy_was_continued_on_the_vm_is_left_and_its_folder_named(tmp_path):
+    old, new = ("-Users-me-demo", ID), ("-Users-me-demo-src", ID)
+    mirror, _ = _mirror(tmp_path, {old: transcript()})
+    _copy(tmp_path, mirror, [old])
+    projects = tmp_path / "vm" / ".claude" / "projects"
+    continued = projects / old[0] / f"{ID}.jsonl"
+    continued.write_bytes(continued.read_bytes() + b'{"type":"user","message":{"content":"on the VM"}}\n')
+    os.renames(mirror / old[0] / f"{ID}.jsonl", mirror / new[0] / f"{ID}.jsonl")
+    result, _ = _copy(tmp_path, mirror, [new])
+    assert result["diverged"] == [ID] and result["held"] == {ID: old[0]}
+    assert continued.exists() and not (projects / new[0] / f"{ID}.jsonl").exists()
+
+
+def test_each_copy_is_recorded_as_it_is_written_so_a_run_that_stops_records_what_it_wrote(tmp_path):
+    keys = [("-Users-me-demo", ID), ("-Users-me-other", OTHER)]
+    mirror, _ = _mirror(tmp_path, {keys[0]: transcript(), keys[1]: transcript(OTHER)})
+    # The second copy's folder is a file: its write fails, after the first was written.
+    (tmp_path / "vm" / ".claude" / "projects").mkdir(parents=True)
+    (tmp_path / "vm" / ".claude" / "projects" / keys[1][0]).write_text("in the way\n")
+    with pytest.raises(OSError):
+        _copy(tmp_path, mirror, keys)
+    recorded = json.loads((tmp_path / "ws" / "manifest.json").read_text())["sessions"]
+    assert sorted(recorded) == [f"{keys[0][0]}/{ID}.jsonl"]
+    # The session then grows here: the copy is the module's own, and replaced, never "diverged".
+    (tmp_path / "vm" / ".claude" / "projects" / keys[1][0]).unlink()
+    (mirror / keys[0][0] / f"{ID}.jsonl").write_bytes(transcript() + transcript())
+    result, _ = _copy(tmp_path, mirror, keys)
+    assert sorted(result["written"]) == sorted([ID, OTHER])
+
+
+@pytest.mark.parametrize(
+    ("age", "current", "kept"),
+    [
+        (3600, None, "source"),  # recent: the other machine's time
+        (40 * 86400, None, "now"),  # older than the sweep's 30 days: the time it is written
+        (40 * 86400, 86400, "current"),  # given that a day ago: kept
+        (40 * 86400, 20 * 86400, "now"),  # given that 20 days ago: renewed
+    ],
+)
+def test_a_copy_keeps_the_other_machine_s_time_only_while_the_sweep_would_spare_it(age, current, kept):
+    now = 2_000_000_000.0
+    source, there = now - age, None if current is None else now - current
+    assert copy.copy_time(source, there, now) == {"source": source, "now": now, "current": there}[kept]
+
+
+def test_an_old_session_s_copy_is_given_the_time_it_is_written_and_kept_on_the_next_run(tmp_path):
+    key = ("-Users-me-demo", ID)
+    mirror, _ = _mirror(tmp_path, {key: transcript()})
+    then = time.time() - 40 * 86400
+    os.utime(mirror / key[0] / f"{ID}.jsonl", (then, then))
+    _copy(tmp_path, mirror, [key])
+    copied = tmp_path / "vm" / ".claude" / "projects" / key[0] / f"{ID}.jsonl"
+    assert time.time() - copied.stat().st_mtime < 60
+    _, changed = _copy(tmp_path, mirror, [key])
+    assert not changed
+
+
+def test_check_mode_writes_nothing(tmp_path):
+    key = ("-Users-me-demo", ID)
+    mirror, _ = _mirror(tmp_path, {key: transcript()})
+    result, changed = _copy(tmp_path, mirror, [key], check=True)
+    assert changed and result["written"] == [ID]
+    assert not (tmp_path / "vm").exists() and not (tmp_path / "ws").exists()
+
+
+def test_sessions_that_left_the_selection_leave_the_mirror(tmp_path):
+    keys = [("-Users-me-demo", ID), ("-Users-me-other", OTHER)]
+    mirror, _ = _mirror(tmp_path, {keys[0]: transcript(), keys[1]: transcript(OTHER)})
+    _, changed = _copy(tmp_path, mirror, keys[:1])
+    assert changed
+    assert sorted(path.name for path in mirror.iterdir()) == ["-Users-me-demo"]
+
+
+def test_the_module_takes_only_a_session_s_folder_and_id(tmp_path, patch_module):
+    from conftest import fail_main
+
+    args = {
+        "mirror": str(tmp_path / "mirror"),
+        "dest": str(tmp_path / ".claude"),
+        "manifest": str(tmp_path / "manifest.json"),
+        "sessions": [{"id": ID, "folder": "../../etc", "checkout": CHECKOUT, "memory": VM_MEMORY}],
+    }
+    assert "is not a session's folder and ID" in fail_main(copy.main, args)["msg"]

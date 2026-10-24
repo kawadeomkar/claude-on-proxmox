@@ -1,11 +1,11 @@
 """Filters for the Claude Code sessions make code carries from this machine to a VM.
 
-The modules in playbooks/library/ read both ends, and this decides, from what
-they read, which session goes to which checkout on the VM. A session belongs
-to the repository its first recorded directory is a checkout of, by that
-checkout's git origin: never by a folder's name, which a renamed clone, a
-subfolder or another owner's repository of the same name all get wrong
-(docs/architecture/custom-code.md §7.6).
+playbooks/tasks/session_read.yml reads both ends with the modules in
+playbooks/library/ and decides here, from what they read, which session goes
+to which checkout on the VM. A session belongs to the repository its first
+recorded directory is a checkout of, by that checkout's git origin: never by
+a folder's name, which a renamed clone, a subfolder or another owner's
+repository of the same name all get wrong (docs/architecture/lifecycle.md §4.9).
 Nothing here reads a file: the modules do, and only these values reach a filter.
 """
 
@@ -162,7 +162,7 @@ def claude_sessions_plan(sessions, here, there, version, repo_paths=None, dest="
     running claude on the VM has open (claude_sessions_info's ``registered`` there): such a copy is
     left, never replaced under the claude holding it.
 
-    Returns ``sessions``, one item per session to copy: its ID, its
+    Returns ``sessions``, one item per session to copy, as claude_sessions_copy takes it: its ID, its
     folder here - kept on the VM, so that --continue in a checkout never picks a copy up - the
     checkout it continues in and the memory folder its recorded prompt is pointed at. ``files`` is
     what rsync sends for them, relative to the projects folder; ``repositories`` their repositories.

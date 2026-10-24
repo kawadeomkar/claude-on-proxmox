@@ -205,7 +205,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   instantly, and exists only while the login is the one thing missing (docs/architecture/roles.md §5.5).
 - **Tests never touch a real Proxmox, GitHub, Tailscale or hypervisor.** `tests/molecule/` holds the
   fakes: a stateful PVE API with a guest agent, a stateful `qm`, a `virt-customize`, a GitHub API over
-  local bare repos (the authenticated endpoints included), a stand-in `gh` installed ahead of the real
+  local bare repos (the authenticated endpoints included), a stand-in Messages API on loopback for the
+  real `claude` the `configure` scenario resumes sessions with (`fake_anthropic_api.py`, which records
+  what each request sent), a stand-in `gh` installed ahead of the real
   one on PATH, and a stand-in `tailscale` (`fake_tailscale.sh`, Tailscale's own output as research and a
   Headscale run recorded it). Extend a fake rather than reaching for the network.
 - **Tailscale's auth key joins a VM once, and the role touches only the Tailscale it installed.** The key

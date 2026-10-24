@@ -34,8 +34,9 @@ playbooks/
   destroy.yml                     confirm, verify ownership, release (Claude, GitHub, Tailscale), delete in parallel, forget each alias
   ssh_config.yml                  refresh every alias from the fleet; fleet-wide, prune the vanished
   code.yml                        refresh one alias, write the Claude workspace file and the session notes, open it
-  library/                        make code's session handoff: claude_sessions_info and git_checkouts_info (reads,
-                                  here and on the VM)
+  library/                        make code's session handoff: claude_sessions_info, git_checkouts_info (reads, here
+                                  and on the VM) and claude_sessions_copy (the VM's copies, their four edits, the
+                                  manifest)
   templates/vm_session.md.j2      the session notes: a page about one VM, opened beside the Claude terminal
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
@@ -83,7 +84,7 @@ tests/
                                   sign-ins and deploy's sign-in steps, Tailscale, destroy's release, the managed SSH
                                   config, the Claude terminal's script, Makefile guards, the wiki (test_docs.py)
   molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh, claude, tailscale,
-                                  Tailscale API
+                                  Tailscale API, the Anthropic Messages API (for the real claude in configure)
 molecule/
   provision/                      provision.yml + discover.yml against the fake API
   configure/                      configure.yml end to end in a container

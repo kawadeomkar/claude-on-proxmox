@@ -39,6 +39,246 @@
         fail_msg: "{{ side_effect_units.results | map(attribute='stdout') | list }}"
         quiet: true
 
+# make code's session handoff against the Claude Code the converge installed,
+# since verify.yml only meets the stand-in: a release that files, records or
+# resumes sessions otherwise fails here first (docs/architecture/lifecycle.md
+# §4.9). One Claude configuration directory stands for the laptop, another for
+# the VM. The real claude makes two sessions in a checkout of the laptop's, one
+# of them in a Claude worktree and bound to it, against a stand-in Messages API
+# on 127.0.0.1 that answers and records what it is sent; claude_sessions_copy
+# writes the VM's copies, under the laptop's folder name; then claude in the
+# VM's checkout resumes each. The laptop's checkout and worktree are still
+# there, the hardest case: a copy left bound refuses to resume into them.
+- name: Resume a session copied as make code copies one, with the real claude
+  hosts: claude_vms
+  become: true
+  become_user: dev
+  vars:
+    side_effect_handoff_dir: /home/dev/handoff
+    side_effect_handoff_laptop: /home/dev/handoff/laptop/demo
+    side_effect_handoff_worktree: /home/dev/handoff/laptop/demo/.claude/worktrees/fix
+    side_effect_handoff_checkout: /home/dev/handoff/vm/demo
+    side_effect_handoff_api: /home/dev/handoff/requests.jsonl
+    # The folder Claude Code files each directory's sessions under.
+    side_effect_handoff_folder: "{{ side_effect_handoff_laptop | claude_project_folder }}"
+    side_effect_handoff_wt_folder: "{{ side_effect_handoff_worktree | claude_project_folder }}"
+    side_effect_handoff_memory: >-
+      {{ side_effect_handoff_dir }}/vm-claude/projects/{{ side_effect_handoff_checkout | claude_project_folder }}/memory/
+    # A claude of its own: the stand-in API, a fake key, and nothing reaching the network.
+    side_effect_handoff_env:
+      ANTHROPIC_BASE_URL: http://127.0.0.1:18431
+      ANTHROPIC_API_KEY: sk-ant-stand-in
+      DISABLE_AUTOUPDATER: "1"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+      GIT_CONFIG_GLOBAL: /dev/null
+    side_effect_handoff_claude: /home/dev/.local/bin/claude
+  tasks:
+    - name: Make the laptop's checkout with a worktree folder, and the VM's
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ side_effect_handoff_worktree }}"
+        - "{{ side_effect_handoff_checkout }}"
+
+    - name: Make both git checkouts
+      ansible.builtin.command:
+        argv: [git, -C, "{{ item }}", init, --quiet, --initial-branch, main]
+        creates: "{{ item }}/.git"
+      environment: "{{ side_effect_handoff_env }}"
+      loop:
+        - "{{ side_effect_handoff_laptop }}"
+        - "{{ side_effect_handoff_checkout }}"
+
+    - name: Give the laptop's checkout a commit
+      ansible.builtin.command:
+        argv: [git, -C, "{{ side_effect_handoff_laptop }}", -c, user.name=Dev, -c, user.email=dev@example.com,
+               commit, --quiet, --allow-empty, -m, first]
+      environment: "{{ side_effect_handoff_env }}"
+      changed_when: true
+
+    - name: Put the stand-in Messages API in place
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../tests/molecule/fake_anthropic_api.py"
+        dest: "{{ side_effect_handoff_dir }}/fake_anthropic_api.py"
+        mode: "0755"
+
+    - name: Start the stand-in Messages API
+      ansible.builtin.command:
+        argv: [python3, "{{ side_effect_handoff_dir }}/fake_anthropic_api.py", "18431", "{{ side_effect_handoff_api }}"]
+      async: 600
+      poll: 0
+      register: side_effect_handoff_server
+      changed_when: false
+
+    - name: Wait for the stand-in Messages API
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 18431
+        timeout: 30
+
+    # One in the checkout, one in the worktree folder, as a laptop's are.
+    - name: Make two sessions on the laptop
+      ansible.builtin.command:
+        argv: ["{{ side_effect_handoff_claude }}", -p, --output-format, json, "Remember the word HANDOFF-ONE."]
+        chdir: "{{ item }}"
+      environment: "{{ side_effect_handoff_env | combine({'CLAUDE_CONFIG_DIR': side_effect_handoff_dir ~ '/laptop-claude'}) }}"
+      register: side_effect_handoff_made
+      changed_when: false
+      loop:
+        - "{{ side_effect_handoff_laptop }}"
+        - "{{ side_effect_handoff_worktree }}"
+
+    - name: Keep the sessions' IDs
+      ansible.builtin.set_fact:
+        side_effect_handoff_ids: "{{ side_effect_handoff_made.results | map(attribute='stdout') | map('from_json') | map(attribute='session_id') | list }}"
+
+    # The binding a session made in a worktree ends with, as Claude Code 2.1.308 writes it.
+    - name: Bind the worktree session to its worktree
+      ansible.builtin.lineinfile:
+        path: "{{ side_effect_handoff_dir }}/laptop-claude/projects/{{ side_effect_handoff_wt_folder }}/{{ side_effect_handoff_ids[1] }}.jsonl"
+        insertafter: EOF
+        line: >-
+          {{ {'type': 'worktree-state', 'sessionId': side_effect_handoff_ids[1],
+              'worktreeSession': {'originalCwd': side_effect_handoff_laptop, 'preEnterOriginalCwd': side_effect_handoff_laptop,
+                                  'worktreePath': side_effect_handoff_worktree, 'worktreeName': 'fix',
+                                  'worktreeBranch': 'worktree-fix', 'originalBranch': 'main',
+                                  'originalHeadCommit': '0000000000000000000000000000000000000000',
+                                  'sessionId': side_effect_handoff_ids[1]}} | to_json(separators=[',', ':']) }}
+
+    - name: Read the sessions as make code reads them on the laptop
+      claude_sessions_info:
+        path: "{{ side_effect_handoff_dir }}/laptop-claude"
+        days: 30
+      register: side_effect_handoff_found
+
+    - name: Assert each records where it ran
+      ansible.builtin.assert:
+        that:
+          - side_effect_handoff_found.sessions | map(attribute='cwd') | sort
+            == [side_effect_handoff_laptop, side_effect_handoff_worktree] | sort
+          - side_effect_handoff_found.sessions | map(attribute='conversation') | unique == [true]
+        fail_msg: "{{ side_effect_handoff_found.sessions | to_json }}"
+        quiet: true
+
+    - name: Keep an unedited copy of the bound session
+      ansible.builtin.copy:
+        src: "{{ side_effect_handoff_dir }}/laptop-claude/projects/{{ side_effect_handoff_wt_folder }}/{{ side_effect_handoff_ids[1] }}.jsonl"
+        dest: "{{ side_effect_handoff_dir }}/raw-claude/projects/{{ side_effect_handoff_wt_folder }}/"
+        remote_src: true
+        mode: "0600"
+        directory_mode: "0700"
+
+    - name: Write the VM's copies
+      claude_sessions_copy:
+        mirror: "{{ side_effect_handoff_dir }}/laptop-claude/projects"
+        dest: "{{ side_effect_handoff_dir }}/vm-claude"
+        manifest: "{{ side_effect_handoff_dir }}/manifest.json"
+        here: "{{ side_effect_handoff_dir }}/laptop-claude"
+        prune: false
+        sessions:
+          - {id: "{{ side_effect_handoff_ids[0] }}", folder: "{{ side_effect_handoff_folder }}",
+             checkout: "{{ side_effect_handoff_checkout }}", memory: "{{ side_effect_handoff_memory }}"}
+          - {id: "{{ side_effect_handoff_ids[1] }}", folder: "{{ side_effect_handoff_wt_folder }}",
+             checkout: "{{ side_effect_handoff_checkout }}", memory: "{{ side_effect_handoff_memory }}"}
+      register: side_effect_handoff_copied
+
+    - name: Read the copy of the session made in the checkout
+      ansible.builtin.slurp:
+        src: "{{ side_effect_handoff_dir }}/vm-claude/projects/{{ side_effect_handoff_folder }}/{{ side_effect_handoff_ids[0] }}.jsonl"
+      register: side_effect_handoff_copy
+
+    - name: Count what the stand-in has been sent
+      ansible.builtin.command:
+        argv: [wc, -l, "{{ side_effect_handoff_api }}"]
+      register: side_effect_handoff_before
+      changed_when: false
+
+    # Each from the VM's checkout: the session, then --continue there, the bound
+    # copy, and the bound one left unedited.
+    - name: Resume the copies in the VM's checkout
+      ansible.builtin.command:
+        argv: "{{ [side_effect_handoff_claude, '-p', '--output-format', 'json'] + item.args + ['And now, HANDOFF-TWO?'] }}"
+        chdir: "{{ side_effect_handoff_checkout }}"
+      environment: "{{ side_effect_handoff_env | combine({'CLAUDE_CONFIG_DIR': side_effect_handoff_dir ~ '/' ~ item.dir}) }}"
+      register: side_effect_handoff_resumed
+      changed_when: false
+      failed_when: false
+      loop:
+        - {dir: vm-claude, args: [--resume, "{{ side_effect_handoff_ids[0] }}"]}
+        - {dir: vm-claude, args: [--continue]}
+        - {dir: vm-claude, args: [--resume, "{{ side_effect_handoff_ids[1] }}"]}
+        - {dir: raw-claude, args: [--resume, "{{ side_effect_handoff_ids[1] }}"]}
+
+    - name: Read what the stand-in was sent
+      ansible.builtin.slurp:
+        src: "{{ side_effect_handoff_api }}"
+      register: side_effect_handoff_sent
+
+    - name: Assert the copy resumed as the VM's own, and nothing else picked it up
+      vars:
+        # The requests that carry each run's question, in the order the runs went.
+        side_effect_handoff_asked: >-
+          {{ (side_effect_handoff_sent.content | b64decode).splitlines()[side_effect_handoff_before.stdout.split()[0] | int:]
+             | select('search', 'HANDOFF-TWO') | map('from_json') | list }}
+        side_effect_handoff_runs: "{{ side_effect_handoff_resumed.results }}"
+        # Claude Code's records of the requests the laptop sent, kept in the copy as they are.
+        side_effect_handoff_records: >-
+          {{ (side_effect_handoff_copy.content | b64decode).splitlines() | select('search', '"type":"api-request-shape"') | list }}
+      ansible.builtin.assert:
+        that:
+          - side_effect_handoff_copied.written | sort == side_effect_handoff_ids | sort
+          # They still name the laptop's memory folder, and the resume below sends the VM's: it sends the
+          # recorded prompt, never them.
+          - side_effect_handoff_records | select('search', '/laptop-claude/projects/') | list | length > 0
+          # The session, under its own ID, its history and the VM's memory folder sent, never the laptop's.
+          - side_effect_handoff_runs[0].rc == 0
+          - (side_effect_handoff_runs[0].stdout | from_json).session_id == side_effect_handoff_ids[0]
+          - side_effect_handoff_asked[0].messages | string is search('HANDOFF-ONE')
+          - side_effect_handoff_asked[0].system | string is search(side_effect_handoff_memory | regex_escape)
+          - not (side_effect_handoff_asked[0].system | string is search('/laptop-claude/'))
+          # --continue in the checkout starts afresh: the copy is filed under the laptop's folder.
+          - side_effect_handoff_runs[1].rc == 0
+          - (side_effect_handoff_runs[1].stdout | from_json).session_id not in side_effect_handoff_ids
+          - not (side_effect_handoff_asked[1].messages | string is search('HANDOFF-ONE'))
+          # The bound session resumes once its binding is cleared, and refuses without that.
+          - side_effect_handoff_runs[2].rc == 0
+          - (side_effect_handoff_runs[2].stdout | from_json).session_id == side_effect_handoff_ids[1]
+          - side_effect_handoff_runs[3].rc != 0
+          - (side_effect_handoff_runs[3].stdout ~ side_effect_handoff_runs[3].stderr) is search('worktree')
+        fail_msg: >-
+          {{ side_effect_handoff_runs | map(attribute='rc') | list }}
+          {{ side_effect_handoff_runs | map(attribute='stderr') | map('truncate', 300) | list }}
+        quiet: true
+
+    - name: Stop the stand-in Messages API
+      ansible.builtin.command:
+        argv: [pkill, -f, fake_anthropic_api.py]
+      changed_when: false
+      failed_when: false
+
+    # verify.yml holds that no async job of a run is left behind: the job's
+    # last status is written once the server has gone, and only then removed.
+    - name: Wait for the stand-in's job to end
+      ansible.builtin.async_status:
+        jid: "{{ side_effect_handoff_server.ansible_job_id }}"
+      register: side_effect_handoff_ended
+      until: side_effect_handoff_ended.finished
+      retries: 30
+      delay: 1
+      failed_when: false
+
+    - name: Forget the stand-in's job
+      ansible.builtin.async_status:
+        jid: "{{ side_effect_handoff_server.ansible_job_id }}"
+        mode: cleanup
+
+    - name: Remove the handoff's directories
+      ansible.builtin.file:
+        path: "{{ side_effect_handoff_dir }}"
+        state: absent
+
 - name: Put the stand-in claude in place of the real one
   hosts: claude_vms
   become: true
