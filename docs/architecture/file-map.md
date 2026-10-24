@@ -34,6 +34,8 @@ playbooks/
   destroy.yml                     confirm, verify ownership, release (Claude, GitHub, Tailscale), delete in parallel, forget each alias
   ssh_config.yml                  refresh every alias from the fleet; fleet-wide, prune the vanished
   code.yml                        refresh one alias, write the Claude workspace file and the session notes, open it
+  library/                        make code's session handoff: claude_sessions_info and git_checkouts_info (reads,
+                                  here and on the VM)
   templates/vm_session.md.j2      the session notes: a page about one VM, opened beside the Claude terminal
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
@@ -66,6 +68,9 @@ filter_plugins/desktop.py         page_opener, the sign-ins' browser command
 filter_plugins/text.py            plain_text, what a VM printed made safe to quote; banner, the block a prompt is set in
 filter_plugins/settings.py        init_answer, the rule each make init answer follows; with_setting, one written into YAML text;
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
+filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
+                                  and github_repository, owner/repo of a remote URL here and of a GitHub one on the VM;
+                                  claude_project_folder, Claude Code's folder for a path; claude_session_dirs
 inventory/
   hosts.yml.example               the only address anyone supplies
   controller.yml                  localhost, so it picks up group_vars/all

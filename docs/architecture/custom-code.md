@@ -145,3 +145,44 @@ The blocks are bright yellow through `Display`, plain under `ANSIBLE_NOCOLOR` or
 log gets them plain, but never destroy's question, which `vars_prompt` reads with `input()`. The harness
 shows custom stats (`ANSIBLE_SHOW_CUSTOM_STATS=1`), so each role's own tests read what it recorded from the
 JSON report (`_left_to_do`), in every state they already run.
+
+## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
+
+Which of this machine's Claude Code sessions belong to which of a VM's checkouts: the decision `make
+code` carries the sessions over by. Two modules in `playbooks/library/` read the files and the git
+checkouts; the filters decide from what they read, and touch no file.
+
+**`claude_sessions_info`** — the transcripts under `<dir>/projects/<folder>/<id>.jsonl` of a Claude
+Code configuration directory, written in the last `days`: per
+session its folder and time, its first `cwd`, the newest `version`, the last `gitBranch`, whether
+it holds a user or assistant message, whether it has `tool-results/` or any folder beside it, and the
+pid of a live `claude` that `sessions/` says has it open - one whose command line, from `/proc` or `ps`,
+is still claude's, never a pid another program took since its entry was left; and that registry
+whole, whatever the transcripts (`registered`): the VM's, for which copies a `claude` there has open.
+Every complete line is parsed and only those values kept, so nothing that was said comes back. With
+`repo_paths`, `githubRepoPaths` from Claude Code's `.claude.json`, and nothing else of that file; with
+`claude`, the version of the first of those executables there is - only those, never `PATH`. Run here
+and on the VM.
+
+**`git_checkouts_info`** — for each directory asked about, or else each checkout directly inside one,
+the checkout's top level and `origin` URL as configured, never as a `url.<base>.insteadOf` rewrites it,
+and without what precedes the host, which can be a token; each path as written, never with its `~` or
+`$VAR` expanded. Every command is `git --no-optional-locks`, which takes no index lock.
+
+**`claude_sessions_plan(sessions, here, there, version, repo_paths, dest, open_there)`** —
+the decision as data: `sessions` to copy, each with the checkout it continues in and the memory folder
+its prompt is pointed at; `files` for rsync; `newer`, `ambiguous`, `twice` (an ID in two folders here)
+and `open` (one a `claude` on the VM has open, given as `open_there`), one of no repository the VM
+has in none. A session's repository is
+its first directory's origin, else its gone worktree's checkout's, else `githubRepoPaths`; the VM's
+checkout of it is the one whose GitHub origin names it, of two the one named after it.
+**`git_repository(url)`** is `owner/repo`, lowercased, of https, ssh and scp-like URLs and local paths
+alike, the host not compared: this machine's side, where a clone may reach GitHub by an SSH alias.
+**`github_repository(url)`** is the same of a GitHub origin only, and `""` of any other: the VM's side,
+whose checkouts make deploy cloned from GitHub, so that a local path or another host's repository there
+claims nothing. **`claude_project_folder(path)`** is Claude Code's folder name for a path - every character
+but an ASCII letter or digit as `-` - refusing one over 200 characters, which Claude Code shortens with
+a hash of its own. **`claude_session_dirs(sessions)`** is the directories to ask git about for them:
+each first directory, and the checkout of a Claude worktree's, which a gone worktree leaves behind.
+
+Covered by `tests/unit/test_session_handoff.py`, with real git checkouts and canned transcripts.
