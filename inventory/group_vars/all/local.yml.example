@@ -142,6 +142,10 @@
 # beside the Claude terminal each time the window opens, its sign-in status read
 # from the VM then. Needs vscode_claude_terminal.
 # vscode_session_notes: true
+# Copy this machine's Claude Code sessions of the VM's repositories, the last 30
+# days of them, to the VM on every make code, so /resume there lists them. Their
+# transcripts hold whatever their tools printed: false keeps them here.
+# vscode_claude_sessions: true
 # The VS Code settings read (never written) to say whether the terminal starts
 # on its own. Empty: where stock VS Code keeps them on macOS and Linux; set it
 # for Insiders, VSCodium, or a VS Code on Windows driven from WSL.

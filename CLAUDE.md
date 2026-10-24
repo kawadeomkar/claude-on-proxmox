@@ -42,7 +42,7 @@ make deploy alpha TAGS=claude_code # re-run one role, e.g. to push an API key (T
 make destroy alpha   # release the VM from Claude, GitHub and Tailscale, then delete it
 make login alpha     # Claude, GitHub, Tailscale in deploy's order, one VM after another (TYPE=claude, github or tailscale: one)
 make list            # read-only: the VMs this project created, and their addresses
-make code VM_NAME=alpha [PROJECT=repo]   # refresh one alias, check the folder over SSH, open it in VS Code with a Claude terminal
+make code VM_NAME=alpha [PROJECT=repo]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
 make logs            # the run logs, newest first: read these instead of asking for terminal output
 make docs            # regenerate the wiki's reference pages; TYPE=serve previews the site, TYPE=build builds it strictly
 ```
@@ -259,8 +259,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   added only when `ssh -G` says the user's config does not reach the managed file yet (a `${HOME}`
   spelling counts on OpenSSH 9.9+ and not before; an `Include` inside a `Host` block never does),
   and never rewrites or changes the mode of the user's file.
-- **`make code` writes in one directory of its own on the VM, and never answers VS Code's security
-  questions.** With `vscode_claude_terminal` it writes a `.code-workspace` file in
+- **`make code` writes in one directory of its own on the VM, the session copies aside, and never
+  answers VS Code's security questions.** With `vscode_claude_terminal` it writes a `.code-workspace` file in
   `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` tasks
   run `claude` in a terminal and a login shell split to its left (one presentation group); with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
   0700 directory), and a second `folderOpen` task, "Session notes", run beside the Claude task, which
@@ -286,13 +286,49 @@ token; `github_auth_method: token` still fails. The status JSON carries
   rescue fails again. A fleet's deploy ends at code.yml's first task with each VM's line.
   `tests/unit/test_code_session.py` runs it (once at a pseudo-terminal, for Ctrl-C), runs the window
   step's own tasks with stand-ins for `which` and `code` first on PATH, and holds
-  every task in `code.yml` to an allowlist: read-only on this machine (plus `which`/`code` and the
-  alias through `tasks/ssh_config.yml`), or `stat`/`getent`/`find`/`slurp` and the four writes (the
-  workspace and its directory, the notes and theirs) delegated to the VM; a `shell`, a writer in a
-  `block`, or a `connection` fails it by name. The helper is run against stand-ins with nothing else
+  every task in `code.yml`, and in the task files it imports, followed all the way down, to an
+  allowlist: read-only on this machine (plus `which`/`code`, the session handoff's `rsync` to the VM and
+  the alias through `tasks/ssh_config.yml`), the handoff's readers (`claude_sessions_info`,
+  `git_checkouts_info`) here or on the VM, or `stat`/`getent`/`find`/`slurp` and the six
+  writes (the workspace and its directory, the notes and theirs, the sessions' directory and their copies)
+  delegated to the VM; a `shell`, a writer in a `block`, or a `connection` fails it by name. The helper is run against stand-ins with nothing else
   on PATH: never a login shell there, which would put this machine's own `code` and `tailscale` back. The `provision`
   scenario, which runs `code.yml`, points `vscode_user_settings_file` into the ephemeral directory,
   since the message depends on it, and asserts that file's bytes and mtime after every run.
+  With `vscode_claude_sessions` (on by default) it also copies this machine's Claude Code sessions of the
+  last 30 days to the VM, those whose first directory's git origin names a repository the VM has a
+  checkout of (`owner/repo`, matched against the VM's checkouts, never by folder name; the origin as
+  configured, never as `url.<base>.insteadOf` rewrites it, and on the VM only a GitHub one, so a checkout
+  there with a local path or another host's URL claims nothing of this machine's): into the VM's
+  `~/.claude/projects/` under the folder names they have here, so `--continue` in a checkout never picks
+  one up, through an rsync mirror and a manifest in `<workspaces>/claude-sessions/` (0700). Each copy
+  gets exactly four edits (`claude_sessions_copy` in `playbooks/library/`): the memory folder in its
+  `prompt_snapshot` entries, read from the entry and never computed; the session's `tool-results/` folder
+  of this machine's, in user entries only (never an assistant's, which can carry signed thinking); a
+  cleared `worktree-state` after a bound one; a `relocated` entry naming the checkout. A copy is replaced
+  only while it matches the manifest's digest, written after each copy, so a session continued on the VM
+  is never overwritten; it keeps this machine's file time only within 14 days, else the time of writing,
+  since Claude Code sweeps a transcript at 30. An rsync that fails is said and the window opens
+  anyway. The handoff reads this machine's
+  `~/.claude` (`code_session_source_dir`) and checkout, with `git --no-optional-locks`, and writes
+  nothing here; every task reading a transcript is `no_log` and no message carries more than IDs,
+  folders, branches and counts. The allowlist follows `code.yml`'s own imports (`tasks/session_read.yml`, `tasks/session_write.yml`;
+  only `cluster_vms.yml`, `vm_addresses.yml` and `ssh_config.yml` are shared and not followed) and names
+  each reader, writer and command (docs/architecture/lifecycle.md §4.9). A copy gone while its ID is in
+  another folder of the VM's moved there (`/cd`) and is never written again: an ID in two folders resumes
+  from neither - unless that copy is still as written, when the session moved here and its copy follows.
+  A copy a claude on the VM has open (its `sessions/` registry, at a pid that still runs claude) is left
+  as it is, and so is an ID in two folders here; origins are reported without credentials, and no path
+  is expanded (`expand_user_and_vars=False`). The copies' records of each request sent (`api-request-shape`, `api-request-blob`) keep
+  this machine's memory folder: resume sends the snapshot, never them, which the `configure` scenario holds.
+- **Tests never read or write the developer's `~/.claude`.** `make code` reads this machine's sessions
+  and, in every scenario and harness, the "VM" is this machine too. Every run of `code.yml` points
+  `code_session_source_dir` and `code_session_dest_dir` into its own directory (`_window_extra` in
+  `tests/unit/test_code_session.py`, `verify_code_vars` and every `deploy.yml` run in the `provision`
+  scenario), the VM's `claude` is a stand-in beside the latter - looked for only at the installers'
+  paths, never on `PATH` - and git runs there with `GIT_CONFIG_GLOBAL=/dev/null`, since the developer's
+  config (a `status.showUntrackedFiles`, an `insteadOf`, a hook) changes what git says and does. The guards in
+  `test_code_session.py` fail if one stops.
 - **Tests never write into the developer's `~/.ssh`.** The `configure` scenario runs the real
   playbook and its `localhost` is the developer's machine, so every playbook scenario points
   `claude_ssh_config_file` and `claude_ssh_user_config` into `MOLECULE_EPHEMERAL_DIRECTORY` with

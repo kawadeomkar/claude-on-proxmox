@@ -385,8 +385,9 @@ one at random.
 
 ## 4.9 `playbooks/code.yml`
 
-`make code VM_NAME=alpha [PROJECT=discord-music-bot]`: the alias step for one VM, then the one step
-no other playbook does, launching the editor. In order:
+`make code VM_NAME=alpha [PROJECT=discord-music-bot]`: the alias step for one VM, then
+the one step no other playbook does, launching the editor - with this machine's recent Claude Code
+sessions copied to the VM on the way (**The session handoff**, below). In order:
 
 1. Refuse anything but one name, and a `vm_project` (`PROJECT`) that is not one GitHub repository
    name - up to 100 ASCII letters, digits, `.`, `-`, `_`, and not `.` or `..` - so nothing outside
@@ -400,12 +401,14 @@ no other playbook does, launching the editor. In order:
    `accept-new`, not the user's ssh config, and the group's connection variables from the inventory
    (a key, a port) apply as they do to `make deploy TYPE=configure`.
 4. Read the VM user's home on the VM with `getent`, delegated over SSH, unless `vm_projects_dir`
-   says where the code is. Nothing is guessed on the controller, and nothing is read back out of the
-   alias: the workspace is `vm_projects_dir` or `<home>/projects`.
+   says where the code is (and the sessions' directory there is given or not needed). Nothing is
+   guessed on the controller, and nothing is read back out of the alias: the workspace is
+   `vm_projects_dir` or `<home>/projects`. Then the session handoff's reads (`tasks/session_read.yml`).
 5. Refuse a `vm_projects_dir` that is not absolute (VS Code is handed it as written, from this
-   machine, so `~` would not expand) and, with the terminal on, a `vscode_workspaces_dir` that is
-   not absolute, is the projects directory (its files would sit among the repositories), or is the
-   folder being opened (`PROJECT=.claude-on-proxmox`). Each names the variable it is about.
+   machine, so `~` would not expand) and, with the terminal or the session copies on, a
+   `vscode_workspaces_dir` that is not absolute or is the projects directory (its files would sit
+   among the repositories), and with the terminal, one that is the folder being opened
+   (`PROJECT=.claude-on-proxmox`). Each names the variable it is about.
 6. Refresh the alias, then look for the folder to open - the workspace, or `<workspace>/<project>` -
    with `stat` on the VM. Read-only. Unreachable, missing and not-a-folder are each their own
    message: a missing project lists what the workspace holds and, for a name that differs only in
@@ -413,7 +416,7 @@ no other playbook does, launching the editor. In order:
    VM never configured, and says to run `make deploy TYPE=configure`. These are there so a typo is said in the
    terminal, not in a VS Code window opened on a folder that does not exist.
 7. Check `code` is on `PATH`, and install `ms-vscode-remote.remote-ssh` if `code --list-extensions`
-   lacks it.
+   lacks it. Then the session handoff's writes (`tasks/session_write.yml`), the first on the VM.
 8. With `vscode_claude_terminal` (the default), write a workspace file on the VM and open that:
    `code --remote ssh-remote+alpha <workspaces>/project/<project>.code-workspace`, or
    `<workspaces>/<workspace's name>.code-workspace` for the whole directory, where `<workspaces>` is
@@ -474,8 +477,8 @@ include a workspace file's tasks, and a path ending in `.code-workspace` given t
 workspace. The defaults moved twice in 2026 (1.109, 1.126); CI cannot watch the user's editor, so a
 manual run of `make code` is the check when they move again.
 
-The workspace file and the session notes (below) are all that is written on the VM, last, as the VM
-user, so every refusal above leaves the VM as it was; a workspace directory that already exists keeps its mode, since
+The workspace file, the session notes (below) and the session copies (below) are all that is written
+on the VM, last, as the VM user, so every refusal above leaves the VM as it was; a workspace directory that already exists keeps its mode, since
 `vscode_workspaces_dir` may name one of the user's own. `tests/unit/test_code_session.py` holds
 every task in `code.yml` to an allowlist - read-only here, or delegated to the VM - and the
 `provision` scenario checks the settings file it planted is byte-for-byte untouched after every
@@ -526,6 +529,100 @@ and every window under a `vscode_workspaces_dir` outside the projects directory,
 they open the notes from outside it, which VS Code asks about once per workspace
 (`requestOpenFilesTrust`, remembered on *Open*) unless a trusted folder covers them - the projects
 directory, trusted in its own window - and `make code`'s message says so.
+
+**The session handoff.** With `vscode_claude_sessions` (the default) every run copies this machine's
+Claude Code sessions of the last 30 days - Claude Code's own `cleanupPeriodDays` by default, by their file
+time, so Claude Desktop's, which Claude Code keeps here at any age, come over within it like the rest - to
+the VM, those of the repositories it has checked out. It rests on how Claude Code 2.1.308 resumes:
+by the folder a transcript is filed in under `~/.claude/projects/`, never by the directory recorded
+inside it, `--continue` taking the newest file of the current folder only, and the `/resume` picker
+listing other folders' sessions under Ctrl+A - never those started with `claude -p` or the Agent SDK, or
+whose first prompt was `/loop`, which resume by ID alone. `claude --resume <id>` looks in the current directory's
+folder and its worktrees' first, then in every other folder, and resolves an ID only one of those holds
+(since 2.1.223): moving the transcript into any folder of the other machine is the way across machines
+Claude Code's own Agent SDK documents. The rules:
+
+- **Read-only on this machine.** `claude_sessions_info` (`playbooks/library/`) lists the transcripts
+  in `code_session_source_dir` (`CLAUDE_CONFIG_DIR` or `~/.claude`) and returns what each says about
+  itself - its first `cwd`, the newest `version`, the last `gitBranch`, whether it has a message, and
+  from `sessions/` whether a live `claude` has it open: at a pid whose command line, from `/proc` or `ps`,
+  is still claude's, since an entry a claude left behind can name a pid another program took since -
+  never what was said; `git_checkouts_info` runs `git --no-optional-locks`, which takes no index lock,
+  for each first directory and the checkout of a `.claude/worktrees/<name>` one, taking each path as
+  written (`expand_user_and_vars=False`, no `path`-typed option, which expand `~` and `$VAR`), and each
+  origin without what precedes the host, where a token can sit. Nothing here is written, so the controller still writes only the
+  SSH files of §4.8.
+- **Selection by origin, decided against the VM.** `git_checkouts_info` reads the origin of every
+  checkout in the VM's projects directory, as configured - never rewritten by a `url.<base>.insteadOf`,
+  which names where git connects, not the repository - and `claude_sessions_plan`
+  (`filter_plugins/sessions.py`) matches `owner/repo`, without regard to case, against each session's:
+  never a folder's name, which renamed clones, subfolders and other owners' repositories of the same
+  name get wrong, and never the GitHub listing, which differs from what is cloned (a private repository
+  with gh signed out, one created since). On the VM only a GitHub origin names a repository
+  (`github_repository`: https, ssh, scp-like, `ssh.github.com:443`), as make deploy clones them, so a
+  checkout with a local path or another host's URL there claims nothing of this machine's; here any form
+  does (`git_repository`), since a clone may reach GitHub through an SSH alias of the user's own. A gone directory falls back to its worktree's checkout, then to
+  `githubRepoPaths` in Claude Code's `.claude.json`. `sessions/*.json` lists only running processes,
+  so it serves the open-session check and nothing else. Of two checkouts of one repository the one
+  named after it is taken, else neither.
+- **Filed under this machine's folder names.** A copy keeps its folder (`-Users-you-repo`), so
+  `--continue` in a checkout never picks it up and the window's default terminal stays the VM's own
+  conversation. A session written by a Claude Code newer than the VM's (`claude --version` there,
+  from the native installer's path or npm's, never `PATH`) is left here and named. So is a session in
+  two folders here (`twice`), which `claude --resume <id>` would resume from neither once both were on
+  the VM, and one a `claude` on the VM has open (its `sessions/` registry there, `registered`),
+  whose copy is never replaced under the claude holding it.
+- **Four edits, nothing else** (`claude_sessions_copy`): the memory folder in each `prompt_snapshot`
+  attachment becomes `<VM ~/.claude>/projects/<checkout's folder>/memory/` - read from the entry's
+  "persistent file-based memory at" path, never computed, because `--system-prompt-snapshot` is on by
+  default and resume sends the recorded prompt until the conversation is compacted; a copy whose
+  prompt still names its own memory folder here after that, in a form the edit does not know, is not
+  written; another project's memory folder, which a prompt can quote, stays as text. The session's own
+  `tool-results/` folder of this machine's, under any project folder (a session continued after `/cd`
+  names the old one), becomes the copy's on the VM, in user entries only - the tool results that say
+  where a large output was saved, and `toolUseResult` - so that a resumed session can read them; an
+  assistant's entries, which can carry signed thinking, are never changed. When the last
+  `worktree-state` entry binds a worktree, a cleared one is appended: Claude Code clears a binding to a
+  worktree that is gone by itself, which is the VM's usual case, but refuses to resume one whose path is
+  there and is not that worktree - the `configure` scenario's, where both "machines" hold the path. A
+  `relocated` entry naming the checkout comes last, so
+  that the picker opens it there and names the `cd` from anywhere else; `claude --resume <id>` itself
+  is not guarded by it. Every other line is copied byte for byte, the last incomplete one left out -
+  among them the records Claude Code keeps since 2.1.300 of each request it sent
+  (`api-request-shape`, `api-request-blob`), which still name this machine's memory folder: a resume
+  sends the recorded prompt, never them, as the `configure` scenario holds against the real `claude`.
+- **Replace only what the last run wrote.** The manifest in `<workspaces>/claude-sessions/` holds the
+  digest of each copy written. A copy that still matches is replaced; one that differs was continued
+  on the VM, or was never this project's, and is left alone and named - as continued when nothing new
+  came from here, as changed on both otherwise. The appended entries rule a byte-prefix check out. A
+  copy that is gone while its ID is in another folder of the VM's moved there - `/cd` in a resumed
+  session moves its transcript into the new directory's folder - and counts as continued the same way:
+  written again, the ID would be in two folders, and `claude --resume <id>` from a third finds neither.
+  Unless the copy in that other folder is this project's own, still as written: then the session moved
+  here (`/cd` on this machine), and it is written in its new folder and the old copy removed, which
+  otherwise reads as changed on both forever. The manifest is written after each copy, so a run that
+  stops part way still records what it wrote; one copy written and not recorded would read as continued
+  on the VM once the session grew here.
+- **Kept from Claude Code's sweep.** A copy keeps this machine's file time while that is within 14
+  days, and is otherwise given the time it is written, renewed once that is 14 days old: Claude Code
+  deletes a transcript 30 days after its file time, which would take a session copied at 29 days the
+  next day.
+- **One way.** The sync only ever goes to the VM. What a VM holds of its own - sessions begun there,
+  copies continued there, auto memory - goes with it when `make destroy` deletes it (§4.5).
+- **The transport.** `rsync -az --files-from=-` over the alias, as VS Code reaches the VM, with
+  `BatchMode`, into a mirror in that directory (0700; macOS's `openrsync` has no `--chmod`), which
+  later runs only add to; to a local path where Ansible reaches the VM locally, as in the `provision`
+  scenario. Its 23 and 24 - a file it could not read, one that vanished - are not failures: the rest
+  went, and the copy names a session that did not arrive. Any other failure, rsync missing on either
+  machine among them, is said too, and the window opens with the copies there are. Subagent transcripts never go: resume sends the same history without them. Sessions that
+  leave the window leave the mirror; their copies stay, for Claude Code's own clean-up on the VM.
+- **No transcript content in output or logs.** Both modules that read transcripts are `no_log`, and
+  the messages carry IDs, folders, branches and counts only.
+
+`tests/unit/test_session_handoff.py` holds the filter and the modules,
+`tests/unit/test_code_session.py` runs the tasks between two real checkouts with a marker string in
+the transcripts that must reach no output, and the `configure` scenario resumes a copy with the real
+`claude` before its stand-in replaces it.
 
 ## 4.10 `playbooks/tailscale_login.yml`
 

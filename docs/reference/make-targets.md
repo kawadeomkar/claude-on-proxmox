@@ -57,7 +57,7 @@ and `LOG_DIR` moves the run logs or, empty, turns them off.
 | &emsp;`TYPE=check` | Dry-run configure against the VMs (--check --diff; every tagged VM, unless named) |
 | &emsp;`TYPE=ssh-config` | Refresh the SSH aliases of the VMs this project created; without names, also prune those of VMs that are gone |
 | &emsp;`TAGS=<role>,...` | Configure only these roles: beside VM names as TYPE=configure, else with TYPE=configure or check (make deploy alpha TAGS=claude_code) |
-| `make code <name>` | Open a VM in VS Code with a Claude terminal |
+| `make code <name>` | Open a VM in VS Code with a Claude terminal, this machine's recent Claude sessions copied there |
 | &emsp;`PROJECT=<repo>` | Open one project folder on the VM rather than the whole projects directory |
 | `make login [<name>...]` | Sign the VM(s) in to Claude, GitHub and Tailscale, or report how each is signed in |
 | &emsp;`TYPE=claude` | Sign Claude Code in by the browser, then start Remote Control |

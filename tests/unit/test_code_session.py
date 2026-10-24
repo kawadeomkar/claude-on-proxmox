@@ -22,13 +22,18 @@ of this machine's is ever started.
 The rest holds every task in `code.yml` to an allowlist, because the playbook
 reads the user's own VS Code settings and must never write them. On this
 machine a task may assert, fail, debug, set facts, add the host, import the
-project's task files, or run `which` and `code`; on the VM, reached only
-through `delegate_to`, it may stat, getent and find, and make the one
-directory and the one file. `tasks/ssh_config.yml` (the alias) is held to its
-own rules by test_ssh_config.py, and `code --install-extension` fills VS
-Code's own extension store, by design. The last tests keep the provision
-scenario, which runs `code.yml` on this machine, away from the developer's own
-VS Code settings.
+project's task files, or run `which`, `code` and rsync; on the VM, reached only
+through `delegate_to`, it may stat, getent and find, make its directories and
+files, and write the session copies. The session handoff's own task files are
+followed and held to the same list; the shared ones (the alias, the Proxmox
+reads) to their own tests, and `code --install-extension` fills VS Code's own
+extension store, by design.
+
+The session handoff is run too, between two directories standing for this
+machine and the VM, with real git checkouts at both ends and a marker in the
+transcripts that no run may print. The last tests keep every run here and the
+provision scenario, which runs `code.yml` on this machine, away from the
+developer's own VS Code settings and Claude Code.
 """
 
 from __future__ import annotations
@@ -37,6 +42,7 @@ import ast
 import copy
 import fcntl
 import importlib.util
+import inspect
 import json
 import os
 import pty
@@ -253,6 +259,9 @@ def test_with_nothing_to_continue_a_fresh_claude_starts(tmp_path):
     result, asked = _run(tmp_path, status_rc=0, continue_rc=1)
     assert result.returncode == 0
     assert asked == ["claude auth status", GITHUB_STATUS, "claude --continue", "claude"]
+
+
+SESSION_ID = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
 
 
 def test_a_continued_session_that_ends_badly_is_not_started_again(tmp_path):
@@ -486,6 +495,26 @@ def _failures(output: str) -> list[str]:
     ]
 
 
+def _window_extra(root: Path) -> dict:
+    """What every window run is given before its case's own values.
+
+    Never the developer's own VS Code settings, nor their time zone: what is said depends on them.
+    With none of the zone's sources there, it is UTC. Nor the developer's Claude Code, at either
+    end: both directories of sessions are the run's own, and the copying is off unless a case
+    turns it on.
+    """
+    return {
+        "ansible_python_interpreter": sys.executable,
+        "vscode_user_settings_file": str(root / "none"),
+        "code_tz_env": "",
+        "code_localtime": str(root / "no-localtime"),
+        "code_timezone_file": str(root / "no-timezone"),
+        "code_session_source_dir": str(root / "here" / ".claude"),
+        "code_session_dest_dir": str(root / "vm" / ".claude"),
+        "vscode_claude_sessions": False,
+    }
+
+
 def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, local=None, show=None, **extra) -> dict:
     """Run the tasks of code.yml's window step named in `keep` as code.yml runs them, and say what came of it.
 
@@ -531,6 +560,9 @@ def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, lo
         window["block"].append({"name": "Show it", "ansible.builtin.debug": {"msg": "{{ " + show + " }}"}})
     window["block"].append({"name": "Reach the window", "ansible.builtin.debug": {"msg": "reached"}})
     (root / "window.yml").write_text(yaml.safe_dump([play]))
+    # What code.yml finds beside itself: the task files it imports, its modules and its templates.
+    for name in ("tasks", "library", "templates"):
+        (root / name).symlink_to(REPO / "playbooks" / name)
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
     env.update(
@@ -540,17 +572,11 @@ def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, lo
         # The run's stats printed: what it recorded for NEXT STEPS.
         ANSIBLE_SHOW_CUSTOM_STATS="1",
         PATH=f"{bin_dir}:{WINDOW_PATH}",
+        # Never the developer's git config: a url.<base>.insteadOf there rewrites the origins read.
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_NOSYSTEM="1",
     )
-    # Never the developer's own VS Code settings, nor their time zone: what is said depends on them. With
-    # none of the zone's sources there, it is UTC.
-    extra = {
-        "ansible_python_interpreter": sys.executable,
-        "vscode_user_settings_file": str(root / "none"),
-        "code_tz_env": "",
-        "code_localtime": str(root / "no-localtime"),
-        "code_timezone_file": str(root / "no-timezone"),
-        **extra,
-    }
+    extra = {**_window_extra(root), **extra}
     result = subprocess.run(
         [str(ANSIBLE_PLAYBOOK), "-i", str(root / "inventory"), "-e", json.dumps(extra), str(root / "window.yml")],
         cwd=root,
@@ -918,17 +944,37 @@ COMMANDS_HERE = {
     ("code", "--list-extensions"),
     ("code", "--install-extension"),
     ("code", "--remote"),
+    # The sessions, sent to the VM's mirror: read here, written there.
+    ("rsync", "-az"),
 }
 READS_ON_VM = {"ansible.builtin.getent", "ansible.builtin.stat", "ansible.builtin.find", "ansible.builtin.slurp"}
-WRITES_ON_VM = {"ansible.builtin.file", "ansible.builtin.copy"}
+# The session handoff's readers (playbooks/library/), run here and on the VM alike: they change nothing.
+READS_EITHER = {"claude_sessions_info", "git_checkouts_info"}
+WRITES_ON_VM = {"ansible.builtin.file", "ansible.builtin.copy", "claude_sessions_copy"}
+# What each writer runs under: the workspace with the terminal; the notes with it and their own
+# switch; the sessions' directory when there is a session to copy, and the copies with the sync.
+WRITERS_WHEN = (
+    "code_terminal",
+    "code_notes | bool",
+    "code_session_plan.sessions | default([]) | length > 0",
+    "code_sessions | bool",
+)
+# The task files code.yml imports that other playbooks import too, each held to its own tests: the
+# Proxmox API reads and the alias (test_ssh_config.py). Every other import is code.yml's own, and
+# its tasks are held to everything here as code.yml's are.
+SHARED = {"tasks/cluster_vms.yml", "tasks/vm_addresses.yml", "tasks/ssh_config.yml"}
 
 
-def _tasks(items):
-    # Every task, through block/rescue/always; a block itself has no action.
+def _tasks(items, imports_from=None):
+    # Every task, through block/rescue/always; a block itself has no action. With imports_from, the
+    # directory imports are relative to, through code.yml's own imports too, and theirs in turn.
     for item in items:
         if "block" in item:
             for section in ("block", "rescue", "always"):
-                yield from _tasks(item.get(section) or [])
+                yield from _tasks(item.get(section) or [], imports_from)
+        elif imports_from and item.get("ansible.builtin.import_tasks") not in (None, *SHARED):
+            path = imports_from / item["ansible.builtin.import_tasks"]
+            yield from _tasks(yaml.safe_load(path.read_text()), imports_from)
         else:
             yield item
 
@@ -936,7 +982,33 @@ def _tasks(items):
 def _every_task():
     play = _play()
     for section in ("pre_tasks", "tasks", "post_tasks", "handlers"):
-        yield from _tasks(play.get(section) or [])
+        yield from _tasks(play.get(section) or [], CODE.parent)
+
+
+def test_no_import_escapes_the_allowlist(tmp_path):
+    # Followed all the way down, an import that is left is one of the shared files: a task file of
+    # code.yml's own that imports another is held to the allowlist through it.
+    left = {task["ansible.builtin.import_tasks"] for task in _every_task() if "ansible.builtin.import_tasks" in task}
+    assert left <= SHARED
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "outer.yml").write_text(
+        yaml.safe_dump([{"name": "outer | Import", "ansible.builtin.import_tasks": "tasks/inner.yml"}])
+    )
+    (tmp_path / "tasks" / "inner.yml").write_text(
+        yaml.safe_dump([{"name": "inner | Write", "ansible.builtin.shell": "touch /tmp/x"}])
+    )
+    found = list(_tasks([{"name": "Import", "ansible.builtin.import_tasks": "tasks/outer.yml"}], tmp_path))
+    assert [task["name"] for task in found] == ["inner | Write"]
+
+
+def test_code_yml_imports_its_own_task_files_and_the_shared_ones_alone():
+    # A new import is followed above unless it is listed as shared, so it cannot pass unchecked.
+    imported = {
+        task["ansible.builtin.import_tasks"]
+        for task in _tasks(_play()["tasks"])
+        if "ansible.builtin.import_tasks" in task
+    }
+    assert imported == SHARED | {"tasks/session_read.yml", "tasks/session_write.yml"}
 
 
 def _action(task):
@@ -957,10 +1029,11 @@ def test_every_task_reads_this_machine_or_is_delegated_to_the_vm(task):
         assert tuple(task[action]["argv"][:2]) in COMMANDS_HERE
     elif action in READS_ON_VM:
         assert task.get("delegate_to") == ON_VM
+    elif action in READS_EITHER:
+        assert task.get("delegate_to", ON_VM) == ON_VM
     elif action in WRITES_ON_VM:
         assert task.get("delegate_to") == ON_VM
-        # The workspace with the terminal; the notes with it and their own switch.
-        assert task.get("when") in ("code_terminal", "code_notes | bool")
+        assert task.get("when") in WRITERS_WHEN
     elif action == "ansible.builtin.meta":
         # The one meta action: a deploy for a fleet ends the play.
         assert task[action] == "end_play", task.get("name")
@@ -1002,11 +1075,20 @@ def test_every_name_code_yml_sets_is_its_own():
 def test_make_code_writes_exactly_the_directory_and_the_file():
     # The allowlist must not pass by finding no writer.
     assert [t["name"] for t in _every_task() if _action(t) in WRITES_ON_VM] == [
+        "session_write | Make the directory for the sessions on the VM",
+        "session_write | Write the copies the VM resumes",
         "Make the directory for VS Code workspace files on the VM",
         "Write the VS Code workspace on the VM",
         "Make the directory for the session notes on the VM",
         "Write the session notes on the VM",
     ]
+
+
+def test_every_task_that_reads_a_transcript_is_no_log():
+    # The readers return no content, but a transcript holds whatever its tools printed.
+    for task in _every_task():
+        if _action(task) in {"claude_sessions_info", "claude_sessions_copy"}:
+            assert task.get("no_log") is True, task["name"]
 
 
 def test_the_provision_scenario_never_reads_the_developer_s_vscode_settings():
@@ -1027,6 +1109,42 @@ def test_the_provision_scenario_never_reads_the_developer_s_vscode_settings():
         for case in (task.get("vars") or {}).get("verify_code_cases", []):
             if "base" in case:
                 assert "vscode_user_settings_file" in case["base"], case
+
+
+def test_no_window_run_reads_or_writes_the_developer_s_claude_code(tmp_path):
+    # make code reads this machine's ~/.claude and writes the VM's; in every run here the VM is this
+    # machine too. Both are the run's own, whatever a case adds, and so is the VM's claude.
+    given = _window_extra(tmp_path)
+    for key in ("code_session_source_dir", "code_session_dest_dir"):
+        assert Path(given[key]).is_relative_to(tmp_path), key
+    for case in WINDOWS.values():
+        assert not {"code_session_source_dir", "code_session_dest_dir"} & set(case)
+    # The session runs name theirs, inside their world.
+    source = inspect.getsource(_handoff)
+    assert 'code_session_source_dir=str(world["here"]' in source and 'code_session_dest_dir=str(world["vm"]' in source
+
+
+def test_the_provision_scenario_never_reads_or_writes_the_developer_s_claude_code():
+    # The scenario runs code.yml with this machine as the VM: both ends would be the developer's own.
+    plays = yaml.safe_load(PROVISION_VERIFY.read_text())
+    play = next(p for p in plays if "verify_code_vars" in (p.get("vars") or {}))
+    for key in ("code_session_source_dir", "code_session_dest_dir"):
+        assert "MOLECULE_EPHEMERAL_DIRECTORY" in play["vars"]["verify_code_vars"][key], key
+    runs = [t for t in _tasks(play["tasks"]) if "verify_code_playbook" in str(t.get("ansible.builtin.command", ""))]
+    for task in runs:
+        for case in (task.get("vars") or {}).get("verify_code_cases", []):
+            if "base" in case:
+                assert {"code_session_source_dir", "code_session_dest_dir"} <= set(case["base"]), case
+    deploys = [
+        task
+        for each in plays
+        for task in _tasks(each.get("tasks") or [])
+        if "deploy.yml" in str(task.get("ansible.builtin.command", "")) and "pve2" not in str(task)
+    ]
+    assert deploys
+    for task in deploys:
+        argv = str(task["ansible.builtin.command"]["argv"])
+        assert "code_session_source_dir" in argv and "code_session_dest_dir" in argv, task["name"]
 
 
 def test_the_provision_scenario_s_deploy_runs_never_read_the_developer_s_vscode_settings_either():
@@ -1529,3 +1647,311 @@ def test_no_sign_in_here_leaves_the_notes_to_the_window(tmp_path, case):
 def test_without_notes_a_sign_in_starts_no_helper(tmp_path):
     result, called = _signing_in(tmp_path, None, status_rc=1, login_rc=0)
     assert result.returncode == 0 and called == []
+
+
+# ------------------------------------------------------------- the session handoff in the window ---
+# The window step's own session tasks, run as make code runs them, between two directories that stand
+# for this machine and the VM: real git checkouts at both ends, cloned from one bare repository whose
+# path ends like a GitHub URL, a ~/.claude with transcripts at each, and rsync to a local path, as
+# Ansible reaches the VM locally here. Neither end is the developer's.
+SESSION_KEEP = [
+    "Reach the VM the way make deploy TYPE=configure does",
+    "Read the sessions to carry to the VM",
+    "Settle the folder to open",
+    "Carry the sessions to the VM",
+    "Say what was opened",
+]
+OTHER_ID = "bc0e637b-2c3d-4e4f-9a01-23456789abcd"
+STUB_ID = "178468f7-0000-4000-8000-000000000000"
+# What a tool printed, as a transcript holds it: no run's output may carry it.
+MARKER = "TRANSCRIPT-MARKER-6f1d2c"
+
+
+def _git(path: Path, *args: str) -> str:
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    return subprocess.run(
+        ["git", "-C", str(path), *args], capture_output=True, text=True, check=True, env=env
+    ).stdout.strip()
+
+
+def _commit(path: Path, name: str) -> str:
+    (path / name).write_text(name + "\n")
+    _git(path, "add", name)
+    _git(path, "-c", "user.name=Dev", "-c", "user.email=dev@example.com", "commit", "--quiet", "-m", name)
+    return _git(path, "rev-parse", "HEAD")
+
+
+def _transcript(sid: str, cwd: Path, here: Path, branch: str, *, conversation=True) -> bytes:
+    folder = re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
+    base = {"cwd": str(cwd), "sessionId": sid, "version": "2.1.308", "gitBranch": branch}
+    memory = f"{here}/projects/{folder}/memory/"
+    entries = [
+        {
+            **base,
+            "type": "attachment",
+            "attachment": {
+                "type": "prompt_snapshot",
+                "systemPrompt": [f"You have a persistent file-based memory at `{memory}`."],
+            },
+        },
+    ]
+    if conversation:
+        saved = f"{here}/projects/{folder}/{sid}/tool-results/toolu_1.txt"
+        entries += [
+            {**base, "type": "user", "message": {"role": "user", "content": f"print the token {MARKER}"}},
+            {
+                **base,
+                "type": "user",
+                "message": {"role": "user", "content": [{"type": "tool_result", "content": f"Saved to {saved}"}]},
+            },
+            {
+                **base,
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": MARKER}]},
+            },
+        ]
+    return "".join(json.dumps(entry, separators=(",", ":")) + "\n" for entry in entries).encode()
+
+
+def _world(root: Path) -> dict:
+    """This machine and a VM under root, the session ID's work committed on feat/x and pushed."""
+    root = root.resolve()
+    bare = root / "remotes" / "octo" / "demo.git"
+    bare.mkdir(parents=True)
+    _git(bare, "init", "--quiet", "--bare", "--initial-branch", "main")
+    seed = root / "seed"
+    seed.mkdir()
+    _git(seed, "init", "--quiet", "--initial-branch", "main")
+    _commit(seed, "README")
+    _git(seed, "push", "--quiet", str(bare), "main")
+    here, vm = root / "here", root / "vm"
+    demo = here / "src" / "demo"
+    demo.parent.mkdir(parents=True)
+    _git(demo.parent, "clone", "--quiet", str(bare), "demo")
+    _git(demo, "switch", "--quiet", "--create", "feat/x")
+    commit = _commit(demo, "work")
+    _git(demo, "push", "--quiet", "--set-upstream", "origin", "feat/x")
+    other = here / "src" / "other"
+    other.mkdir()
+    _git(other, "init", "--quiet")
+    _git(other, "remote", "add", "origin", "https://github.com/octo/other.git")
+    (vm / "projects").mkdir(parents=True)
+    _git(vm / "projects", "clone", "--quiet", str(bare), "demo")
+    # Its origin GitHub's, as make deploy clones one, and only a rewrite of its own sends git to the bare
+    # repository here: the VM's origins name a repository only as GitHub's.
+    _git(vm / "projects" / "demo", "remote", "set-url", "origin", "https://github.com/octo/demo.git")
+    _git(vm / "projects" / "demo", "config", f"url.{bare}.insteadOf", "https://github.com/octo/demo.git")
+    claude = vm / ".local" / "bin" / "claude"
+    claude.parent.mkdir(parents=True)
+    claude.write_text("#!/bin/sh\necho '2.1.308 (Claude Code)'\n")
+    claude.chmod(0o755)
+    folder = here / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(demo))
+    (folder / SESSION_ID / "tool-results").mkdir(parents=True)
+    (folder / SESSION_ID / "subagents").mkdir()
+    (folder / SESSION_ID / "tool-results" / "toolu_1.txt").write_text(f"{MARKER}\n")
+    (folder / SESSION_ID / "subagents" / "agent-1.jsonl").write_text("{}\n")
+    (folder / f"{SESSION_ID}.jsonl").write_bytes(_transcript(SESSION_ID, demo, here / ".claude", "feat/x"))
+    (folder / f"{STUB_ID}.jsonl").write_bytes(
+        _transcript(STUB_ID, demo, here / ".claude", "feat/x", conversation=False)
+    )
+    elsewhere = here / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(other))
+    elsewhere.mkdir(parents=True)
+    (elsewhere / f"{OTHER_ID}.jsonl").write_bytes(_transcript(OTHER_ID, other, here / ".claude", "main"))
+    return {
+        "root": root,
+        "bare": bare,
+        "here": here,
+        "vm": vm,
+        "demo": demo,
+        "folder": folder,
+        "commit": commit,
+        "checkout": vm / "projects" / "demo",
+    }
+
+
+def _handoff(world: dict, run: str, sessions=True, **extra) -> dict:
+    return _window(
+        world["root"] / run,
+        SESSION_KEEP,
+        in_deploy=False,
+        vm_name="alpha",
+        code_reach="192.0.2.51",
+        ansible_connection="local",
+        vscode_claude_sessions=sessions,
+        vm_projects_dir=str(world["vm"] / "projects"),
+        code_session_source_dir=str(world["here"] / ".claude"),
+        code_session_dest_dir=str(world["vm"] / ".claude"),
+        show="code_target",
+        **extra,
+    )
+
+
+def _changed(run: dict) -> int:
+    return int(re.search(r"^localhost\s*:\s*ok=\d+\s+changed=(\d+)", run["output"], re.MULTILINE).group(1))
+
+
+def _sync_twice(root: Path) -> dict:
+    world = _world(root)
+    return {"world": world, "first": _handoff(world, "first"), "second": _handoff(world, "second")}
+
+
+def _off(root: Path) -> dict:
+    world = _world(root)
+    return {"world": world, "off": _handoff(world, "off", sessions=False)}
+
+
+def _sync_failing(root: Path) -> dict:
+    world = _world(root)
+    _no_mirror(world)
+    return {"world": world, "run": _handoff(world, "run")}
+
+
+def _no_mirror(world: dict) -> None:
+    # Where rsync sends the sessions, a file: it fails, as one missing on either machine does.
+    sessions = world["vm"] / "projects" / ".claude-on-proxmox" / "claude-sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "mirror").write_text("in the way\n")
+
+
+def _changed_on_both(world: dict) -> None:
+    _handoff(world, "before")
+    line = b'{"type":"user","message":{"role":"user","content":"more"}}\n'
+    for path in (world["vm"] / ".claude" / "projects" / world["folder"].name, world["folder"]):
+        with open(path / f"{SESSION_ID}.jsonl", "ab") as handle:
+            handle.write(line)
+
+
+# A process whose argv is claude's, for the registry entries below: a session is open only while one of
+# those runs at the pid its entry names. Started by the handoffs fixture.
+CLAUDE: dict = {}
+
+
+def _register(claude_dir: Path) -> None:
+    """Register SESSION_ID in claude_dir's sessions/ as a running claude does, under that claude's pid."""
+    (claude_dir / "sessions").mkdir(parents=True, exist_ok=True)
+    (claude_dir / "sessions" / f"{CLAUDE['pid']}.json").write_text(
+        json.dumps({"pid": CLAUDE["pid"], "sessionId": SESSION_ID})
+    )
+
+
+def _sync_with(root: Path, place) -> dict:
+    world = _world(root)
+    place(world)
+    return {"world": world, "run": _handoff(world, "run")}
+
+
+def _in_two_folders(world: dict) -> None:
+    # The same session here under another folder as well, as a copy by hand leaves it.
+    twice = world["here"] / ".claude" / "projects" / "-Users-me-demo-copy"
+    twice.mkdir()
+    (twice / f"{SESSION_ID}.jsonl").write_bytes((world["folder"] / f"{SESSION_ID}.jsonl").read_bytes())
+
+
+# Syncs whose one session is left out, each for what the run says of it.
+SYNCS = {
+    "open there": (lambda w: _register(w["vm"] / ".claude"), "Left as they are, open in a claude on alpha: 0a608ad8."),
+    "in two folders": (
+        _in_two_folders,
+        "Not copied, in more than one folder here, so claude --resume could not tell which: 0a608ad8.",
+    ),
+    "diverged only": (
+        _changed_on_both,
+        "Left as they are, changed both there and here since they were copied: 0a608ad8;",
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def handoffs(tmp_path_factory):
+    """Every session run, side by side: the sync twice, off, failing, and each that leaves its session out."""
+    root = tmp_path_factory.mktemp("handoffs")
+    claude = subprocess.Popen(["claude", "3600"], executable="/bin/sleep")
+    CLAUDE["pid"] = claude.pid
+    try:
+        yield _every_handoff(root)
+    finally:
+        claude.kill()
+        claude.wait()
+
+
+def _every_handoff(root: Path) -> dict:
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        runs = {
+            "sync": pool.submit(_sync_twice, root / "sync"),
+            "off": pool.submit(_off, root / "off"),
+        }
+        runs["sync fails"] = pool.submit(_sync_failing, root / "sync-fails")
+        for name, (place, _) in SYNCS.items():
+            runs[name] = pool.submit(_sync_with, root / re.sub(r"\W+", "-", name), place)
+    return {name: run.result() for name, run in runs.items()}
+
+
+def test_the_sync_copies_the_vm_s_repositories_sessions_with_their_edits(handoffs):
+    world, run = handoffs["sync"]["world"], handoffs["sync"]["first"]
+    assert run["reached"] and run["rc"] == 0, run["output"]
+    folder = world["folder"].name
+    copies = world["vm"] / ".claude" / "projects"
+    # The session of the VM's repository, under the folder it has here; not the other repository's, nor the stub.
+    assert sorted(path.name for path in copies.iterdir()) == [folder]
+    copied = copies / folder / f"{SESSION_ID}.jsonl"
+    entries = [json.loads(line) for line in copied.read_text().splitlines()]
+    vm_memory = f"{world['vm']}/.claude/projects/{re.sub(r'[^A-Za-z0-9]', '-', str(world['checkout']))}/memory/"
+    assert entries[0]["attachment"]["systemPrompt"] == [f"You have a persistent file-based memory at `{vm_memory}`."]
+    assert entries[-1] == {"type": "relocated", "relocatedCwd": str(world["checkout"]), "sessionId": SESSION_ID}
+    # The output the tool saved is named where the copy keeps it.
+    vm_results = copies / folder / SESSION_ID / "tool-results"
+    assert entries[2]["message"]["content"][0]["content"] == f"Saved to {vm_results}/toolu_1.txt"
+    assert (vm_results / "toolu_1.txt").exists()
+    assert sorted(path.name for path in (copies / folder / SESSION_ID).iterdir()) == ["tool-results"]
+    assert int(copied.stat().st_mtime) == int((world["folder"] / f"{SESSION_ID}.jsonl").stat().st_mtime)
+    assert stat.S_IMODE(copied.stat().st_mode) == 0o600
+    assert stat.S_IMODE((world["vm"] / "projects" / ".claude-on-proxmox" / "claude-sessions").stat().st_mode) == 0o700
+    assert run["opened"].endswith(
+        "1 of this machine's Claude Code sessions of the last 30 days, of octo/demo, is on alpha (1 copied now): in"
+        " claude there, /resume and then Ctrl+A lists them. vscode_claude_sessions: false turns the copying off."
+    )
+    # The default sync changes no git state, and opens the whole directory.
+    assert _git(world["checkout"], "symbolic-ref", "--short", "HEAD") == "main"
+    assert run["shown"] == str(world["vm"] / "projects")
+
+
+def test_a_second_sync_of_unchanged_sessions_changes_nothing(handoffs):
+    run = handoffs["sync"]["second"]
+    assert run["rc"] == 0 and _changed(run) == 0, run["output"]
+    assert "(0 copied now)" in run["opened"]
+
+
+def test_with_the_sync_off_nothing_is_read_or_copied(handoffs):
+    world, run = handoffs["off"]["world"], handoffs["off"]["off"]
+    assert run["reached"] and run["rc"] == 0, run["output"]
+    assert not (world["vm"] / ".claude").exists()
+    assert not (world["vm"] / "projects" / ".claude-on-proxmox" / "claude-sessions").exists()
+    assert "copied" not in run["opened"] and "vscode_claude_sessions" not in run["opened"]
+
+
+def test_no_run_says_anything_a_transcript_holds(handoffs):
+    for name, runs in handoffs.items():
+        for key, run in runs.items():
+            if key not in ("world", "before"):
+                assert MARKER not in run["output"], (name, key)
+
+
+@pytest.mark.parametrize("name", SYNCS)
+def test_a_sync_leaves_out_what_it_cannot_copy_safely_and_says_so(handoffs, name):
+    world, run = handoffs[name]["world"], handoffs[name]["run"]
+    assert run["rc"] == 0 and run["reached"], run["output"]
+    # The one session of the VM's repository, left: so nothing is copied, and the run says that, never
+    # that no session is of a repository the VM has.
+    assert run["opened"].count("No Claude Code session of this machine was copied to alpha.") == 1
+    assert "is of a repository alpha has checked out" not in run["opened"]
+    assert SYNCS[name][1] in run["opened"]
+    if name != "diverged only":
+        assert not (world["vm"] / ".claude" / "projects" / world["folder"].name / f"{SESSION_ID}.jsonl").exists()
+
+
+def test_a_sync_whose_rsync_fails_says_so_and_still_opens_the_window(handoffs):
+    world, run = handoffs["sync fails"]["world"], handoffs["sync fails"]["run"]
+    assert run["rc"] == 0 and run["reached"], run["output"]
+    assert "rsync could not send them all to alpha (it exited " in run["opened"]
+    assert f"Not copied: {SESSION_ID[:8]}, rsync did not bring it." in run["opened"]
+    assert not (world["vm"] / ".claude" / "projects" / world["folder"].name / f"{SESSION_ID}.jsonl").exists()

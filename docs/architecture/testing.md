@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1590 tests. By file:
+pytest over `tests/unit/`: 1612 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -72,16 +72,17 @@ pytest over `tests/unit/`: 1590 tests. By file:
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 127): the Claude terminal's script against stand-ins, once at a
+- **`make code`** (`test_code_session.py` 148): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
-  for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
+  for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine, followed
+  through every import its task files make. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
   exit 0 and the notes opened when its Python raises, hangs or is missing, a read that hangs costing
   2 s, a symlink neither followed nor opened, the time in the zone it is given or in UTC for one it
   cannot find - the refresh after a sign-in in the terminal, the zone `code.yml` finds (`TZ`, the
   `/etc/localtime` link on Linux and macOS, `/etc/timezone`, else UTC, shell syntax and paths refused),
   and the workspace each window gets: the notes' folder only where its own folder holds them.
-- **The session handoff** (`test_session_handoff.py` 96): the plan - by origin in every URL form here,
+- **The session handoff** (`test_session_handoff.py` 97): the plan - by origin in every URL form here,
   a GitHub one only on the VM, a renamed clone, a gone worktree's checkout, `githubRepoPaths`, another
   owner's repository of the same name refused - the transcripts read without their content, an open
   session only at a pid that is still a claude's, the registry whatever the transcripts, a transcript
@@ -90,7 +91,12 @@ pytest over `tests/unit/`: 1590 tests. By file:
   the four edits byte for byte with the records of requests sent, an assistant's signed thinking and
   another project's memory folder left as they are, the manifest's rule and its write after each copy, a copy moved to another folder on the VM
   never written again and one moved here following, the time a copy is given against the 30-day sweep,
-  and check mode.
+  and check mode. In `test_code_session.py`, the window step's session tasks between two real checkouts,
+  the VM's with a GitHub origin: the copies and their edits, a second run changing nothing, the sync
+  off, a sync whose rsync fails opening the window all the same, syncs
+  that leave their one session out - open on the VM, in two folders here, changed on both - saying so
+  and never that none is of the VM's repositories, and no run printing the marker the transcripts
+  carry.
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
@@ -249,7 +255,7 @@ that no build started.
 | Scenario | What it proves |
 |---|---|
 | `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `make deploy TYPE=configure` needs nothing stored locally |
-| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM; then the sign-ins, and the copies `claude_sessions_copy` makes resumed with the real `claude` against a stand-in Messages API - as the VM's own, `--continue` never picking one up, the records of requests sent left unsent |
+| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM; then the sign-ins, `make code`'s session handoff with the real `claude` against a stand-in Messages API - copies resumed as the VM's own, `--continue` never picking one up, the records of requests sent left unsent |
 
 Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scenario inventory, so the
 actual variable wiring is exercised rather than a copy. Test overrides live in `host_vars/`. The

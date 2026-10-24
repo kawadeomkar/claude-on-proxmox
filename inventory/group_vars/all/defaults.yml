@@ -329,6 +329,13 @@ vscode_workspaces_dir: ""
 # time it opens. They need that task, so they come with vscode_claude_terminal
 # (docs/guides/vscode.md). Set false for neither.
 vscode_session_notes: true
+# This machine's Claude Code sessions on the VM: every make code copies the ones
+# of the last 30 days whose repository the VM has checked out - matched by git
+# origin - into the VM's ~/.claude/projects/, so that /resume there (Ctrl+A for
+# every project) lists them. A transcript holds whatever its tools printed,
+# secrets included, so a VM gets those too: set false for none
+# (docs/guides/vscode.md).
+vscode_claude_sessions: true
 # The VS Code user settings make code reads, and never writes, to say whether
 # that terminal will start on its own. Empty: where VS Code itself would keep
 # them - $VSCODE_APPDATA or $XDG_CONFIG_HOME if set, else

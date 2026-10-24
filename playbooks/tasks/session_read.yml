@@ -1,0 +1,68 @@
+---
+# The reads of the session handoff, imported by code.yml's window step once
+# the VM answers and before the folder to open is settled
+# (docs/architecture/lifecycle.md §4.9). They decide which of this machine's
+# Claude Code sessions go to which of the VM's checkouts - by the git origin
+# of the directory each session ran in, matched against the origin of each
+# checkout on the VM. Nothing is written anywhere; session_write.yml does
+# that after every refusal make code has.
+#
+# Every task that reads a transcript is no_log: claude_sessions_info returns
+# only what a session says about itself (its first directory, branch,
+# version), never what was said, but a transcript holds whatever its tools
+# printed, and no output of a mistake here may carry it.
+#
+# Inputs: code.yml's play vars code_sessions (the sync is on),
+# code_session_here and code_session_there (Claude Code's directory on this
+# machine and on the VM), code_session_days and code_projects_dir. Sets
+# code_session_plan.
+
+- name: session_read | Read the Claude Code sessions on this machine
+  claude_sessions_info:
+    path: "{{ code_session_here }}"
+    days: "{{ code_session_days }}"
+    repo_paths: true
+  register: code_session_found
+  no_log: true
+  when: code_sessions | bool
+
+# git reads only, as git --no-optional-locks: a plain git status here would
+# refresh .git/index under index.lock and could collide with the user's own
+# git, editor or Claude in that checkout.
+- name: session_read | Read the git checkouts those sessions ran in
+  git_checkouts_info:
+    paths: "{{ code_session_found.sessions | claude_session_dirs }}"
+  register: code_session_dirs_here
+  when: code_sessions | bool
+
+- name: session_read | Read the origin of each project on the VM
+  git_checkouts_info:
+    under: "{{ code_projects_dir }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_projects
+  when: code_sessions | bool
+
+# The VM installs Claude Code's stable channel, which can trail this machine's:
+# a session written by a newer one is left here. Where the native installer
+# puts it, beside the ~/.claude given, then where npm's global prefix does.
+# And the sessions a claude there has open, whose copies are left as they are.
+- name: session_read | Read Claude Code on the VM
+  claude_sessions_info:
+    path: "{{ code_session_there }}"
+    claude:
+      - "{{ code_session_there | dirname }}/.local/bin/claude"
+      - /usr/local/bin/claude
+      - /usr/bin/claude
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_vm
+  no_log: true
+  when: code_sessions | bool
+
+- name: session_read | Settle which sessions go to which checkout
+  ansible.builtin.set_fact:
+    code_session_plan: >-
+      {{ code_session_found.sessions
+         | claude_sessions_plan(code_session_dirs_here.checkouts, code_session_projects.checkouts,
+                                code_session_vm.version, code_session_found.repo_paths, code_session_there,
+                                open_there=code_session_vm.registered | list) }}
+  when: code_sessions | bool

@@ -1,0 +1,64 @@
+---
+# The writes of the session handoff, imported by code.yml's window step after
+# every refusal make code has and before the workspace is written
+# (docs/architecture/lifecycle.md §4.9), so a run that stops leaves the VM as
+# it was. session_read.yml decided what goes where (code_session_plan).
+#
+# rsync brings this machine's transcripts and their tool-results/ into a
+# mirror in make code's own directory on the VM, appended bytes only after
+# the first time; claude_sessions_copy then writes the copies Claude Code
+# resumes, under ~/.claude/projects/ in the folders they have here, each with
+# its four edits. A copy is replaced only while it is what the last run
+# wrote, so a session continued on the VM is never overwritten. Nothing is
+# written on this machine. The copy is no_log, and rsync names files, never
+# what is in them.
+
+# The VM user's alone, as what is in it is: 0700, the files rsync brings
+# keeping this machine's modes inside it.
+- name: session_write | Make the directory for the sessions on the VM
+  ansible.builtin.file:
+    path: "{{ code_session_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  when: code_session_plan.sessions | default([]) | length > 0
+
+# Over the alias, as VS Code reaches the VM, never asking for anything; to a
+# local path where Ansible reaches the VM locally, as the provision scenario
+# does. -r because --files-from turns off what -a implies for directories.
+# macOS's rsync has no --chmod for the modes, which the directory above sets.
+# A failure is said, and the window opens with the copies there are: rsync's
+# 23 and 24 are a file it could not read or one that vanished as it ran, the
+# rest sent, and the copy names a session that did not arrive; anything else
+# - no rsync on either machine among them - sent nothing new.
+- name: session_write | Send the sessions to the VM
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - -az
+      - -r
+      - --files-from=-
+      - --itemize-changes
+      - -e
+      - ssh -o BatchMode=yes
+      - "{{ code_session_here }}/projects/"
+      - "{{ code_session_mirror_target }}/"
+    stdin: "{{ code_session_plan.files | join('\n') }}"
+  register: code_session_sent
+  changed_when: code_session_sent.stdout | default('') | trim | length > 0
+  failed_when: false
+  when: code_session_plan.sessions | default([]) | length > 0
+
+# Run whenever the sync is on, so that sessions which left the window also
+# leave the mirror.
+- name: session_write | Write the copies the VM resumes
+  claude_sessions_copy:
+    mirror: "{{ code_session_dir }}/mirror"
+    dest: "{{ code_session_there }}"
+    manifest: "{{ code_session_dir }}/manifest.json"
+    here: "{{ code_session_here }}"
+    sessions: "{{ code_session_plan.sessions }}"
+  delegate_to: "{{ claude_vm_names[0] }}"
+  register: code_session_copied
+  no_log: true
+  when: code_sessions | bool

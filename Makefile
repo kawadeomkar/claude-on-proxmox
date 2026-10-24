@@ -494,7 +494,7 @@ endif
 #: PROJECT=<repo>  Open one project folder on the VM rather than the whole projects directory
 .PHONY: code
 code: export VM_NAME_CHECK := $(value VM_NAME)
-code: vault-check vm-name-check project-name-check collections-check log-setup ## Open a VM in VS Code with a Claude terminal
+code: vault-check vm-name-check project-name-check collections-check log-setup ## Open a VM in VS Code with a Claude terminal, this machine's recent Claude sessions copied there
 	@test -n "$$VM_NAME_CHECK" || { echo "error: code opens one VM: make code VM_NAME=<name>"; exit 1; }
 	@case "$$VM_NAME_CHECK" in *,*) echo "error: code opens one VM at a time, not [$$VM_NAME_CHECK]"; exit 1;; esac
 	$(BIN)/ansible-playbook $(VAULT_ARGS) $(VM_ARGS) $(PROJECT_ARGS) $(ANSIBLE_ARGS) playbooks/code.yml

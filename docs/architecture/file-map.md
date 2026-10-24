@@ -33,7 +33,8 @@ playbooks/
                                   controller, and a last play failing what the rescue recorded
   destroy.yml                     confirm, verify ownership, release (Claude, GitHub, Tailscale), delete in parallel, forget each alias
   ssh_config.yml                  refresh every alias from the fleet; fleet-wide, prune the vanished
-  code.yml                        refresh one alias, write the Claude workspace file and the session notes, open it
+  code.yml                        refresh one alias, copy this machine's Claude sessions, write the Claude workspace
+                                  file and the session notes, open it
   library/                        make code's session handoff: claude_sessions_info, git_checkouts_info (reads, here
                                   and on the VM) and claude_sessions_copy (the VM's copies, their four edits, the
                                   manifest)
@@ -41,6 +42,8 @@ playbooks/
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
   tasks/ssh_config.yml            one blockinfile block per VM in ~/.ssh/claude-on-proxmox.conf, Include once
+  tasks/session_read.yml          which of this machine's sessions go to which VM checkout
+  tasks/session_write.yml         rsync to the VM's mirror, then the copies
   tasks/remote_tmp.yml            root's remote_tmp, made before a module makes it and warns (template, configure)
   tasks/init_ask.yml              one make init question: a value given, or asked, held to its kind, asked once more
   tasks/init_local_setting.yml    one setting written into local.yml in place of its commented example line
@@ -71,7 +74,8 @@ filter_plugins/settings.py        init_answer, the rule each make init answer fo
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
                                   and github_repository, owner/repo of a remote URL here and of a GitHub one on the VM;
-                                  claude_project_folder, Claude Code's folder for a path; claude_session_dirs
+                                  claude_project_folder, Claude Code's folder for a path; claude_session_dirs;
+                                  claude_sessions_listed, how make code says the sessions it left out
 inventory/
   hosts.yml.example               the only address anyone supplies
   controller.yml                  localhost, so it picks up group_vars/all

@@ -237,6 +237,12 @@ A page about the VM - addresses, what is signed in, the make commands - opened b
 |---|---|---|
 | `vscode_session_notes` | `true` |  |
 
+Copy this machine's Claude Code sessions of the VM's repositories, the last 30 days of them, to the VM on every make code, so /resume there lists them. Their transcripts hold whatever their tools printed: false keeps them here.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `vscode_claude_sessions` | `true` |  |
+
 The VS Code settings read (never written) to say whether the terminal starts on its own. Empty: where stock VS Code keeps them on macOS and Linux; set it for Insiders, VSCodium, or a VS Code on Windows driven from WSL.
 
 | Setting | Default | Notes |

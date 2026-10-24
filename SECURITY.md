@@ -98,6 +98,17 @@ restate them are not treated as vulnerabilities:
   repository; no command the task runs prints a token, and what the VM reports is stripped of escape
   sequences and control characters before it is written. A window it would put back in Restricted
   Mode never gets the notes' folder: the project does not change what a window you trusted covers.
+- `make code` copies this machine's Claude Code sessions of the last 30 days to the VM it opens
+  (`vscode_claude_sessions`, on by default): the transcripts of the repositories that VM has checked
+  out, matched by git origin. A transcript holds whatever its tools printed - command output, the
+  contents of files, tokens - so every VM you open gets those of its repositories' sessions, in the VM
+  user's `~/.claude` (0600 files, 0700 folders), never in a repository, and as rsync's unedited mirror of
+  them in `make code`'s own directory there (`<projects>/.claude-on-proxmox/claude-sessions/`, 0700);
+  `false` keeps them here from then on, and leaves what is on the VM already - mirror and copies - for you
+  to delete, or for `make destroy` to take with the VM.
+  `make code` copies nothing back, the copy's own tasks print nothing a transcript holds, and a session
+  continued on the VM is never overwritten. A VM chooses which of this machine's sessions it gets only
+  through the GitHub origins of its checkouts: a local path or another host's URL there matches none.
 - Deleting a VM also removes its host key from `known_hosts`, which re-opens that first-contact window
   for its address. The address goes back into the DHCP pool, so whatever answers there next is trusted
   once - and the next `make deploy` then sends it your SSH keys, GitHub token and Anthropic API key. The

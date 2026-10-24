@@ -148,10 +148,10 @@ JSON report (`_left_to_do`), in every state they already run.
 
 ## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
 
-Which of this machine's Claude Code sessions belong to which of a VM's checkouts, and what a copy of one
-on the VM is made of: the pieces `make code` carries the sessions over with. Three modules in
-`playbooks/library/` read and write the files; the filters decide from what they read, and touch no
-file.
+What `make code` carries of this machine's Claude Code sessions to a VM
+([§4.9](lifecycle.md#49-playbookscodeyml), **The session handoff**).
+Three modules, each in `playbooks/library/` beside the playbook that runs them, read and write the
+files; the filters decide from what they read, and touch no file.
 
 **`claude_sessions_info`** — the transcripts under `<dir>/projects/<folder>/<id>.jsonl` of a Claude
 Code configuration directory, written in the last `days`: per
@@ -200,6 +200,8 @@ claims nothing. **`claude_project_folder(path)`** is Claude Code's folder name f
 but an ASCII letter or digit as `-` - refusing one over 200 characters, which Claude Code shortens with
 a hash of its own. **`claude_session_dirs(sessions)`** is the directories to ask git about for them:
 each first directory, and the checkout of a Claude worktree's, which a gone worktree leaves behind.
+**`claude_sessions_listed(rows)`** is make code's words for the sessions it left out, each
+`[before, ids, after]` that has IDs, each ID by its first eight characters as `/resume` lists them.
 
 Covered by `tests/unit/test_session_handoff.py`, with real git checkouts and canned transcripts, and by
-the `configure` scenario, which resumes a copy with the real `claude`.
+the window step's runs in `tests/unit/test_code_session.py`.

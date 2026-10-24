@@ -225,11 +225,22 @@ def claude_sessions_plan(sessions, here, there, version, repo_paths=None, dest="
     return plan
 
 
+def claude_sessions_listed(rows):
+    """make code's words for the sessions it left out: each ``[before, ids, after]`` with IDs, the IDs between.
+
+    An ID is said by its first eight characters, as /resume lists it; nothing of a transcript is.
+    """
+    return "".join(
+        f"{before}{', '.join(str(sid).split('-')[0] for sid in ids)}{after}" for before, ids, after in rows or [] if ids
+    )
+
+
 class FilterModule:
     def filters(self):
         return {
             "claude_project_folder": claude_project_folder,
             "claude_session_dirs": claude_session_dirs,
+            "claude_sessions_listed": claude_sessions_listed,
             "claude_sessions_plan": claude_sessions_plan,
             "git_repository": git_repository,
             "github_repository": github_repository,

@@ -20,6 +20,12 @@ and the [security model](../architecture/security-model.md) is how each is enfor
   Code installer script is fetched over TLS from `claude.ai` and itself verifies the binary against a
   release manifest; there is no independently signed artifact to pin.
 - sshd is restricted to key-based logins (`common_harden_ssh`), even if `vm_password` is set.
+- `make code` gives each VM this machine's Claude Code sessions of the repositories it has checked out
+  ([This machine's Claude sessions on the VM](vscode.md#this-machines-claude-sessions-on-the-vm)): their
+  transcripts hold whatever their tools printed, secrets among them, readable there by anything running as
+  `dev`. Which sessions go is decided by the GitHub origins of the VM's checkouts, which the VM reports:
+  one that makes up a checkout of another of your repositories gets that one's sessions too, so treat a
+  VM you open as able to read any of your recent sessions. `vscode_claude_sessions: false` stops it.
 
 ## See also
 
