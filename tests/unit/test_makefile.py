@@ -210,6 +210,32 @@ def test_vm_name_check_rejects_anything_else(value: str) -> None:
     assert NAME_ERROR in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    ("target", "names"),
+    [
+        ("code", ["VM_NAME", "PROJECT"]),
+        ("init", ["HOST", "TOKEN_USER", "TOKEN_NAME", "TOKEN_SECRET_FILE", "GITHUB_USER", "PROMPT"]),
+    ],
+)
+@pytest.mark.parametrize("dry_run", [False, True], ids=["run", "dry-run"])
+def test_no_value_typed_on_the_command_line_runs_before_its_check(
+    tmp_path: Path, target: str, names: list[str], dry_run: bool
+) -> None:
+    # make expands a := assignment while it reads the Makefile, and every variable set on its command
+    # line as it exports it to the first recipe it runs - both before any check: a $(shell ...) typed as
+    # one of these ran there, even under make -n for the first.
+    marks = {name: tmp_path / name for name in names}
+    result = _make(
+        *(["-n"] if dry_run else []),
+        target,
+        *(f"{name}=$(shell touch {mark})" for name, mark in marks.items()),
+        *_safe_overrides(tmp_path),
+    )
+    assert not [name for name, mark in marks.items() if mark.exists()], result.stdout + result.stderr
+    if not dry_run:
+        assert result.returncode != 0
+
+
 def test_provision_passes_vm_name_as_one_json_extra_var() -> None:
     result = _make("-n", "deploy", "TYPE=provision", "VM_NAME=alpha,beta")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -924,17 +950,25 @@ def test_a_run_at_a_terminal_leaves_the_desktop_steps_on(tmp_path: Path, args: l
 
 # make vault: the file's state says which - a plaintext vault is encrypted, an
 # encrypted one edited, a missing one sent to make init. A stand-in
-# ansible-vault records what it was asked.
+# ansible-vault records what it was asked. VAULT_PASS points into tmp_path,
+# never the checkout's .vault_pass, which a developer's checkout has: there,
+# make vault passed it on and the test saw arguments it did not expect.
+@pytest.mark.parametrize("password", [False, True], ids=["no-password-file", "password-file"])
 @pytest.mark.parametrize(
     ("content", "action"), [("vault_proxmox_api_token_secret: x\n", "encrypt"), (VAULT_HEADER, "edit")]
 )
-def test_vault_encrypts_a_plaintext_vault_and_edits_an_encrypted_one(tmp_path: Path, content: str, action: str) -> None:
-    venv, record, vault = tmp_path / "venv", tmp_path / "args", tmp_path / "vault.yml"
+def test_vault_encrypts_a_plaintext_vault_and_edits_an_encrypted_one(
+    tmp_path: Path, content: str, action: str, password: bool
+) -> None:
+    venv, record, vault, vault_pass = tmp_path / "venv", tmp_path / "args", tmp_path / "vault.yml", tmp_path / "pass"
     _stand_in(venv, "ansible-vault", record)
     vault.write_text(content)
-    result = _make("vault", f"BIN={venv / 'bin'}", f"VAULT_FILE={vault}")
+    if password:
+        vault_pass.write_text("stand-in\n")
+    result = _make("vault", f"BIN={venv / 'bin'}", f"VAULT_FILE={vault}", f"VAULT_PASS={vault_pass}")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert record.read_text().splitlines() == [action, str(vault)]
+    given = ["--vault-password-file", str(vault_pass)] if password else []
+    assert record.read_text().splitlines() == [action, *given, str(vault)]
 
 
 def test_vault_names_make_init_when_the_vault_is_missing(tmp_path: Path) -> None:

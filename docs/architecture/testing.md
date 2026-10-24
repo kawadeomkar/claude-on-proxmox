@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1488 tests. By file:
+pytest over `tests/unit/`: 1494 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -139,8 +139,10 @@ pytest over `tests/unit/`: 1488 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 383): `vm-name-check` accepts DNS-like names and refuses
-  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; `deploy
+- **The Makefile** (`test_makefile.py` 389): `vm-name-check` accepts DNS-like names and refuses
+  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; a
+  `$(shell ...)` typed as `VM_NAME`, `PROJECT` or one of `make init`'s values never run, by make
+  reading the Makefile or exporting them to the first recipe, `-n` or not; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
   `VM_NAME`, runs the check on them without make expanding them, and refuses a word that is a make

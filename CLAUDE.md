@@ -510,7 +510,11 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   each have a `*-name-check` target, and `make init`'s `HOST`, `TOKEN_USER`, `TOKEN_NAME`,
   `TOKEN_SECRET_FILE`, `GITHUB_USER` and `PROMPT` have `init-args-check`, each reading the value through
   the environment with `$(value ...)` and refusing anything outside its character set with a shell
-  `case`, then the value travels to Ansible as JSON (`INIT_GIVEN_ARGS`). Those init values are assigned
+  `case`, then the value travels to Ansible as JSON (`VM_ARGS`, `INIT_GIVEN_ARGS`). Make itself never
+  expands one first: every assignment that carries one reads it with `$(value ...)`, since a `:=` is
+  expanded as the Makefile is read and `VM_NAME='$(shell ...)'` ran there, and every one is `unexport`ed,
+  since make expands each variable from its command line as it exports it to the first recipe, the check
+  or not (`test_no_value_typed_on_the_command_line_runs_before_its_check`). Those init values are assigned
   empty in the Makefile, so only the command line sets them, never an exported variable; the token
   secret is refused there outright, since `make` copies the command line into `MAKEFLAGS`. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused as well, and
   `code.yml` repeats the check for a direct `ansible-playbook` run. The targets in `NAMED_TARGETS`,

@@ -228,8 +228,12 @@ endif
 # on whitespace, so VM_NAME="alpha beta" silently became just alpha and only
 # half the fleet was created. As JSON the value arrives whole and reaches the
 # name check in the proxmox_vm role, which explains the problem. vm-name-check
-# has already rejected anything that could break out of this quoting.
-VM_ARGS    := $(if $(VM_NAME),-e '{"vm_name": "$(VM_NAME)"}',)
+# has already rejected anything that could break out of this quoting. Read
+# with $(value), as every value typed on the command line is: this assignment
+# is expanded while make reads the Makefile, before any check has run, and
+# $(VM_NAME) would run a $(shell ...) typed into it right here. VM_ARGS keeps
+# the text as typed, and a simply expanded variable is never expanded again.
+VM_ARGS    := $(if $(value VM_NAME),-e '{"vm_name": "$(value VM_NAME)"}',)
 # A run with no terminal on stdin has nobody to approve a sign-in: no page
 # opens and nothing reaches the clipboard, since nobody is there to use them,
 # and make deploy skips its sign-ins, which would otherwise start by themselves
@@ -242,7 +246,7 @@ NO_TTY_ARGS = $$([ -t 0 ] || printf '%s' '-e {"login_desktop":false,"deploy_sign
 # same reason as VM_NAME, after project-name-check has refused anything that
 # could break out of the quoting or out of the projects directory.
 PROJECT    ?=
-PROJECT_ARGS := $(if $(PROJECT),-e '{"vm_project": "$(PROJECT)"}',)
+PROJECT_ARGS := $(if $(value PROJECT),-e '{"vm_project": "$(value PROJECT)"}',)
 # The answers make init takes on the command line instead of asking for them
 # (docs/getting-started/first-deploy.md, "Without a terminal, or scripted"),
 # each checked by init-args-check and passed on as one JSON extra var,
@@ -262,6 +266,12 @@ STORAGE           :=
 BRIDGE            :=
 TAILSCALE         :=
 PROMPT            :=
+# make exports every variable set on its command line into the environment of
+# each recipe it runs, and expands it to do so - before the first recipe, which
+# is not the check: VM_NAME='$(shell ...)' ran as vault-check started. Never
+# exported, then: each check reads the value through a variable of its own,
+# exported as typed ($(value)), and every recipe passes it on as JSON.
+unexport VM_NAME PROJECT HOST TOKEN_USER TOKEN_NAME TOKEN_SECRET_FILE GITHUB_USER STORAGE BRIDGE TAILSCALE PROMPT
 ifneq ($(filter command,$(origin TOKEN_SECRET) $(origin CLAUDE_ON_PROXMOX_TOKEN_SECRET)),)
 $(error the token secret never goes on make's command line, which every command a recipe runs inherits (MAKEFLAGS) and the shell's history keeps: put it in a file only you can read, make init TOKEN_SECRET_FILE=<file>, or export CLAUDE_ON_PROXMOX_TOKEN_SECRET from wherever your secrets live - a CI secret, or read -rs at a prompt - never typed into the command)
 endif
