@@ -214,9 +214,9 @@
     msg: |-
       {% for claude_ssh_vm in claude_ssh_vms %}
       {% if claude_ssh_vm.workspace | default('') | length > 0 %}
-      {{ claude_ssh_vm.name }}: ssh {{ claude_ssh_vm.name }}   |   make code VM_NAME={{ claude_ssh_vm.name }}   (opens {{ claude_ssh_vm.workspace }})
+      {{ claude_ssh_vm.name }}: ssh {{ claude_ssh_vm.name }}   |   just code {{ claude_ssh_vm.name }}   (opens {{ claude_ssh_vm.workspace }})
       {% else %}
-      {{ claude_ssh_vm.name }}: ssh {{ claude_ssh_vm.name }}   |   make code VM_NAME={{ claude_ssh_vm.name }}
+      {{ claude_ssh_vm.name }}: ssh {{ claude_ssh_vm.name }}   |   just code {{ claude_ssh_vm.name }}
       {% endif %}
       {% endfor %}
       {% if not claude_ssh_config_include | default(true) | bool %}

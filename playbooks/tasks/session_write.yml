@@ -1,11 +1,11 @@
 ---
 # The writes of the session handoff, imported by code.yml's window step after
-# every refusal make code has and before the workspace is written
+# every refusal just code has and before the workspace is written
 # (docs/architecture/lifecycle.md §4.9), so a run that stops leaves the VM as
 # it was. session_read.yml decided what goes where (code_session_plan).
 #
 # rsync brings this machine's transcripts and their tool-results/ into a
-# mirror in make code's own directory on the VM, appended bytes only after
+# mirror in just code's own directory on the VM, appended bytes only after
 # the first time; claude_sessions_copy then writes the copies Claude Code
 # resumes, under ~/.claude/projects/ in the folders they have here, each with
 # its four edits. A copy is replaced only while it is what the last run
@@ -15,7 +15,7 @@
 #
 # With SESSION, the VM's checkout of its repository is then brought to the
 # commit the session's branch is at here, by fast-forward only: the one write
-# make code makes inside a repository.
+# just code makes inside a repository.
 
 # The VM user's alone, as what is in it is: 0700, the files rsync brings
 # keeping this machine's modes inside it.
@@ -78,7 +78,7 @@
     fail_msg: >-
       {{ 'Session ' ~ code_session_id ~ ' was not copied to ' ~ claude_vm_names[0] ~ ': ' ~ code_unread[0].why ~ '.'
          if code_unread | length > 0
-         else 'Session ' ~ code_session_id ~ ' was continued on ' ~ claude_vm_names[0] ~ ' and here since make code'
+         else 'Session ' ~ code_session_id ~ ' was continued on ' ~ claude_vm_names[0] ~ ' and here since just code'
               ~ ' last copied it, so its copy there was left as it is. To continue the one here on '
               ~ claude_vm_names[0] ~ ', move that copy away first: '
               ~ code_session_there ~ '/projects/'
@@ -116,7 +116,7 @@
       {{ claude_vm_names[0] }} could not fetch {{ code_session_upstream }} from origin in
       {{ code_session_plan.session.checkout }}: {{ code_session_fetched.stderr | default('') | plain_text
       | regex_replace('\s+', ' ') | trim }} A private repository needs GitHub's sign-in there:
-      make login {{ claude_vm_names[0] }} TYPE=github.
+      just login {{ claude_vm_names[0] }} --only github.
     quiet: true
   when: code_session_id | length > 0
 

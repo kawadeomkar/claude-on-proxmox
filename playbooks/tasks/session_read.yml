@@ -7,7 +7,7 @@
 # checkout on the VM - and with SESSION, whether that one can be opened there:
 # found once, closed on both machines, its work committed and pushed here,
 # and a VM checkout free to be brought to the same commit. Nothing is
-# written anywhere; session_write.yml does that after every refusal make code
+# written anywhere; session_write.yml does that after every refusal just code
 # has.
 #
 # Every task that reads a transcript is no_log: claude_sessions_info returns
@@ -179,14 +179,14 @@
          ~ code_open ~ '). Exit it there first: a session continues in one place at a time.'
          if code_open | int > 0
          else code_git.path ~ ' on ' ~ claude_vm_names[0] ~ ' has changes of its own. Commit, push or discard them there,'
-              ~ ' then run this again: make code moves a checkout only when nothing in it would be lost.'
+              ~ ' then run this again: just code moves a checkout only when nothing in it would be lost.'
          if not code_git.clean
          else code_git.path ~ ' on ' ~ claude_vm_names[0] ~ ' is on a detached HEAD at ' ~ code_git.head[:12]
               ~ ', which no branch, remote-tracking branch or tag holds, so moving it would lose that commit. Make a'
               ~ ' branch of it there (git switch --create <name>), then run this again.'
          if not code_git.head_kept
          else 'claude is running in ' ~ code_git.path ~ ' on ' ~ claude_vm_names[0] ~ ' (pid '
-              ~ code_git.busy | join(', ') ~ '). Exit it first: make code moves a checkout only when nobody is working in it.' }}
+              ~ code_git.busy | join(', ') ~ '). Exit it first: just code moves a checkout only when nobody is working in it.' }}
     quiet: true
   when: code_session_id | length > 0
 

@@ -31,10 +31,10 @@ vault*.json
 # Credentials.
 .vault_pass*
 .env*
-# Run logs (the Makefile's LOG_DIR): they name hosts and addresses.
+# Run logs (the justfile's LOG_DIR): they name hosts and addresses.
 .logs/
 *.log
-# Claude Code sessions make destroy saved from a VM: they hold whatever their tools printed.
+# Claude Code sessions just destroy saved from a VM: they hold whatever their tools printed.
 .sessions/
 # A committed template carries no real values.
 !*.example
@@ -77,5 +77,5 @@ collections/ansible_collections/
 !/docs/architecture/
 !/docs/development/
 !/docs/stylesheets/
-# The wiki built as a site (make docs TYPE=build).
+# The wiki built as a site (just docs build).
 /site/

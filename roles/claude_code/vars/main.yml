@@ -73,9 +73,9 @@ claude_code_remote_control_wanted: >-
 # Internal: the output of `claude auth status`, read from the result both
 # remote_control.yml and login.yml register as claude_code_remote_control_auth.
 # This and the two below are the one definition of whether a VM can run Remote
-# Control. `make login TYPE=claude` used to decide from `loggedIn` alone, so a VM
-# signed in any other way was told by it to run `make deploy TYPE=configure`, and by
-# `make deploy TYPE=configure` to run it. A var rather than a fact for the same reason as
+# Control. `just login --only claude` used to decide from `loggedIn` alone, so a VM
+# signed in any other way was told by it to run `just deploy --only configure`, and by
+# `just deploy --only configure` to run it. A var rather than a fact for the same reason as
 # roles/proxmox_vm/vars/main.yml: it follows the register it reads.
 #
 # Exit status 1 means not logged in, and anything else unreadable counts as the
@@ -239,7 +239,7 @@ claude_code_login_entered: >-
 claude_code_login_entered_again: >-
   {{ (claude_code_login_prompt_again | default({})).user_input | default('', true) | trim }}
 
-claude_code_login_command: make login VM_NAME={{ inventory_hostname }} TYPE=claude
+claude_code_login_command: just login {{ inventory_hostname }} --only claude
 
 # --- the browser coming back by itself (claude_code_login_redirect) ---
 # Internal: the browser claude gets on the VM (BROWSER), which only records the
@@ -266,7 +266,7 @@ claude_code_login_callback_port: >-
      if claude_code_login_callback | length > 0 else 0 }}
 # Internal: whether a browser on this machine can take the page there: one
 # BROWSER names, or open / xdg-open where login_desktop let the run look for
-# them - and make not run over SSH, where the person is at another machine,
+# them - and just not run over SSH, where the person is at another machine,
 # whose browser the page would send to its own localhost.
 claude_code_login_controller_remote: "{{ lookup('ansible.builtin.env', 'SSH_CONNECTION') | length > 0 }}"
 claude_code_login_browser_here: >-
@@ -301,7 +301,7 @@ claude_code_login_forward_argv: >-
         'echo $$ > ' ~ (claude_code_login_forward_pidfile | quote) ~ ' && exec sleep '
         ~ (claude_code_login_approval_timeout | int + 60)] }}
 # Internal: whether someone answered this attempt - a code entered, or the
-# browser come back - for make deploy's later sign-ins, and for the outcome.
+# browser come back - for just deploy's later sign-ins, and for the outcome.
 claude_code_login_responded: >-
   {{ claude_code_login_entered | length > 0
      or (claude_code_login_redirecting | bool and (claude_code_login_landed.finished | default(0) | int) == 1) }}

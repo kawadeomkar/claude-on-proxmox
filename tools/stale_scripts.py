@@ -5,11 +5,11 @@ uv writes the Python into each command it installs - the first line,
 install. A sync through another path to the same environment, such as the
 `.venv` link into it that `make venv` once synced through, leaves every command
 naming that path, and each one breaks when the path goes; a later sync that
-finds every package current rewrites none of them. make install runs this with
+finds every package current rewrites none of them. just install runs this with
 the environment's own Python before its sync, and reinstalls what it prints,
 so those commands name the environment itself again.
 
-Only the packages uv.lock lists are looked at, since only those can make
+Only the packages uv.lock lists are looked at, since only those can just
 install reinstall: a command of anything else in the environment - pip, which
 made it - stays as it is, or it would be reinstalled on every run and never
 change. A command is read only when its first line starts a Python by its
@@ -18,9 +18,9 @@ Python relative to the command, never count.
 
 Prints `--reinstall-package <name>` for each such package, for uv sync, and
 says on stderr which commands named which Python; prints nothing when there
-are none. With --check, which make install runs after a reinstall, it fails
+are none. With --check, which just install runs after a reinstall, it fails
 instead, naming them: a reinstall that changed nothing would otherwise run
-again on every make install.
+again on every just install.
 """
 
 from __future__ import annotations

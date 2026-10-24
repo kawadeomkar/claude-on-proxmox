@@ -8,55 +8,69 @@ get wrong.
 
 ## Always run tooling through the project's Python environment
 
-Every tool is pinned in `pyproject.toml`, locked with all it pulls in in `uv.lock`, and `make install`
+Every tool is pinned in `pyproject.toml`, locked with all it pulls in in `uv.lock`, and `just install`
 puts it into the user's own virtualenv for the project - the one `python3` resolves to here or `PYTHON=`
 names, made with whatever tool they like. The project keeps no environment of its own, never assumes a
 `.venv`, and never assumes pyenv: the README suggests it, but no code, message or test may call it or
-depend on it. Use `make`, which runs each tool
-from that environment's `bin` (`$(BIN)`, asked of `$(PYTHON)` once per run, and empty for a Python that is
-no virtualenv's, which `env-check` - run before every tool - refuses), or `tools/env-run <tool>`, which
+depend on it. Use `just`, whose every recipe asks `tools/env-run --bin` for that environment's `bin`
+(refused, with how to make one, for a Python that is no virtualenv's), or `tools/env-run <tool>`, which
 finds it the same way; the git hooks and the Vagrantfile use that. Never a system-wide `ansible`,
 `ansible-lint` or `molecule`: a non-virtualenv Python's scripts directory is `/usr/local/bin` and the
-like, which is why `BIN` is never taken from one. uv is the one tool on `PATH` by design: it only
-installs into that environment (`make install`: `uv sync --locked --inexact`, the locked versions in and
-nothing else of the user's removed) and writes the lock (`make install TYPE=lock`, after editing a pin;
-never edit `uv.lock` by hand).
+like, which is why `BIN` is never taken from one. uv and just are the two tools on `PATH` by design, both
+the user's to install: uv only installs into that environment (`just install`: `uv sync --locked
+--inexact`, the locked versions in and nothing else of the user's removed) and writes the lock (`just
+install --lock`, after editing a pin; never edit `uv.lock` by hand); just is 1.59.0 or later, the version
+the justfile's `set minimum-version` and `just_pin` and CI's `.github/actions/setup` pin
+(`test_justfile.py` holds the three to one), and CI's comes from upstream's release, checked by SHA256.
 
 Molecule resolves `ansible-playbook` from `PATH` and only *appends* the virtualenv, so it must be
-**prepended** or a different ansible-core is silently used. `make test` already does this;
+**prepended** or a different ansible-core is silently used. `just test` already does this;
 a hand-rolled `molecule test` will not.
 
 ```
-make install         # sync your virtualenv to uv.lock (uv sync --locked) + the Galaxy collections; TYPE=lock after editing a pin
-make init            # once: make install + the git hook + the local config, asking for what a first deploy needs
-make vault           # encrypt the vault while it is plaintext, edit it once it is encrypted
-make lint            # uv lock --check, yamllint --strict, ansible-lint (production), ruff, --syntax-check, the other pre-commit hooks
-make lint TYPE=syntax          # one of them: lock, yaml, ansible, python, syntax or hooks
-make test            # lint, then every test: unit and every Molecule scenario — the CI gate
-make test TYPE=unit            # pytest, tests/unit/
-make test ROLE=proxmox_vm      # one role scenario (TYPE=role: every role; TYPE=molecule: every scenario)
-make test TYPE=provision       # one playbook scenario (TYPE=integration is the configure scenario)
-make deploy          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (make deploy alpha: that VM)
-make deploy alpha TYPE=configure   # one stage of it: template, provision, configure, check (dry run) or ssh-config (fleet-wide also prunes)
-make deploy alpha TAGS=claude_code # re-run one role, e.g. to push an API key (TAGS means TYPE=configure)
-make destroy alpha   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
-make login alpha     # Claude, GitHub, Tailscale in deploy's order, one VM after another (TYPE=claude, github or tailscale: one)
-make list            # read-only: the VMs this project created, and their addresses
-make code VM_NAME=alpha [PROJECT=repo] [SESSION=<id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
-make logs            # the run logs, newest first: read these instead of asking for terminal output
-make docs            # regenerate the wiki's reference pages; TYPE=serve previews the site, TYPE=build builds it strictly
+just install                         # sync your virtualenv to uv.lock (uv sync --locked) + the Galaxy collections; --lock after editing a pin
+just init                            # once: just install + the git hook + the local config, asking for what a first deploy needs
+just vault                           # encrypt the vault while it is plaintext, edit it once it is encrypted
+just lint                            # uv lock --check, yamllint --strict, ansible-lint (production), ruff, just --fmt --check, --syntax-check, the other pre-commit hooks
+just lint syntax                     # some of them: lock, yaml, ansible, python, just, syntax, hooks
+just test                            # lint, then every test: unit and every Molecule scenario — the CI gate
+just test unit                       # pytest, tests/unit/
+just test --role proxmox_vm          # one role scenario (role: every role; molecule: every scenario)
+just test provision                  # one playbook scenario (integration is the configure scenario)
+just deploy                          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (just deploy alpha: that VM)
+just deploy alpha --only configure   # one stage of it: template, provision, configure or ssh-config (fleet-wide also prunes); --check is the dry run
+just deploy alpha --tags claude_code # re-run one role, e.g. to push an API key (--tags beside names means --only configure)
+just destroy alpha                   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
+just login alpha                     # Claude, GitHub, Tailscale in deploy's order, one VM after another (--only claude, github or tailscale: one)
+just list                            # read-only: the VMs this project created, and their addresses
+just code alpha [--project repo] [--session <id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
+just logs                            # the run logs, newest first: read these instead of asking for terminal output
+just docs                            # regenerate the wiki's reference pages; serve previews the site, build builds it strictly
 ```
 
-`make help` lists every target with the `TYPE`s it takes; `TYPES_<target>` in the Makefile is the list,
-and the `#: TYPE=...` comment lines above each target describe them for help and the wiki
-(`test_makefile.py` holds the two to the same list). The targets the Makefile no longer has (`configure`,
-`provision`, `claude-login`, `molecule`, ...) stop with the command that replaced them (`RENAMED_<name>`).
+`just` lists every recipe, `just help <recipe>` one's options; each option's `[arg(..., help=)]` and each
+recipe's `[doc()]` are that text, for the terminal and the wiki (`docs/reference/commands.md`, from `just
+--json`). Options go after the recipe's name; settings (`ANSIBLE_ARGS`, `LOG_DIR`, `PYTHON`) are exported or
+go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
+
+**How every recipe runs** (the justfile's header): a bash script with no dependencies - `JUST_NO_DEPS` or
+`--no-deps` would skip one - whose first line is the checkout guard (`tools/check checkout`: just looks for a
+justfile upward, so started in a make-era worktree under `.claude/worktrees/` it would run main's, against
+main's inventory and vault), then its own rules with their messages, then what it needs (`tools/env-run
+--bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d. No
+assignment starts a program: just evaluates what a recipe uses before any line runs, so it would start
+before a refusal. Bash, not sh: Ubuntu's dash dies of a Ctrl-C that the playbook it runs survived
+(Ansible's `pause`, Ctrl-C then C), and `[continue]` needs the script to live on; and only what macOS's
+bash 3.2 has - no arrays, since `"${a[@]}"` of an empty one is fatal there under `-u`, which every script
+has, so a variable that may be unset is read as `${VAR:-}`. A recipe that includes another's work runs it
+as `{{ self }} <recipe>`, which passes on every setting (a recursive just starts without the command line's
+`BIN=`). `test_justfile.py` runs every recipe against stand-ins, under `/bin/bash` on macOS.
 
 **A change to behaviour changes the wiki in the same commit.** The page for it is in `docs/`
 (`docs/README.md` maps them; `docs/architecture/` for the design, cited by section number). The
 reference pages are generated from `argument_specs.yml`, `local.yml.example`, `vault.yml.example`,
 `inventory/group_vars/all/defaults.yml`, the roles' `defaults/main.yml`, `vars/main.yml` and task files
-(rendered by docsible), and the Makefile's `## ` text: edit those and run `make docs` (the pre-commit
+(rendered by docsible), and the justfile's `[doc]` and `[arg]` help: edit those and run `just docs` (the pre-commit
 hook does too), never the generated section; a task change is a docs change. A new
 setting goes in an example file and a new role default in `argument_specs.yml`, or the page misses it.
 `tests/unit/test_docs.py` fails on a stale or incomplete page, a broken link or anchor, a page that
@@ -67,16 +81,16 @@ code span, so write `</dev/tty` as `< /dev/tty`; it also needs a blank line befo
 spaces before a nested one. Only `docs/README.md` and `docs/`'s folders are the wiki: anything else at
 the top of `docs/` is a local working document, ignored and refused by the tracked-file guard.
 
-Every target that runs Ansible, Molecule included, writes its whole run to
-`.logs/<YYYYMMDD-HHMMSS>-<target>[-<TYPE>].log` through `ANSIBLE_LOG_PATH`. When a user says they ran
-something, read the newest log for that target before asking them to paste anything. Logs name the
+Every recipe that runs Ansible, Molecule included, writes its whole run to
+`.logs/<YYYYMMDD-HHMMSS>-<recipe>[-<part>].log` through `ANSIBLE_LOG_PATH` (`tools/run-logged`). When a user
+says they ran something, read the newest log for that recipe before asking them to paste anything. Logs name the
 Proxmox host and VMs by address, so `.logs/` is git-ignored and blocked by
 `tests/check_no_local_files.sh`; a log file is never committed, quoted into a doc, or attached to a
-pull request. The file name is built from the date, the target and its checked `TYPE` only, never from `VM_NAME`,
-which is the one value a user types that reaches the shell.
+pull request. The file name is built from the date, the recipe and a part its pattern has checked only,
+never from a VM name.
 
 Scenarios are slow and disk-hungry. Run the ones your change touches, one at a time, rather than
-`make test`, until you are ready to finish.
+`just test`, until you are ready to finish.
 
 `common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects`, `tailscale` and the `configure`
 scenario install packages inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_template` and
@@ -133,7 +147,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
 - **Tests never open the developer's browser, touch their clipboard, or read their terminal.** The
   sign-ins - GitHub's device flow (`roles/github_projects/tasks/device_flow.yml`), Claude's browser
   sign-in (`roles/claude_code/tasks/browser_login.yml`) and Tailscale's web login
-  (`roles/tailscale/tasks/web_login.yml`), run by `make login` and `make deploy` - open a page (and GitHub's copies its code) on `localhost`, which in
+  (`roles/tailscale/tasks/web_login.yml`), run by `just login` and `just deploy` - open a page (and GitHub's copies its code) on `localhost`, which in
   the unit harness and every playbook scenario is the developer's machine. `login_desktop` (roles:
   `github_projects_login_desktop`, `claude_code_login_desktop`, `tailscale_login_desktop`, all wired from
   it in `inventory/group_vars/all/defaults.yml`) gates those steps; every scenario and the harnesses set
@@ -150,11 +164,11 @@ token; `github_auth_method: token` still fails. The status JSON carries
   is the developer's, which asks for a password; the harnesses run with become off, so the same tests
   hold that statically. Each flow unlinks its output file before starting, never truncating: an
   attempt a failed run left behind would share the file. The sign-in plays run `serial: 1` whenever
-  they can prompt (names given, or `make deploy`) and all at once for a bare report, and the flows'
+  they can prompt (names given, or `just deploy`) and all at once for a bare report, and the flows'
   one-VM guards read `ansible_play_batch` - `ansible_play_hosts` ignores serial. Under serial a failed
   VM is a whole batch failed, which ends the run, so the plays rescue a failure, say it, and raise it
-  in a later non-serial play, which `make deploy` skips (`claude_vm_login_in_deploy`): deploy goes on
-  past a failed sign-in. `make login` (`playbooks/login.yml`) skips it too
+  in a later non-serial play, which `just deploy` skips (`claude_vm_login_in_deploy`): deploy goes on
+  past a failed sign-in. `just login` (`playbooks/login.yml`) skips it too
   (`claude_vm_login_raised_later`), so a VM goes on to its next sign-in as under deploy, and raises every
   failure in a last play of its own. `rescue` covers failed tasks only: an unreachable VM is caught by a non-serial
   play before the sign-in, which pings each VM with `ignore_unreachable` and records it as failed. The
@@ -162,10 +176,10 @@ token; `github_auth_method: token` still fails. The status JSON carries
   too, read again for each task, and the rescue sets the very fact it tests, which skipped the message
   after it. The rescue re-raises `pause`'s abort (Ctrl-C, then A), which ends the run. The work after a sign-in -
   Remote Control's start, the github_projects role - runs in a follow-on play after the last prompt;
-  its failure is recorded in `claude_vm_configure_failures` and raised even under `make deploy`, by
+  its failure is recorded in `claude_vm_configure_failures` and raised even under `just deploy`, by
   deploy's last play, since it is not a failed sign-in and the VM is not done.
   `tests/unit/test_sign_in_plays.py` runs both playbooks, and deploy's sign-ins as deploy.yml has them,
-  against stand-ins, a VM whose ssh exits 255 among them. `make deploy TYPE=configure` never prompts.
+  against stand-ins, a VM whose ssh exits 255 among them. `just deploy --only configure` never prompts.
 - **Claude's sign-in comes back over a forward, or hands the code over a pipe, and nothing decides from a
   terminal probe.** Given `BROWSER`, `claude auth login` runs it with a page that redirects to
   `http://localhost:<port>/callback`, listens on the VM's `127.0.0.1:<port>`, and takes a code from that
@@ -176,7 +190,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   here only when it matches `claude_code_login_page_pattern`, and waits on the async job
   (`claude_code_login_approval_timeout`) - no prompt. `claude_code_login_redirect` follows
   `login_desktop`; a forward that fails, a page that is not Claude's, a code given, no browser on this
-  machine to open the page (`page_opener` finds none), or `make` itself run over SSH (`SSH_CONNECTION`: the
+  machine to open the page (`page_opener` finds none), or `just` itself run over SSH (`SSH_CONNECTION`: the
   page would send another machine's browser to its own localhost) falls back to the paste. Tests reach no ssh: `claude_code_login_ssh` is a stand-in, passed as an extra var, since an
   internal in `vars/main.yml` outranks a host var. `claude auth login` with no terminal prints the page
   and reads one line, `<code>#<state>`: a wrong code exits
@@ -190,16 +204,16 @@ token; `github_auth_method: token` still fails. The status JSON carries
   up to its `#`) is asked for once more; a sign-in of the same VM still waiting is refused by its
   pidfile; and what claude printed reaches a message only through the `plain_text` filter, which
   removes whole escape sequences and then every control character but tab and newline (gh's text and
-  `make code`'s SSH error go through it too). A `/dev/tty` probe cannot tell an
+  `just code`'s SSH error go through it too). A `/dev/tty` probe cannot tell an
   attended run - Ansible runs lookups in workers detached from the terminal - so `pause` returning
-  nothing is the skip. `make deploy` decides GitHub's fifteen-minute device flow and Tailscale's web
+  nothing is the skip. `just deploy` decides GitHub's fifteen-minute device flow and Tailscale's web
   login VM by VM, from facts on each VM: a Claude sign-in nobody answered (`claude_code_login_skipped`:
   Enter, or a browser that never came back) leaves it. With `github_login_auto_start` /
   `tailscale_login_auto_start` (default true) every other VM starts at once; off, each is asked by
   `*_login_ask` - Enter signs in one whose Claude sign-in was answered (`claude_code_login_answered`) and
   `n` leaves it, while one that showed no Claude sign-in (signed in already, an API key) signs in on `y`
   only - never one fact for the whole run, which made one answer start every VM's flow. A run with no
-  terminal gets `deploy_sign_in: false` from the Makefile (`NO_TTY_ARGS`), since sign-ins that start by
+  terminal gets `deploy_sign_in: false` from the justfile (`no_tty_args`), since sign-ins that start by
   themselves would otherwise wait for a browser nobody watches. The path unit that starts Remote
   Control when a login lands is `PathChanged=`, never `PathExists=`, which restarts a stopped service
   instantly, and exists only while the login is the one thing missing (docs/architecture/roles.md §5.5).
@@ -244,24 +258,24 @@ token; `github_auth_method: token` still fails. The status JSON carries
   cannot find a package from a repository the same `--check` run adds. Tests reach no Tailscale service
   and never this machine's real CLI: `tailscale` is among the harness's failing stand-ins, every scenario
   that runs the role installs `fake_tailscale.sh` in `prepare.yml` and turns log upload off, the
-  Vagrantfile is keyless with logs off, and a guard holds each - and the role's scenario to `ROLES` and
+  Vagrantfile is keyless with logs off, and a guard holds each - and the role's scenario to `scenario_roles` and
   CI's matrix. The template is never signed in to anything.
 - **The project writes exactly two things outside the repo on the controller:** `~/.ssh/known_hosts`
   and the managed SSH config `~/.ssh/claude-on-proxmox.conf`, plus one `Include` line at the top of
   `~/.ssh/config` that is added once and never removed. Nothing else in `~/.ssh` is ever edited.
-  (The Claude Code sessions `make destroy` saves go into the checkout's `.sessions/`, inside the repo,
+  (The Claude Code sessions `just destroy` saves go into the checkout's `.sessions/`, inside the repo,
   unless the user points `destroy_sessions_dir` elsewhere.)
   Everything goes through `playbooks/tasks/ssh_config.yml`, which validates each write with
   `ssh -G`, refuses an alias the user's own config already names, and refuses a name or address that
   is not one plain word. A VM's address is whatever its guest agent reports, which the VM chooses:
   `guest_ipv4` accepts only what `ipaddress.IPv4Address` parses, because a newline and a
   `ProxyCommand` after a valid address pass `ssh -G` and run on this machine. A block is only ever written
-  for a tagged VM, holds only what ssh reads (no state of this project's - `make code` reads the
+  for a tagged VM, holds only what ssh reads (no state of this project's - `just code` reads the
   workspace on the VM), and pruning (`ssh_config.yml`) removes blocks, never VMs. The `Include` is
   added only when `ssh -G` says the user's config does not reach the managed file yet (a `${HOME}`
   spelling counts on OpenSSH 9.9+ and not before; an `Include` inside a `Host` block never does),
   and never rewrites or changes the mode of the user's file.
-- **`make code` writes in one directory of its own on the VM, the session copies and one fast-forward
+- **`just code` writes in one directory of its own on the VM, the session copies and one fast-forward
   aside, and never answers VS Code's or Claude Code's security questions.** With `vscode_claude_terminal` it writes a `.code-workspace` file in
   `<projects>/.claude-on-proxmox/`, beside the repositories and never in one, whose `folderOpen` tasks
   run `claude` in a terminal and a login shell split to its left (one presentation group); with `vscode_session_notes` too, `session/<vm>-session.md` there (0600,
@@ -275,23 +289,23 @@ token; `github_auth_method: token` still fails. The status JSON carries
   Python. The notes' directory is a
   second workspace folder only where the window's own folder contains it: VS Code stores the folders a
   user trusted, not their parents, so a folder added to a trusted workspace drops it to Restricted Mode.
-  `make code` slurps the notes to carry their live section over, so an unchanged VM rewrites nothing.
+  `just code` slurps the notes to carry their live section over, so an unchanged VM rewrites nothing.
   VS Code runs that task only in a trusted window and once the user has allowed automatic tasks;
   `code.yml` reads `task.allowAutomaticTasks` from the user's VS Code settings to say which to
   expect, and must never write it, set trust, or lower `security.workspace.trust.*` or
   `terminal.integrated.allowInUntrustedWorkspace`. The script is fixed text in `code.yml`'s vars;
   anything variable reaches it as an argument. Every name `code.yml` sets starts with `code_`, a prefix
-  no role uses: a role's fact or register outranks a play var in the same `make deploy`, and no task var
-  shares a fact's name. In `make deploy` (`code_in_deploy`) every task of the window step is in one
-  `block` whose `rescue` says any failure with the `make code` line (`make deploy ...
-  proxmox_vm_start_existing=true` for a VM the deploy left stopped) and ends the play; outside it the
+  no role uses: a role's fact or register outranks a play var in the same `just deploy`, and no task var
+  shares a fact's name. In `just deploy` (`code_in_deploy`) every task of the window step is in one
+  `block` whose `rescue` says any failure with the `just code` line (`just deploy <vm>
+  --start` for a VM the deploy left stopped) and ends the play; outside it the
   rescue fails again. A fleet's deploy ends at code.yml's first task with each VM's line.
   `tests/unit/test_code_session.py` runs it (once at a pseudo-terminal, for Ctrl-C), runs the window
   step's own tasks with stand-ins for `which` and `code` first on PATH, and holds
   every task in `code.yml`, and in the task files it imports, followed all the way down, to an
   allowlist: read-only on this machine (plus `which`/`code`, the session handoff's `rsync` to the VM and
   the alias through `tasks/ssh_config.yml`), the handoff's readers (`claude_sessions_info`,
-  `git_checkouts_info`) here or on the VM, or `stat`/`getent`/`find`/`slurp`, SESSION's `git` and the six
+  `git_checkouts_info`) here or on the VM, or `stat`/`getent`/`find`/`slurp`, --session's `git` and the six
   writes (the workspace and its directory, the notes and theirs, the sessions' directory and their copies)
   delegated to the VM; a `shell`, a writer in a `block`, or a `connection` fails it by name. The helper is run against stand-ins with nothing else
   on PATH: never a login shell there, which would put this machine's own `code` and `tailscale` back. The `provision`
@@ -310,13 +324,13 @@ token; `github_auth_method: token` still fails. The status JSON carries
   cleared `worktree-state` after a bound one; a `relocated` entry naming the checkout. A copy is replaced
   only while it matches the manifest's digest, written after each copy, so a session continued on the VM
   is never overwritten; it keeps this machine's file time only within 14 days, else the time of writing,
-  since Claude Code sweeps a transcript at 30. `SESSION=<id>`
-  (`vm_session`, checked by `session-name-check`) resumes that one with `claude --resume <id>`, never a
+  since Claude Code sweeps a transcript at 30. `--session <id>`
+  (`vm_session`, checked by its pattern and `tools/check session`) resumes that one with `claude --resume <id>`, never a
   fork and never a fresh `claude` after a failed resume, once its checkout here is clean and its branch
   pushed and the VM's checkout clean, on a `HEAD` some ref holds and free of a `claude`; the VM checkout
   then reaches the same commit by fast-forward only, never over a path git does not track there (an
-  ignored file git would overwrite unasked), the one write `make code` makes in a repository. rsync's 23
-  and 24, and any failure without `SESSION`, are said and the window opens anyway. The handoff reads this machine's
+  ignored file git would overwrite unasked), the one write `just code` makes in a repository. rsync's 23
+  and 24, and any failure without `--session`, are said and the window opens anyway. The handoff reads this machine's
   `~/.claude` (`code_session_source_dir`) and checkout, with `git --no-optional-locks`, and writes
   nothing here; every task reading a transcript is `no_log` and no message carries more than IDs,
   folders, branches and counts. Claude Code's trust question for a checkout stays the user's. The
@@ -329,9 +343,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   as it is, and so is an ID in two folders here; origins are reported without credentials, and no path or
   branch is expanded (`expand_user_and_vars=False`). The copies' records of each request sent (`api-request-shape`, `api-request-blob`) keep
   this machine's memory folder: resume sends the snapshot, never them, which the `configure` scenario holds.
-- **`make destroy` saves what of a VM's Claude Code sessions exists only there before releasing it.**
+- **`just destroy` saves what of a VM's Claude Code sessions exists only there before releasing it.**
   `tasks/session_save.yml`, under `destroy_save_sessions` (on by default): `claude_sessions_info` on the VM
-  with `all` and make code's manifest (in `make_code_dir`, as code.yml names it), `claude_sessions_saved`
+  with `all` and just code's manifest (in `make_code_dir`, as code.yml names it), `claude_sessions_saved`
   keeping each session with a message that is not a copy still as written, with the folder beside it, and
   every auto memory folder. Nothing the VM sends is trusted: a folder or ID not named as Claude Code names
   them is left out, and `claude_sessions_fetch` (delegated here) runs `tar` there over SSH as Ansible
@@ -349,7 +363,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   to have gone unsaved; `destroy_release: false` still saves, and releases nothing; a VM whose sudo fails
   is saved, then deleted unreleased, said so: sudo is asked for in a block before the save, since a failed
   sudo is an error `failed_when` never sees (docs/architecture/lifecycle.md §4.5).
-- **Tests never read or write the developer's `~/.claude`.** `make code` reads this machine's sessions
+- **Tests never read or write the developer's `~/.claude`.** `just code` reads this machine's sessions
   and, in every scenario and harness, the "VM" is this machine too. Every run of `code.yml` points
   `code_session_source_dir` and `code_session_dest_dir` into its own directory (`_window_extra` in
   `tests/unit/test_code_session.py`, `verify_code_vars` and every `deploy.yml` run in the `provision`
@@ -364,21 +378,21 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the `Include` off, the Vagrantfile sets `claude_ssh_config: false`, and
   `tests/unit/test_ssh_config.py` fails if any of them stops.
 
-- **`make init` writes only what is still a placeholder, only at a terminal or as given, and the vault
+- **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`
   (the controller alone, pipelining on, no `group_vars`; never in `playbooks/` itself, where the syntax
   check and ansible-lint take it for a playbook), and asks through `tasks/init_ask.yml` only while a value
   is the example's or unset; Enter is "later", and an answer is held to its kind by `init_answer`
-  (`filter_plugins/settings.py`). `init_ask` is false unless the Makefile sees a terminal and `PROMPT` is
-  not `no` (`INIT_TTY_ARGS`), and every write is under it or under a value given on the command line
+  (`filter_plugins/settings.py`). `init_ask` is false unless the justfile sees a terminal and was not given
+  `--no-prompt`, and every write is under it or under a value given on the command line
   (`init_given`), which never overwrites: one that differs from what is set fails the run, naming both.
   `hosts.yml` and `local.yml` are changed by one validated `lineinfile` each, on the example's own line.
   The vault is re-encrypted by piping its text into `ansible-vault encrypt`'s stdin under `no_log`, never
   through `copy`, which decrypts. `.vault_pass` is created `O_EXCL`, 0600, and never rewritten. Every
   test points the four `init_*_file` vars into its own directory, through `_init` and
   `_init_at_a_terminal` in `tests/unit/test_init_settings.py`, which holds that statically. The token
-  secret is never taken from the command line (`TOKEN_SECRET=` stops `make`): only from
-  `TOKEN_SECRET_FILE`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
+  secret is never taken from the command line (`just init` refuses any word after its options without
+  printing it, `TOKEN_SECRET=...` among them): only from `--token-secret-file`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
   argv. `playbooks/init_check.yml`, its second run, changes nothing but `local.yml`, through
   `tasks/init_local_setting.yml` and under `init_ask` or a value given: the node when it is the default and
   not the template's (worked out, never chosen), the storage or bridge chosen from what the node lists and
@@ -430,9 +444,9 @@ localhost: against the fake, 20 VMs took 168 s that way and take 41 s now. The p
 
 **`deploy.yml` configures only what provisioning published.** It imports `configure.yml` with
 `claude_vm_discovery: false`. Discovery without `vm_name` means every tagged VM, while provisioning
-without it means the one default VM, so running both made a bare `make deploy` create the default VM
-and then configure the whole fleet. `make deploy TYPE=configure`, `check` and `ssh-config`, `make list`
-and `make login` stay fleet-wide without `VM_NAME`: each runs its own playbook, discovery on.
+without it means the one default VM, so running both made a bare `just deploy` create the default VM
+and then configure the whole fleet. `just deploy --only configure`, `--check` and `--only ssh-config`, `just list`
+and `just login` stay fleet-wide without names: each runs its own playbook, discovery on.
 
 **A stopped VM is left stopped, and not waited on.** An existing, configured VM is started only
 with `proxmox_vm_start_existing`. Otherwise `present.yml` sets `proxmox_vm_stopped` from the
@@ -498,8 +512,8 @@ the workspace is the VM user's real home rather than a guess from the controller
 the stdout callback `ansible.cfg` names, prints NEXT STEPS after the recap from `set_stats` records only -
 `{vm: {matter: line}}` under five `*_next` stats - each made straight after its report from the facts the
 message is built from: the line while something is left, `''` once nothing is, the last record of a VM and
-matter winning across plays. Do not decide from a message's text: a stopped Tailscale names no `make`
-command, and "make deploy signs it in next" names one with nothing to do. A new report needs its record, and
+matter winning across plays. Do not decide from a message's text: a stopped Tailscale names no `just`
+command, and "just deploy signs it in next" names one with nothing to do. A new report needs its record, and
 `tests/unit/test_attention_callback.py` fails without it. Tests never load the callback (an
 `ansible.cfg` holding only `inject_facts_as_vars = false`, and the JSON callback); the harness shows custom stats, and `_left_to_do` reads the records.
 
@@ -515,7 +529,7 @@ down broke `deploy`, `configure`, `list` and `destroy` for every VM on the other
 `playbooks/tasks/cluster_vms.yml` fetches the listing with `uri` (`no_log`, since the request
 carries the token); `proxmox_vm_info` is called only with a `name` or a `vmid`. The shared pieces
 live in one place each, so the playbooks cannot drift: `proxmox_api_module_defaults` for
-`module_defaults`, `claude_vm_requested` for `VM_NAME` narrowing, the `guest_address` filter with
+`module_defaults`, `claude_vm_requested` for narrowing to the names given (`vm_name`), the `guest_address` filter with
 `proxmox_nic` for a VM's address, and the `proxmox_access_denied` filter for "the token was
 refused" - which anchors 401/403 to proxmoxer's status position, because Proxmox names the VM in
 the error text and `VM 4013 is not running` otherwise reads as a 401.
@@ -526,21 +540,21 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
 - **A gathered fact is `ansible_facts['architecture']`, never `ansible_architecture`.** ansible-core 2.24
   stops injecting facts as top-level variables, and `ansible.cfg`, Molecule's shared config and every
   `ansible.cfg` a unit test writes (`harness.ansible_config`) already set `inject_facts_as_vars = false`, so
-  the top-level name is undefined here. The first `make deploy` of a new VM printed a deprecation per read
+  the top-level name is undefined here. The first `just deploy` of a new VM printed a deprecation per read
   until they moved; `tests/unit/test_gathered_facts.py` scans for one and holds all three settings.
 - **Every checkout on a machine shares `~/.ansible/collections`.** `make deps` in a worktree that still
   pinned ansible.posix 2.1.0 put it back under every other checkout, whose runs went on without a word.
-  Every Ansible target now runs `collections-check` first (`ansible-galaxy collection install --offline`
-  against `requirements.yml`), and refuses, naming `make install`, while a collection differs
+  Every recipe that runs Ansible now runs `tools/check collections` first (`ansible-galaxy collection install --offline`
+  against `requirements.yml`), and refuses, naming `just install`, while a collection differs
   from its pin.
 - **uv writes the environment's path, as it was given, into every command it installs.** `make venv`
   synced through the checkout's `.venv` link to the environment, so 31 commands started their Python by
   that link and would have broken with it, and a sync that finds every package current rewrites none.
-  `make install` runs `tools/stale_scripts.py` first and reinstalls each locked package with a command
+  `just install` runs `tools/stale_scripts.py` first and reinstalls each locked package with a command
   whose first line names a Python outside the environment's `bin`, compared as spelled, never resolved
   (the link resolves to the right Python), then `--check`s that none is left.
 - **`-e key=value` splits extra-vars on whitespace.** `VM_NAME="alpha beta"` silently provisioned
-  half the fleet. The Makefile passes JSON (`-e '{"vm_name": "..."}'`) to keep the value whole.
+  half the fleet. The justfile passes the names as JSON (`-e '{"vm_name": "..."}'`) to keep them whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them
   comma-joined. Anything parsing tags must handle both.
 - **`vars_prompt` silently takes its `default:` without a terminal.** It does not hang — ansible-core
@@ -549,7 +563,7 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   defaults to `no`).
 - **A `vars_prompt` sees the play's vars and the extra vars, nothing else.** It is templated before any
   host is in scope, even when `-e` answers it, so a prompt naming `claude_vm_names` (group_vars) failed
-  every `make destroy` before it asked. `test_release.py` runs destroy with no inventory variables at all.
+  every `just destroy` before it asked. `test_release.py` runs destroy with no inventory variables at all.
 - **A stdout callback that subclasses the default needs the default's `DOCUMENTATION`.** Without the
   `default_callback` and `result_format_callback` fragments it has no options, every hook fails, Ansible
   only warns, and every task's result disappears in a run that exits 0. `--syntax-check` loads no
@@ -574,30 +588,27 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   `claude_ssh_vms: <the prune list>` and `state: absent`. The fact won, and the prune removed the
   aliases it had just refreshed. Pass the task file's inputs only through `vars:` on the import;
   `tests/unit/test_ssh_config.py` fails if a playbook sets them as facts.
-- **Every value typed on the `make` line is checked before a shell sees it.** `VM_NAME`, `PROJECT` and
-  `SESSION` each have a `*-name-check` target, and `make init`'s `HOST`, `TOKEN_USER`, `TOKEN_NAME`,
-  `TOKEN_SECRET_FILE`, `GITHUB_USER` and `PROMPT` have `init-args-check`, each reading the value through
-  the environment with `$(value ...)` and refusing anything outside its character set with a shell
-  `case`, then the value travels to Ansible as JSON (`VM_ARGS`, `INIT_GIVEN_ARGS`). Make itself never
-  expands one first: every assignment that carries one reads it with `$(value ...)`, since a `:=` is
-  expanded as the Makefile is read and `VM_NAME='$(shell ...)'` ran there, and every one is `unexport`ed,
-  since make expands each variable from its command line as it exports it to the first recipe, the check
-  or not (`test_no_value_typed_on_the_command_line_runs_before_its_check`). Those init values are assigned
-  empty in the Makefile, so only the command line sets them, never an exported variable; the token
-  secret is refused there outright, since `make` copies the command line into `MAKEFLAGS`. `PROJECT` is a GitHub repository name, so `/`, `.` and `..` are refused as well, and
-  `code.yml` repeats the check for a direct `ansible-playbook` run. The targets in `NAMED_TARGETS`,
-  every one that takes `VM_NAME`, also take the names as the words after them, which make reads as
-  goals: they become `VM_NAME` and go into no rule's syntax and no `$(shell)` before `vm-name-check` (a
-  `%:` rule that does nothing answers each), and a word the Makefile has a rule for is refused while
-  the Makefile is read, or make would run that target after the first, or beside it under `-j` - and so
-  is one of the target's own TYPEs (`make deploy configure` would create a VM named `configure`).
-  So is a target an earlier Makefile had (`RENAMED_<name>`): `make deploy alpha syntax` would create a VM
-  named `syntax`. `TYPE`, `TAGS` and `ROLE` are taken from the command line only (`:=`, which outranks
-  the environment: an exported `TYPE=check` made every deploy a dry run), and checked while the Makefile
-  is read, through `$(value ...)`, against the fixed lists (`TYPES_<target>`, the six role tags, `ROLES`),
-  so only a listed word ever reaches a recipe or a log file's name; `TAGS` stands for `TYPE=configure`
-  only beside VM names, since configuration without names reaches the fleet and a bare deploy does not; a TYPE is kept per target (`KIND_<target>`), so it never narrows a second goal
-  on the same line.
+- **Every value typed on the `just` line is checked before a shell sees it, and none can be switched
+  off.** Each recipe parameter has a literal `[arg(..., pattern=)]` (a pattern naming an assignment could
+  be loosened by overriding it), which just holds every value to - every name of a variadic one -
+  before anything runs, and an option or word a recipe does not have is refused. A value reaches its
+  script only as a positional argument (`[positional-arguments]`), never as its text, and what goes into
+  JSON is checked again there (`tools/check names`, `project` and `session`, `init`'s `only`), then
+  travels to Ansible as JSON. VM names start with a letter or a digit: a recipe without options takes a
+  word that starts with `-` as a name, so `--project x` after `just destroy` would otherwise name a VM
+  `--project`. The
+  rules between options - `--tags` beside names means `--only configure`, and without names needs it,
+  since configuration without names reaches the fleet and a bare deploy does not; `--check` takes no
+  `--only`; `--start` only where something is started - are the first lines of each script, said before
+  any check or tool. `just deploy configure`, a stage or a recipe as a VM name, is refused rather than
+  creating a VM so named. A recipe parameter never comes from the environment: an exported `TAGS` or
+  `TYPE` changes nothing. `just init` takes `--token-secret-file` and the exported
+  `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, never the secret itself: `--token-secret` is no option, and a word
+  after its options - make's `TOKEN_SECRET=...` - is caught by `EXTRA` and refused without being said
+  (an unknown recipe or a pattern refusal would print it). `--project` is a GitHub repository name, so
+  `/`, `.` and `..` are refused, and `code.yml` repeats the check for a direct `ansible-playbook` run.
+  `--session` is a Claude Code session ID, lowercase hex in groups of 8-4-4-4-12 and nothing else, and
+  only `just code` takes it.
 - **There is deliberately no `LIMIT`.** `--limit` is applied before the plays run, and these VMs
   only enter the inventory once discovery has found them, so it could never match.
 - **`gitleaks --staged` scans the index**, which equals HEAD in a CI checkout — i.e. nothing. CI

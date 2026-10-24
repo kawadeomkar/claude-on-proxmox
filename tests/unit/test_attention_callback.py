@@ -223,16 +223,16 @@ def test_next_steps_after_the_recap_by_vm_then_matter_each_line_once(tmp_path):
   tasks:
     - ansible.builtin.set_stats:
         data:
-          github_projects_next: "{{ {'beta': {'github': 'beta: run make login VM_NAME=beta TYPE=github'}} }}"
+          github_projects_next: "{{ {'beta': {'github': 'beta: run just login beta --only github'}} }}"
     - ansible.builtin.set_stats:
         data:
-          claude_code_next: "{{ {'beta': {'claude': 'beta: run make login VM_NAME=beta TYPE=claude'}} }}"
+          claude_code_next: "{{ {'beta': {'claude': 'beta: run just login beta --only claude'}} }}"
     - ansible.builtin.set_stats:
         data:
           tailscale_next: "{{ {'alpha': {'tailscale': 'alpha: Tailscale is down: sudo tailscale up.'}} }}"
     - ansible.builtin.set_stats:
         data:
-          claude_code_next: "{{ {'alpha': {'claude': 'alpha: not signed in. Run make login VM_NAME=alpha'}} }}"
+          claude_code_next: "{{ {'alpha': {'claude': 'alpha: not signed in. Run just login alpha'}} }}"
     - name: Signed in later in the run
       ansible.builtin.set_stats:
         data:
@@ -240,7 +240,7 @@ def test_next_steps_after_the_recap_by_vm_then_matter_each_line_once(tmp_path):
     - name: The same line for two matters
       ansible.builtin.set_stats:
         data:
-          code_next: "{{ {'beta': {'vscode': 'beta: run make login VM_NAME=beta TYPE=github'}} }}"
+          code_next: "{{ {'beta': {'vscode': 'beta: run just login beta --only github'}} }}"
     - name: Under a name nobody reads
       ansible.builtin.set_stats:
         data:
@@ -252,10 +252,10 @@ def test_next_steps_after_the_recap_by_vm_then_matter_each_line_once(tmp_path):
     assert (
         f"{RULE}\n##  NEXT STEPS\n{RULE}\n"
         "alpha: Tailscale is down: sudo tailscale up.\n"
-        "beta: run make login VM_NAME=beta TYPE=claude\n"
-        "beta: run make login VM_NAME=beta TYPE=github\n"
+        "beta: run just login beta --only claude\n"
+        "beta: run just login beta --only github\n"
     ) in tail, tail
-    assert "not this" not in out and "make login VM_NAME=alpha TYPE=claude\n" not in tail
+    assert "not this" not in out and "just login alpha --only claude\n" not in tail
     assert "##  NEXT STEPS" in log
 
 
@@ -269,7 +269,7 @@ def test_colour_on_the_screen_never_in_the_log(tmp_path):
   tasks:
     - ansible.builtin.set_stats:
         data:
-          claude_vm_next: "{{ {'alpha': {'vm': 'alpha is stopped: make deploy VM_NAME=alpha'}} }}"
+          claude_vm_next: "{{ {'alpha': {'vm': 'alpha is stopped: just deploy alpha'}} }}"
 """,
         ANSIBLE_NOCOLOR="0",
         ANSIBLE_FORCE_COLOR="1",
@@ -368,7 +368,7 @@ def test_every_report_is_followed_by_its_record_under_one_of_the_five_names():
                     after = tasks[index + 1] if index + 1 < len(tasks) else {}
                     followed[(relative, task["name"])] = "ansible.builtin.set_stats" in after
                     # A report's task vars are its own: a record whose condition named
-                    # one failed every make destroy at its end.
+                    # one failed every just destroy at its end.
                     condition = (
                         " ".join(map(str, after.get("when") or []))
                         if isinstance(after.get("when"), list)

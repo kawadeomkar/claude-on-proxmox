@@ -1,4 +1,4 @@
-"""The pieces of make code's session handoff: filter_plugins/sessions.py and the modules in playbooks/library/.
+"""The pieces of just code's session handoff: filter_plugins/sessions.py and the modules in playbooks/library/.
 
 Which session goes to which checkout on the VM, what a copy is made of, and
 when an existing copy is left alone. Every transcript, ~/.claude and checkout
@@ -165,7 +165,7 @@ def test_on_the_vm_a_github_origin_names_its_repository(url):
         "/srv/git/octo/demo.git",  # a local path names folders, not a repository
         "file:///srv/git/octo/demo.git",
         "https://gitlab.com/octo/demo.git",  # another host's repository of the same name
-        "git@github-work:octo/demo",  # an SSH alias: the VM's checkouts are make deploy's, which uses none
+        "git@github-work:octo/demo",  # an SSH alias: the VM's checkouts are just deploy's, which uses none
         "https://github.com.example.com/octo/demo",
         "https://github.com/octo/demo/tree/main",
         "https://github.com/../demo",
@@ -305,7 +305,7 @@ HERE_DEMO = [{"path": "/Users/me/demo", "exists": True, "origin": "https://githu
         ([_session(cwd="/Users/me/elsewhere")], {}, "belongs to no repository alpha could have"),
         ([_session(version="2.2.0")], {}, "newer than alpha's 2.1.308"),
         ([_session(branch="HEAD")], {}, "a detached HEAD"),
-        ([_session()], {"project": "other"}, "PROJECT=other on alpha is not a checkout of octo/demo; demo is."),
+        ([_session()], {"project": "other"}, "--project other on alpha is not a checkout of octo/demo; demo is."),
         ([_session()], {"version": ""}, "Claude Code is not installed on alpha yet"),
     ],
 )
@@ -337,7 +337,7 @@ def test_an_id_in_two_folders_here_is_left_out_and_named():
     twice = {**_session(), "folder": "-Users-me-demo-src"}
     plan = _plan([_session(), twice, _session(OTHER)], HERE_DEMO)
     assert plan["twice"] == [ID] and [item["id"] for item in plan["sessions"]] == [OTHER]
-    # SESSION's own is refused with its reason instead.
+    # --session's own is refused with its reason instead.
     assert "is in more than one folder here" in _plan([_session(), twice], HERE_DEMO, wanted=ID)["session"]["problem"]
 
 
@@ -345,13 +345,14 @@ def test_a_session_a_claude_on_the_vm_has_open_is_left_as_it_is():
     # Replaced under the claude holding it, the copy would take that claude's next lines onto other content.
     plan = _plan([_session(), _session(OTHER)], HERE_DEMO, open_there=[ID])
     assert plan["open"] == [ID] and [item["id"] for item in plan["sessions"]] == [OTHER]
-    # SESSION's own stays planned: session_read.yml refuses it, saying where it is open.
+    # --session's own stays planned: session_read.yml refuses it, saying where it is open.
     assert [item["id"] for item in _plan([_session()], HERE_DEMO, wanted=ID, open_there=[ID])["sessions"]] == [ID]
 
 
 def test_a_vm_without_the_repository_is_named_with_the_run_that_clones_it():
     plan = _plan([_session()], HERE_DEMO, there=[], wanted=ID, vm="alpha")
-    assert plan["session"]["problem"].startswith("alpha has no checkout of octo/demo. make deploy alpha TYPE=configure")
+    problem = plan["session"]["problem"]
+    assert problem.startswith("alpha has no checkout of octo/demo. just deploy alpha --only configure")
 
 
 # ------------------------------------------------------------------------ claude_sessions_info ---
@@ -905,7 +906,7 @@ def test_a_memory_folder_named_in_a_form_make_code_does_not_know_is_not_copied()
     # A Claude Code that words the prompt otherwise: the folder of this machine's would be sent as it is.
     data = transcript().replace(b"persistent file-based memory at", b"memory, kept at")
     edited, why = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, HERE)
-    assert edited == b"" and "a form make code does not know" in why
+    assert edited == b"" and "a form just code does not know" in why
 
 
 VM_RESULTS = f"/home/dev/.claude/projects/-Users-me-demo/{ID}/tool-results"
@@ -956,7 +957,7 @@ def test_another_project_s_memory_folder_a_prompt_quotes_is_left_as_text():
     # The session's own, named otherwise than the rewrite knows, is still refused.
     other_form = transcript().replace(b"persistent file-based memory at", b"memory, kept at")
     edited, why = copy.edit_transcript(other_form, ID, CHECKOUT, VM_MEMORY, HERE, folder="-Users-me-demo")
-    assert edited == b"" and "a form make code does not know" in why
+    assert edited == b"" and "a form just code does not know" in why
 
 
 def test_only_complete_lines_are_copied():

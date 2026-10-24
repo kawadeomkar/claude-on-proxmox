@@ -11,7 +11,7 @@ tailscale_enabled: true
 
 # A key for the VM's first join (tskey-auth-..., or an OAuth client secret,
 # tskey-client-..., which needs tailscale_advertise_tags). Empty means the web
-# login (make login TYPE=tailscale, or make deploy's step). Used for a first join
+# login (just login --only tailscale, or just deploy's step). Used for a first join
 # only: sent again to a node that is signed in, a key Tailscale no longer
 # accepts logs the node out (tailscale#19501).
 tailscale_auth_key: ""
@@ -91,12 +91,12 @@ tailscale_marker_dir: /var/lib/claude-on-proxmox
 # login_desktop).
 tailscale_login_desktop: true
 
-# make deploy signs the VM in next, in the same run: configuration says so
-# rather than naming make login TYPE=tailscale.
+# just deploy signs the VM in next, in the same run: configuration says so
+# rather than naming just login --only tailscale.
 tailscale_sign_in_follows: false
 
 # Set by playbooks/tailscale_login.yml for the login entry point: sign the VM in
-# by the web login (names given, or make deploy for a VM whose Claude code was
-# entered), and whether to ask first (make deploy).
+# by the web login (names given, or just deploy for a VM whose Claude code was
+# entered), and whether to ask first (just deploy).
 tailscale_login_interactive: false
 tailscale_login_ask: false

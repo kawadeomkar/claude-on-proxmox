@@ -1,8 +1,8 @@
 ---
 # gh on the VM, as github_projects_user: signed in from the vault token when
 # there is one and gh holds no login of the user's own, otherwise left for the
-# one device-flow login the user makes (make login TYPE=github, or the terminal
-# make code opens), and either way made git's credential helper for
+# one device-flow login the user makes (just login --only github, or the terminal
+# just code opens), and either way made git's credential helper for
 # github.com. The state is read first, and again after a change, so that the
 # listing which follows can use whatever token the VM then holds
 # (vars/main.yml, github_projects_listing_token). Nothing here fails a VM that
@@ -235,12 +235,12 @@
     - github_projects_signed_in | bool
     - not github_projects_gh_helper | bool
 
-# Under make deploy the sign-in comes next in the same run, which says so
+# Under just deploy the sign-in comes next in the same run, which says so
 # rather than send the user off to run it (github_projects_sign_in_follows).
 - name: auth | Say how to sign gh in
   vars:
     github_projects_sign_in_next: >-
-      {{ 'make deploy signs it in next, in this run, and the private repositories follow.' if github_projects_sign_in_follows | bool
+      {{ 'just deploy signs it in next, in this run, and the private repositories follow.' if github_projects_sign_in_follows | bool
          else 'Run ' ~ github_projects_login_command ~ ' on your machine: a page opens in your browser, the code is on your'
               ~ ' clipboard, you paste it and authorise, and that run clones the private repositories too.' }}
   ansible.builtin.debug:

@@ -1,10 +1,10 @@
 ---
 # Bring the SSH aliases on this machine back in step with the fleet.
 #
-#   make deploy TYPE=ssh-config                   -> every VM tagged claude-on-proxmox
-#   make deploy VM_NAME=alpha TYPE=ssh-config     -> only alpha, and nothing pruned
+#   just deploy --only ssh-config                   -> every VM tagged claude-on-proxmox
+#   just deploy alpha --only ssh-config     -> only alpha, and nothing pruned
 #
-# `make deploy` and `make deploy TYPE=configure` keep an alias for each VM they touch
+# `just deploy` and `just deploy --only configure` keep an alias for each VM they touch
 # (playbooks/tasks/ssh_config.yml); this is for everything in between: a
 # lease that moved, a VM deleted in the Proxmox UI, a second machine. It
 # refreshes every tagged VM that has an address and, fleet-wide, prunes the
@@ -35,7 +35,7 @@
       ansible.builtin.import_tasks: tasks/cluster_vms.yml
 
     # claude_vm_requested (group_vars/all) keeps the VMs carrying this
-    # project's tag, narrowed to VM_NAME when given, exactly as discovery and
+    # project's tag, narrowed to vm_name when given, exactly as discovery and
     # the listing do. A tagged VM without a name (a node that is down) cannot
     # be asked for an address and cannot be an alias; it matters below.
     - name: Narrow to the requested VMs
@@ -72,7 +72,7 @@
 
     # The workspace is only shown in the connect line, and this play never
     # connects to a VM to read its home: vm_projects_dir when it is set, and
-    # otherwise the line says `make code`, which does.
+    # otherwise the line says `just code`, which does.
     - name: Build an alias for each VM that can be reached
       ansible.builtin.set_fact:
         claude_ssh_refresh: >-
@@ -136,5 +136,5 @@
           Run this again once every node reports.
           {% endif %}
           {% if vm_name is defined %}
-          Only the VMs named in VM_NAME were refreshed; a fleet-wide `make deploy TYPE=ssh-config` also prunes.
+          Only the VMs named were refreshed; a fleet-wide `just deploy --only ssh-config` also prunes.
           {% endif %}

@@ -19,7 +19,7 @@ description:
     never through a link: nothing here is a link, since a link, a hard link, a device or a pipe in the
     archive is left out and named. Nothing is ever written outside O(dest).
   - Fails, having written nothing outside O(dest), when SSH or tar fails, when the archive ends early, or
-    when an entry asked for did not arrive. make destroy then keeps the VM (playbooks/tasks/session_save.yml).
+    when an entry asked for did not arrive. just destroy then keeps the VM (playbooks/tasks/session_save.yml).
   - Nothing of what the files hold is returned, only how many and the names left out.
 options:
   dest:
@@ -114,7 +114,7 @@ import threading
 from ansible.module_utils.basic import AnsibleModule
 
 SESSION_ID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-# What make destroy asks for: a transcript, the folder beside it, or a project's auto memory.
+# What just destroy asks for: a transcript, the folder beside it, or a project's auto memory.
 NAME = re.compile(rf"^[A-Za-z0-9-]+/(?:{SESSION_ID}(?:\.jsonl)?|memory)$")
 # How many of the entries left out are named: a VM can send any number.
 LISTED = 50

@@ -179,9 +179,9 @@
 # Discovery runs as its own playbook here, in a Molecule stage of its own, so
 # the in-memory hosts provisioning added are gone: this proves the VMs can be
 # found again from their Proxmox tag alone, which is what a later
-# `make deploy TYPE=configure` depends on.
+# `just deploy --only configure` depends on.
 #
-# No vm_name, so this is `make deploy TYPE=configure` with no VM_NAME: the whole fleet,
+# No vm_name, so this is `just deploy --only configure` with no names: the whole fleet,
 # with the ownership filter as the only thing between discovery and every
 # running VM on the host.
 - name: Discover the whole fleet
@@ -253,7 +253,7 @@
           Discovery claimed a VM it does not own or cannot reach: {{ groups['claude_vms'] | sort }}.
         quiet: true
 
-# The same discovery with VM_NAME. The hosts published above stay in memory,
+# The same discovery with vm_name. The hosts published above stay in memory,
 # so this checks what discovery narrowed to rather than the group.
 - name: Discover one VM by name
   ansible.builtin.import_playbook: ../../playbooks/discover.yml
@@ -267,7 +267,7 @@
     - name: Assert only the requested VM was considered
       ansible.builtin.assert:
         that: claude_vm_discovered | map(attribute='name') | list == ['beta']
-        fail_msg: "VM_NAME=beta considered {{ claude_vm_discovered | map(attribute='name') | list }}"
+        fail_msg: "vm_name=beta considered {{ claude_vm_discovered | map(attribute='name') | list }}"
         quiet: true
 
 # A template whose LAN NIC is net1. Discovery used to read net0 whatever
@@ -330,10 +330,10 @@
         fail_msg: provision.yml must ask Proxmox for the next free VMID, once, for a fleet.
         quiet: true
 
-# What `make list` shows, for the whole fleet. Asserted on the rows the
+# What `just list` shows, for the whole fleet. Asserted on the rows the
 # playbook builds rather than the rendered table, so a formatting change does
 # not break the test while a wrong VM, a wrong address or a lost filter does.
-- name: List the fleet the way make list does
+- name: List the fleet the way just list does
   ansible.builtin.import_playbook: ../../playbooks/list.yml
 
 - name: Verify the listing
@@ -356,7 +356,7 @@
           # docker bridge the fake also reports.
           - claude_list_rows | map(attribute='address') | list == ['192.0.2.51', '192.0.2.54', '192.0.2.58', '', '', '', '']
           - claude_list_rows | map(attribute='status') | list == ['running', 'running', 'running', 'running', 'running', 'stopped', 'unknown']
-        fail_msg: "make list produced {{ claude_list_rows }}"
+        fail_msg: "just list produced {{ claude_list_rows }}"
         quiet: true
 
 - name: List two VMs by name
@@ -372,7 +372,7 @@
     - name: Assert the listing narrowed to the requested VMs
       ansible.builtin.assert:
         that: claude_list_rows | map(attribute='name') | list == ['alpha', 'beta']
-        fail_msg: "make list VM_NAME=alpha,beta produced {{ claude_list_rows }}"
+        fail_msg: "just list alpha,beta produced {{ claude_list_rows }}"
         quiet: true
 
 - name: List a VM whose LAN NIC is net1
@@ -389,7 +389,7 @@
     - name: Assert netone is listed with its net1 address
       ansible.builtin.assert:
         that: claude_list_rows | map(attribute='address') | list == ['192.0.2.59']
-        fail_msg: "make list with proxmox_nic=net1 produced {{ claude_list_rows }}"
+        fail_msg: "just list with proxmox_nic=net1 produced {{ claude_list_rows }}"
         quiet: true
 
 # The playbook-level refusals: a failure is the expected result, which an
@@ -468,10 +468,10 @@
           {{ verify_dupes_run.rc }}: {{ verify_dupes_output.splitlines()[-20:] }}
         quiet: true
 
-    # A VM named in VM_NAME that has no address - parked is tagged but stopped -
+    # A VM named in vm_name that has no address - parked is tagged but stopped -
     # must fail discovery, not be dropped while the rest are configured and the
     # run exits 0. Fresh child process, so groups['claude_vms'] starts empty.
-    - name: Run discovery for a stopped VM named in VM_NAME
+    - name: Run discovery for a stopped VM named in vm_name
       ansible.builtin.command:
         argv: >-
           {{ verify_playbook_cmd
@@ -488,7 +488,7 @@
       ansible.builtin.assert:
         that:
           - verify_missing_run.rc != 0
-          - verify_missing_output is search('VM_NAME asked for parked')
+          - verify_missing_output is search('The names given were parked')
           - verify_missing_output is search('no address\s+was found for parked')
         fail_msg: >-
           Expected discovery to fail for stopped VM "parked"; it exited
@@ -535,7 +535,7 @@
           beta {{ verify_beta_status.json.data.status }}): {{ verify_stopped_run.stdout_lines[-20:] }}
         quiet: true
 
-    # `make deploy VM_NAME=solo TYPE=provision`, the simplest command: one name, so
+    # `just deploy solo --only provision`, the simplest command: one name, so
     # play 1 lists nothing, asks for no VMID and hands the role no
     # proxmox_vm_id - every lazy var there defaults from a skipped register,
     # and the role lets Proxmox pick the VMID. Every other provision run here
@@ -576,13 +576,13 @@
           - verify_solo_run.rc == 0
           - verify_solo_run.stdout is search('solo is up at 192\.0\.2\.63')
         fail_msg: >-
-          make deploy VM_NAME=solo TYPE=provision went wrong (rc {{ verify_solo_run.rc }}):
+          just deploy solo --only provision went wrong (rc {{ verify_solo_run.rc }}):
           {{ (verify_solo_run.stdout ~ '\n' ~ verify_solo_run.stderr).splitlines()[-20:] }}
         quiet: true
 
-    # `make deploy TYPE=check` runs discovery in check mode, where a task that does not
+    # `just deploy --check` runs discovery in check mode, where a task that does not
     # support it is skipped - and uri, which lists the cluster, is one.
-    - name: Run discovery in check mode, as make deploy TYPE=check does
+    - name: Run discovery in check mode, as just deploy --check does
       ansible.builtin.command:
         argv: "{{ verify_playbook_cmd + ['--check', '--extra-vars', '{\"vm_name\": \"alpha\"}', playbook_dir ~ '/../../playbooks/discover.yml'] }}"
       environment: "{{ verify_playbook_env }}"
@@ -609,7 +609,7 @@
     # nothing to run on either way; what it would do is read from the report.
     # The sign-ins match no host either, and the window is left for later
     # rather than failing the deploy, with the step that does everything: this
-    # deploy left beta stopped, so make code alone would open a VM it never
+    # deploy left beta stopped, so just code alone would open a VM it never
     # configured or signed in. Never the developer's VS Code settings, though
     # nothing reads them before that end.
     - name: Run deploy.yml with the template present, and with a name that matches none
@@ -642,10 +642,10 @@
           - >-
             verify_deploy_runs.results | map(attribute='stdout')
             | select('search', 'beta is stopped, and this deploy left it so: it was not configured, signed in or opened in VS Code\.'
-                               ~ ' To start it and finish the deploy: make deploy VM_NAME=beta ANSIBLE_ARGS=\\W+-e proxmox_vm_start_existing=true')
+                               ~ ' To start it and finish the deploy: just deploy beta --start')
             | list | length == 2
           - >-
-            verify_deploy_runs.results | map(attribute='stdout') | select('search', 'make code VM_NAME=beta') | list | length == 0
+            verify_deploy_runs.results | map(attribute='stdout') | select('search', 'just code beta') | list | length == 0
         fail_msg: >-
           deploy.yml exited {{ verify_deploy_runs.results | map(attribute='rc') | list }}, reporting
           {{ verify_deploy_runs.results | map(attribute='stdout') | map('regex_findall', 'Template \S+ (?:is already built|does not exist yet)') | list }}
@@ -654,9 +654,9 @@
 
     # Two more ends of deploy's window step, on stopped VMs so that nothing is
     # configured. For two VMs it opens none, and ends at its first task with
-    # each VM's make code line; solo is shut down for that run and started
+    # each VM's just code line; solo is shut down for that run and started
     # again after it. With claude_ssh_config off, it says why there is no
-    # window, with the make code line, and the deploy still exits 0.
+    # window, with the just code line, and the deploy still exits 0.
     - name: Shut solo down for a deploy of two stopped VMs
       ansible.builtin.uri:
         validate_certs: false
@@ -715,18 +715,18 @@
         that:
           - verify_deploy_windows.results | map(attribute='rc') | list == [0, 0]
           - verify_fleet.stdout is search('VS Code opens one VM at a time, so this deploy for 2 VMs opened none\. To open one')
-          - verify_fleet.stdout is search('"make code VM_NAME=beta"')
-          - verify_fleet.stdout is search('"make code VM_NAME=solo"')
+          - verify_fleet.stdout is search('"just code beta"')
+          - verify_fleet.stdout is search('"just code solo"')
           # Ended at its first task: not even the one-VM check ran.
           - verify_fleet.stdout is not search('TASK \\[Refuse anything but one VM\\]')
           - >-
             verify_no_alias.stdout is search('claude_ssh_config is false, so this project keeps no SSH alias for the VM')
           - >-
-            verify_no_alias.stdout is search('VS Code was not opened; to open it later: make code VM_NAME=beta"')
+            verify_no_alias.stdout is search('VS Code was not opened; to open it later: just code beta"')
         fail_msg: >-
           deploy.yml exited {{ verify_deploy_windows.results | map(attribute='rc') | list }}, reporting
           {{ verify_deploy_windows.results | map(attribute='stdout')
-             | map('regex_findall', '(?:VS Code opens one VM[^\n]*|make code VM_NAME=[^\n]*|claude_ssh_config is false[^\n]*)') | list }}
+             | map('regex_findall', '(?:VS Code opens one VM[^\n]*|just code [^\n]*|claude_ssh_config is false[^\n]*)') | list }}
           {{ verify_deploy_windows.results | map(attribute='stderr') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
         quiet: true
 
@@ -751,10 +751,10 @@
         that:
           - verify_mixed_case_run.rc == 0
           - verify_mixed_case_output is not search('No VMs to configure')
-          - verify_mixed_case_output is not search('VM_NAME asked for')
+          - verify_mixed_case_output is not search('The names given were')
         fail_msg: >-
           discover.yml with claude_vm_tag=Claude-On-Proxmox exited {{ verify_mixed_case_run.rc }}:
-          {{ verify_mixed_case_output | regex_findall('(?:\[ERROR\]|No VMs to configure|VM_NAME asked for)[^\n]*') }}
+          {{ verify_mixed_case_output | regex_findall('(?:\[ERROR\]|No VMs to configure|The names given were)[^\n]*') }}
         quiet: true
 
     # A token without the guest-agent privilege: the fake's "noagent" token is
@@ -1094,9 +1094,9 @@
           nextid requests, and these clones: {{ provision_verify_solo_clones | map(attribute='params') | list }}
         quiet: true
 
-# The aliases on this machine follow the fleet: `make deploy TYPE=ssh-config` against
+# The aliases on this machine follow the fleet: `just deploy --only ssh-config` against
 # this cluster with the node that is down first off and then on, one VM at a
-# time, and `make code` against a stand-in VS Code that only records what it
+# time, and `just code` against a stand-in VS Code that only records what it
 # was asked. Last, because the node switch changes what the listing shows,
 # and the twins go first: two tagged VMs of one name are refused here as
 # discovery refuses them. The managed file is the one group_vars points
@@ -1126,7 +1126,7 @@
       vm_projects_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/projects"
       ansible_connection: local
       ansible_python_interpreter: "{{ ansible_playbook_python }}"
-      # Never the developer's own: what make code says depends on it.
+      # Never the developer's own: what just code says depends on it.
       vscode_user_settings_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/vscode/settings.json"
       # Nor the developer's Claude Code at either end: the sessions are read from an empty ~/.claude of
       # the scenario's own and copied into another, beside a stand-in for the VM's claude. Copying
@@ -1263,16 +1263,16 @@
       ansible.builtin.assert:
         that:
           - verify_ssh_one.rc == 0
-          - verify_ssh_one.stdout is search('Only the VMs named in VM_NAME were refreshed')
+          - verify_ssh_one.stdout is search('Only the VMs named were refreshed')
           - "'gone-too' in verify_one_names"
           - "'alpha' in verify_one_names"
         fail_msg: >-
-          ssh-config VM_NAME=alpha exited {{ verify_ssh_one.rc }}, leaving {{ verify_one_names }}:
+          ssh-config with vm_name=alpha exited {{ verify_ssh_one.rc }}, leaving {{ verify_one_names }}:
           {{ (verify_ssh_one.stdout ~ '\n' ~ verify_ssh_one.stderr).splitlines()[-25:] }}
         quiet: true
 
     # A VS Code that records what it was asked and reports the extensions a
-    # file says it has, so `make code` can be run without an editor.
+    # file says it has, so `just code` can be run without an editor.
     - name: Make a directory for the stand-in VS Code
       ansible.builtin.file:
         path: "{{ verify_ssh_dir }}/bin"
@@ -1289,7 +1289,7 @@
           [ "$1" = "--list-extensions" ] && cat "{{ verify_ssh_dir }}/extensions" 2>/dev/null
           exit 0
 
-    # The VM side of `make code` - the home directory, is the folder there,
+    # The VM side of `just code` - the home directory, is the folder there,
     # what else is - is read over SSH, and the fake fleet's addresses are
     # documentation ones that nothing answers on. So these runs reach "alpha"
     # with Ansible's own local connection instead, and vm_projects_dir points
@@ -1328,7 +1328,7 @@
 
     # The runs below assume no settings file, an empty log and no workspace
     # files: made so, not assumed, in case an earlier run was cut short.
-    - name: Start make code's runs from nothing
+    - name: Start just code's runs from nothing
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
@@ -1337,7 +1337,7 @@
         - "{{ verify_ssh_dir }}/code.log"
         - "{{ verify_code_ws_dir }}"
 
-    - name: Run make code's playbook for alpha with the extension missing
+    - name: Run just code's playbook for alpha with the extension missing
       ansible.builtin.command:
         argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_code_vars | to_json, verify_code_playbook] }}"
       environment: "{{ verify_code_env }}"
@@ -1351,7 +1351,7 @@
         mode: "0644"
         content: "ms-vscode-remote.remote-ssh\n"
 
-    - name: Run make code's playbook for alpha with the extension present, then for one project
+    - name: Run just code's playbook for alpha with the extension present, then for one project
       ansible.builtin.command:
         argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_code_vars | combine(item) | to_json, verify_code_playbook] }}"
       environment: "{{ verify_code_env }}"
@@ -1368,7 +1368,7 @@
 
     # VS Code is handed the workspace file, not the folder: the whole
     # directory's is named after it, one project's is in project/.
-    - name: Assert make code installed the extension once and opened the workspace, then the project
+    - name: Assert just code installed the extension once and opened the workspace, then the project
       vars:
         verify_ws: "{{ verify_ssh_dir }}/projects"
         verify_runs: "{{ [verify_code_first] + verify_code_next.results }}"
@@ -1389,7 +1389,7 @@
           - verify_runs[0].stdout is search('trust the window .*, then choose Allow when VS Code asks about automatic tasks')
           - verify_runs[0].stdout is search('No VS Code settings file at \S+/vscode/settings.json, so whether you have answered')
           - verify_runs[0].stdout is search(('Trusting this window trusts every project in ' ~ verify_ws ~ '.') | regex_escape)
-          - verify_runs[2].stdout is search('Trusting the window of make code VM_NAME=alpha instead trusts every project')
+          - verify_runs[2].stdout is search('Trusting the window of just code alpha instead trusts every project')
           # The session notes: beside the window each time, and in a project's window from outside its folder.
           - verify_runs[0].stdout is search(('The session notes open beside it each time (' ~ verify_code_ws_dir
                                              ~ '/session/alpha-session.md).') | regex_escape)
@@ -1399,11 +1399,11 @@
           - verify_runs[0].stdout is search("No Claude Code session of this machine's from the last 30 days is of a repository")
           - not (verify_code_vars.code_session_dest_dir ~ '/projects') is exists
         fail_msg: >-
-          make code exited {{ verify_runs | map(attribute='rc') | list }} and asked for {{ verify_code_log }}:
+          just code exited {{ verify_runs | map(attribute='rc') | list }} and asked for {{ verify_code_log }}:
           {{ verify_runs | map(attribute='stdout') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
         quiet: true
 
-    - name: Read the workspace files make code wrote
+    - name: Read the workspace files just code wrote
       ansible.builtin.set_fact:
         verify_ws_whole: "{{ lookup('ansible.builtin.file', verify_code_ws_dir ~ '/projects.code-workspace') | from_json }}"
         verify_ws_project: >-
@@ -1460,17 +1460,17 @@
                                  verify_task.args[5], '/etc/systemd/system/claude-remote-control.path', verify_task.args[7],
                                  'https', 'workflow', 'alpha', verify_notes_script, verify_notes, 'claude-remote-control',
                                  'Asia/Kolkata', '']
-          - verify_task.args[3] is search('make deploy VM_NAME=alpha TYPE=configure,')
+          - verify_task.args[3] is search('just deploy alpha --only configure,')
           # What a sign-in there says: Remote Control started by the path unit that watches for the login, or not.
-          - verify_task.args[4] is search('starts by itself.* make deploy VM_NAME=alpha TAGS=claude_code$')
-          - verify_task.args[5] is search('start Remote Control from your machine. make deploy VM_NAME=alpha TAGS=claude_code$')
+          - verify_task.args[4] is search('starts by itself.* just deploy alpha --tags claude_code$')
+          - verify_task.args[5] is search('start Remote Control from your machine. just deploy alpha --tags claude_code$')
           # The GitHub sign-in message, empty when github_auth is off.
-          - verify_task.args[7] is search('make deploy VM_NAME=alpha TAGS=github_projects$')
+          - verify_task.args[7] is search('just deploy alpha --tags github_projects$')
           - verify_task.options.cwd == verify_ws ~ '/discord-music-bot'
           - "verify_task.runOptions == {'runOn': 'folderOpen'}"
           - "verify_task.presentation == {'reveal': 'always', 'focus': true, 'panel': 'dedicated', 'group': 'claude', 'clear': true, 'showReuseMessage': true}"
           - verify_task.problemMatcher == []
-        fail_msg: "make code wrote {{ verify_ws_whole }} and {{ verify_ws_project }}"
+        fail_msg: "just code wrote {{ verify_ws_whole }} and {{ verify_ws_project }}"
         quiet: true
 
     - name: Stat the project's workspace file before it is opened again
@@ -1486,7 +1486,7 @@
         - "{{ verify_code_ws_dir }}/session"
       register: verify_notes_before
 
-    # What make code wrote: the placeholder where the window's task writes, and
+    # What just code wrote: the placeholder where the window's task writes, and
     # the VM's facts, the alias and the commands with its name.
     - name: Assert the session notes are the VM user's alone and say what the window fills in
       vars:
@@ -1498,11 +1498,11 @@
           - verify_notes_text is match('# alpha\n')
           - verify_notes_text is search('<!-- claude-on-proxmox:live -->\n## Signed in\n\nOpening the window fills this in;')
           - verify_notes_text is search('\| LAN address \| `192.0.2.51`')
-          - verify_notes_text is search('`make login VM_NAME=alpha TYPE=claude`')
-        fail_msg: "make code wrote {{ verify_notes_before.results | map(attribute='stat.mode') | list }}: {{ verify_notes_text }}"
+          - verify_notes_text is search('`just login alpha --only claude`')
+        fail_msg: "just code wrote {{ verify_notes_before.results | map(attribute='stat.mode') | list }}: {{ verify_notes_text }}"
         quiet: true
 
-    - name: Make a directory for the VS Code settings make code reads
+    - name: Make a directory for the VS Code settings just code reads
       ansible.builtin.file:
         path: "{{ verify_code_vars.vscode_user_settings_file | dirname }}"
         state: directory
@@ -1522,9 +1522,9 @@
             "editor.fontSize": 14,
           }
 
-    # make code reads these settings and must never write them: their bytes
+    # just code reads these settings and must never write them: their bytes
     # and mtime are compared after every run that can see them.
-    - name: Stat the VS Code settings before make code reads them
+    - name: Stat the VS Code settings before just code reads them
       ansible.builtin.stat:
         path: "{{ verify_code_vars.vscode_user_settings_file }}"
       register: verify_settings_on
@@ -1549,7 +1549,7 @@
         path: "{{ verify_code_ws_dir }}/session/alpha-session.md"
       register: verify_notes_after
 
-    - name: Stat the VS Code settings after make code read them
+    - name: Stat the VS Code settings after just code read them
       ansible.builtin.stat:
         path: "{{ verify_code_vars.vscode_user_settings_file }}"
       register: verify_settings_on_after
@@ -1590,7 +1590,7 @@
         path: "{{ verify_ssh_dir }}/elsewhere"
       register: verify_ws_elsewhere
 
-    - name: Assert make code says what VS Code will do, rewrites nothing, and writes nothing when switched off
+    - name: Assert just code says what VS Code will do, rewrites nothing, and writes nothing when switched off
       vars:
         verify_ws: "{{ verify_ssh_dir }}/projects"
         verify_off: "{{ verify_code_switches.results[0] }}"
@@ -1637,7 +1637,7 @@
             == [verify_code_ws_dir ~ '/project/discord-music-bot.code-workspace', verify_code_ws_dir ~ '/projects.code-workspace',
                 verify_code_ws_dir ~ '/session/alpha-session.md']
         fail_msg: >-
-          make code exited {{ [verify_code_allowed.rc, verify_off.rc, verify_bare.rc] }}, asked for {{ verify_code_log_now[-5:] }},
+          just code exited {{ [verify_code_allowed.rc, verify_off.rc, verify_bare.rc] }}, asked for {{ verify_code_log_now[-5:] }},
           left {{ verify_ws_files.files | map(attribute='path') | list }}:
           {{ [verify_code_allowed, verify_off, verify_bare] | map(attribute='stdout')
              | map('regex_findall', '(\\[ERROR\\]: [^\\n]*|VS Code is opening[^\\n]*)') | list }}
@@ -1652,7 +1652,7 @@
         path: "{{ verify_ssh_dir }}/projects/PARKBNB"
       register: verify_fs_folds_case
 
-    - name: Run make code's playbook where it must refuse
+    - name: Run just code's playbook where it must refuse
       vars:
         verify_code_cases:
           - {expect: 'A VM of that name exists but is not tagged', vars: {vm_name: stranger}}
@@ -1671,13 +1671,13 @@
             case_sensitive_only: true
           - expect: '/projects/notes\.txt on alpha is a file, not a project folder\.'
             vars: {vm_project: notes.txt}
-          # The Makefile refuses these first; the playbook must too.
-          - expect: 'PROJECT names one project folder on the VM.*"\.\./etc" is not one'
+          # just code refuses these first; the playbook must too.
+          - expect: '--project names one project folder on the VM.*"\.\./etc" is not one'
             vars: {vm_project: ../etc}
-          - expect: 'PROJECT names one project folder on the VM.*"\.\." is not one'
+          - expect: '--project names one project folder on the VM.*"\.\." is not one'
             vars: {vm_project: ".."}
           # The workspace files' own directory, though a valid name.
-          - expect: '/projects/\.claude-on-proxmox on alpha is where make code keeps its VS Code workspace files, not a project\.'
+          - expect: '/projects/\.claude-on-proxmox on alpha is where just code keeps its VS Code workspace files, not a project\.'
             vars: {vm_project: .claude-on-proxmox}
           - expect: 'vscode_workspaces_dir is a path on the VM, and must be an absolute one, not \W+relative/files'
             vars: {vscode_workspaces_dir: relative/files}
@@ -1724,7 +1724,7 @@
           - verify_code_refusal.rc != 0
           - (verify_code_refusal.stdout ~ '\n' ~ verify_code_refusal.stderr) is search(verify_code_refusal.verify_case.expect)
         fail_msg: >-
-          make code {{ verify_code_refusal.verify_case.vars }} exited {{ verify_code_refusal.rc }}, expected
+          just code {{ verify_code_refusal.verify_case.vars }} exited {{ verify_code_refusal.rc }}, expected
           /{{ verify_code_refusal.verify_case.expect }}/:
           {{ (verify_code_refusal.stdout ~ '\n' ~ verify_code_refusal.stderr) | regex_findall('\[ERROR\]: [^\n]*') }}
         quiet: true
@@ -1801,7 +1801,7 @@
           - >-
             lookup('ansible.builtin.file', verify_code_vars.vscode_user_settings_file) == '{"task.allowAutomaticTasks": "off"}'
         fail_msg: >-
-          make code with the workspace files kept elsewhere exited {{ verify_code_kept.rc }}, asked for
+          just code with the workspace files kept elsewhere exited {{ verify_code_kept.rc }}, asked for
           {{ verify_code_log_kept[-2:] }}, left {{ verify_kept.results | map(attribute='stat.exists') | list }}
           with mode {{ verify_kept.results[0].stat.mode | default('none') }}:
           {{ verify_code_kept.stdout | regex_findall('(\\[ERROR\\]: [^\\n]*|VS Code is opening[^\\n]*)') }}
@@ -1833,7 +1833,7 @@
         # Only with the terminal on is that directory special.
         - {vm_project: .claude-on-proxmox, vscode_claude_terminal: "false"}
 
-    - name: Stat the broken VS Code settings after make code read them
+    - name: Stat the broken VS Code settings after just code read them
       ansible.builtin.stat:
         path: "{{ verify_code_vars.vscode_user_settings_file }}"
       register: verify_settings_broken_after
@@ -1853,7 +1853,7 @@
           - verify_code_log_last | length == 19
           - verify_code_log_last[-1] == '--remote ssh-remote+alpha ' ~ verify_ws ~ '/.claude-on-proxmox'
         fail_msg: >-
-          make code exited {{ verify_code_last.results | map(attribute='rc') | list }} and asked for
+          just code exited {{ verify_code_last.results | map(attribute='rc') | list }} and asked for
           {{ verify_code_log_last[-4:] }}:
           {{ verify_code_last.results | map(attribute='stdout')
              | map('regex_findall', '(\\[ERROR\\]: [^\\n]*|VS Code is opening[^\\n]*|did not parse[^\\n]*)') | list }}
@@ -1862,7 +1862,7 @@
     # Nothing set and nothing where stock VS Code keeps its settings: said
     # so, naming the variable that points elsewhere. HOME is an empty
     # directory for this one run, and the two variables VS Code honours are
-    # unset, so none of the places make code looks in is this machine's.
+    # unset, so none of the places just code looks in is this machine's.
     - name: Make an empty home for a run that must find no settings
       ansible.builtin.file:
         path: "{{ verify_ssh_dir }}/nohome"
@@ -1879,7 +1879,7 @@
       changed_when: false
       failed_when: false
 
-    - name: Assert make code said no settings file was found, and what points elsewhere
+    - name: Assert just code said no settings file was found, and what points elsewhere
       vars:
         verify_code_log_end: "{{ lookup('ansible.builtin.file', verify_ssh_dir ~ '/code.log').splitlines() }}"
       ansible.builtin.assert:
@@ -1890,7 +1890,7 @@
           - verify_code_nohome.stdout is search('then choose Allow when VS Code asks')
           - verify_code_log_end | length == 21
         fail_msg: >-
-          make code with no settings anywhere exited {{ verify_code_nohome.rc }} and asked for {{ verify_code_log_end[-2:] }}:
+          just code with no settings anywhere exited {{ verify_code_nohome.rc }} and asked for {{ verify_code_log_end[-2:] }}:
           {{ verify_code_nohome.stdout | regex_findall('(\\[ERROR\\]: [^\\n]*|VS Code is opening[^\\n]*|No VS Code settings[^\\n]*)') }}
         quiet: true
 

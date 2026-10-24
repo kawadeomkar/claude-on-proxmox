@@ -1,6 +1,6 @@
 """Claude Code's browser sign-in (roles/claude_code/tasks/browser_login.yml), run for real.
 
-`make login VM_NAME=... TYPE=claude` and `make deploy` run playbooks/claude_login.yml,
+`just login ... --only claude` and `just deploy` run playbooks/claude_login.yml,
 whose role starts `claude auth login` on each VM in the background, shows the
 sign-in page, takes the code the page shows from a prompt on the controller,
 hands it to claude through a named pipe and waits for its answer. Here every
@@ -174,7 +174,7 @@ NO_SSH = "/nonexistent/claude-login-test-ssh"
 
 
 def _extra(*names: str, ssh: str = NO_SSH) -> dict:
-    """make login VM_NAME=<names> TYPE=claude, as the harness runs it: no discovery, no sudo to give, no real ssh."""
+    """just login <names> --only claude, as the harness runs it: no discovery, no sudo to give, no real ssh."""
     return {
         "claude_vm_discovery": False,
         "ansible_become": False,
@@ -237,7 +237,7 @@ SIGNING_IN = ["rejected", "invalid", "accepted", "skipped", "sso"]
 
 @pytest.fixture(scope="module")
 def signed(tmp_path_factory):
-    """claude_login.yml for every case at once, as make login VM_NAME=... TYPE=claude runs it: root and report."""
+    """claude_login.yml for every case at once, as just login ... --only claude runs it: root and report."""
     root = tmp_path_factory.mktemp("claude_login_flow")
     hosts = _hosts(root, CASES)
     report = _run(root, PLAYBOOK, hosts, "-e", json.dumps(_extra(*CASES)), ordered=True)
@@ -274,7 +274,7 @@ def test_a_rejected_or_malformed_code_is_a_named_failure_after_every_vm_had_its_
     assert set(failures) == {"rejected", "invalid"}, failures
     assert "the Claude sign-in did not complete" in failures["rejected"]
     assert "Login failed: Request failed with status code 400" in failures["rejected"]
-    assert "make login VM_NAME=rejected TYPE=claude again" in failures["rejected"]
+    assert "just login rejected --only claude again" in failures["rejected"]
     assert "Invalid code. Please make sure the full code was copied." in failures["invalid"]
     for host in ("rejected", "invalid"):
         assert not (root / host / ".claude" / ".credentials.json").exists()
@@ -295,7 +295,7 @@ def test_no_code_ends_the_attempt_without_failing(signed):
     root, report = signed
     assert "skipped" not in _failures(report)
     said = _messages(report, "Say that no code was entered")["skipped"]
-    assert "make login VM_NAME=skipped TYPE=claude signs it in later" in said
+    assert "just login skipped --only claude signs it in later" in said
     calls = _calls(root, "skipped")
     # Killed, not handed a blank line: claude would answer that "Invalid code"
     # and go on waiting.
@@ -310,7 +310,7 @@ def test_next_steps_keep_a_sign_in_left_to_do_and_nothing_once_signed_in(signed)
     left = _left_to_do(report)
     assert left["accepted"]["claude"] == ""
     assert left["already"]["claude"] == ""
-    assert "make login VM_NAME=skipped TYPE=claude" in left["skipped"]["claude"]
+    assert "just login skipped --only claude" in left["skipped"]["claude"]
 
 
 def test_a_signed_in_vm_is_only_reported(signed):
@@ -374,7 +374,7 @@ def test_the_sign_in_reads_this_machine_s_desktop_switch():
 
 
 def test_each_vm_records_whether_its_code_was_entered(tmp_path):
-    # make deploy's GitHub step decides VM by VM from these: a code entered
+    # just deploy's GitHub step decides VM by VM from these: a code entered
     # signs that VM in, Enter there skips it, and a VM that showed no prompt
     # (signed in already, or an API key) has neither and is asked on its own.
     cases = {"answered": {"code": CODES["accepted"]}, "unanswered": {}, "already": {"signed_in": True}}
@@ -575,10 +575,10 @@ def test_a_browser_that_never_comes_back_ends_the_attempt_and_skips_the_vm(tmp_p
     assert report["rc"] == 0, _failures(report)
     said = _messages(report, "browser_login | Say that the browser did not come back")["away"]
     assert said == (
-        "away: the browser did not come back within 6 seconds, so Claude Code is left signed out there. make"
-        " login VM_NAME=away TYPE=claude signs it in later."
+        "away: the browser did not come back within 6 seconds, so Claude Code is left signed out there. just"
+        " login away --only claude signs it in later."
     )
-    assert "make login VM_NAME=away TYPE=claude" in _left_to_do(report)["away"]["claude"]
+    assert "just login away --only claude" in _left_to_do(report)["away"]["claude"]
     # claude was ended, not left waiting on its callback.
     assert "TERM" in _calls(tmp_path, "away")
     assert {r["msg"] for _, host, r in _results(report) if str(r.get("msg", "")).startswith("skipped=")} == {
@@ -637,7 +637,7 @@ def test_a_code_given_after_the_attempt_ended_is_said_to_be_too_late(refused):
     root, report = refused
     failure = _failures(report)["gone"]
     assert "gone: the sign-in had ended before the code was pasted (claude had exited)." in failure
-    assert failure.endswith("Run make login VM_NAME=gone TYPE=claude again for a fresh sign-in page.")
+    assert failure.endswith("Run just login gone --only claude again for a fresh sign-in page.")
     # It went before any code was handed over.
     assert _calls(root, "gone")[-1] == "gone"
     assert _leftovers(root, "gone") == []
@@ -648,7 +648,7 @@ def test_an_account_on_hold_is_quoted(refused):
     failure = _failures(report)["on-hold"]
     assert "the Claude sign-in did not complete." in failure
     assert ON_HOLD in failure
-    assert failure.endswith("Run make login VM_NAME=on-hold TYPE=claude again for a fresh sign-in page.")
+    assert failure.endswith("Run just login on-hold --only claude again for a fresh sign-in page.")
 
 
 def test_an_error_in_place_of_the_page_ends_with_the_command_to_retry(refused):
@@ -657,7 +657,7 @@ def test_an_error_in_place_of_the_page_ends_with_the_command_to_retry(refused):
     assert "claude on no-page did not start the sign-in:" in failure
     assert "Opening browser to sign in… Error: managed settings forbid this sign-in. Run" in failure
     assert ".." not in failure
-    assert failure.endswith("Run make login VM_NAME=no-page TYPE=claude again.")
+    assert failure.endswith("Run just login no-page --only claude again.")
 
 
 def test_what_claude_prints_reaches_no_message_with_its_control_characters(refused):
@@ -717,7 +717,7 @@ def test_a_sign_in_is_refused_while_another_of_the_vm_still_waits(tmp_path):
         other.wait()
     failure = _failures(report)["busy"]
     assert f"another sign-in of this VM is still waiting for its code (claude, pid {other.pid})" in failure
-    assert failure.endswith("run make login VM_NAME=busy TYPE=claude again.")
+    assert failure.endswith("run just login busy --only claude again.")
     assert "auth login" not in _calls(tmp_path, "busy")
 
 
@@ -971,7 +971,7 @@ def test_a_sign_in_then_starts_remote_control_as_root():
 
 def test_nothing_decides_from_a_terminal_probe():
     # Ansible runs a lookup in a worker detached from the terminal, so a
-    # /dev/tty probe says "no terminal" even on make deploy at one; whether the
+    # /dev/tty probe says "no terminal" even on just deploy at one; whether the
     # run is attended is learnt from the prompt alone (docs/architecture/roles.md §5.5).
     for path in (
         ROLE / "tasks" / "browser_login.yml",

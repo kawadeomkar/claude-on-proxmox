@@ -1,7 +1,7 @@
 # claude-on-proxmox
 
 Ansible that turns a Proxmox VE host into [Claude Code](https://code.claude.com/docs) development VMs.
-One command, `make deploy VM_NAME=alpha`:
+One command, `just deploy alpha`:
 
 1. **Template** – builds a cloud-init Ubuntu 24.04 template on the Proxmox host, once.
 2. **Provision** – clones it into a VM named `alpha`, with your SSH key; your DHCP server gives it an
@@ -26,11 +26,12 @@ a first deploy.
   it, and a storage for VM disks ([what the project assumes](docs/getting-started/requirements.md)).
 - **On your machine** (macOS or Linux): Python 3.12+ in a virtualenv of its own for this project (pyenv's,
   or any other: `PYTHON=` names it), [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+,
-  `make`, an SSH key at `~/.ssh/id_ed25519.pub`, and VS Code with the `code` command (optional).
+  [just](https://github.com/casey/just) 1.59+ (`brew install just`, or `cargo install just`), an SSH key at
+  `~/.ssh/id_ed25519.pub`, and VS Code with the `code` command (optional).
 - **Accounts:** a Claude Pro, Max, Team or Enterprise login, which Remote Control needs - on Team and
   Enterprise an Owner turns Remote Control on for the organisation first - or an Anthropic API key, with
   Remote Control off; GitHub; and Tailscale, which is on by default: without an account, set
-  `tailscale_enabled: false` in `local.yml` (`make init` reminds you).
+  `tailscale_enabled: false` in `local.yml` (`just init` reminds you).
 
 ## Quick start
 
@@ -63,36 +64,36 @@ Keep the token's secret, which `pveum` prints once, for the next step.
 [Proxmox access](docs/getting-started/proxmox-access.md) explains the guest-agent privilege, a datacenter
 setting that can block the project's tag, and validating the host's certificate.
 
-**2. Get the project, and answer `make init`.**
+**2. Get the project, and answer `just init`.**
 
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
-make init            # installs the tools, then asks for your Proxmox host, its API token and your GitHub username
+just init            # installs the tools, then asks for your Proxmox host, its API token and your GitHub username
 ```
 
 pyenv, with its pyenv-virtualenv plugin, is the suggestion: `pyenv local` makes that environment this
 directory's `python3` from then on. Any other virtualenv of Python 3.12 or later works -
-`python3 -m venv ~/.virtualenvs/claude-on-proxmox`, then activate it in each shell, or put
-`PYTHON=~/.virtualenvs/claude-on-proxmox/bin/python` on each `make` line.
+`python3 -m venv ~/.virtualenvs/claude-on-proxmox`, then activate it in each shell, or export
+`PYTHON=~/.virtualenvs/claude-on-proxmox/bin/python`.
 
-Enter at a question leaves it for the next `make init`. What you answer goes into three git-ignored files,
+Enter at a question leaves it for the next `just init`. What you answer goes into three git-ignored files,
 the vault encrypted, with its password in `.vault_pass`: keep that file.
 
 | File | Contents |
 |------|----------|
-| `inventory/hosts.yml` | The address of your Proxmox host, which `make init` asks for. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | Encrypted: the token secret and your GitHub username, which `make init` asks for. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `make vault` |
-| `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone, `tailscale_enabled: false` without a Tailscale account - and what `make init` writes there: a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
+| `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |
+| `inventory/group_vars/all/vault.yml` | Encrypted: the token secret and your GitHub username, which `just init` asks for. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `just vault` |
+| `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone, `tailscale_enabled: false` without a Tailscale account - and what `just init` writes there: a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
 Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md),
-and `make vault` edits the vault. [Your first deploy](docs/getting-started/first-deploy.md) has the same
-setup with no terminal, every answer on `make init`'s command line.
+and `just vault` edits the vault. [Your first deploy](docs/getting-started/first-deploy.md) has the same
+setup with no terminal, every answer an option of `just init`'s.
 
 **3. Deploy.**
 
 ```bash
-make deploy VM_NAME=alpha
+just deploy alpha
 ```
 
 The run stops for you three times, each at a page it opens in your browser:
@@ -109,26 +110,26 @@ asks you to trust the folder and to allow automatic tasks; both are yours to ans
 [Your first deploy](docs/getting-started/first-deploy.md) walks through each stop, and what to do when
 one is skipped or fails.
 
-**If a run fails**, it stops and says why, and `make logs` lists the whole run. Fix the cause and run the
-same `make deploy` again: every stage is idempotent, and a VM a failed run left half-built is finished
-rather than skipped. `make vault` changes a secret. The usual first-run snags are in
+**If a run fails**, it stops and says why, and `just logs` lists the whole run. Fix the cause and run the
+same `just deploy` again: every stage is idempotent, and a VM a failed run left half-built is finished
+rather than skipped. `just vault` changes a secret. The usual first-run snags are in
 [Your first deploy](docs/getting-started/first-deploy.md#if-a-run-fails).
 
 ## Everyday commands
 
 | Command | What it does |
 |---|---|
-| `make deploy alpha beta` | Create and configure VMs and sign them in, then open VS Code on a lone one. Re-run it after changing a setting (VM size applies when a VM is created) |
-| `make code alpha [PROJECT=repo] [SESSION=<id>]` | Open a VM, or one repository on it, in VS Code with a Claude terminal; this machine's recent Claude sessions are copied there, and `SESSION` goes on with one of them |
-| `make login alpha` | Sign the VM in to Claude, GitHub and Tailscale where a sign-in was skipped; `TYPE=claude`, `github` or `tailscale` for one of them |
-| `make list` | The VMs this project created, and their addresses |
-| `make destroy alpha` | Save the Claude sessions only the VM has, sign it out of Claude, GitHub and Tailscale, then delete it |
-| `make logs` | The log of every run, newest first |
-| `ssh alpha` | The alias `make deploy` and `make code` keep pointed at the VM's address, in `~/.ssh/claude-on-proxmox.conf` (one `Include` line added to `~/.ssh/config`) |
+| `just deploy alpha beta` | Create and configure VMs and sign them in, then open VS Code on a lone one. Re-run it after changing a setting (VM size applies when a VM is created) |
+| `just code alpha [--project repo] [--session <id>]` | Open a VM, or one repository on it, in VS Code with a Claude terminal; this machine's recent Claude sessions are copied there, and `--session` goes on with one of them |
+| `just login alpha` | Sign the VM in to Claude, GitHub and Tailscale where a sign-in was skipped; `--only claude`, `github` or `tailscale` for one of them |
+| `just list` | The VMs this project created, and their addresses |
+| `just destroy alpha` | Save the Claude sessions only the VM has, sign it out of Claude, GitHub and Tailscale, then delete it |
+| `just logs` | The log of every run, newest first |
+| `ssh alpha` | The alias `just deploy` and `just code` keep pointed at the VM's address, in `~/.ssh/claude-on-proxmox.conf` (one `Include` line added to `~/.ssh/config`) |
 
-`make deploy` does each of its parts on its own too: `make deploy alpha TAGS=claude_code` re-applies one
-role, and `make deploy TYPE=configure` re-applies the whole configuration to every VM, creating none.
-`make help` lists every target and the `TYPE` each one takes, and [the reference](docs/reference/make-targets.md)
+`just deploy` does each of its parts on its own too: `just deploy alpha --tags claude_code` re-applies one
+role, and `just deploy --only configure` re-applies the whole configuration to every VM, creating none.
+`just` lists every recipe and `just help deploy` one's options; [the reference](docs/reference/commands.md)
 says what each does.
 
 ## Help and contributing

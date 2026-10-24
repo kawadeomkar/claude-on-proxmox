@@ -31,7 +31,7 @@ jobs:
     name: Lint and unit tests
     runs-on: ubuntu-latest
     # The unit suite runs real playbooks: about 15 minutes on a laptop, and
-    # 27 on a hosted runner before make init's questions and checks came in,
+    # 27 on a hosted runner before just init's questions and checks came in,
     # whose tests each run one, many at a pseudo-terminal.
     timeout-minutes: 60
     env:
@@ -62,15 +62,15 @@ jobs:
       # whitespace hooks, which would otherwise only ever run for a developer
       # who installed the git hook.
       #
-      # gitleaks is among the hooks make lint skips, and is run by the two
+      # gitleaks is among the hooks just lint skips, and is run by the two
       # steps below. Its hook is `gitleaks git --pre-commit --staged`, which
       # scans the git index - and in a CI checkout the index equals HEAD, so it
       # scans an empty diff and always passes.
       - name: Lint
-        run: make lint
+        run: just lint
 
       - name: Unit tests
-        run: make test TYPE=unit
+        run: just test unit
 
       # The files as the change leaves them. On its own this misses a token
       # committed in one commit and deleted in the next, which is gone from
@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Molecule test
-        run: make test ROLE=${{ matrix.role }}
+        run: just test --role ${{ matrix.role }}
 
   # Not part of the gate: this runs only on the weekly schedule (or on demand)
   # and tests the roles against the *unpinned* image, so an upstream Ubuntu
@@ -160,7 +160,7 @@ jobs:
       # scenario serves a random file from 127.0.0.1. So the image URL and the
       # SHA256SUMS the role verifies it against are checked here, as the role
       # has them - a moved image or a renamed checksum file fails this run
-      # instead of a user's first `make deploy`. Nothing is downloaded: a HEAD
+      # instead of a user's first `just deploy`. Nothing is downloaded: a HEAD
       # on the image and a GET of the (small) checksum list.
       - name: Check the Ubuntu cloud image is where the role expects it
         run: |
@@ -175,7 +175,7 @@ jobs:
 
       - uses: ./.github/actions/setup
       - name: Molecule test (full configure playbook)
-        run: make test TYPE=integration
+        run: just test integration
 
   playbooks:
     name: Molecule (${{ matrix.scenario }} playbook)
@@ -184,8 +184,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      # The job keeps the scenario's name; make test calls the configure
-      # scenario TYPE=integration.
+      # The job keeps the scenario's name; just test calls the configure
+      # scenario's part integration.
       matrix:
         include:
           - scenario: configure
@@ -196,4 +196,4 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Molecule test
-        run: make test TYPE=${{ matrix.type }}
+        run: just test ${{ matrix.type }}

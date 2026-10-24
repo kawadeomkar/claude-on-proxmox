@@ -16,7 +16,7 @@ use it; on Pro and Max the login is enough.
 
 ## What a run does on each VM
 
-So `make deploy TYPE=configure` derives what to do from the credentials it finds on the VM:
+So `just deploy --only configure` derives what to do from the credentials it finds on the VM:
 
 | On the VM | What happens |
 |---|---|
@@ -31,11 +31,11 @@ How each of these is decided is in
 
 ## Signing a VM in
 
-Activating it is therefore: leave the API key empty and sign in once. `make deploy` asks for that
-itself, after configuring the VM; for a VM that exists, `make login TYPE=claude` does the same:
+Activating it is therefore: leave the API key empty and sign in once. `just deploy` asks for that
+itself, after configuring the VM; for a VM that exists, `just login --only claude` does the same:
 
 ```bash
-make login alpha TYPE=claude     # the sign-in page opens in your browser: authorise,
+just login alpha --only claude     # the sign-in page opens in your browser: authorise,
                                  # and the browser comes back to the VM by itself
                                  # ... and Remote Control starts; the session appears on your phone
 ```
@@ -52,7 +52,7 @@ Given several names it signs them in one after another; given none it only repor
 ### When the browser cannot come back
 
 Where the browser could not come back - the port is already taken on this machine, `login_desktop:
-false`, nothing here to open a browser with, or `make` run over SSH, where the browser is on another
+false`, nothing here to open a browser with, or `just` run over SSH, where the browser is on another
 machine and the page would send it to that machine's own localhost - claude's other page opens instead,
 which shows a code once you authorise: paste it at the `Code:` prompt and the run hands it to claude
 through a pipe. The code is read with the run log's no_log, so it never lands in `.logs/`. Enter alone
@@ -72,16 +72,16 @@ set, or `claude_remote_control: false` - is reported as such, with nothing to fi
 ## Signing in another way
 
 A sign-in made any other way starts the service by itself too. While a VM waits for its first login,
-`make deploy TYPE=configure` leaves a systemd path unit, `claude-remote-control.path`, watching for the login file;
-the moment one lands - from `make login TYPE=claude`, the Claude terminal of `make code`, or by hand with
-`ssh -t dev@<address> "bash -lc 'claude auth login'"` - it starts the server. The next `make deploy TYPE=configure`
+`just deploy --only configure` leaves a systemd path unit, `claude-remote-control.path`, watching for the login file;
+the moment one lands - from `just login --only claude`, the Claude terminal of `just code`, or by hand with
+`ssh -t dev@<address> "bash -lc 'claude auth login'"` - it starts the server. The next `just deploy --only configure`
 enables the server for boot, runs the stay-up check below, and removes the path unit, so a server you
 stop later stays stopped ([the path unit](../architecture/roles.md#the-path-unit) says why). By hand, it goes
 through `bash -lc` because only a login shell puts `~/.local/bin`, where the native installer puts
 `claude`, on `PATH`; a command given to `ssh` runs without one, so a bare `claude auth login` is
 `command not found`.
 
-`make login TYPE=claude` decides from the same `claude auth status` fields as `make deploy TYPE=configure`, so a VM
+`just login --only claude` decides from the same `claude auth status` fields as `just deploy --only configure`, so a VM
 signed in another way — a Console account, a `claude setup-token` token, an API key — is told by both
 what is in the way, and never signed in over it.
 
@@ -95,7 +95,7 @@ other roles still run, but the service stays stopped until one or the other chan
 ## Keeping the server running
 
 The first time `claude remote-control` runs, Claude Code explains what Remote Control does and asks
-`Enable Remote Control? (y/n)`. A systemd service has no terminal to answer it, so `make deploy TYPE=configure`
+`Enable Remote Control? (y/n)`. A systemd service has no terminal to answer it, so `just deploy --only configure`
 records that answer in `~/.claude.json` for you, alongside first-run onboarding and trust for
 `~/projects`: leaving Remote Control on is taken as the yes.
 
@@ -106,14 +106,14 @@ limit: the server comes back on its own after an outage, and an expired login co
 minutes rather than a spin. `systemctl stop` still stops it. The unit's settings, and why each, are in
 [the service unit](../architecture/roles.md#the-service-unit).
 
-On a signed-in VM, `make deploy TYPE=configure` then waits 20 seconds and fails, with the `journalctl` command to
+On a signed-in VM, `just deploy --only configure` then waits 20 seconds and fails, with the `journalctl` command to
 read why, unless the server process it started is still the one running. That is there to catch a
 server refused at startup, for its login, plan or organisation settings, during the run rather than
 when you reach for your phone. A re-run that changes nothing leaves a running server alone and skips
 the wait; a changed unit (a new permission mode, say) restarts it, once, and waits again. After a
-sign-in, `make login TYPE=claude` and `make deploy` run the same check; a server that does not stay up
+sign-in, `just login --only claude` and `just deploy` run the same check; a server that does not stay up
 fails the run at its end - after VS Code has opened, in a deploy - with
-`make deploy VM_NAME=alpha TAGS=claude_code` to retry it, while the login itself is kept.
+`just deploy alpha --tags claude_code` to retry it, while the login itself is kept.
 
 ## How much of the VM a remote session can reach
 
@@ -140,7 +140,7 @@ session from the app: it only sets the mode for `claude` you start on the VM you
 SSH. Once a session is open, the app can switch it between Manual, Accept edits and Plan; Auto and
 Bypass permissions cannot be selected there. The value is passed to Claude Code unvalidated, so any
 mode it accepts works; one it does not stops the server at startup, and on a signed-in VM
-`make deploy TYPE=configure` then fails with the command that shows why.
+`just deploy --only configure` then fails with the command that shows why.
 
 ## An API key instead of a claude.ai login
 
@@ -148,12 +148,12 @@ mode it accepts works; one it does not stops the server at startup, and on a sig
 just that role — no SSH:
 
 ```bash
-make vault                                 # set vault_anthropic_api_key
-make deploy VM_NAME=alpha TAGS=claude_code   # writes ~/.claude/settings.json on the VM
+just vault                                 # set vault_anthropic_api_key
+just deploy alpha --tags claude_code       # writes ~/.claude/settings.json on the VM
 ```
 
 That makes `claude` on the VM authenticate against the Anthropic API. It does not start anything: Claude
-Code is a terminal program, so open it with `make code VM_NAME=alpha`, whose terminal starts `claude`, or
+Code is a terminal program, so open it with `just code alpha`, whose terminal starts `claude`, or
 `ssh alpha` and run `claude` there.
 
 Note this also **turns Remote Control off** for that VM, and the run says so. The two credentials are
@@ -165,7 +165,7 @@ want, leave the key empty and sign the VM in, as at the top of this page.
 **Going back** works the same way: clear `vault_anthropic_api_key` and re-run. The role removes the
 `ANTHROPIC_API_KEY` it wrote from `~/.claude/settings.json` and leaves the rest of the file alone. A
 key set through `claude_code_settings.env` is yours, and stays. The VM then needs its claude.ai login:
-`make login VM_NAME=alpha TYPE=claude` signs it in and starts Remote Control (`make deploy` does both too).
+`just login alpha --only claude` signs it in and starts Remote Control (`just deploy` does both too).
 
 ## See also
 

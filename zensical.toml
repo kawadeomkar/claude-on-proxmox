@@ -3,8 +3,8 @@
 # same on GitHub; this file only adds the navigation, search and theme. It needs
 # Zensical 0.0.70 or later, the first to support exclude_docs.
 #
-#   make docs TYPE=serve   preview at http://127.0.0.1:8000, rebuilt on every save
-#   make docs TYPE=build   the site in site/, strict: a broken link or anchor fails it
+#   just docs serve   preview at http://127.0.0.1:8000, rebuilt on every save
+#   just docs build   the site in site/, strict: a broken link or anchor fails it
 #
 # docs/development/docs.md says how the wiki is organised and generated.
 
@@ -51,7 +51,7 @@ nav = [
     { "Upgrading" = "guides/upgrading.md" },
   ] },
   { "Reference" = [
-    { "Make targets" = "reference/make-targets.md" },
+    { "Commands" = "reference/commands.md" },
     { "Settings" = "reference/settings.md" },
     { "Roles" = [
       "reference/roles/README.md",

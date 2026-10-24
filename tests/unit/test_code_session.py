@@ -1,4 +1,4 @@
-"""The Claude session `make code` starts in the window it opens, the window step around it, and what it may write.
+"""The Claude session `just code` starts in the window it opens, the window step around it, and what it may write.
 
 `playbooks/code.yml` hands VS Code a workspace file whose one task runs
 `bash -lc <code_terminal_script> make-code <not installed> <signed in, watched>
@@ -13,7 +13,7 @@ task around it.
 
 The window step is run too, a few of code.yml's own tasks at a time, inside
 its block and with its rescue, its play vars, deploy.yml's for its import and
-the inventory defaults: as make code and as make deploy's last step, for one
+the inventory defaults: as just code and as just deploy's last step, for one
 VM, none named and a fleet, a VM left stopped, no `code` command, no alias, a
 refused SSH connection and an extension that would not install. `which` and
 `code` are stand-ins there, first on a PATH that holds no other, so no VS Code
@@ -24,7 +24,7 @@ reads the user's own VS Code settings and must never write them. On this
 machine a task may assert, fail, debug, set facts, add the host, import the
 project's task files, or run `which`, `code` and rsync; on the VM, reached only
 through `delegate_to`, it may stat, getent and find, make its directories and
-files, write the session copies, and run git in SESSION's checkout. The session
+files, write the session copies, and run git in --session's checkout. The session
 handoff's own task files are followed and held to the same list; the shared
 ones (the alias, the Proxmox reads) to their own tests, and `code
 --install-extension` fills VS Code's own extension store, by design.
@@ -71,7 +71,7 @@ WATCHED = "Signed in; Remote Control starts by itself."
 UNWATCHED = "Signed in; start Remote Control from your machine."
 SIGNING_IN = "Signing in to Claude first. Your browser opens the sign-in page; if it shows a code, paste it here."
 NOT_SIGNED_IN = 'Not signed in to Claude. To try again, reload the window or run "Tasks: Run Task", Claude.'
-GITHUB_SIGNED_IN = "Signed in to GitHub; run make deploy TYPE=configure to clone the private repositories."
+GITHUB_SIGNED_IN = "Signed in to GitHub; run just deploy --only configure to clone the private repositories."
 GITHUB_SIGNING_IN = (
     "Signing in to GitHub next, so that git push and gh work here; Ctrl-C skips this. "
     "Your browser opens github.com/login/device; enter the code below there."
@@ -79,7 +79,7 @@ GITHUB_SIGNING_IN = (
 GITHUB_STATUS = "gh auth status --hostname github.com --active"
 GITHUB_LOGIN = "gh auth login -h github.com -p https -w -s workflow --skip-ssh-key"
 GITHUB_PAGE = "browser https://github.com/login/device"
-GITHUB_FAILED = "Not signed in to GitHub. From your machine: make login VM_NAME=alpha TYPE=github"
+GITHUB_FAILED = "Not signed in to GitHub. From your machine: just login alpha --only github"
 GITHUB_CODE = "FAKE-C0DE"
 GITHUB_EXPIRED = "failed to authenticate via web browser: This 'device_code' has expired. (expired_token)"
 
@@ -473,7 +473,7 @@ OPENED = {
 ARGS = "code_claude_task.args[3:11]"
 NOTES = {**OPENED, "show": "code_workspace_file"}
 SESSION = "/home/dev/projects/.claude-on-proxmox/session"
-LATER = " VS Code was not opened; to open it later: make code VM_NAME=alpha"
+LATER = " VS Code was not opened; to open it later: just code alpha"
 
 
 def _tagged(name, vmid):
@@ -630,14 +630,14 @@ def _window(root: Path, keep: list[str], *, in_deploy: bool, code_here=False, lo
 WINDOWS = {
     "deploy, code here": {"keep": ONE_VM + VS_CODE, "in_deploy": True, "code_here": True, "vm_name": "alpha"},
     "deploy, no code": {"keep": ONE_VM + VS_CODE, "in_deploy": True, "vm_name": "alpha"},
-    "make code, code here": {"keep": ONE_VM + VS_CODE, "in_deploy": False, "code_here": True, "vm_name": "alpha"},
-    "make code, no code": {"keep": ONE_VM + VS_CODE, "in_deploy": False, "vm_name": "alpha"},
+    "just code, code here": {"keep": ONE_VM + VS_CODE, "in_deploy": False, "code_here": True, "vm_name": "alpha"},
+    "just code, no code": {"keep": ONE_VM + VS_CODE, "in_deploy": False, "vm_name": "alpha"},
     "deploy, no name": {"keep": ONE_VM, "in_deploy": True},
-    "make code, no name": {"keep": ONE_VM, "in_deploy": False},
+    "just code, no name": {"keep": ONE_VM, "in_deploy": False},
     "deploy, fleet": {"keep": ONE_VM, "in_deploy": True, "vm_name": "alpha,beta"},
-    "make code, fleet": {"keep": ONE_VM, "in_deploy": False, "vm_name": "alpha,beta"},
+    "just code, fleet": {"keep": ONE_VM, "in_deploy": False, "vm_name": "alpha,beta"},
     "deploy, stopped": {"keep": UP, "in_deploy": True, "vm_name": "beta", "claude_vm_addressed": STOPPED},
-    "make code, stopped": {"keep": UP, "in_deploy": False, "vm_name": "beta", "claude_vm_addressed": STOPPED},
+    "just code, stopped": {"keep": UP, "in_deploy": False, "vm_name": "beta", "claude_vm_addressed": STOPPED},
     "deploy, no address": {"keep": UP, "in_deploy": True, "vm_name": "alpha", "claude_vm_addressed": NO_ADDRESS},
     "deploy, no alias": {
         "keep": ["Refuse to run with the managed file switched off"],
@@ -653,7 +653,7 @@ WINDOWS = {
         "code_home": REFUSED,
     },
     "deploy, no extension": {"keep": EXTENSION, "in_deploy": True, "code_here": True, "vm_name": "alpha"},
-    "make code, no extension": {"keep": EXTENSION, "in_deploy": False, "code_here": True, "vm_name": "alpha"},
+    "just code, no extension": {"keep": EXTENSION, "in_deploy": False, "code_here": True, "vm_name": "alpha"},
     "deploy, no name, beside others": {
         "keep": ["Find the VM"],
         "in_deploy": True,
@@ -671,13 +671,13 @@ WINDOWS = {
         "vm_name": "alpha",
         "claude_vm_all": _listing("alpha", "alpha"),
     },
-    "make code, twice": {
+    "just code, twice": {
         "keep": ["Find the VM"],
         "in_deploy": False,
         "vm_name": "alpha",
         "claude_vm_all": _listing("alpha", "alpha"),
     },
-    "make code, missing": {
+    "just code, missing": {
         "keep": ["Find the VM"],
         "in_deploy": False,
         "vm_name": "gamma",
@@ -764,18 +764,18 @@ def windows(tmp_path_factory):
 
 
 def test_a_deploy_for_one_vm_goes_on_to_the_window_named_or_not(windows):
-    # Without VM_NAME, a deploy is for the default VM: one name all the same.
+    # Without vm_name, a deploy is for the default VM: one name all the same.
     for name in ("deploy, code here", "deploy, no name"):
         assert windows[name]["reached"] and windows[name]["rc"] == 0, windows[name]["output"]
 
 
 def test_make_code_goes_on_to_the_window_where_vs_code_s_command_is(windows):
-    run = windows["make code, code here"]
+    run = windows["just code, code here"]
     assert run["reached"] and run["rc"] == 0, run["output"]
 
 
 def test_make_code_without_vs_code_s_command_fails_and_says_how_to_get_it(windows):
-    run = windows["make code, no code"]
+    run = windows["just code, no code"]
     assert run["rc"] != 0 and not run["reached"]
     assert "`code` is not on this machine's PATH. In VS Code, run" in run["output"]
     assert run["later"] is None
@@ -790,9 +790,9 @@ def test_make_deploy_without_vs_code_s_command_says_so_with_the_make_code_line_a
 
 
 def test_make_code_needs_one_vm_name(windows):
-    for name in ("make code, fleet", "make code, no name"):
+    for name in ("just code, fleet", "just code, no name"):
         run = windows[name]
-        assert run["rc"] != 0 and "VS Code opens one VM at a time: make code VM_NAME=<name>." in run["output"], name
+        assert run["rc"] != 0 and "VS Code opens one VM at a time: just code <name>." in run["output"], name
         assert run["fleet"] is None, name
 
 
@@ -801,8 +801,8 @@ def test_a_deploy_for_a_fleet_ends_at_its_first_task_with_each_vm_s_make_code_li
     assert run["rc"] == 0 and not run["reached"], run["output"]
     assert run["fleet"] == [
         "VS Code opens one VM at a time, so this deploy for 2 VMs opened none. To open one:",
-        "make code VM_NAME=alpha",
-        "make code VM_NAME=beta",
+        "just code alpha",
+        "just code beta",
     ]
     assert "TASK [Refuse anything but one VM]" not in run["output"]
     # Left to do for the fleet, once, as said.
@@ -810,21 +810,21 @@ def test_a_deploy_for_a_fleet_ends_at_its_first_task_with_each_vm_s_make_code_li
 
 
 def test_a_deploy_that_left_its_vm_stopped_names_the_deploy_that_starts_it(windows):
-    # make code alone would open a VM this deploy never configured or signed in.
+    # just code alone would open a VM this deploy never configured or signed in.
     run = windows["deploy, stopped"]
     assert run["rc"] == 0 and not run["reached"], run["output"]
     assert run["later"] == (
         "beta is stopped, and this deploy left it so: it was not configured, signed in or opened in VS Code. "
-        'To start it and finish the deploy: make deploy VM_NAME=beta ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"'
+        "To start it and finish the deploy: just deploy beta --start"
     )
     # Recorded as the VM's own matter, in the place of provision's line about the same thing.
     assert run["left"] == {"beta": {"vm": run["later"]}}
 
 
 def test_make_code_refuses_a_stopped_vm(windows):
-    run = windows["make code, stopped"]
+    run = windows["just code, stopped"]
     assert run["rc"] != 0 and not run["reached"]
-    assert "beta is stopped, so there is nothing to connect to. `make list` shows the fleet;" in run["output"]
+    assert "beta is stopped, so there is nothing to connect to. `just list` shows the fleet;" in run["output"]
 
 
 @pytest.mark.parametrize(
@@ -833,7 +833,7 @@ def test_make_code_refuses_a_stopped_vm(windows):
         ("deploy, no alias", "claude_ssh_config is false, so this project keeps no SSH alias for the VM"),
         (
             "deploy, no address",
-            "alpha is running and reported no address, so there is nothing to connect to. `make list` shows the fleet;",
+            "alpha is running and reported no address, so there is nothing to connect to. `just list` shows the fleet;",
         ),
         (
             "deploy, ssh refused",
@@ -862,20 +862,20 @@ def test_every_failure_of_the_window_step_is_said_on_one_line(windows):
     # A more-indented line in a folded scalar keeps its line break, and an
     # SSH error can carry one of its own, or the escapes of a VM's banner.
     failures = {name: _failures(run["output"]) for name, run in windows.items()}
-    assert failures["make code, stopped"] and failures["deploy, ssh refused"]
+    assert failures["just code, stopped"] and failures["deploy, ssh refused"]
     for name, said in failures.items():
         assert not [one for one in said if re.search(r"[\x00-\x1f\x7f]", one)], (name, said)
 
 
 def test_make_code_fails_where_make_deploy_goes_on_and_names_the_command_that_failed(windows):
-    run = windows["make code, no extension"]
+    run = windows["just code, no extension"]
     assert run["rc"] != 0 and not run["reached"]
     assert "`code --install-extension ms-vscode-remote.remote-ssh` failed: Error while installing" in run["output"]
     assert run["code"] == ["code --list-extensions", "code --install-extension ms-vscode-remote.remote-ssh"]
 
 
 def test_a_bare_deploy_opens_the_default_vm_beside_other_tagged_ones(windows):
-    # Without VM_NAME, vm_name is not defined, and claude_vm_requested is the
+    # Without vm_name, vm_name is not defined, and claude_vm_requested is the
     # whole tagged fleet; the window step opens the one VM deploy was for.
     run = windows["deploy, no name, beside others"]
     assert run["reached"], run["output"]
@@ -887,7 +887,7 @@ def test_a_named_deploy_opens_that_vm(windows):
 
 
 def test_a_real_duplicate_or_a_missing_vm_is_still_refused(windows):
-    twice, missing = windows["make code, twice"], windows["make code, missing"]
+    twice, missing = windows["just code, twice"], windows["just code, missing"]
     assert twice["rc"] != 0 and "More than one VM tagged" in twice["output"], twice["output"]
     assert missing["rc"] != 0 and "No VM named gamma is tagged" in missing["output"], missing["output"]
 
@@ -895,15 +895,15 @@ def test_a_real_duplicate_or_a_missing_vm_is_still_refused(windows):
 def test_the_terminal_is_handed_the_lines_for_this_vm(windows):
     run = windows["messages"]
     not_installed, watched, unwatched, watch, github, protocol, scopes, vm = run["shown"]
-    assert "make deploy VM_NAME=alpha TYPE=configure," in not_installed
+    assert "just deploy alpha --only configure," in not_installed
     assert watched.startswith("Signed in. Remote Control starts by itself in a moment")
-    assert watched.endswith("run on your machine: make deploy VM_NAME=alpha TAGS=claude_code")
+    assert watched.endswith("run on your machine: just deploy alpha --tags claude_code")
     assert unwatched == (
         "Signed in. To reach this VM from the Claude apps too, start Remote Control from your machine: "
-        "make deploy VM_NAME=alpha TAGS=claude_code"
+        "just deploy alpha --tags claude_code"
     )
     assert watch == "/etc/systemd/system/claude-remote-control.path"
-    assert github.endswith("run on your machine: make deploy VM_NAME=alpha TAGS=github_projects")
+    assert github.endswith("run on your machine: just deploy alpha --tags github_projects")
     assert (protocol, scopes, vm) == ("https", "workflow", "alpha")
     assert "signing in to Claude and to GitHub first if alpha has not been" in run["opened"]
 
@@ -1067,7 +1067,7 @@ def test_every_task_reads_this_machine_or_is_delegated_to_the_vm(task):
         # The one meta action: a deploy for a fleet ends the play.
         assert task[action] == "end_play", task.get("name")
     else:
-        pytest.fail(f"{task.get('name')} uses {action}, which make code may not")
+        pytest.fail(f"{task.get('name')} uses {action}, which just code may not")
 
 
 def test_every_task_of_the_window_step_is_in_the_block_make_deploy_rescues():
@@ -1084,7 +1084,7 @@ def test_every_task_of_the_window_step_is_in_the_block_make_deploy_rescues():
 
 
 def test_every_name_code_yml_sets_is_its_own():
-    # code_, which no role uses: make deploy runs the roles in the same run,
+    # code_, which no role uses: just deploy runs the roles in the same run,
     # and a fact or register of theirs outranks a play var. The inputs of the
     # project's task files keep those files' names. And no task var is also a
     # fact or a register, which would outrank it from then on.
@@ -1114,8 +1114,8 @@ def test_make_code_writes_exactly_the_directory_and_the_file():
 
 
 def test_git_on_the_vm_runs_only_for_session_and_moves_its_checkout_only_forward():
-    # The one write make code makes in a repository: SESSION's checkout, fast-forward only. Every
-    # git command on the VM is SESSION's, and none of them resets, rebases, stashes or pushes.
+    # The one write just code makes in a repository: --session's checkout, fast-forward only. Every
+    # git command on the VM is --session's, and none of them resets, rebases, stashes or pushes.
     on_vm = [t for t in _every_task() if _action(t) == "ansible.builtin.command" and "delegate_to" in t]
     git = [t for t in on_vm if t["ansible.builtin.command"]["argv"][0] == "git"]
     assert [t["ansible.builtin.command"]["argv"][4] for t in git] == [
@@ -1144,7 +1144,7 @@ def test_every_task_that_reads_a_transcript_is_no_log():
 def test_the_provision_scenario_never_reads_the_developer_s_vscode_settings():
     # Every code.yml run in the scenario passes verify_code_vars, which pins
     # vscode_user_settings_file into the ephemeral directory; a refusal case
-    # that builds its own base must pin it too. What make code says depends
+    # that builds its own base must pin it too. What just code says depends
     # on that file, so a run that fell through to the developer's own would
     # pass or fail by the machine it runs on.
     plays = yaml.safe_load(PROVISION_VERIFY.read_text())
@@ -1162,7 +1162,7 @@ def test_the_provision_scenario_never_reads_the_developer_s_vscode_settings():
 
 
 def test_no_window_run_reads_or_writes_the_developer_s_claude_code(tmp_path):
-    # make code reads this machine's ~/.claude and writes the VM's; in every run here the VM is this
+    # just code reads this machine's ~/.claude and writes the VM's; in every run here the VM is this
     # machine too. Both are the run's own, whatever a case adds, and so is the VM's claude.
     given = _window_extra(tmp_path)
     for key in ("code_session_source_dir", "code_session_dest_dir"):
@@ -1198,7 +1198,7 @@ def test_the_provision_scenario_never_reads_or_writes_the_developer_s_claude_cod
 
 
 def test_the_provision_scenario_s_deploy_runs_never_read_the_developer_s_vscode_settings_either():
-    # make deploy ends with code.yml, so every deploy.yml run there pins the
+    # just deploy ends with code.yml, so every deploy.yml run there pins the
     # file too, though none of them gets as far as reading it.
     plays = yaml.safe_load(PROVISION_VERIFY.read_text())
     runs = [
@@ -1281,7 +1281,7 @@ def test_a_project_s_window_keeps_its_one_folder_and_says_the_question_vs_code_m
     assert workspace["tasks"]["tasks"][1]["options"] == {"cwd": "/home/dev/projects/discord-music-bot"}
     assert (
         "VS Code may ask once whether to open them, as a file outside this window's folder: Open, or trust the"
-        " window of make code VM_NAME=alpha, which covers them." in run["opened"]
+        " window of just code alpha, which covers them." in run["opened"]
     ), run["opened"]
 
 
@@ -1429,7 +1429,7 @@ def test_the_helper_rewrites_the_live_section_only_and_opens_the_notes(tmp_path)
     assert took < 4, took
 
 
-# The time is said in the zone of the machine make code ran on, which the VM's clock (UTC) is not.
+# The time is said in the zone of the machine just code ran on, which the VM's clock (UTC) is not.
 def test_the_helper_says_its_time_in_the_zone_it_is_given(tmp_path):
     _, _, after, _, _ = _helper(tmp_path, zone="Asia/Kolkata")
     assert re.search(r"^\| \| as of \d\d:\d\d IST on \d\d \w\w\w \|$", _live(after), re.M), _live(after)
@@ -1445,10 +1445,10 @@ def test_the_helper_says_utc_for_a_zone_it_cannot_find(tmp_path, zone):
 def test_a_vm_signed_in_nowhere_names_each_sign_in(tmp_path):
     _, _, after, _, _ = _helper(tmp_path, answers=SIGNED_OUT)
     live = _live(after)
-    assert "| Claude Code | not signed in: make login VM_NAME=alpha TYPE=claude on your machine |" in live
+    assert "| Claude Code | not signed in: just login alpha --only claude on your machine |" in live
     assert "| Remote Control | not running (inactive) |" in live
-    assert "| GitHub (`gh`) | not signed in: make login VM_NAME=alpha TYPE=github on your machine |" in live
-    assert "| Tailscale | NeedsLogin: make login VM_NAME=alpha TYPE=tailscale signs it in |" in live
+    assert "| GitHub (`gh`) | not signed in: just login alpha --only github on your machine |" in live
+    assert "| Tailscale | NeedsLogin: just login alpha --only tailscale signs it in |" in live
 
 
 def test_what_a_tool_prints_is_read_as_utf_8_whatever_the_locale(tmp_path):
@@ -1505,7 +1505,7 @@ def test_the_helper_removes_what_plain_text_removes():
 @pytest.mark.parametrize(
     ("gh", "row"),
     [
-        pytest.param('{"hosts":{"github.com":[]}}', "not signed in: make login VM_NAME=", id="an empty github.com"),
+        pytest.param('{"hosts":{"github.com":[]}}', "not signed in: just login ", id="an empty github.com"),
         pytest.param("", "unknown (gh auth status gave no status; it needs gh 2.81.0 or newer)", id="no JSON"),
         pytest.param('{"error":"unknown flag"}', "unknown (gh auth status gave no status", id="not gh's JSON"),
     ],
@@ -1701,12 +1701,12 @@ def test_without_notes_a_sign_in_starts_no_helper(tmp_path):
 
 
 # ------------------------------------------------------------- the session handoff in the window ---
-# The window step's own session tasks, run as make code runs them, between two directories that stand
+# The window step's own session tasks, run as just code runs them, between two directories that stand
 # for this machine and the VM: real git checkouts at both ends, cloned from one bare repository whose
 # path ends like a GitHub URL, a ~/.claude with transcripts at each, and rsync to a local path, as
 # Ansible reaches the VM locally here. Neither end is the developer's.
 SESSION_KEEP = [
-    "Reach the VM the way make deploy TYPE=configure does",
+    "Reach the VM the way just deploy --only configure does",
     "Read the sessions to carry to the VM",
     "Settle the folder to open",
     "Carry the sessions to the VM",
@@ -1788,7 +1788,7 @@ def _world(root: Path) -> dict:
     _git(other, "remote", "add", "origin", "https://github.com/octo/other.git")
     (vm / "projects").mkdir(parents=True)
     _git(vm / "projects", "clone", "--quiet", str(bare), "demo")
-    # Its origin GitHub's, as make deploy clones one, and only a rewrite of its own sends git to the bare
+    # Its origin GitHub's, as just deploy clones one, and only a rewrite of its own sends git to the bare
     # repository here: the VM's origins name a repository only as GitHub's.
     _git(vm / "projects" / "demo", "remote", "set-url", "origin", "https://github.com/octo/demo.git")
     _git(vm / "projects" / "demo", "config", f"url.{bare}.insteadOf", "https://github.com/octo/demo.git")
@@ -1959,7 +1959,7 @@ REFUSALS = {
     "open on the vm": (_open_on_the_vm, f"Session {SESSION_ID} is open on alpha (claude, pid {{pid}})"),
     "changed on both": (
         _changed_on_both,
-        f"Session {SESSION_ID} was continued on alpha and here since make code last copied it",
+        f"Session {SESSION_ID} was continued on alpha and here since just code last copied it",
     ),
     "fetch fails": (_fetch_fails, "alpha could not fetch feat/x from origin in {checkout}"),
     "never pushed": (
@@ -2105,13 +2105,13 @@ def test_session_brings_the_vm_checkout_to_its_commit_and_the_terminal_resumes_i
     # The project's window, its Claude terminal handed the ID.
     assert run["shown"] == [str(world["checkout"]), SESSION_ID]
     assert f"The Claude terminal resumes session {SESSION_ID} in {world['checkout']}, on feat/x at" in run["opened"]
-    assert "where make code moved it" in run["opened"] and "reload it" in run["opened"]
+    assert "where just code moved it" in run["opened"] and "reload it" in run["opened"]
 
 
 def test_session_again_changes_nothing(handoffs):
     run = handoffs["session"]["second"]
     assert run["rc"] == 0 and _changed(run) == 0, run["output"]
-    assert "where make code moved it" not in run["opened"]
+    assert "where just code moved it" not in run["opened"]
 
 
 @pytest.mark.parametrize("name", REFUSALS)
@@ -2129,7 +2129,7 @@ def test_session_fast_forwards_a_vm_branch_behind_its_commit(handoffs, name):
     world, run = handoffs[name]["world"], handoffs[name]["run"]
     assert run["rc"] == 0, run["output"]
     assert _head(world["checkout"]) == (world["commit"], "feat/x")
-    assert "where make code moved it" in run["opened"]
+    assert "where just code moved it" in run["opened"]
 
 
 @pytest.mark.parametrize("name", SYNCS)

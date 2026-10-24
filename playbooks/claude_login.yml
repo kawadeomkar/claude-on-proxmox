@@ -1,9 +1,9 @@
 ---
 # Sign Claude Code in on the VMs, or say how each one is signed in.
 #
-#   make login VM_NAME=alpha TYPE=claude         -> signs alpha in, then starts Remote Control
-#   make login VM_NAME=alpha,beta TYPE=claude    -> the same, one VM after the other
-#   make login TYPE=claude                       -> reports every VM's state
+#   just login alpha --only claude         -> signs alpha in, then starts Remote Control
+#   just login alpha,beta --only claude    -> the same, one VM after the other
+#   just login --only claude                       -> reports every VM's state
 #
 # Remote Control needs a claude.ai subscription login on the VM itself, and
 # Anthropic supports no non-interactive way to create one: API keys are not
@@ -12,7 +12,7 @@
 # browser flow, once per VM, and this runs it as far as it goes (the claude_code
 # role's browser_login.yml): claude auth login on the VM, the sign-in page
 # opened on this machine, the code the page shows pasted at a prompt here, and
-# Remote Control started in the same run. make deploy imports this playbook for
+# Remote Control started in the same run. just deploy imports this playbook for
 # the VMs it configured.
 - name: Discover VMs on Proxmox
   ansible.builtin.import_playbook: discover.yml
@@ -52,7 +52,7 @@
   hosts: claude_vms
   gather_facts: false
   vars:
-    # Names given (any number), or make deploy: sign in. Bare: report.
+    # Names given (any number), or just deploy: sign in. Bare: report.
     claude_vm_login_prompts: >-
       {{ claude_vm_login_interactive
          | default((vm_name | default('', true) | split(',') | map('trim') | select | list | length) > 0) }}
@@ -61,7 +61,7 @@
   tasks:
     - name: Sign this VM in
       block:
-        # The decision is the claude_code role's, so this and `make deploy TYPE=configure`
+        # The decision is the claude_code role's, so this and `just deploy --only configure`
         # cannot disagree about whether a VM is signed in the way Remote
         # Control needs. tests/unit/test_remote_control_playbooks.py and
         # tests/unit/test_claude_login.py run this playbook against stand-ins.
@@ -93,14 +93,14 @@
 
 # What a sign-in leads to, for every VM signed in just now, after the last
 # prompt: Remote Control's start and its stay-up check. A failure here is not
-# a failed sign-in - the login is made - and is raised even under make deploy,
+# a failed sign-in - the login is made - and is raised even under just deploy,
 # at its end, naming the command that retries it.
 - name: Start Remote Control on each VM signed in just now
   hosts: claude_vms
   gather_facts: false
 
   tasks:
-    - name: Start Remote Control as make deploy TYPE=configure would
+    - name: Start Remote Control as just deploy --only configure would
       when:
         - claude_vm_claude_login_failure is not defined
         - claude_code_login_done | default(false) | bool
@@ -119,16 +119,16 @@
                  + [inventory_hostname ~ ' is signed in to Claude, but starting Remote Control failed at "'
                     ~ (ansible_failed_task.name | default('a task')) ~ '": ' ~ claude_vm_failed_why
                     ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.')
-                    ~ ' Retry it with: make deploy VM_NAME=' ~ inventory_hostname ~ ' TAGS=claude_code'] }}
+                    ~ ' Retry it with: just deploy ' ~ inventory_hostname ~ ' --tags claude_code'] }}
 
         - name: Say why
           ansible.builtin.debug:
             msg: "{{ claude_vm_configure_failures | last }}"
 
-# make deploy carries on past a sign-in that failed - its VMs exist and are
+# just deploy carries on past a sign-in that failed - its VMs exist and are
 # configured, and the message above says what is left - and raises the work
-# after a sign-in at its own end; make login TYPE=claude exists to sign in, so here
-# the run fails, VM by VM - unless make login runs the three sign-ins
+# after a sign-in at its own end; just login --only claude exists to sign in, so here
+# the run fails, VM by VM - unless just login runs the three sign-ins
 # (claude_vm_login_raised_later), whose own last play raises it once all three
 # have had their turn.
 - name: Fail each VM whose sign-in, or the work after it, failed

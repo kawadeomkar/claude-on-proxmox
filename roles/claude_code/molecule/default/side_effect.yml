@@ -78,7 +78,7 @@
 
     # ------------------------ 1b. a login lands while the path unit waits --
     # What the path unit is for: a login made any other way - in the Claude
-    # terminal of make code - starts the server with no run of the role. A
+    # terminal of just code - starts the server with no run of the role. A
     # stand-in plays a server that stays up; the real claude is put back after,
     # and the service stopped, so step 2 meets the path unit still watching.
     - name: Move the real claude aside for the login that lands
@@ -177,7 +177,7 @@
           LoadState {{ claude_code_side_effect_off.status.LoadState | default('?') }}).
         quiet: true
 
-    # `make deploy TYPE=check` on a VM that has never had the unit, which failed: check mode
+    # `just deploy --check` on a VM that has never had the unit, which failed: check mode
     # writes no unit, and systemd_service rejects a missing one in check mode
     # too. Applied to the role rather than passed as --check, so
     # ansible_check_mode stays false - which the fix does not depend on.

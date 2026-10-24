@@ -1,5 +1,5 @@
 ---
-# Entry point for playbooks/github_login.yml (`make login TYPE=github`): say whether
+# Entry point for playbooks/github_login.yml (`just login --only github`): say whether
 # gh on this VM is signed in to GitHub, how, and if not what to run. In the
 # role rather than the playbook so that it decides from the same vars/main.yml
 # definitions auth.yml does, and the two cannot disagree.
@@ -23,7 +23,7 @@
   ansible.builtin.include_tasks: auth_status.yml
   when: github_projects_gh_found | bool
 
-# make deploy, for every VM but one whose Claude prompt got Enter: the flow
+# just deploy, for every VM but one whose Claude prompt got Enter: the flow
 # waits up to fifteen minutes for a browser, so it can always be left for
 # later. Where a Claude code was entered someone is here, and Enter goes; a
 # VM that showed no Claude prompt (signed in already, or an API key) goes on
@@ -50,7 +50,7 @@
     - github_projects_auth_status.rc | default(1) == 0
     - not github_projects_signed_in | bool
 
-# The device flow, for the VMs make login TYPE=github was given, and make deploy's
+# The device flow, for the VMs just login --only github was given, and just deploy's
 # by the answer above: nothing to run by hand. playbooks/github_login.yml sets
 # the switches, and runs its play one VM at a time.
 - name: login | Sign gh in by the device flow
@@ -64,7 +64,7 @@
 
 # Advice only for what can run: the device flow when it would (web), the
 # token sign-in when a vault token waits for it - which the whole role does
-# next in this run under make login VM_NAME=x TYPE=github - and nothing with
+# next in this run under just login x --only github - and nothing with
 # github_auth: false, which leaves gh alone. A command that ends the line has
 # no full stop after it: one would be pasted along with it.
 - name: login | Report the login state and what to do about it

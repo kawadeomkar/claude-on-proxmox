@@ -1,41 +1,51 @@
 # 13. Toolchain
 
 Everything is pinned in `pyproject.toml`, locked with every package it pulls in (version and hash) in
-`uv.lock`, and lives in your own virtualenv for the project: the project keeps none. `make install` runs
-`uv sync --locked` into the environment of `$(PYTHON)` (`python3` as the shell finds it in the
+`uv.lock`, and lives in your own virtualenv for the project: the project keeps none. `just install` runs
+`uv sync --locked` into the environment of `PYTHON` (`python3` as the shell finds it in the
 checkout, unless `PYTHON=` names another), which refuses a lock that no longer matches
 `pyproject.toml`, and `--inexact`, so the versions the lock pins go in and nothing else of the environment
 is removed; Dependabot's uv ecosystem moves the pins and the lock. uv writes the path the environment was
 synced by into the first line of every command it installs, and a sync that installs nothing rewrites
 none, so before the sync `tools/stale_scripts.py` names each locked package with a command that starts a
 Python outside the environment's `bin` - by a `.venv` link into it, as `make venv` left them - and the
-sync reinstalls those, then checks that none is left. Every target runs the tools from that
-environment's `bin`, never from `PATH`, and refuses a Python that is not a virtualenv (`env-check`), whose
-scripts directory would be a system-wide one; the git hooks and the Vagrantfile find it the same way,
-through `tools/env-run`. The playbooks' own pins are `[project]`'s dependencies, the
-linters' and tests' the `dev` group, and the wiki's the `docs` group; `make install` installs all three. The versions are the ones
+sync reinstalls those, then checks that none is left. Every recipe runs the tools from that
+environment's `bin`, never from `PATH`, and refuses a Python that is not a virtualenv (`tools/env-run
+--bin`), whose scripts directory would be a system-wide one; the git hooks and the Vagrantfile find it the
+same way, through `tools/env-run`. The playbooks' own pins are `[project]`'s dependencies, the
+linters' and tests' the `dev` group, and the wiki's the `docs` group; `just install` installs all three. The versions are the ones
 `pyproject.toml` pins - this page names what each tool is for, so that a bump cannot leave it stale:
 
 | Tool | For |
 |---|---|
 | ansible-core | the playbooks and roles |
-| ansible-lint, yamllint | `make lint`, with ruff |
+| ansible-lint, yamllint | `just lint`, with ruff |
 | ruff | Python lint and format |
 | molecule, with molecule-plugins' Docker driver and the `docker` package | the role and playbook scenarios |
-| pytest | `make test TYPE=unit` |
+| pytest | `just test unit` |
 | pre-commit | the hooks run on commit, and the file checks CI runs with them |
 | proxmoxer, requests | the `community.proxmox` collection, on the controller |
-| docsible | `make docs`: each role's reference page - its variables, internal values, tasks and a flowchart of each task file |
-| Zensical | the wiki in `docs/` built as a site (`make docs TYPE=serve`, `make docs TYPE=build`) |
+| docsible | `just docs`: each role's reference page - its variables, internal values, tasks and a flowchart of each task file |
+| Zensical | the wiki in `docs/` built as a site (`just docs serve`, `just docs build`) |
 | Markdown, pymdown-extensions | the site's rendering and its heading anchors, kept the ones GitHub makes |
 | markdown-it-py | the pages rendered as GitHub does, for the test that compares the two |
-| uv | installing into your environment (`make install`) and the lock (`make install TYPE=lock`); the one tool on `PATH` by design, and pinned in the `dev` group for CI |
+| uv | installing into your environment (`just install`) and the lock (`just install --lock`); one of the two tools on `PATH` by design, and pinned in the `dev` group for CI |
+
+**just**, the other tool on `PATH`, runs every command (`justfile`; [Commands](../reference/commands.md)).
+It is yours to install, as uv is, 1.59.0 or later, from its own releases - Homebrew, `cargo install just`,
+or the release archive checked against its `SHA256SUMS`; not PyPI's `rust-just`, a third party's own build
+of it. The justfile's `set minimum-version` refuses an older one. CI installs upstream's x86_64 Linux
+archive, checked against the SHA256 in `.github/actions/setup/action.yml`, at the version written there
+as `JUST_VERSION`, in the justfile's `minimum-version` and as its `just_pin`; `test_justfile.py` holds the
+three to one. Dependabot moves neither file, so moving to a new `just` is by hand: the three versions, and
+the archive's line of the new release's `SHA256SUMS` as `JUST_SHA256`. The justfile's format is checked
+(`just lint just`) only by the pinned version, which `just lint` says when it skips it.
 
 Collections: `community.proxmox`, `community.general`, `community.docker` and `ansible.posix`, pinned
 to exact versions in `requirements.yml`.
 
 > **Molecule resolves `ansible-playbook` from `PATH` and only appends the virtualenv**, so the
-> environment's `bin` must be **prepended** or a different ansible-core is silently used. `make test`
+> environment's `bin` must be **prepended** or a different ansible-core is silently used. `just test`
 > does this; a hand-rolled `molecule test` does not.
 
 `ansible.cfg` sets the directory inventory, `roles_path`, the local `filter_plugins`, YAML callback

@@ -241,10 +241,10 @@ def edit_transcript(data, session, checkout, memory, here="", results="", folder
                     found = sorted({found for text in _strings(attachment) for found in MEMORY_AT.findall(text)})
                     for path in found:
                         if _escaped(path) not in line:
-                            return b"", "its recorded prompt names its memory folder in a form make code cannot rewrite"
+                            return b"", "its recorded prompt names its memory folder in a form just code cannot rewrite"
                         line = line.replace(_escaped(path), memory_escaped)
                     if here and _left_behind(here, [folder] if folder else [], found).search(line):
-                        return b"", "its recorded prompt names a memory folder in a form make code does not know"
+                        return b"", "its recorded prompt names a memory folder in a form just code does not know"
         if b'"worktree-state"' in line:
             entry = _entry(line)
             if entry.get("type") == "worktree-state":

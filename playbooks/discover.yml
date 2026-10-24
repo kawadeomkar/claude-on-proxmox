@@ -1,8 +1,8 @@
 ---
 # Find the VMs this project created and make them reachable.
 #
-#   make deploy TYPE=configure                    -> every VM tagged claude-on-proxmox
-#   make deploy VM_NAME=alpha,beta TYPE=configure -> only those
+#   just deploy --only configure                    -> every VM tagged claude-on-proxmox
+#   just deploy alpha,beta --only configure -> only those
 #
 # Every VM the proxmox_vm role creates carries the claude-on-proxmox tag, so
 # Proxmox itself is the register of what exists - nothing is tracked locally
@@ -27,14 +27,14 @@
 
     # claude_vm_requested (group_vars/all) keeps the VMs carrying this
     # project's tag, matched as a whole tag rather than a substring so
-    # "claude-on-proxmox-staging" is left alone - and with VM_NAME given, only
+    # "claude-on-proxmox-staging" is left alone - and with vm_name given, only
     # those; without it, the whole fleet.
     - name: Narrow to the requested VMs
       ansible.builtin.set_fact:
         claude_vm_discovered: "{{ claude_vm_requested }}"
 
     # Proxmox permits duplicate names. The role refuses to act on one; here the
-    # second add_host would silently overwrite the first, so `make deploy TYPE=configure`
+    # second add_host would silently overwrite the first, so `just deploy --only configure`
     # would report success having touched only one of them, unpredictably.
     - name: Refuse to continue with duplicated VM names
       vars:
@@ -75,11 +75,11 @@
         loop_var: claude_vm_found
         label: "{{ claude_vm_found.name }}"
 
-    # With VM_NAME given, every named VM is meant to be configured. One that is
+    # With vm_name given, every named VM is meant to be configured. One that is
     # stopped, still booting, unreachable, or not tagged at all is added by
     # nothing above, so the plays that follow would configure the rest and exit
     # 0 - a key pushed to "alpha,beta" could silently miss beta. Name the ones
-    # left out and stop. Only with VM_NAME: a fleet-wide run has no list of
+    # left out and stop. Only with vm_name: a fleet-wide run has no list of
     # names it could be missing, and an empty fleet is reported below instead.
     # "Skipped" rather than "not configured": claude_login.yml imports this
     # play too, and there nothing was going to be configured.
@@ -90,13 +90,13 @@
       ansible.builtin.assert:
         that: claude_vm_missing | length == 0
         fail_msg: >-
-          VM_NAME asked for {{ claude_vm_names | join(', ') }}, but no address
+          The names given were {{ claude_vm_names | join(', ') }}, but no address
           was found for {{ claude_vm_missing | join(', ') }}, so
           {{ 'it was' if claude_vm_missing | length == 1 else 'they were' }}
           skipped. A named VM is skipped when it is stopped, still booting,
           its guest agent has not answered, or it is not tagged
-          {{ claude_vm_tag }}. Start it or wait for it and re-run, or drop it
-          from VM_NAME.
+          {{ claude_vm_tag }}. Start it or wait for it and re-run, or leave its
+          name out.
         quiet: true
       when: vm_name is defined
 
@@ -107,11 +107,11 @@
       ansible.builtin.debug:
         msg: >-
           No VMs to configure.
-          {{ 'Proxmox has no VM tagged ' ~ claude_vm_tag ~ '; run make deploy first.'
+          {{ 'Proxmox has no VM tagged ' ~ claude_vm_tag ~ '; run just deploy first.'
              if claude_vm_tagged | length == 0
              else (claude_vm_discovered | length == 0)
                   | ternary('Tagged VMs exist (' ~ (claude_vm_tagged | map(attribute='name', default='(no name)') | join(', '))
-                            ~ ') but none match VM_NAME.',
+                            ~ ') but none match the names given.',
                             'Tagged VMs exist but none reported an address yet - they may be stopped,'
                             ~ ' still booting, or on a node that is down.') }}
       when: groups['claude_vms'] | default([]) | length == 0

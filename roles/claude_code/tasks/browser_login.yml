@@ -9,10 +9,10 @@
 # over SSH (claude_code_login_redirect) and the page opens here, so once you
 # authorise, the browser comes back to claude by itself and the run waits for
 # that, with nothing to paste. Where the browser could not come back - no
-# browser on this machine to open the page, make itself run over SSH (a page
+# browser on this machine to open the page, just itself run over SSH (a page
 # opened on another machine redirects to that machine's localhost), a port
 # taken here - the printed page opens instead, the code it shows is pasted at a
-# prompt in the terminal running make, and it reaches claude through a named
+# prompt in the terminal running just, and it reaches claude through a named
 # pipe. Authorising is the person's part, and the only part.
 #
 # What it rests on, probed against Claude Code 2.1.296 (docs/architecture/roles.md §5.5):
@@ -57,7 +57,7 @@
     that: claude_code_login_which.stdout | trim | length > 0
     fail_msg: >-
       `claude` is not on {{ claude_code_user }}'s PATH on {{ inventory_hostname }}, so there is
-      nothing to sign in yet: make deploy VM_NAME={{ inventory_hostname }} TYPE=configure installs it.
+      nothing to sign in yet: just deploy {{ inventory_hostname }} --only configure installs it.
     quiet: true
 
 - name: browser_login | Make the directory for the sign-in's files
@@ -69,7 +69,7 @@
   become_user: "{{ claude_code_user }}"
 
 # A sign-in of this VM still waiting - a run left at its prompt, or a second
-# make login TYPE=claude started meanwhile - owns the pipe and the pidfile below;
+# just login --only claude started meanwhile - owns the pipe and the pidfile below;
 # taking them over would hand one run's code to the other's claude and end the
 # other's process. Told by the recorded pid's command line, so a pid reused by
 # something else since is no reason to refuse; with no ps to ask, nothing is.
@@ -120,7 +120,7 @@
     content: |
       #!/bin/sh
       # The browser claude opens its sign-in page with on this VM: it records
-      # the page, which make login TYPE=claude opens on your machine instead.
+      # the page, which just login --only claude opens on your machine instead.
       printf '%s\n' "$*" > {{ claude_code_login_page_file | quote }}
   become: true
   become_user: "{{ claude_code_user }}"
@@ -314,7 +314,7 @@
       # One waiting line from the stdout callback, not a line per retry.
       tags: [attention_browser]
 
-    # For make deploy's GitHub and Tailscale steps, VM by VM: a code entered,
+    # For just deploy's GitHub and Tailscale steps, VM by VM: a code entered,
     # or the browser come back, says someone is here for this VM; Enter, a
     # browser that never came back, or no terminal to ask at, skips it there
     # too. A VM that never needs this sign-in (signed in already, or on an API

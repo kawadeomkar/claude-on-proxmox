@@ -38,7 +38,7 @@ provisioner:
     ANSIBLE_FILTER_PLUGINS: ${MOLECULE_PROJECT_DIRECTORY}/../../filter_plugins
 scenario:
   # check before converge: converge in check mode on a VM that has never had
-  # Tailscale, as every VM is at the first `make deploy TYPE=check` after the upgrade.
+  # Tailscale, as every VM is at the first `just deploy --check` after the upgrade.
   test_sequence:
     - dependency
     - cleanup

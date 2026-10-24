@@ -1,8 +1,8 @@
 ---
 # Show the VMs this project created, and how to reach them.
 #
-#   make list
-#   make list VM_NAME=alpha,beta
+#   just list
+#   just list alpha,beta
 #
 # Read-only. Proxmox is the register - nothing is tracked locally - so this is
 # a query against it, filtered to the ownership tag. Unlike discover.yml it
@@ -20,7 +20,7 @@
 
     # claude_vm_requested (group_vars/all) keeps only the VMs carrying this
     # project's tag, matched as a whole tag rather than a substring, and
-    # narrows them to VM_NAME the same way discovery does. By name, with the
+    # narrows them to vm_name the same way discovery does. By name, with the
     # ones that have none - a VM on a node that is down - at the end.
     - name: Narrow to the requested VMs
       ansible.builtin.set_fact:
@@ -50,8 +50,8 @@
       ansible.builtin.debug:
         msg: |-
           {% if claude_list_rows | length == 0 %}
-          No VMs tagged "{{ claude_vm_tag }}"{{ ' match VM_NAME' if vm_name is defined else ' exist on this host' }}.
-          Create one with: make deploy VM_NAME=alpha
+          No VMs tagged "{{ claude_vm_tag }}"{{ ' match the names given' if vm_name is defined else ' exist on this host' }}.
+          Create one with: just deploy alpha
           {% else %}
           {{ '%-24s %7s  %-9s %s' | format('NAME', 'VMID', 'STATUS', 'ADDRESS') }}
           {% for row in claude_list_rows %}
@@ -60,7 +60,7 @@
           {% endfor %}
 
           {{ claude_list_rows | length }} VM{{ '' if claude_list_rows | length == 1 else 's' }} tagged "{{ claude_vm_tag }}".
-          VS Code: make code VM_NAME=<name> [PROJECT=<repo>] (make deploy TYPE=ssh-config refreshes the aliases).
+          VS Code: just code <name> [--project <repo>] (just deploy --only ssh-config refreshes the aliases).
           {% if claude_list_unaddressed | length > 0 %}
           No address for {{ claude_list_unaddressed | map(attribute='name', default='(no name)') | join(', ') }}: the guest agent has not reported one.
           Those VMs may be stopped, still booting, built without the agent, or on a node that is down.

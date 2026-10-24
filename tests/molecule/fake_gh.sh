@@ -1,6 +1,6 @@
 #!/bin/sh
 # Stand-in for gh: the auth commands the github_projects role and the terminal
-# make code opens run, and nothing else. The login is a file in the calling
+# just code opens run, and nothing else. The login is a file in the calling
 # user's home, so each user has their own, as with gh. Used by the Molecule
 # scenarios (installed ahead of /usr/bin/gh on PATH) and by the unit tests.
 #

@@ -1,12 +1,12 @@
 ---
 # What of the VM's Claude Code sessions exists only there, saved on this
-# machine before make destroy releases and deletes the VM
+# machine before just destroy releases and deletes the VM
 # (docs/architecture/lifecycle.md §4.5). Claude Code keeps a session on the
 # disk of the machine it runs on, the only copy it can resume, and auto
 # memory is machine-local too, so deleting the VM would end them: every
-# session that began on the VM, every copy make code made that was continued
+# session that began on the VM, every copy just code made that was continued
 # there, the folder of subagents and tool results beside each, and every auto
-# memory folder. A copy make code wrote that is still as written is left: this
+# memory folder. A copy just code wrote that is still as written is left: this
 # machine has that session.
 #
 # Into <destroy_sessions_dir>/<vm>-<time>/projects/, laid out as on the VM and
@@ -79,8 +79,8 @@
       not "{{ destroy_sessions_dir }}".
     quiet: true
 
-# make code's manifest says which copies are still as it wrote them, from the
-# directory make code keeps on the VM, as code.yml names it.
+# just code's manifest says which copies are still as it wrote them, from the
+# directory just code keeps on the VM, as code.yml names it.
 - name: session_save | Read what of the VM's Claude Code sessions is only there
   claude_sessions_info:
     path: "{{ claude_vm_save_claude }}"
