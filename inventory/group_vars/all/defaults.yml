@@ -22,7 +22,7 @@ proxmox_storage: local-lvm
 proxmox_bridge: vmbr0
 # Which NIC of the template carries the LAN address: its MAC is how a VM's own
 # address is told apart from bridges the guest grows later. Provisioning,
-# discovery and just list all read it from here. Only change it if the
+# discovery and just status all read it from here. Only change it if the
 # template was built with something other than a single net0.
 proxmox_nic: net0
 
@@ -56,6 +56,16 @@ proxmox_api_headers:
 # modules' HTTP client reads and `uri` does not, so it is passed on. Empty
 # when certificates are not validated; callers `default(omit, true)` it.
 proxmox_api_ca_path: "{{ lookup('ansible.builtin.env', 'REQUESTS_CA_BUNDLE') if proxmox_validate_certs | bool else '' }}"
+# Seconds each of those reads waits for Proxmox: uri's own default, which
+# playbooks/tasks/cluster_vms.yml and vm_addresses.yml keep. `just status` passes
+# them 10, since a report that cannot reach the API should say so soon.
+claude_vm_api_timeout: 30
+
+# just status (playbooks/status.yml): how long each of its reads of the API
+# waits, and the file the recipe reads the report's exit code from, which it
+# names in STATUS_REPORT_FILE; none for a run by hand, which writes no file.
+status_api_timeout: 10
+status_report_file: "{{ lookup('ansible.builtin.env', 'STATUS_REPORT_FILE') }}"
 
 # Cloud-init template that VMs are cloned from (built by playbooks/template.yml)
 proxmox_template_vmid: 9000
@@ -69,8 +79,8 @@ proxmox_template_name: ubuntu-24.04-cloudinit
 #
 # claude_vm_names falls back to this default name when vm_name is not given,
 # which is what provision.yml, deploy.yml and destroy.yml act on. discover.yml
-# and list.yml test `vm_name is defined` instead and, without it, cover every
-# tagged VM - so just list, just login and just deploy --only configure,
+# and status.yml test `vm_name is defined` instead and, without it, cover every
+# tagged VM - so just status, just login and just deploy --only configure,
 # --check and --only ssh-config are fleet-wide.
 claude_vm_default_name: claude-on-proxmox-default
 # Applied to every VM this project creates, and how they are found again.
@@ -83,7 +93,7 @@ claude_vm_tag: claude-on-proxmox
 # The proxmox_vm role lowercases both sides of its own comparison the same way.
 claude_vm_tag_pattern: "(?i)(^|[;,]){{ claude_vm_tag | lower | regex_escape }}([;,]|$)"
 # The VMs this project owns, filtered out of the cluster's VM list. Defined
-# here, not in each playbook, so discover.yml, list.yml and destroy.yml cannot
+# here, not in each playbook, so discover.yml, status.yml and destroy.yml cannot
 # drift on what "ours" means. Evaluated lazily: any play that uses it must have
 # run playbooks/tasks/cluster_vms.yml, which registers claude_vm_all, and is
 # meant to fail loudly if it has not - an empty fleet and an unasked API are
@@ -92,7 +102,7 @@ claude_vm_tag_pattern: "(?i)(^|[;,]){{ claude_vm_tag | lower | regex_escape }}([
 # `name` can be missing too: Proxmox fills it from the node's statistics, which
 # the cluster drops five minutes after a node stops reporting, so a tagged VM
 # on a node that is down is listed with a VMID, a node and its tags but no
-# name. It stays in this list - `just list` shows it - and every consumer
+# name. It stays in this list - `just status` shows it - and every consumer
 # reads `name` with a default rather than failing the whole fleet over it.
 claude_vm_tagged: >-
   {{ claude_vm_all.json.data
@@ -103,8 +113,8 @@ claude_vm_tagged: >-
 claude_vm_names: >-
   {{ (vm_name | default(claude_vm_default_name, true)) | split(',') | map('trim') | select | list }}
 # The tagged VMs a fleet-wide recipe acts on: the ones named (vm_name), or all of
-# them without it. discover.yml and list.yml both narrow through this, so
-# `just deploy --only configure` and `just list` cannot disagree on what the names select.
+# them without it. discover.yml and status.yml both narrow through this, so
+# `just deploy --only configure` and `just status` cannot disagree on what the names select.
 claude_vm_requested: >-
   {{ claude_vm_tagged | selectattr('name', 'defined') | selectattr('name', 'in', claude_vm_names) | list
      if vm_name is defined else claude_vm_tagged }}

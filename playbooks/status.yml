@@ -1,0 +1,264 @@
+---
+# What every VM this project created is doing, and what needs doing next: `just status`.
+#
+#   just status
+#   just status alpha beta --only vms,storage
+#   just status --json
+#
+# Read-only information, and it must never change anything: GETs to the Proxmox API, and over SSH only reads
+# (tests/unit/test_status.py holds every task here, and in every file and role entry point it reaches, to a fixed
+# set). The recipe runs it as a dry run with its own stdout callback, callback_plugins/claude_on_proxmox_status.py,
+# which draws the report live at a terminal and prints the finished one when the run ends, and exits with the
+# report's own code: 0 nothing is wrong, 1 a problem, 2 something could not be read, 3 the run itself failed.
+#
+# Three plays, as provision.yml and destroy.yml: the fleet from the API on localhost, then every VM at once, one
+# host each, then the report. Each piece of the report is a status_found fact, made one line of plain text a piece
+# (status_clean) before anything keeps it, which the callback draws as it lands. docs/architecture/lifecycle.md
+# §4.6 has the rest.
+
+- name: List the fleet
+  hosts: localhost
+  gather_facts: false
+  vars:
+    status_settings:
+      names: "{{ claude_vm_names if vm_name is defined else [] }}"
+      sections: "{{ status_only | default('') | status_sections }}"
+      tag: "{{ claude_vm_tag }}"
+      template_name: "{{ proxmox_template_name }}"
+      storage: "{{ proxmox_storage }}"
+      nic: "{{ proxmox_nic }}"
+      tailscale_enabled: "{{ tailscale_enabled | bool }}"
+      vm_user: "{{ vm_user }}"
+      discovery: "{{ claude_vm_discovery | bool }}"
+  tasks:
+    # status_sections refuses a section the report has not got, naming the ones it has; the recipe has checked
+    # --only already, so this is for a run by hand.
+    - name: Check the sections asked for
+      ansible.builtin.assert:
+        that: status_settings.sections | length > 0
+        quiet: true
+
+    - name: Read Proxmox
+      when: claude_vm_discovery | bool
+      block:
+        - name: List every VM in the cluster
+          ansible.builtin.import_tasks: tasks/cluster_vms.yml
+          vars:
+            claude_vm_api_timeout: "{{ status_api_timeout }}"
+
+        # The version, for the report's first line, and the storages' fill. Both read only.
+        - name: Read the Proxmox version and the storages
+          ansible.builtin.uri:
+            url: "{{ proxmox_api_url }}/{{ item }}"
+            headers: "{{ proxmox_api_headers }}"
+            validate_certs: "{{ proxmox_validate_certs }}"
+            ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+            timeout: "{{ status_api_timeout }}"
+          loop:
+            - version
+            - cluster/resources?type=storage
+          register: status_proxmox_lists
+          check_mode: false
+          no_log: true
+          failed_when: false
+
+        - name: Read each VM's config and address
+          ansible.builtin.import_tasks: tasks/vm_addresses.yml
+          vars:
+            claude_vm_query: "{{ claude_vm_requested }}"
+            claude_vm_api_timeout: "{{ status_api_timeout }}"
+
+        # The template's ctime says when it was built, and a clone carrying the same one was not built then.
+        - name: Read the template's config
+          ansible.builtin.uri:
+            url: "{{ proxmox_api_url }}/nodes/{{ status_template.node }}/qemu/{{ status_template.vmid }}/config"
+            headers: "{{ proxmox_api_headers }}"
+            validate_certs: "{{ proxmox_validate_certs }}"
+            ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+            timeout: "{{ status_api_timeout }}"
+          vars:
+            status_template: >-
+              {{ claude_vm_all.json.data | selectattr('template', 'defined') | selectattr('template')
+                 | selectattr('name', 'defined') | selectattr('name', 'equalto', proxmox_template_name)
+                 | first | default({}) }}
+          when: status_template.vmid is defined
+          register: status_template_config
+          check_mode: false
+          no_log: true
+          failed_when: false
+
+        # Which disks each storage of this project's holds, and of what size: the project's share of it, and how
+        # far a thin pool is provisioned past what it holds.
+        - name: Read the storages' disks
+          ansible.builtin.uri:
+            url: "{{ proxmox_api_url }}/nodes/{{ item.node }}/storage/{{ item.storage }}/content?content=images"
+            headers: "{{ proxmox_api_headers }}"
+            validate_certs: "{{ proxmox_validate_certs }}"
+            ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+            timeout: "{{ status_api_timeout }}"
+          loop: "{{ status_proxmox_lists.results | default([]) | status_storages(proxmox_storage) }}"
+          loop_control:
+            label: "{{ item.node }}/{{ item.storage }}"
+          register: status_storage_content
+          check_mode: false
+          no_log: true
+          failed_when: false
+      # Proxmox not answering, or refusing the token, is said in the report with what to check, and read as
+      # nothing more: no VM can be found without it. The listing's own status tells the two apart; a later read
+      # that failed says its own message.
+      rescue:
+        - name: Record why Proxmox could not be read
+          vars:
+            status_listing_status: "{{ claude_vm_all.status | default(-1) | int }}"
+          ansible.builtin.set_fact:
+            status_proxmox_unread: >-
+              {{ ('Proxmox refused the token: ' ~ claude_vm_all.msg | default(''))
+                 if status_listing_status | int in [401, 403]
+                 else ('Proxmox did not answer: ' ~ claude_vm_all.msg | default('no response'))
+                 if status_listing_status | int != 200
+                 else (ansible_failed_result.msg | default('Proxmox could not be read')) }}
+            status_proxmox_hint: >-
+              {{ 'check proxmox_api_user, proxmox_api_token_id and vault_proxmox_api_token_secret'
+                   ~ ' (docs/getting-started/proxmox-access.md)'
+                 if status_listing_status | int in [401, 403]
+                 else 'check proxmox_api_host in inventory/hosts.yml, and that the Proxmox host is up' }}
+
+    - name: Read the managed SSH config's aliases
+      ansible.builtin.stat:
+        path: "{{ claude_ssh_config_file }}"
+      register: status_ssh_config_file
+      when: claude_ssh_config | bool
+
+    - name: Read the aliases it holds
+      ansible.builtin.slurp:
+        src: "{{ claude_ssh_config_file }}"
+      register: status_ssh_config_text
+      when:
+        - claude_ssh_config | bool
+        - status_ssh_config_file.stat.exists | default(false)
+
+    - name: Work out the fleet
+      ansible.builtin.set_fact:
+        status_found:
+          fleet: >-
+            {{ (claude_vm_all.json.data | default(none) if claude_vm_discovery | bool else [])
+               | status_fleet(
+                   tagged=(claude_vm_tagged if claude_vm_all.json is defined else []),
+                   requested=(claude_vm_requested if claude_vm_all.json is defined else []),
+                   addressed=claude_vm_addressed | default([]),
+                   configs=claude_vm_configs.results | default([]),
+                   lists=status_proxmox_lists.results | default([]),
+                   contents=status_storage_content.results | default([]),
+                   template_config=status_template_config | default({}),
+                   aliases=(status_ssh_config_text.content | default('') | b64decode)
+                     | status_aliases(claude_ssh_config | bool),
+                   settings=status_settings | combine({'proxmox_hint': status_proxmox_hint | default('')}),
+                   unread=status_proxmox_unread | default('')) | status_clean }}
+
+    # Each VM this project created, by its name - the name every role's commands use - with how to reach it on
+    # the host itself, as discover.yml adds them. Not a VM whose name two VMs carry, or one no recipe could name,
+    # or one on a node that is down: those are shown from the listing alone. A group of status's own, so a run
+    # imported after discovery (the provision scenario's verify) reads only what it listed.
+    - name: Add each VM to read
+      ansible.builtin.add_host:
+        name: "{{ status_vm.name }}"
+        groups: status_vms
+        ansible_host: "{{ status_vm.address if status_vm.address else status_vm.name }}"
+        ansible_user: "{{ vm_user }}"
+        ansible_python_interpreter: "{{ claude_vm_python }}"
+        ansible_timeout: 10
+        status_vm: "{{ status_vm }}"
+      changed_when: false
+      loop: "{{ status_found.fleet.vms | selectattr('read') | list }}"
+      loop_control:
+        loop_var: status_vm
+        label: "{{ status_vm.name }}"
+
+    # With discovery off, the inventory's claude_vms are read as they are, each with its own connection: the
+    # configure scenario's container, or a Vagrant box. The seam the configure scenario tests status through.
+    - name: Read the inventory's VMs when discovery is off
+      ansible.builtin.add_host:
+        name: "{{ status_inventory_vm }}"
+        groups: status_vms
+      changed_when: false
+      loop: "{{ groups['claude_vms'] | default([]) if not (claude_vm_discovery | bool) else [] }}"
+      loop_control:
+        loop_var: status_inventory_vm
+
+- name: Read the VMs
+  hosts: status_vms
+  gather_facts: false
+  strategy: free
+  # A read that runs longer fails into its block's rescue, and the report says which.
+  timeout: 30
+  tasks:
+    # One VM's state as it is now, its day of history, a change waiting for a restart, and what its agent says of
+    # its OS and its disks: GETs, delegated to this machine, as each VM's own task so the VMs are read at once.
+    - name: Read the VM's state and history from Proxmox
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_url }}/nodes/{{ status_vm.node }}/qemu/{{ status_vm.vmid }}/{{ item.path }}"
+        headers: "{{ proxmox_api_headers }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+        timeout: "{{ status_api_timeout }}"
+      loop: >-
+        {{ [{'name': 'current', 'path': 'status/current'},
+            {'name': 'rrddata', 'path': 'rrddata?timeframe=day&cf=AVERAGE'},
+            {'name': 'pending', 'path': 'pending'}]
+           + ([{'name': 'osinfo', 'path': 'agent/get-osinfo'}, {'name': 'fsinfo', 'path': 'agent/get-fsinfo'}]
+              if status_vm.status == 'running' else []) }}
+      loop_control:
+        label: "{{ item.name }}"
+      register: status_api_reads
+      delegate_to: localhost
+      when: status_vm is defined
+      check_mode: false
+      no_log: true
+      failed_when: false
+
+    - name: Compare the VM's settings with what deploy sends
+      ansible.builtin.include_role:
+        name: proxmox_vm
+        tasks_from: settings_drift
+      vars:
+        proxmox_vm_drift_config: "{{ status_vm.config }}"
+      when: status_vm is defined
+
+    - name: Keep what Proxmox says of the VM
+      ansible.builtin.set_fact:
+        status_found: >-
+          {{ {'api': status_api_reads.results | default([]) | status_vm_api(now().timestamp()),
+              'drift': proxmox_vm_settings_drift | default({})} | status_clean }}
+      when: status_vm is defined
+
+- name: Report
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # The finished report: the callback prints it, and --json the file below.
+    - name: Rank what needs attention
+      vars:
+        status_hosts: "{{ ['localhost'] + (groups['status_vms'] | default([])) }}"
+      ansible.builtin.set_fact:
+        status_report: >-
+          {{ dict(status_hosts | zip(status_hosts | map('extract', hostvars, 'status_found') | map('default', {})))
+             | status_report(now().astimezone().strftime('%Y-%m-%d %H:%M %Z') | trim, now().timestamp()) }}
+
+    # The recipe reads its exit code from here, and removes it once read. It holds addresses, so it is git-ignored
+    # and only its owner may read it.
+    - name: Write the report
+      when: status_report_file | length > 0
+      block:
+        - name: Make the report's directory
+          ansible.builtin.file:
+            path: "{{ status_report_file | dirname }}"
+            state: directory
+            mode: "0700"
+          check_mode: false
+
+        - name: Write the report as JSON
+          ansible.builtin.copy:
+            content: "{{ status_report | to_nice_json }}\n"
+            dest: "{{ status_report_file }}"
+            mode: "0600"
+          check_mode: false

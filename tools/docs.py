@@ -142,7 +142,12 @@ def commands() -> str:
     """One table per group of the justfile: every public recipe but help, its usage and [doc], and a row for each of
     its options and the words it takes, with each one's help. Only these fields of `just --json` are read, and the
     layout is this script's own, so a newer just generates the same page."""
-    recipes = json.loads(_just("--json"))["recipes"]
+    justfile = json.loads(_just("--json"))
+    recipes = justfile["recipes"]
+    # An alias is listed under its recipe: the name a recipe had before (just list for just status).
+    aliases: dict[str, list[str]] = {}
+    for alias in sorted(justfile.get("aliases") or {}):
+        aliases.setdefault(justfile["aliases"][alias]["target"], []).append(alias)
     groups: dict[str, list[str]] = {}
     for name in _just("--summary", "--unsorted").split():
         recipe = recipes[name]
@@ -168,6 +173,10 @@ def commands() -> str:
                     )
                     spelled = f"<{word}>"
                 out.append(f"| {INDENT_CELL}`{spelled}` | {cell(parameter['help'] or '')} |")
+            for alias in aliases.get(name, []):
+                out.append(
+                    f"| {INDENT_CELL}`just {alias}` | Another name for `just {name}`, and the same in every way |"
+                )
         out.append("")
     return "\n".join(out)
 

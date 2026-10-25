@@ -1,0 +1,35 @@
+"""just status's last step: the exit code the report holds, the report itself under --json, then no report.
+
+    "$bin/python" tools/status-exit <report.json> <json>
+
+The run writes its report to a file of its own (playbooks/status.yml, status_report_file), which this reads and
+then removes: the run's own scratch, which nothing keeps. With <json> non-empty, the report is printed on standard
+output, alone. Exits with the report's code: 0 nothing is wrong, 1 a problem, 2 something could not be read. A
+report that cannot be read is the run failing, 3.
+"""
+
+import json
+import os
+import sys
+
+
+def main(path: str, as_json: str) -> int:
+    try:
+        with open(path, encoding="utf-8") as stream:
+            text = stream.read()
+        code = json.loads(text)["exit"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"just status: the report could not be read: {error}", file=sys.stderr)
+        return 3
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    if as_json:
+        sys.stdout.write(text if text.endswith("\n") else text + "\n")
+    return code if code in (0, 1, 2) else 3
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else ""))

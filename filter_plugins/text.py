@@ -10,12 +10,18 @@ banner draws the block that sets a moment the run waits for the person apart
 from the task output around it: in a pause or vars_prompt prompt, which
 ansible-core prints as written, and in the stdout callback
 (callback_plugins/claude_on_proxmox.py), so both look the same.
+
+one_line keeps a value a VM chose to one line of a report: `just status`
+(filter_plugins/status.py) draws its report from them, and a newline in a
+directory's name would otherwise start a line of its own - a forged item with a
+command to run, here.
 """
 
 from __future__ import annotations
 
 import re
 import shutil
+import unicodedata
 
 # Each escape sequence whole: a string sequence (OSC, DCS, SOS, PM, APC) up to
 # its terminator, or the end of its line when it has none; a CSI with its
@@ -34,6 +40,29 @@ def plain_text(text):
     if text is None:
         return ""
     return _CONTROL.sub("", _SEQUENCES.sub("", str(text)))
+
+
+# What one_line replaces with a space after plain_text: every control character
+# left (tab, newline, carriage return), and Unicode's format, line and paragraph
+# separators - the bidi overrides and isolates, zero-width characters - which can
+# make a line read in an order other than its own.
+_SPACE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+_SPACES = re.compile(r" {2,}")
+
+
+def one_line(text, limit=120):
+    """Return ``text`` as one line of plain text, at most ``limit`` characters, ending in "…" when cut.
+
+    plain_text first, so whole escape sequences go; then each newline, carriage
+    return, tab, and Unicode format or separator character becomes a space, and
+    runs of spaces one. None is "".
+    """
+    if text is None:
+        return ""
+    cleaned = "".join(" " if unicodedata.category(ch) in _SPACE_CATEGORIES else ch for ch in plain_text(text))
+    cleaned = _SPACES.sub(" ", cleaned).strip()
+    limit = max(int(limit), 1)
+    return cleaned if len(cleaned) <= limit else cleaned[: limit - 1].rstrip() + "…"
 
 
 # The block's width: these columns, or the terminal's when it is narrower,
@@ -65,4 +94,4 @@ def banner(body, title, host="", topic="", width=None):
 
 class FilterModule:
     def filters(self):
-        return {"plain_text": plain_text, "banner": banner}
+        return {"plain_text": plain_text, "one_line": one_line, "banner": banner}

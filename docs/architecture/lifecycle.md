@@ -108,15 +108,16 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
 2. `claude_vm_tagged` (a lazily-evaluated group var) filters to the tagged QEMU VMs. Proxmox omits
    `tags` for an untagged guest, hence its `selectattr('tags', 'defined')`.
 3. `claude_vm_discovered` is `claude_vm_requested`: narrowed to the names given (`vm_name`), else the whole
-   fleet. `list.yml` narrows through the same group var.
+   fleet. `status.yml` narrows through the same group var.
 4. Assert no duplicate names — Proxmox permits them, and the second `add_host` would silently
    overwrite the first, so `just deploy --only configure` would report success having touched one of two,
    unpredictably.
-5. Per VM, `proxmox_vm_info vmid=...` with `config: current` + `network: true`, which asks only that
-   VM's node. A VM that is stopped, whose agent is not up or whose node is down is skipped; a refused
-   token is **fatal**, because it applies to every VM and swallowing it means configuring zero hosts
-   and exiting 0, which looks like success. "Refused" is the `proxmox_access_denied` filter
-   ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)), shared with `list.yml` and the role's agent wait.
+5. Per VM, its config and its agent's interfaces, two GETs to that VM's own node
+   (`tasks/vm_addresses.yml`). A VM that is stopped, whose agent is not up or whose node is down is
+   skipped; a refused token, a 401 or 403, is **fatal**, because it applies to every VM and swallowing
+   it means configuring zero hosts and exiting 0, which looks like success. The role's agent wait reads
+   the same refusal from its module's error with the `proxmox_access_denied` filter
+   ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)).
 6. `add_host` each VM for which `guest_address(proxmox_nic)`
    ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)) returns an address, with
    `ansible_python_interpreter` set to `claude_vm_python` ([§5.3](roles.md#53-common--os-baseline)), as
@@ -128,7 +129,7 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
    still booting, or a token without guest-agent access).
 
 Without names, step 3 keeps every tagged VM, so `just deploy --only configure`, `--check` and
-`--only ssh-config`, `just login` and `just list` are fleet-wide by default.
+`--only ssh-config`, `just login` and `just status` are fleet-wide by default.
 
 ## 4.4 `playbooks/configure.yml`
 
@@ -290,19 +291,85 @@ of it to remove by hand and where: the Tailscale device (which keeps its name, s
 it would join as `<name>-1`), a GitHub token its sign-in made, and a Claude Code login, which Anthropic
 offers no way to revoke from outside - and where its sessions were saved, or that they were not.
 
-## 4.6 `playbooks/list.yml`
+## 4.6 `playbooks/status.yml` — read-only, drawn live
 
-Read-only. Lists the cluster and narrows it exactly as `discover.yml` does (§4.3, steps 1–3), then
-asks each VM for its config and agent report, by VMID, and prints a table.
+What every VM this project created is doing, and what needs doing next. **Status changes nothing**: it
+reads Proxmox through GETs, and adds nothing on this machine, not a host key or an alias, and nothing to
+`~/.ssh` or `~/.claude`. It writes only its own run's files inside the checkout: the report, removed as
+soon as the recipe has read it, and the log every recipe keeps. Proxmox's access log records its
+requests, as it records every run's. `tests/unit/test_status.py` holds every task it runs, and every task
+file and role entry point it reaches, to a fixed set:
 
-It differs from `discover.yml` in one deliberate way: it lists a VM **whether or not** its agent
-answers. Discovery skips an unaddressable VM because it cannot configure it; a listing that hid one
-would be answering a different question than the one asked. A VM with no address shows `-`, and a
-footnote names it.
+- `uri` with the keys `url`, `headers`, `validate_certs`, `ca_path` and `timeout` only, a `url` that
+  starts with `{{ proxmox_api_url }}/`, `check_mode: false` and `no_log`; no `method`, no `body`;
+- the shared listing (`tasks/cluster_vms.yml`, `tasks/vm_addresses.yml`) and `proxmox_vm`'s
+  `settings_drift` entry point;
+- `stat`, `slurp`, `set_fact`, `assert`, `add_host`;
+- the report's `file` and `copy`, into `status_report_file`.
 
-Rows are built once, in `claude_list_rows` — each VM's cluster-listing entry combined with the
-address `guest_address(proxmox_nic)` finds for it — so the table and that footnote cannot disagree
-about which VMs have an address.
+The recipe runs it as a dry run, which guards Ansible's other modules; `uri` never runs in check mode,
+so every GET carries `check_mode: false` as the listing's does, and the allowlist guards the rest.
+
+**Play 1 — list the fleet (localhost).** In one block whose rescue records why Proxmox could not be
+read: the listing (§4.3, steps 1–3) and each VM's config and agent report (`tasks/vm_addresses.yml`),
+both with `claude_vm_api_timeout` at `status_api_timeout`, 10 s; the version and the storages; the
+template's config, whose `ctime` says when it was built; each of this project's storages' disks. The
+rescue tells a refused token from a host that did not answer by the listing's own status, and says what
+to check for each. Then the managed SSH file's aliases, read only (§4.8). `status_fleet` turns all of it
+into the fleet: this project's VMs, other VMs as totals only (never named, never read), the storages, the
+template. A VM is read further only by a name no other tagged VM carries, that a recipe's pattern takes,
+on a node that answers; the others are shown from the listing, and two VMs of one name are a problem.
+A name given that matches no tagged VM is "not read", naming any nameless VM on a node that is down as
+the one it may be. Each VM to read is added to `status_vms` by its name, with how to reach it on the
+host itself and `ansible_python_interpreter: claude_vm_python`, as discovery adds them. With
+`claude_vm_discovery` off, the inventory's `claude_vms` are read as they are: the configure scenario's
+container, a Vagrant box.
+
+**Play 2 — read the VMs (`status_vms`, `strategy: free`, `timeout: 30`).** Each VM's own GETs,
+delegated to this machine, so the VMs are read at once: `status/current`, a day of `rrddata`, `pending`,
+and from a running VM's agent `get-osinfo` and `get-fsinfo`. `proxmox_vm`'s `settings_drift` compares
+the VM's config with what `just deploy` would send (`proxmox_vm_drift`,
+[§7.1](custom-code.md#71-filter_pluginsproxmoxpy)); it needs no connection.
+
+**Play 3 — the report (localhost).** `status_report` ranks what every host found and works out the exit
+code; the report's file is written when `status_report_file` is set.
+
+**What a VM supplies is not trusted.** Each piece is a `status_found` fact, and `status_clean` makes
+every string in it one line of plain text (`one_line`,
+[§7.4](custom-code.md#74-filter_pluginsdesktoppy-and-filter_pluginstextpy)) before anything keeps it:
+a newline, a carriage return, an escape sequence, a bidi control or a zero-width character never starts
+a line of its own, and every value is capped. The text report and `--json` are both built from that
+cleaned model.
+
+**What counts.** Each item is "not read" (exit 2), a problem (exit 1) or a thing to do (exit 0), and the
+code is the highest found:
+
+| Level | When |
+|---|---|
+| not read | Proxmox did not answer, or refused the token. A name given that matches no tagged VM. A VM on a node that is down. A running VM whose agent reports no address on `proxmox_nic` after three minutes. A VM whose reads Proxmox did not answer |
+| problem | Two tagged VMs of one name. A root disk or a storage 90% full |
+| to do | The VM's settings differ from `local.yml`'s, with the `proxmox_vm_force_update` run that sends them and what else it does. A change waiting for a restart. A first deploy that did not finish (the unfinished tag). A VM with no SSH alias. A root disk or a storage 80% full |
+
+Stopped VMs, CPU pressure over a tenth of the last hour, other VMs, a thin pool provisioned beyond its
+size and the template's age are shown and not counted. A run that failed or wrote no report exits 3.
+
+**Live at a terminal.** The recipe chooses its own stdout callback,
+`callback_plugins/claude_on_proxmox_status.py`
+([§7.7](custom-code.md#77-filter_pluginsstatuspy-and-callback_pluginsclaude_on_proxmox_statuspy--just-status)),
+the only callback of the run. At a terminal it draws the whole report at the bottom of the screen
+within a second, a spinner wherever a value is still being read, and redraws it as each piece lands;
+when the run ends the live region is erased and the finished report printed once. Piped, in the log,
+under `--json` or at a terminal that cannot take it, only the finished report appears, or nothing. Every
+live line is cut to the window's width and the region to its height, so nothing wraps and the cursor
+moves only within the region; a resize pushes the screen into the scrollback and starts afresh; the
+cursor is never hidden. `tests/unit/test_status_live.py` runs the real playbook at a pseudo-terminal of
+its own and reads the bytes back through a small terminal (`tests/unit/vt.py`).
+
+**The recipe.** `just status [names] [--only sections] [--json]` runs the playbook through
+`tools/run-logged` with a report path of its own run in `STATUS_DIR` (`.cache/status/`, git-ignored and
+refused by `tests/check_no_local_files.sh`, since the report holds addresses), then `tools/status-exit`,
+which prints the report under `--json`, removes it and exits with its code. `--only` takes `vms`,
+`storage` and `access`. `just list` is the same recipe by the name it had before.
 
 ## 4.7 `deploy.yml`
 

@@ -60,7 +60,7 @@ so a fleet larger than that is cloned, booted and configured in waves. Raise it 
 Expect a VM's address to change when you rebuild it. A DHCP reservation in your router pins an
 address to a MAC, and that only lasts as long as the VM: Proxmox gives every clone a new random MAC
 and this project cannot choose one, so a destroyed and re-provisioned VM is a new MAC and a new
-lease. You never need to know the address in advance anyway — `just list` shows it.
+lease. You never need to know the address in advance anyway — `just status` shows it.
 
 `proxmox_vm_ipconfig` in `local.yml` skips DHCP and assigns an address directly, for example
 `ip=192.0.2.50/24,gw=192.0.2.1`. It is one value applied to **every VM a run provisions**, so with

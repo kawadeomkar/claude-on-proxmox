@@ -173,21 +173,39 @@ VM does, so leaving it alone is a success, reported. `just deploy gamma --only c
 fails instead — its job is the software on the VM you named, and it cannot do that job on a VM that is
 off, so it stops rather than configure the rest and exit 0 with gamma silently skipped.
 
-`just list` answers the same question later, for everything this project created. It is read-only,
-and unlike the discovery that `just deploy --only configure` runs, it shows a VM whether or not its guest agent
-is answering:
+`just status` answers the same question later, for everything this project created, and says what needs
+doing next. It is read-only, changes nothing anywhere, and unlike the discovery that `just deploy --only
+configure` runs, it shows a VM whether or not its guest agent is answering. At a terminal it draws the
+report within a second and fills it in as each value is read:
 
 ```
-NAME                        VMID  STATUS    ADDRESS
-alpha                       9001  running   192.0.2.51
-beta                        9002  running   192.0.2.52
-gamma                       9003  stopped   -
+$ just status
+claude-on-proxmox  2026-10-25 14:32 PDT · pve, Proxmox VE 9.2.21 · 3 VMs
 
-3 VMs tagged "claude-on-proxmox".
-VS Code: just code <name> [--project <repo>] (just deploy --only ssh-config refreshes the aliases).
-No address for gamma: the guest agent has not reported one.
-Those VMs may be stopped, still booting, built without the agent, or on a node that is down.
+VMS  pve · this project: 3 VMs, 6 vCPUs, 12 GiB, 96 GiB of disk
+ VMID  NAME     UP        vCPU  CPU  LAST 24 H     MEM GiB             ROOT GiB   CREATED
+ 9001  ● alpha  2 d 4 h      2  12%  ▁▁▁▁▁▁▁▂▂▁▁▁  3.1 / 4.0           11 / 31    13 d ago
+ 9002  ● beta   6 h 2 m      2   3%  ▁▁▁▁▁▁▁▁▁▁▁▁  1.2 / 4.0, min 2.0  9.8 / 31   13 d ago
+ 9003  ○ gamma  stopped      2                     — / 4.0             — / 32     13 d ago
+       + 4 other VMs on pve, not this project's: 8 vCPUs, 24 GiB, 4 running
+
+STORAGE
+ local-lvm  lvmthin  ███░░░░░░░░░  24%  34 / 141 GiB · this project's disks 96 GiB
+ template   ubuntu-24.04-cloudinit (9000) · built 40 d ago
+
+ACCESS   LAN           SSH ALIAS
+ alpha   192.0.2.51    alpha
+ beta    192.0.2.52    beta
+ gamma   stopped       gamma
+ VS Code: just code <name> [--project <repo>] [--session <id>]
+
+read in 3.2 s · proxmox 0.9 s · vms 3 of 3 2.4 s
+exit 0 · nothing is wrong · sections: vms storage access · --only · --json
 ```
+
+It exits 0 when nothing is wrong, 1 for a problem, 2 when something could not be read, so a script can
+ask it; `--json` prints the report as JSON, and `--only vms,storage` the sections named. `just status
+alpha` reads one VM. [VMs and fleets](../guides/vms.md#what-just-status-shows) says what each part means.
 
 Later, `just code alpha` opens the VM in VS Code again, and the alias the run wrote, named
 after the VM, makes `ssh alpha` work too (see [VS Code](../guides/vscode.md)).

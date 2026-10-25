@@ -330,66 +330,89 @@
         fail_msg: provision.yml must ask Proxmox for the next free VMID, once, for a fleet.
         quiet: true
 
-# What `just list` shows, for the whole fleet. Asserted on the rows the
-# playbook builds rather than the rendered table, so a formatting change does
-# not break the test while a wrong VM, a wrong address or a lost filter does.
-- name: List the fleet the way just list does
-  ansible.builtin.import_playbook: ../../playbooks/list.yml
+# What `just status` shows of the fleet, from the API alone: the fake's VMs
+# never answer over SSH, so only the sections that read the API (vms, storage).
+# Asserted on the report's model rather than its text, so a formatting change
+# does not break the test while a wrong VM, a wrong address or a lost filter
+# does. status_report_file is empty, whatever the environment says: the run writes no report file.
+- name: Report on the fleet the way just status does
+  ansible.builtin.import_playbook: ../../playbooks/status.yml
+  vars:
+    status_report_file: ""
+    status_only: vms,storage
 
-- name: Verify the listing
+- name: Verify the report
   hosts: localhost
   gather_facts: false
 
   tasks:
-    # Unlike discovery, the listing keeps a VM it cannot address - nonic and
-    # netone with no net0, parked stopped, and the one on the node that is
+    # As discovery would not, the report keeps a VM it cannot address - nonic
+    # and netone with no net0, parked stopped, and the one on the node that is
     # down, which has no name either and comes last - with a blank address,
     # and it must still leave out every VM that is not this project's,
     # including the template, and the tagged container, which is no VM.
-    - name: Assert the listing shows this project's VMs, and only those
+    - name: Assert the report shows this project's VMs, and only those
+      vars:
+        status_vms_seen: "{{ status_report.vms }}"
       ansible.builtin.assert:
         that:
-          - claude_list_rows | map(attribute='name', default='') | list == ['alpha', 'beta', 'commas', 'netone', 'nonic', 'parked', '']
-          - claude_list_rows | map(attribute='vmid') | last == 8001
-          - "9003 not in (claude_list_rows | map(attribute='vmid') | list)"
+          - status_vms_seen | map(attribute='name') | map('default', '', true) | list == ['alpha', 'beta', 'commas', 'netone', 'nonic', 'parked', '']
+          - status_vms_seen | map(attribute='vmid') | last == 8001
+          - "9003 not in (status_vms_seen | map(attribute='vmid') | list)"
           # From the guest agent, matched against each VM's own NIC - not the
           # docker bridge the fake also reports.
-          - claude_list_rows | map(attribute='address') | list == ['192.0.2.51', '192.0.2.54', '192.0.2.58', '', '', '', '']
-          - claude_list_rows | map(attribute='status') | list == ['running', 'running', 'running', 'running', 'running', 'stopped', 'unknown']
-        fail_msg: "just list produced {{ claude_list_rows }}"
+          - status_vms_seen | map(attribute='address') | list == ['192.0.2.51', '192.0.2.54', '192.0.2.58', '', '', '', '']
+          - status_vms_seen | map(attribute='state') | list == ['running', 'running', 'running', 'running', 'running', 'stopped', 'unknown']
+          # Each VM's own reads, by its name, as status_vms hosts: the ones that answer have their history.
+          - (status_vms_seen | first).api.read
+          - (status_vms_seen | first).api.cpu_24h | select | list | length > 0
+          # The VM on the node that is down could not be read, and says so, as do the two running VMs whose
+          # agent reports no address on net0 after three minutes; they make the run's code 2.
+          - status_report.attention | selectattr('level', 'equalto', 'unread') | map(attribute='vm') | list == ['VMID 8001', 'netone', 'nonic']
+          - status_report.exit == 2
+          - status_report.sections == ['vms', 'storage']
+          - status_report.storages | map(attribute='storage') | list == ['local-lvm']
+          - status_report.template.name == 'ubuntu-24.04-cloudinit'
+        fail_msg: "just status produced {{ status_report | to_json }}"
         quiet: true
 
-- name: List two VMs by name
-  ansible.builtin.import_playbook: ../../playbooks/list.yml
+- name: Report on two VMs by name
+  ansible.builtin.import_playbook: ../../playbooks/status.yml
   vars:
+    status_report_file: ""
     vm_name: alpha,beta
+    status_only: vms,storage
 
-- name: Verify the narrowed listing
+- name: Verify the narrowed report
   hosts: localhost
   gather_facts: false
 
   tasks:
-    - name: Assert the listing narrowed to the requested VMs
+    - name: Assert the report narrowed to the requested VMs
       ansible.builtin.assert:
-        that: claude_list_rows | map(attribute='name') | list == ['alpha', 'beta']
-        fail_msg: "just list alpha,beta produced {{ claude_list_rows }}"
+        that:
+          - status_report.vms | map(attribute='name') | list == ['alpha', 'beta']
+          - status_report.exit in [0, 1]
+        fail_msg: "just status alpha,beta produced {{ status_report | to_json }}"
         quiet: true
 
-- name: List a VM whose LAN NIC is net1
-  ansible.builtin.import_playbook: ../../playbooks/list.yml
+- name: Report on a VM whose LAN NIC is net1
+  ansible.builtin.import_playbook: ../../playbooks/status.yml
   vars:
+    status_report_file: ""
     vm_name: netone
     proxmox_nic: net1
+    status_only: vms
 
-- name: Verify the listing read the NIC it was told to
+- name: Verify the report read the NIC it was told to
   hosts: localhost
   gather_facts: false
 
   tasks:
-    - name: Assert netone is listed with its net1 address
+    - name: Assert netone is shown with its net1 address
       ansible.builtin.assert:
-        that: claude_list_rows | map(attribute='address') | list == ['192.0.2.59']
-        fail_msg: "just list with proxmox_nic=net1 produced {{ claude_list_rows }}"
+        that: status_report.vms | map(attribute='address') | list == ['192.0.2.59']
+        fail_msg: "just status netone with proxmox_nic=net1 produced {{ status_report | to_json }}"
         quiet: true
 
 # The playbook-level refusals: a failure is the expected result, which an

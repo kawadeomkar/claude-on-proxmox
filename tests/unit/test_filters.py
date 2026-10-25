@@ -232,7 +232,7 @@ class TestGuestAddress:
 
     def test_reads_the_mac_from_the_nic_it_is_given(self):
         # A template whose LAN NIC is net1: reading net0 regardless is the bug
-        # that left such a VM out of just deploy --only configure and blank in just list.
+        # that left such a VM out of just deploy --only configure and blank in just status.
         info = vm_info({"net0": "virtio=02:00:00:00:00:01,bridge=vmbr1", "net1": NET0}, [LO, DOCKER0, ETH0])
         assert guest_address(info, "net1") == "192.0.2.51"
         assert guest_address(info, "net0") == ""
@@ -279,7 +279,7 @@ class TestProxmoxAccessDenied:
         "msg",
         [
             # VMIDs containing 401 or 403, in the detail Proxmox writes: a
-            # stopped VM like this used to fail just list for the whole fleet.
+            # stopped VM like this used to fail the listing for the whole fleet.
             "Failed to retrieve QEMU VMs information: 500 Internal Server Error: VM 4013 is not running",
             "Failed to retrieve QEMU VMs information: 500 Internal Server Error: VM 401 is not running",
             "Failed to retrieve QEMU VMs information: 500 Internal Server Error: VM 14030 is not running",

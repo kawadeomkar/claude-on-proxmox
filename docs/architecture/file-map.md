@@ -23,7 +23,7 @@ playbooks/
   template.yml                    one-time: build the cloud-init template (SSH to PVE)
   provision.yml                   three plays: register → create in parallel → publish
   discover.yml                    find VMs by tag, resolve addresses via the guest agent
-  list.yml                        read-only: what exists, and where it is
+  status.yml                      just status: read-only, what every VM is doing and what needs doing next
   claude_login.yml                sign Claude in by the browser, VM by VM, then start Remote Control; bare, report
   github_login.yml                sign gh in by the device flow, VM by VM, then run github_projects; bare, report
   tailscale_login.yml             sign the VM in to Tailscale by its web login, VM by VM; bare, report

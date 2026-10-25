@@ -50,6 +50,19 @@ A second token id, "noagent", stands for a token created without the
 guest-agent privilege (VM.Monitor on PVE 8, VM.GuestAgent.Audit on 9): every
 request is accepted except the agent's, which is refused with 403.
 
+For `just status` (playbooks/status.yml): /cluster/resources?type=storage lists
+each storage the token may audit with its fill, and ?type=node the nodes, with
+no statistics, as a token without Sys.Audit sees them. A running VM is listed
+with its CPU, memory and uptime, and /nodes/<node>/qemu/<id>/status/current,
+rrddata (a day of points), pending, and the agent's get-osinfo and get-fsinfo
+answer as Proxmox VE does. memhost and the pressure figures are VE 9's: the fake
+reports them only once /version says 9 or later, and a day of rrddata is 1440
+points then, 70 on 8. /nodes/<node>/storage/<id>/content lists the disks on a
+storage. A fixture marks a change waiting for a restart with PUT
+/api2/json/fake/pending?vmid=&key=&value=, and sets how full a VM's root disk
+is with PUT /api2/json/fake/root?vmid=&used=<bytes>. A clone's config carries a
+meta ctime of its own, the moment it was made; the template's is fixed.
+
 Usage: fake_pve_api.py <port> <certfile> <keyfile> <state_dir> <expected_token_secret>
 """
 
@@ -57,6 +70,7 @@ import json
 import re
 import ssl
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -96,6 +110,7 @@ VMS = {
             "ide2": "local-lvm:vm-9000-cloudinit,media=cdrom",
             "net0": "virtio=BC:24:11:00:23:28,bridge=vmbr0",
             "template": 1,
+            "meta": "creation-qemu=8.1.5,ctime=1760000000",
         },
     },
     # Two guests on the node that is down: a stranger, and one this project
@@ -155,6 +170,14 @@ PRIVILEGES = {}
 # Each node's storages for VM disks, with their type and free bytes, and its bridges.
 STORAGES = {NODE: [{"storage": "local-lvm", "type": "lvmthin", "avail": 412 * 1024**3}]}
 BRIDGES = {NODE: ["vmbr0"]}
+# Each storage's size, for its fill in /cluster/resources?type=storage: used is
+# the size less what STORAGES says is free.
+STORAGE_SIZE = 465 * 1024**3
+# Changes waiting for a restart, by VM, and each VM's root disk use, by VMID
+# (11 GiB unless a fixture sets it).
+PENDING = {}
+ROOT_USED = {}
+ROOT_TOTAL = 31 * 1024**3
 ROLE = [
     "VM.Allocate",
     "VM.Clone",
@@ -246,6 +269,21 @@ def disk_bytes(config):
     return 0
 
 
+def version_9():
+    return int(VERSION["version"].split(".")[0]) >= 9
+
+
+def live(vm):
+    """A running VM's CPU, memory and uptime, the same each time it is asked; nothing for one that is not."""
+    vmid, maxmem = vm["vmid"], int(vm["config"].get("memory", 512)) * 1024**2
+    if vm["status"] != "running":
+        return {"cpu": 0, "mem": 0, "uptime": 0}
+    stats = {"cpu": round((vmid % 7 + 1) / 50, 4), "mem": maxmem * 3 // 8, "uptime": 3600 * (vmid % 50 + 1)}
+    if version_9():
+        stats["memhost"] = maxmem // 2
+    return stats
+
+
 def resource(vm):
     entry = {
         "vmid": vm["vmid"],
@@ -257,6 +295,8 @@ def resource(vm):
         "maxcpu": int(vm["config"].get("cores", 1)),
         "maxmem": int(vm["config"].get("memory", 512)) * 1024**2,
         "maxdisk": disk_bytes(vm["config"]),
+        "disk": 0,
+        **live(vm),
     }
     # Proxmox fills name, template and the real status from the node's
     # statistics, which the cluster drops five minutes after a node stops
@@ -370,6 +410,44 @@ class Handler(BaseHTTPRequestHandler):
             # Not a PVE endpoint: a fixture's switch for the listing's lag.
             LISTING_LAG["listings"] = int(params.get("listings", "0"))
             return self._reply(200, dict(LISTING_LAG))
+        if parts == ["cluster", "resources"] and params.get("type") == "storage":
+            # Only the storages the token may audit, as Proxmox lists them; none on the node that is down.
+            listed = []
+            for node, entries in STORAGES.items():
+                if node == DOWN_NODE and not NODES_ONLINE[DOWN_NODE]:
+                    continue
+                for entry in entries:
+                    if "Datastore.Audit" not in privileges(token.group(2), "/storage/" + entry["storage"]):
+                        continue
+                    listed.append(
+                        {
+                            "id": f"storage/{node}/{entry['storage']}",
+                            "type": "storage",
+                            "storage": entry["storage"],
+                            "node": node,
+                            "plugintype": entry["type"],
+                            "maxdisk": STORAGE_SIZE,
+                            "disk": STORAGE_SIZE - entry["avail"],
+                            "status": "available" if entry.get("active", 1) else "unknown",
+                            "shared": 0,
+                            "content": "images,rootdir",
+                        }
+                    )
+            return self._reply(200, listed)
+        if parts == ["cluster", "resources"] and params.get("type") == "node":
+            # A token without Sys.Audit sees the nodes, and no statistics of theirs.
+            nodes = [(NODE, "online"), (DOWN_NODE, "online" if NODES_ONLINE[DOWN_NODE] else "offline")]
+            return self._reply(
+                200, [{"id": f"node/{n}", "type": "node", "node": n, "status": s, "level": ""} for n, s in nodes]
+            )
+        if parts[:2] == ["fake", "pending"] and method == "PUT":
+            # Not a PVE endpoint: a fixture's change waiting for a restart.
+            PENDING.setdefault(int(params["vmid"]), {})[params["key"]] = params.get("value", "")
+            return self._reply(200, PENDING[int(params["vmid"])])
+        if parts[:2] == ["fake", "root"] and method == "PUT":
+            # Not a PVE endpoint: how full a fixture's VM's root disk is.
+            ROOT_USED[int(params["vmid"])] = int(params["used"])
+            return self._reply(200, {"vmid": int(params["vmid"]), "used": int(params["used"])})
         if parts == ["cluster", "resources"]:
             entries = [resource(vm) for vm in VMS.values()]
             for entry in entries:
@@ -411,6 +489,25 @@ class Handler(BaseHTTPRequestHandler):
                 if sees & set(privileges(token.group(2), "/storage/" + entry["storage"]))
             ]
             return self._reply(200, seen)
+        if parts[:1] == ["nodes"] and parts[2:3] == ["storage"] and parts[4:] == ["content"]:
+            # The disks on one storage, each VM's scsi0 that is on it; only with Datastore.Audit there.
+            storage = parts[3]
+            if "Datastore.Audit" not in privileges(token.group(2), "/storage/" + storage):
+                return self._reply(403, None, f"Permission check failed (/storage/{storage}, Datastore.Audit)")
+            volumes = []
+            for vm in VMS.values():
+                volid = str(vm["config"].get("scsi0", "")).split(",", 1)[0]
+                if vm["node"] == parts[1] and volid.startswith(storage + ":"):
+                    volumes.append(
+                        {
+                            "volid": volid,
+                            "vmid": vm["vmid"],
+                            "size": disk_bytes(vm["config"]),
+                            "format": "raw",
+                            "content": "images",
+                        }
+                    )
+            return self._reply(200, volumes)
         if parts[:1] == ["nodes"] and parts[2:] == ["network"]:
             seen = [
                 {"iface": bridge, "type": "bridge", "active": 1, "autostart": 1}
@@ -480,6 +577,8 @@ class Handler(BaseHTTPRequestHandler):
                     "name": params.get("name"),
                     "scsi0": vm["config"]["scsi0"].replace(f"base-{vmid}", f"vm-{newid}"),
                     "net0": f"virtio={mac_for(newid)},bridge=vmbr0",
+                    # A clone is a VM of its own, made now.
+                    "meta": f"creation-qemu=8.1.5,ctime={int(time.time())}",
                 },
             }
             save_state()
@@ -507,7 +606,89 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(500, None, "QEMU guest agent is not running")
             return self._reply(200, {"result": agent_interfaces(vm)})
         if sub == ["status", "current"]:
-            return self._reply(200, {"status": vm["status"], "vmid": vmid, "name": vm["name"]})
+            maxmem = int(vm["config"].get("memory", 512)) * 1024**2
+            current = {
+                "status": vm["status"],
+                "vmid": vmid,
+                "name": vm["name"],
+                "cpus": int(vm["config"].get("cores", 1)),
+                "maxmem": maxmem,
+                "qmpstatus": vm["status"],
+                "agent": 1,
+                "balloon": int(vm["config"].get("balloon", vm["config"].get("memory", 512))) * 1024**2,
+                **live(vm),
+            }
+            if version_9():
+                current.update(
+                    {k: 0 for k in ("pressurecpusome", "pressurecpufull", "pressureiosome", "pressureiofull")}
+                )
+            return self._reply(200, current)
+        if sub == ["rrddata"] and method == "GET":
+            # A day: one point a minute on VE 9, one every twenty minutes on 8, the VM's CPU rising and falling.
+            step = 60 if version_9() else 1200
+            now = int(time.time()) // step * step
+            points = []
+            for i in range(86400 // step):
+                t = now - 86400 + (i + 1) * step
+                point = {"time": t}
+                if vm["status"] == "running":
+                    point.update(
+                        {"cpu": round(0.05 + 0.04 * ((t // 7200) % 5), 4), "maxcpu": int(vm["config"].get("cores", 1))}
+                    )
+                    if version_9():
+                        point.update({"pressurecpusome": 0.5, "memhost": 1})
+                points.append(point)
+            return self._reply(200, points)
+        if sub == ["pending"] and method == "GET":
+            entries = [{"key": k, "value": v} for k, v in sorted(vm["config"].items())]
+            for key, value in sorted(PENDING.get(vmid, {}).items()):
+                entries = [e for e in entries if e["key"] != key] + [
+                    {"key": key, "value": vm["config"].get(key), "pending": value}
+                ]
+            return self._reply(200, entries)
+        if sub[:1] == ["agent"] and sub[1:] in (["get-osinfo"], ["get-fsinfo"]) and method == "GET":
+            if vm["status"] != "running":
+                return self._reply(500, None, f"VM {vmid} is not running")
+            if AGENT_CALLS.get(vmid, 0) <= AGENT_READY_AFTER:
+                return self._reply(500, None, "QEMU guest agent is not running")
+            if sub[1] == "get-osinfo":
+                return self._reply(
+                    200,
+                    {
+                        "result": {
+                            "id": "ubuntu",
+                            "name": "Ubuntu",
+                            "pretty-name": "Ubuntu 24.04.3 LTS",
+                            "version-id": "24.04",
+                            "kernel-release": "6.8.0-85-generic",
+                            "machine": "x86_64",
+                        }
+                    },
+                )
+            used = ROOT_USED.get(vmid, 11 * 1024**3)
+            return self._reply(
+                200,
+                {
+                    "result": [
+                        {
+                            "name": "sda1",
+                            "mountpoint": "/",
+                            "type": "ext4",
+                            "used-bytes": used,
+                            "total-bytes": ROOT_TOTAL,
+                            "disk": [],
+                        },
+                        {
+                            "name": "sda15",
+                            "mountpoint": "/boot/efi",
+                            "type": "vfat",
+                            "used-bytes": 6 * 1024**2,
+                            "total-bytes": 105 * 1024**2,
+                            "disk": [],
+                        },
+                    ]
+                },
+            )
         if sub[:1] == ["status"] and method == "POST":
             action = sub[1]
             if LISTING_LAG["listings"] > 0 and vmid not in STALE:

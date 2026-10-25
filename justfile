@@ -56,6 +56,9 @@ ANSIBLE_ARGS := env('ANSIBLE_ARGS', '')
 # lists them.
 LOG_DIR := env('LOG_DIR', justfile_directory() / '.logs')
 LOG_RETENTION_DAYS := env('LOG_RETENTION_DAYS', '14')
+# Where just status's run writes its report, which the recipe reads and then
+# removes: git-ignored, and refused by tests/check_no_local_files.sh.
+STATUS_DIR := env('STATUS_DIR', justfile_directory() / '.cache' / 'status')
 # From the command line only (just BIN=<dir> ...): the tools of another
 # directory, which the unit tests point at stand-ins. A BIN in the
 # environment, a name many shells use for ~/bin, is never read.
@@ -71,7 +74,7 @@ stamp := datetime('%Y%m%d-%H%M%S')
 # recipe that includes another's work (test lints, init installs) runs it by.
 # A recursive just would otherwise start without the command line's BIN= and
 # the rest; tests/unit/test_justfile.py holds this to every setting above.
-self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' INIT_FILES=' + quote(INIT_FILES) + ' stamp=' + quote(stamp)
+self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' INIT_FILES=' + quote(INIT_FILES) + ' stamp=' + quote(stamp)
 # The first line of every recipe but help.
 guard := quote(justfile_directory() / 'tools/check') + ' checkout ' + quote(invocation_directory())
 # The scripts directory of PYTHON's environment, or BIN: refused, with how to
@@ -119,10 +122,10 @@ help *RECIPE:
     if [ "$#" -eq 1 ]; then exec {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --usage "$1"; fi
     {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --list --unsorted
     echo
-    echo "Without names, deploy and destroy act on claude-on-proxmox-default; list, login and deploy"
+    echo "Without names, deploy and destroy act on claude-on-proxmox-default; status, login and deploy"
     echo "--only configure, --check or --only ssh-config act on every VM this project created."
     echo "Options go after the recipe's name, settings before it or exported: ANSIBLE_ARGS='...' passes"
-    echo "anything else to ansible-playbook in init, deploy, code, login, list and destroy, and"
+    echo "anything else to ansible-playbook in init, deploy, code, login, status and destroy, and"
     echo "LOG_DIR=<dir> moves the run logs: just ANSIBLE_ARGS=-vvv deploy alpha."
 
 # ------------------------------------------------------------------ use ----
@@ -456,15 +459,32 @@ login SIGN_IN='' *NAMES:
     {{ no_tty_args }}
     exec {{ run_logged }} "login${only:+-$only}" "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} "playbooks/${only:+${only}_}login.yml"
 
-[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='Only these VMs; none lists every VM this project created')]
-[doc('Show the VMs this project created, and their addresses')]
+# What every VM this project created is doing, and what needs doing next,
+# read without changing anything (playbooks/status.yml): a dry run, with its
+# own stdout callback (callback_plugins/claude_on_proxmox_status.py) the only
+# one, so ansible.cfg's profile_tasks prints nothing on stdout (naming a stdout
+# callback in callbacks_enabled loads nothing more, and an empty one is an
+# error). The callback draws the report live at a terminal and prints it whole
+# at the end. The run writes the report to a file of its own, named after the
+# run, which the last line reads its exit code from, prints under --json, and
+# removes: 0 nothing is wrong, 1 a problem, 2 something could not be read, 3
+# the run itself failed or wrote no report. ansible-playbook's own code is
+# caught, since -e would end the script at it: its 2 would read as "not read".
+# just list is the same recipe, by the name it had before.
+[arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output, with the same exit code')]
+[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='Only these VMs; none reads every VM this project created')]
+[arg('ONLY', long='only', pattern='((vms|storage|access)(,(vms|storage|access))*)?', help='Only these sections, comma-separated: vms storage access')]
+[doc('What every VM this project created is doing, and what needs doing next, read without changing anything')]
 [group('use')]
 [no-exit-message]
 [positional-arguments]
 [script]
-list *NAMES:
+status ONLY='' JSON='' *NAMES:
     {{ guard }}
+    only=$1 json=$2
+    shift 2
     tools/check names "$@"
+    tools/check sections "$only"
     names=$(IFS=,; printf %s "$*")
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
@@ -472,7 +492,23 @@ list *NAMES:
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
-    exec {{ run_logged }} list "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/list.yml
+    [ -z "$only" ] || set -- "$@" -e "{\"status_only\": \"$only\"}"
+    report={{ quote(absolute_path(STATUS_DIR)) }}/{{ stamp }}-$$.json
+    mkdir -p {{ quote(absolute_path(STATUS_DIR)) }}
+    chmod 700 {{ quote(absolute_path(STATUS_DIR)) }}
+    rm -f "$report"
+    rc=0
+    STATUS_REPORT_FILE=$report STATUS_QUIET=$json ANSIBLE_STDOUT_CALLBACK=claude_on_proxmox_status \
+      ANSIBLE_CALLBACKS_ENABLED=claude_on_proxmox_status \
+      {{ run_logged }} status "$bin/ansible-playbook" "$@" --check {{ ANSIBLE_ARGS }} playbooks/status.yml || rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$report" ]; then
+      rm -f "$report"
+      echo "just status: the run failed (ansible-playbook exited $rc) and wrote no report" >&2
+      exit 3
+    fi
+    exec "$bin/python" tools/status-exit "$report" "$json"
+
+alias list := status
 
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default')]
 [continue]
