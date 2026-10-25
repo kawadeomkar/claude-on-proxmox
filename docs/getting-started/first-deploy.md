@@ -62,7 +62,7 @@ for it. `just init` reminds you while `local.yml` does not set it either way, an
 With no terminal, `just init` asks nothing and writes nothing but what its command line gives it, so it
 can be scripted. Each answer is an option of `just init`'s, and the token's secret comes from a file, or
 from the environment, never from the command line, which your shell keeps in its history and the process
-list shows (a word after the options, `TOKEN_SECRET=` among them, is refused without being said):
+list shows (a word after the options, make's `TOKEN_SECRET=` among them, is refused without being said):
 
 ```console
 $ (umask 077; printf %s "$PVE_SECRET" > ~/.config/pve-token)

@@ -345,7 +345,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   this machine's memory folder: resume sends the snapshot, never them, which the `configure` scenario holds.
 - **`just destroy` saves what of a VM's Claude Code sessions exists only there before releasing it.**
   `tasks/session_save.yml`, under `destroy_save_sessions` (on by default): `claude_sessions_info` on the VM
-  with `all` and just code's manifest (in `make_code_dir`, as code.yml names it), `claude_sessions_saved`
+  with `all` and just code's manifest (in `just_code_dir`, as code.yml names it), `claude_sessions_saved`
   keeping each session with a message that is not a copy still as written, with the folder beside it, and
   every auto memory folder. Nothing the VM sends is trusted: a folder or ID not named as Claude Code names
   them is left out, and `claude_sessions_fetch` (delegated here) runs `tar` there over SSH as Ansible
@@ -392,7 +392,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   test points the four `init_*_file` vars into its own directory, through `_init` and
   `_init_at_a_terminal` in `tests/unit/test_init_settings.py`, which holds that statically. The token
   secret is never taken from the command line (`just init` refuses any word after its options without
-  printing it, `TOKEN_SECRET=...` among them): only from `--token-secret-file`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
+  printing it, make's `TOKEN_SECRET=...` among them): only from `--token-secret-file`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
   argv. `playbooks/init_check.yml`, its second run, changes nothing but `local.yml`, through
   `tasks/init_local_setting.yml` and under `init_ask` or a value given: the node when it is the default and
   not the template's (worked out, never chosen), the storage or bridge chosen from what the node lists and
@@ -553,7 +553,7 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   `just install` runs `tools/stale_scripts.py` first and reinstalls each locked package with a command
   whose first line names a Python outside the environment's `bin`, compared as spelled, never resolved
   (the link resolves to the right Python), then `--check`s that none is left.
-- **`-e key=value` splits extra-vars on whitespace.** `VM_NAME="alpha beta"` silently provisioned
+- **`-e key=value` splits extra-vars on whitespace.** make's `VM_NAME="alpha beta"` silently provisioned
   half the fleet. The justfile passes the names as JSON (`-e '{"vm_name": "..."}'`) to keep them whole.
 - **Proxmox tags** arrive `;`-joined and lowercased on the wire, but `proxmox_kvm` *sends* them
   comma-joined. Anything parsing tags must handle both.
@@ -596,8 +596,11 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   JSON is checked again there (`tools/check names`, `project` and `session`, `init`'s `only`), then
   travels to Ansible as JSON. VM names start with a letter or a digit: a recipe without options takes a
   word that starts with `-` as a name, so `--project x` after `just destroy` would otherwise name a VM
-  `--project`. The
-  rules between options - `--tags` beside names means `--only configure`, and without names needs it,
+  `--project`. A recipe's words are a `*` parameter, even where it takes one: a parameter with a default
+  lists as `help RECIPE=''`, make's spelling, which just refuses, and leaves the next word to run as a
+  second recipe (`just help deploy` with `test` after it ran every test). Named in the singular (`help`,
+  `code`, `docs`, `vagrant`, `clean`), it takes one word and the script refuses a second;
+  `test_justfile.py` holds both. The rules between options - `--tags` beside names means `--only configure`, and without names needs it,
   since configuration without names reaches the fleet and a bare deploy does not; `--check` takes no
   `--only`; `--start` only where something is started - are the first lines of each script, said before
   any check or tool. `just deploy configure`, a stage where the names go, asks at a terminal whether the

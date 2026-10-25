@@ -16,6 +16,11 @@
 # program, which just would do before any line ran. A value a person typed
 # reaches a script as an argument ("$1"), never as its text: just holds it to
 # its [arg] pattern first, and what goes into JSON is checked again there.
+# A recipe's words are a * parameter even where it takes one: a parameter with
+# a default lists as NAME='', make's spelling, which just refuses after the
+# recipe, and leaves the word after it to run as a second recipe (just help
+# deploy test ran every test). Named in the singular, it takes one word, and
+# the script refuses a second.
 # just itself is yours to install, as uv is: 1.59.0 or later.
 
 set minimum-version := '1.59.0'
@@ -98,24 +103,27 @@ scenario_roles := 'common vscode_server dev_tools claude_code github_projects ta
 # (ruff-format even rewriting files). gitleaks is in it because its hook scans
 # only what is staged, and CI scans the tree and the pushed commits separately.
 pre_commit_skip := 'yamllint,ansible-lint,ruff-check,ruff-format,gitleaks'
-# What init says when a word follows its options - make's spelling of an
-# answer, TOKEN_SECRET=..., or a bare word - without saying the word, which
+# What init says when a word follows its options - a bare word, or an
+# answer as make took it, TOKEN_SECRET=... - without saying the word, which
 # may be the secret.
 init_extra_refused := "echo \"error: just init takes only its options (just help init), and nothing after them - never the token secret, which the command line would put in the shell's history and the process list: put it in a file only you can read, just init --token-secret-file <file>, or export CLAUDE_ON_PROXMOX_TOKEN_SECRET from wherever your secrets live - a CI secret, or read -rs at a prompt\" >&2; exit 1"
 
-[arg('RECIPE', pattern='[a-z]*', help='A recipe whose options to show')]
+[arg('RECIPE', pattern='[a-z]+', help='The one recipe whose options to show')]
 [default]
 [doc('Show the recipes, or the options of one: just help <recipe>')]
+[no-exit-message]
 [positional-arguments]
 [script]
-help RECIPE='':
-    if [ -n "$1" ]; then exec {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --usage "$1"; fi
+help *RECIPE:
+    [ "$#" -le 1 ] || { echo "error: just help shows one recipe's options at a time (got: [$*])" >&2; exit 1; }
+    if [ "$#" -eq 1 ]; then exec {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --usage "$1"; fi
     {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --list --unsorted
     echo
     echo "Without names, deploy and destroy act on claude-on-proxmox-default; list, login and deploy"
     echo "--only configure, --check or --only ssh-config act on every VM this project created."
-    echo "Options go after the recipe's name. Every recipe that runs Ansible takes ANSIBLE_ARGS='...'"
-    echo "and LOG_DIR=<dir>, exported or before the recipe: just ANSIBLE_ARGS=-vvv deploy alpha."
+    echo "Options go after the recipe's name, settings before it or exported: ANSIBLE_ARGS='...' passes"
+    echo "anything else to ansible-playbook in init, deploy, code, login, list and destroy, and"
+    echo "LOG_DIR=<dir> moves the run logs: just ANSIBLE_ARGS=-vvv deploy alpha."
 
 # ------------------------------------------------------------------ use ----
 # just install, the git hook, the local config files - copied from their
@@ -271,7 +279,7 @@ vault:
 # mean either. just deploy test is the VM test.
 [arg('START', long='start', value='true', help='Start a VM this run would leave stopped (proxmox_vm_start_existing)')]
 [arg('CHECK', long='check', value='check', help='Dry-run configuration: ansible-playbook --check --diff (every tagged VM, unless named)')]
-[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default, or every VM this project created for configure, --check and ssh-config')]
+[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default, or every VM this project created for --only configure, --check and --only ssh-config')]
 [arg('ROLES', long='tags', short='t', pattern='[a-z_,]*', help='Configure only these roles, comma-separated: beside VM names it means --only configure (just deploy alpha --tags claude_code)')]
 [arg('STAGE', long='only', pattern='(template|provision|configure|ssh-config)?', help='Run one stage and nothing after it: template (the cloud-init template, if missing), provision (create and start), configure (every tagged VM, unless named) or ssh-config (refresh the SSH aliases; without names, also prune those of VMs that are gone)')]
 [continue]
@@ -361,7 +369,7 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
     set --
     {{ vault_args }}
     # Passed as JSON, not key=value: Ansible's key=value parser splits
-    # extra-vars on whitespace, so VM_NAME="alpha beta" once became just alpha
+    # extra-vars on whitespace, so make's VM_NAME="alpha beta" once became alpha
     # and only half the fleet was created.
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
     [ -z "$start" ] || set -- "$@" -e '{"proxmox_vm_start_existing": true}'
@@ -386,7 +394,7 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
 # Code sessions to continue there: its ID, the name of its transcript in
 # ~/.claude/projects/, lowercase hex in groups of 8-4-4-4-12 and nothing else.
 # Without it the folder's latest conversation continues, as before.
-[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The one VM to open')]
+[arg('NAME', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The one VM to open')]
 [arg('PROJECT', long='project', pattern='([A-Za-z0-9._-]{1,100})?', help='Open one project folder on the VM rather than the whole projects directory')]
 [arg('SESSION', long='session', pattern='([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?', help="Continue one of this machine's Claude Code sessions there, by its ID as /resume lists it: its checkout brought to the session's pushed commit, then claude --resume")]
 [continue]
@@ -395,7 +403,7 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
 [no-exit-message]
 [positional-arguments]
 [script]
-code PROJECT='' SESSION='' *NAMES:
+code PROJECT='' SESSION='' *NAME:
     {{ guard }}
     project=$1 session=$2
     shift 2
@@ -605,16 +613,17 @@ test ROLES='' *PARTS:
 # generated from the files they describe - this justfile's recipes among them,
 # through `just --json` - and tests/unit/test_docs.py, part of `just test
 # unit`, fails when one is out of date or a link is broken.
-[arg('PART', pattern='(serve|build)?', help='serve (the wiki as a site at http://127.0.0.1:8000, rebuilt as you save) or build (the site in site/, failing on a broken link or anchor)')]
+[arg('PART', pattern='serve|build', help='serve (the wiki as a site at http://127.0.0.1:8000, rebuilt as you save) or build (the site in site/, failing on a broken link or anchor)')]
 [doc("Regenerate the wiki's reference pages from the files they describe")]
 [group('develop')]
 [no-exit-message]
 [positional-arguments]
 [script]
-docs PART='':
+docs *PART:
     {{ guard }}
+    [ "$#" -le 1 ] || { echo "error: just docs takes one part, serve or build (got: [$*])" >&2; exit 1; }
     {{ find_bin }}
-    case "$1" in
+    case "${1:-}" in
     serve) exec "$bin/zensical" serve -a 127.0.0.1:8000 ;;
     build) exec "$bin/zensical" build --strict --clean ;;
     *)
@@ -624,30 +633,32 @@ docs PART='':
 
 # The Vagrantfile's Ansible provisioner runs the ansible-playbook it is given
 # here, the environment's, rather than the first one on PATH.
-[arg('PART', pattern='(destroy)?', help='destroy: destroy the Vagrant test VM')]
+[arg('PART', pattern='destroy', help='destroy: destroy the Vagrant test VM')]
 [doc('End-to-end test of configure.yml on a VirtualBox VM')]
 [group('develop')]
 [no-exit-message]
 [positional-arguments]
 [script]
-vagrant PART='':
+vagrant *PART:
     {{ guard }}
-    if [ "$1" = destroy ]; then exec vagrant destroy -f; fi
+    [ "$#" -le 1 ] || { echo "error: just vagrant takes one part, destroy (got: [$*])" >&2; exit 1; }
+    if [ "${1:-}" = destroy ]; then exec vagrant destroy -f; fi
     {{ find_bin }}
     export ANSIBLE_PLAYBOOK="$bin/ansible-playbook"
     exec {{ run_logged }} vagrant vagrant up --provision
 
 # Only files named the way tools/run-logged names its logs, and only in
 # LOG_DIR.
-[arg('PART', pattern='(logs)?', help='logs: delete only the run logs in LOG_DIR')]
+[arg('PART', pattern='logs', help='logs: delete only the run logs in LOG_DIR')]
 [doc('Remove caches, the run logs and the built site (never your Python environment)')]
 [group('develop')]
 [no-exit-message]
 [positional-arguments]
 [script]
-clean PART='':
+clean *PART:
     {{ guard }}
-    part=$1
+    [ "$#" -le 1 ] || { echo "error: just clean takes one part, logs (got: [$*])" >&2; exit 1; }
+    part=${1:-}
     dir={{ quote(LOG_DIR) }}
     if [ -n "$dir" ]; then
       set -- "$dir"/[0-9]*-*.log

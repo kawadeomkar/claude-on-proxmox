@@ -554,7 +554,7 @@ def test_tailscale_auth_method_decides_whether_the_key_is_used(configured):
 # ------------------------------------------------------- what reaches text ---
 def test_next_steps_keep_what_is_left_to_do_and_nothing_where_it_runs_as_it_should(configured):
     # What the run's last lines list (callback_plugins/claude_on_proxmox.py):
-    # the report itself while something is left, whether or not it names a make
+    # the report itself while something is left, whether or not it names a just
     # command - a stopped node, missing tags, an admin's approval.
     root, first, first_calls, second = configured
     said = _said(first)
@@ -725,7 +725,7 @@ def test_a_page_approved_after_the_run_is_the_role_s_login_and_keeps_its_setting
     assert [name for name, host, result in _results(second) if result.get("changed")] == []
 
 
-def test_make_deploy_says_a_page_left_waiting_after_its_configure_play_refused_the_key(tmp_path):
+def test_just_deploy_says_a_page_left_waiting_after_its_configure_play_refused_the_key(tmp_path):
     # The configure play's refused join is still registered in the sign-in play.
     hosts = _hosts(tmp_path, {"deployed": {"key": "expired", "tailscale_login_timeout": 2}})
     playbook = tmp_path / "configure_then_sign_in.yml"
@@ -738,7 +738,7 @@ def test_make_deploy_says_a_page_left_waiting_after_its_configure_play_refused_t
     assert said[1].startswith("deployed: not signed in to Tailscale yet - the page stays valid for 7 days"), said
 
 
-def test_make_deploy_s_sign_in_step_never_says_again_what_its_configure_play_did(tmp_path):
+def test_just_deploy_s_sign_in_step_never_says_again_what_its_configure_play_did(tmp_path):
     # Its configure play's join and set are still registered in the sign-in
     # play, which did neither.
     hosts = _hosts(
@@ -901,7 +901,7 @@ def deployed(tmp_path_factory):
     return root, _deploy_step(root)
 
 
-def test_make_deploy_starts_the_web_login_by_itself_for_every_vm_but_one_whose_claude_sign_in_was_skipped(deployed):
+def test_just_deploy_starts_the_web_login_by_itself_for_every_vm_but_one_whose_claude_sign_in_was_skipped(deployed):
     root, report = deployed
     assert _asked(report) == set()
     assert len(_ups(_calls(root, "typed"))) == 1 and len(_ups(_calls(root, "quiet"))) == 1
@@ -941,7 +941,7 @@ def test_asking_first_at_a_terminal_asks_under_a_block(tmp_path):
 
 
 @pytest.mark.parametrize("switch", ["deploy_sign_in", "tailscale_enabled"])
-def test_make_deploy_s_tailscale_step_is_off_with_either_switch(tmp_path, switch):
+def test_just_deploy_s_tailscale_step_is_off_with_either_switch(tmp_path, switch):
     hosts = _hosts(tmp_path, {"typed": {}})
     hosts["typed"].update(AFTER_CLAUDE["typed"])
     extra = {**WEB_EXTRA, "vm_name": "typed", "deploy_sign_in": True, switch: False}

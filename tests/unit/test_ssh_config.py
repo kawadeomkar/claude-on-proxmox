@@ -249,7 +249,7 @@ def test_identity_file_agent_forwarding_and_options_are_written_when_set(tmp_pat
     assert resolved["connecttimeout"] == "5"
 
 
-def test_without_a_workspace_the_connect_line_says_make_code_and_guesses_no_path(tmp_path: Path) -> None:
+def test_without_a_workspace_the_connect_line_says_just_code_and_guesses_no_path(tmp_path: Path) -> None:
     result = _run(tmp_path, [{"name": "solo", "address": "192.0.2.60", "user": "dev"}])
     assert result.returncode == 0, result.stdout + result.stderr
     assert "solo: ssh solo   |   just code solo" in result.stdout

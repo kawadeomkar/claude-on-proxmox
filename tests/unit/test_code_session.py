@@ -1,7 +1,7 @@
 """The Claude session `just code` starts in the window it opens, the window step around it, and what it may write.
 
 `playbooks/code.yml` hands VS Code a workspace file whose one task runs
-`bash -lc <code_terminal_script> make-code <not installed> <signed in, watched>
+`bash -lc <code_terminal_script> just-code <not installed> <signed in, watched>
 <signed in, unwatched> <the login's path unit> <signed in to GitHub>
 <git protocol> <scopes> <vm name>` when the window opens. The script is run
 here as it is, against stand-ins for `claude`, `gh` and the BROWSER helper that
@@ -176,7 +176,7 @@ def _terminal(
     watch = tmp_path / "claude-remote-control.path"
     if watched:
         watch.write_text("[Path]\n")
-    argv = ["/bin/bash", "-c", _script(), "make-code", NOT_INSTALLED, *signed_in, str(watch), github_signed_in]
+    argv = ["/bin/bash", "-c", _script(), "just-code", NOT_INSTALLED, *signed_in, str(watch), github_signed_in]
     env = {
         "PATH": str(bin_dir),
         "BROWSER": str(bin_dir / "browser"),
@@ -190,7 +190,7 @@ def _terminal(
         "CONTINUE_SLEEP": "" if continue_sleep is None else str(continue_sleep),
         "RESUME_RC": "" if resume_rc is None else str(resume_rc),
     }
-    # Then the session notes' four, off here, and SESSION, last as the task passes them.
+    # Then the session notes' four, off here, and --session, last as the task passes them.
     return [*argv, "https", "workflow", "alpha", "", "", "claude-remote-control", "UTC", session], env
 
 
@@ -273,7 +273,7 @@ SESSION_ID = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
 
 
 def test_a_session_handed_over_is_resumed_under_its_own_id(tmp_path):
-    # SESSION: the copy this machine's session became, never a fork, and never --continue.
+    # --session: the copy this machine's session became, never a fork, and never --continue.
     result, asked = _run(tmp_path, status_rc=0, session=SESSION_ID)
     assert result.returncode == 0
     assert asked == ["claude auth status", GITHUB_STATUS, f"claude --resume {SESSION_ID}"]
@@ -422,7 +422,7 @@ def test_the_task_passes_the_script_and_its_messages_as_arguments():
     # an override of one reaches both.
     task = _play()["vars"]["code_claude_task"]
     assert task["command"] == "/bin/bash"
-    assert task["args"][:3] == ["-lc", "{{ code_terminal_script }}", "make-code"]
+    assert task["args"][:3] == ["-lc", "{{ code_terminal_script }}", "just-code"]
     assert task["args"][3:] == [
         "{{ code_not_installed }}",
         "{{ code_signed_in_watched }}",
@@ -438,7 +438,7 @@ def test_the_task_passes_the_script_and_its_messages_as_arguments():
         "{{ code_notes_file if code_notes | bool else '' }}",
         "{{ code_remote_control_unit }}",
         "{{ code_timezone }}",
-        # SESSION, last: the script reads it as the last argument.
+        # --session, last: the script reads it as the last argument.
         "{{ code_session_id }}",
     ]
     assert task["runOptions"] == {"runOn": "folderOpen"}
@@ -769,19 +769,19 @@ def test_a_deploy_for_one_vm_goes_on_to_the_window_named_or_not(windows):
         assert windows[name]["reached"] and windows[name]["rc"] == 0, windows[name]["output"]
 
 
-def test_make_code_goes_on_to_the_window_where_vs_code_s_command_is(windows):
+def test_just_code_goes_on_to_the_window_where_vs_code_s_command_is(windows):
     run = windows["just code, code here"]
     assert run["reached"] and run["rc"] == 0, run["output"]
 
 
-def test_make_code_without_vs_code_s_command_fails_and_says_how_to_get_it(windows):
+def test_just_code_without_vs_code_s_command_fails_and_says_how_to_get_it(windows):
     run = windows["just code, no code"]
     assert run["rc"] != 0 and not run["reached"]
     assert "`code` is not on this machine's PATH. In VS Code, run" in run["output"]
     assert run["later"] is None
 
 
-def test_make_deploy_without_vs_code_s_command_says_so_with_the_make_code_line_and_goes_on(windows):
+def test_just_deploy_without_vs_code_s_command_says_so_with_the_just_code_line_and_goes_on(windows):
     run = windows["deploy, no code"]
     assert run["rc"] == 0 and not run["reached"], run["output"]
     assert run["later"].startswith("`code` is not on this machine's PATH. In VS Code, run")
@@ -789,14 +789,14 @@ def test_make_deploy_without_vs_code_s_command_says_so_with_the_make_code_line_a
     assert run["left"] == {"alpha": {"vscode": run["later"]}}
 
 
-def test_make_code_needs_one_vm_name(windows):
+def test_just_code_needs_one_vm_name(windows):
     for name in ("just code, fleet", "just code, no name"):
         run = windows[name]
         assert run["rc"] != 0 and "VS Code opens one VM at a time: just code <name>." in run["output"], name
         assert run["fleet"] is None, name
 
 
-def test_a_deploy_for_a_fleet_ends_at_its_first_task_with_each_vm_s_make_code_line(windows):
+def test_a_deploy_for_a_fleet_ends_at_its_first_task_with_each_vm_s_just_code_line(windows):
     run = windows["deploy, fleet"]
     assert run["rc"] == 0 and not run["reached"], run["output"]
     assert run["fleet"] == [
@@ -821,7 +821,7 @@ def test_a_deploy_that_left_its_vm_stopped_names_the_deploy_that_starts_it(windo
     assert run["left"] == {"beta": {"vm": run["later"]}}
 
 
-def test_make_code_refuses_a_stopped_vm(windows):
+def test_just_code_refuses_a_stopped_vm(windows):
     run = windows["just code, stopped"]
     assert run["rc"] != 0 and not run["reached"]
     assert "beta is stopped, so there is nothing to connect to. `just list` shows the fleet;" in run["output"]
@@ -851,7 +851,7 @@ def test_make_code_refuses_a_stopped_vm(windows):
         ("deploy, twice", 'More than one VM tagged "claude-on-proxmox" is named alpha'),
     ],
 )
-def test_make_deploy_says_any_failure_of_the_window_step_with_the_make_code_line_and_goes_on(windows, name, said):
+def test_just_deploy_says_any_failure_of_the_window_step_with_the_just_code_line_and_goes_on(windows, name, said):
     run = windows[name]
     assert run["rc"] == 0 and not run["reached"], run["output"]
     assert run["later"].startswith(said), run["later"]
@@ -867,7 +867,7 @@ def test_every_failure_of_the_window_step_is_said_on_one_line(windows):
         assert not [one for one in said if re.search(r"[\x00-\x1f\x7f]", one)], (name, said)
 
 
-def test_make_code_fails_where_make_deploy_goes_on_and_names_the_command_that_failed(windows):
+def test_just_code_fails_where_just_deploy_goes_on_and_names_the_command_that_failed(windows):
     run = windows["just code, no extension"]
     assert run["rc"] != 0 and not run["reached"]
     assert "`code --install-extension ms-vscode-remote.remote-ssh` failed: Error while installing" in run["output"]
@@ -975,11 +975,11 @@ COMMANDS_HERE = {
 READS_ON_VM = {"ansible.builtin.getent", "ansible.builtin.stat", "ansible.builtin.find", "ansible.builtin.slurp"}
 # The session handoff's readers (playbooks/library/), run here and on the VM alike: they change nothing.
 READS_EITHER = {"claude_sessions_info", "git_checkouts_info"}
-# On the VM: whether Remote Control runs, and with SESSION, git in the one checkout it moves.
+# On the VM: whether Remote Control runs, and with --session, git in the one checkout it moves.
 COMMANDS_ON_VM = {("systemctl", "is-active"), ("git", "--no-optional-locks")}
 WRITES_ON_VM = {"ansible.builtin.file", "ansible.builtin.copy", "claude_sessions_copy"}
 # What each writer runs under: the workspace with the terminal; the notes with it and their own
-# switch; the sessions' directory when there is a session to copy, and the copies with the sync or SESSION.
+# switch; the sessions' directory when there is a session to copy, and the copies with the sync or --session.
 WRITERS_WHEN = (
     "code_terminal",
     "code_notes | bool",
@@ -1070,7 +1070,7 @@ def test_every_task_reads_this_machine_or_is_delegated_to_the_vm(task):
         pytest.fail(f"{task.get('name')} uses {action}, which just code may not")
 
 
-def test_every_task_of_the_window_step_is_in_the_block_make_deploy_rescues():
+def test_every_task_of_the_window_step_is_in_the_block_just_deploy_rescues():
     # A task outside it would fail a deploy whose VM is done. Before it is
     # only the fleet's end, which opens nothing.
     tasks = _play()["tasks"]
@@ -1101,7 +1101,7 @@ def test_every_name_code_yml_sets_is_its_own():
     assert sorted(facts & task_vars) == []
 
 
-def test_make_code_writes_exactly_the_directory_and_the_file():
+def test_just_code_writes_exactly_the_directory_and_the_file():
     # The allowlist must not pass by finding no writer.
     assert [t["name"] for t in _every_task() if _action(t) in WRITES_ON_VM] == [
         "session_write | Make the directory for the sessions on the VM",
@@ -1255,7 +1255,7 @@ def test_the_whole_directory_s_window_shows_the_notes_folder_and_opens_them_as_a
     }
     assert claude["label"] == "Claude" and "dependsOn" not in claude
     assert claude["runOptions"] == {"runOn": "folderOpen"}
-    # Then SESSION, none here.
+    # Then --session, none here.
     assert claude["args"][-5:] == [notes["args"][1], f"{SESSION}/alpha-session.md", "claude-remote-control", "UTC", ""]
     # A shell beside Claude's terminal, on its left: one presentation group
     # splits a terminal in the order its tasks start, which is the order listed.
@@ -2002,7 +2002,7 @@ def _in_two_folders(world: dict) -> None:
     (twice / f"{SESSION_ID}.jsonl").write_bytes((world["folder"] / f"{SESSION_ID}.jsonl").read_bytes())
 
 
-# Syncs without SESSION whose one session is left out, each for what the run says of it.
+# Syncs without --session whose one session is left out, each for what the run says of it.
 SYNCS = {
     "open there": (lambda w: _register(w["vm"] / ".claude"), "Left as they are, open in a claude on alpha: 0a608ad8."),
     "in two folders": (
@@ -2018,7 +2018,7 @@ SYNCS = {
 
 @pytest.fixture(scope="module")
 def handoffs(tmp_path_factory):
-    """Every session run, side by side: the sync twice, SESSION twice, and each refusal, in worlds of their own."""
+    """Every session run, side by side: the sync twice, --session twice, and each refusal, in worlds of their own."""
     root = tmp_path_factory.mktemp("handoffs")
     claude = subprocess.Popen(["claude", "3600"], executable="/bin/sleep")
     CLAUDE["pid"] = claude.pid

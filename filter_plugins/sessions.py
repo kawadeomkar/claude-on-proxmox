@@ -90,7 +90,7 @@ def github_repository(url):
     return f"{found.group('owner')}/{found.group('repo')}".lower()
 
 
-def make_code_dir(projects, given=""):
+def just_code_dir(projects, given=""):
     """just code's own directory on a VM: ``given`` (vscode_workspaces_dir), else .claude-on-proxmox in ``projects``.
 
     code.yml keeps the workspace files and the session copies' manifest there, and just destroy's
@@ -186,8 +186,8 @@ def claude_sessions_plan(
     repository only by a GitHub origin (github_repository): here any origin names one, since a
     clone here may reach GitHub through an SSH alias of the user's own - ``version``
     the VM's Claude Code ("" without one), ``repo_paths`` githubRepoPaths from this machine's
-    ~/.claude.json, ``dest`` the VM's Claude configuration directory. ``wanted`` is SESSION, which is
-    planned whatever its age, and ``project`` PROJECT, which with it must name the checkout.
+    ~/.claude.json, ``dest`` the VM's Claude configuration directory. ``wanted`` is --session, which is
+    planned whatever its age, and ``project`` --project, which with it must name the checkout.
     ``open_there`` holds the IDs a running claude on the VM has open (claude_sessions_info's
     ``registered`` there): such a copy is left, never replaced under the claude holding it.
 
@@ -273,7 +273,7 @@ def claude_sessions_plan(
 
 
 def _session_problem(entry, sessions, wanted, by_repo, project, version, vm):
-    """Why SESSION cannot be opened on the VM, or "". The git checks come after, in session_read.yml."""
+    """Why --session cannot be opened on the VM, or "". The git checks come after, in session_read.yml."""
     found = [session for session in sessions or [] if session.get("id") == wanted]
     if not found:
         return f"There is no session {wanted} on this machine: no {wanted}.jsonl in a folder of Claude Code's projects."
@@ -405,5 +405,5 @@ class FilterModule:
             "claude_sessions_saved": claude_sessions_saved,
             "git_repository": git_repository,
             "github_repository": github_repository,
-            "make_code_dir": make_code_dir,
+            "just_code_dir": just_code_dir,
         }

@@ -257,7 +257,8 @@ def test_every_parameter_but_a_flag_has_a_literal_pattern() -> None:
 def test_every_vm_recipe_holds_its_names_to_one_pattern() -> None:
     recipes = _public()
     for name in PLAYBOOK_RECIPES:
-        names = next(p for p in recipes[name]["parameters"] if p["name"] == "NAMES")
+        # code opens one VM, so its word is named in the singular.
+        names = next(p for p in recipes[name]["parameters"] if p["name"] == ("NAME" if name == "code" else "NAMES"))
         assert names["pattern"] == [NAMES_PATTERN] and names["kind"] == "star", (name, names)
 
 
@@ -753,6 +754,51 @@ def test_just_lists_every_recipe_and_help_names_each_option(tmp_path: Path) -> N
         for parameter in recipe["parameters"]:
             if parameter["long"]:
                 assert f"--{parameter['long']}" in usage.stdout, (name, parameter["long"])
+
+
+def test_every_word_a_recipe_takes_is_a_star_parameter() -> None:
+    # One with a default lists as help RECIPE='', make's spelling, which just refuses after the recipe, and
+    # leaves the word after it to run as a second recipe: just help deploy test ran every test.
+    for name, recipe in _public().items():
+        for parameter in recipe["parameters"]:
+            if not parameter["long"] and not parameter["short"]:
+                assert parameter["kind"] == "star", (name, parameter["name"])
+    listed = [line.split("#")[0] for line in _just().stdout.splitlines() if line.startswith("    ")]
+    assert listed and not [line for line in listed if "=" in line], listed
+
+
+# Each recipe whose word is named in the singular, and a word it takes.
+ONE_WORD = {"help": "deploy", "code": "alpha", "docs": "build", "vagrant": "destroy", "clean": "logs"}
+
+
+def test_a_word_named_in_the_singular_is_one_word() -> None:
+    assert ONE_WORD.keys() == {
+        name
+        for name, recipe in _public().items()
+        for parameter in recipe["parameters"]
+        if parameter["kind"] == "star" and not parameter["name"].endswith("S") and parameter["name"] != "EXTRA"
+    }
+
+
+@pytest.mark.parametrize("second", ["same", "logs"])
+@pytest.mark.parametrize("recipe", sorted(ONE_WORD))
+def test_a_second_word_is_refused_and_never_runs_as_a_recipe(tmp_path: Path, recipe: str, second: str) -> None:
+    # logs only reads: had it run as a second recipe, it would say there are none.
+    stand_ins = tmp_path / "stand-ins"
+    _stand_in(stand_ins, "vagrant")
+    _stand_in(tmp_path / "bin", "zensical")
+    word = ONE_WORD[recipe]
+    result = _just(
+        recipe,
+        word,
+        word if second == "same" else second,
+        settings=_recording(tmp_path),
+        env={"PATH": f"{stand_ins}:{_env()['PATH']}"},
+    )
+    output = _output(result)
+    assert result.returncode != 0, output
+    assert " one " in output or NOT_MATCHED in output, output
+    assert "No run logs in" not in output and not (tmp_path / "order").exists(), output
 
 
 # ---------------------------------------------------------------- run logs ----

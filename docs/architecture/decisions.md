@@ -105,6 +105,12 @@ How the justfile is built, and why (each tried on just 1.59.0, on macOS and in `
 - **A catch-all on `init`.** A word after a recipe that takes none becomes the name of a recipe to run,
   and just prints it when there is none: `just init TOKEN_SECRET=...`, make's spelling, would print the
   secret. `init` takes the words after its options as `EXTRA`, which it refuses without saying them.
+- **Every word is a variadic parameter.** A parameter with a default lists as `help RECIPE=''` - make's
+  spelling, which just refuses after the recipe - and leaves the word after it to run as a second
+  recipe: `just help deploy test` showed `deploy`'s options and then ran every test. So a recipe's words
+  are a `*` parameter, named in the plural where it takes several and in the singular where it takes one
+  (`help`, `code`, `docs`, `vagrant`, `clean`), whose script refuses a second; the listing reads
+  `docs *PART`, and [Commands](../reference/commands.md) `just docs [<part>]`.
 - **VM names start with a letter or a digit.** A recipe without options takes `--project` as a word, so a
   name may not start with `-`.
 - **just is the user's, from its own releases.** PyPI's `rust-just` would have let `uv.lock` pin it, but

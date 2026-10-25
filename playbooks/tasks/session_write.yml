@@ -13,7 +13,7 @@
 # written on this machine. The copy is no_log, and rsync names files, never
 # what is in them.
 #
-# With SESSION, the VM's checkout of its repository is then brought to the
+# With --session, the VM's checkout of its repository is then brought to the
 # commit the session's branch is at here, by fast-forward only: the one write
 # just code makes inside a repository.
 
@@ -33,7 +33,7 @@
 # macOS's rsync has no --chmod for the modes, which the directory above sets.
 # rsync's 23 and 24 are a file it could not read or one that vanished as it
 # ran: the rest was sent, and the copy names a session that did not arrive.
-# Any other failure - no rsync on either machine among them - fails SESSION
+# Any other failure - no rsync on either machine among them - fails --session
 # alone: the sync says it, and the window opens with the copies there are.
 - name: session_write | Send the sessions to the VM
   ansible.builtin.command:

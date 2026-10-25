@@ -102,7 +102,7 @@ the template, goes to `proxmox_vm_node`.
 
 ## `-e key=value` splits on whitespace
 
-`VM_NAME="alpha beta"` silently provisioned half the fleet.
+Under make, `VM_NAME="alpha beta"` silently provisioned half the fleet.
 The justfile passes the names as JSON (`-e '{"vm_name": "..."}'`) so the value arrives whole and reaches
 the name check, which explains the problem.
 

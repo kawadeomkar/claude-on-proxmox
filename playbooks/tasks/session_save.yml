@@ -75,7 +75,7 @@
     path: "{{ claude_vm_save_claude }}"
     all: true
     manifest: >-
-      {{ claude_vm_save_projects | make_code_dir(vscode_workspaces_dir | default('', true)) }}/claude-sessions/manifest.json
+      {{ claude_vm_save_projects | just_code_dir(vscode_workspaces_dir | default('', true)) }}/claude-sessions/manifest.json
     memory: true
   become: false
   register: claude_vm_save_found

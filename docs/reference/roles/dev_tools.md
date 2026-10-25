@@ -1,6 +1,6 @@
 # `dev_tools`
 
-Developer tooling from each vendor's own source: Node.js from NodeSource, Docker Engine, the GitHub CLI, and uv from a release pinned by version and SHA256. The apt signing keys are vendored in `roles/dev_tools/files`. `TAGS=dev_tools` runs it alone.
+Developer tooling from each vendor's own source: Node.js from NodeSource, Docker Engine, the GitHub CLI, and uv from a release pinned by version and SHA256. The apt signing keys are vendored in `roles/dev_tools/files`. `--tags dev_tools` runs it alone.
 
 How it works: [§5.4](../../architecture/roles.md#54-dev_tools--developer-tooling).
 

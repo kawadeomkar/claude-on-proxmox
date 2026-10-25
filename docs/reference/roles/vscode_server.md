@@ -1,6 +1,6 @@
 # `vscode_server`
 
-What VS Code's Remote - SSH extension needs on the VM: an sshd drop-in that keeps port forwarding on, checked against what sshd will really apply to the editor's connection, keepalives, and a higher inotify limit. `TAGS=vscode_server` runs it alone; `vscode_remote: false` removes it.
+What VS Code's Remote - SSH extension needs on the VM: an sshd drop-in that keeps port forwarding on, checked against what sshd will really apply to the editor's connection, keepalives, and a higher inotify limit. `--tags vscode_server` runs it alone; `vscode_remote: false` removes it.
 
 Using it: [VS Code](../../guides/vscode.md#what-the-vm-gets). How it works: [§5.7](../../architecture/roles.md#57-vscode_server--what-vs-codes-remote---ssh-needs-on-the-host).
 

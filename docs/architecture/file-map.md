@@ -3,7 +3,7 @@
 ```
 ansible.cfg                       inventory dir, accept-new host keys, forks, the stdout callback, YAML results
 callback_plugins/claude_on_proxmox.py   the default output, the waits set apart, NEXT STEPS after the recap (§7.5)
-.logs/                            one log per make run that used Ansible (git-ignored, 0700, pruned after 14 days)
+.logs/                            one log per just run that used Ansible (git-ignored, 0700, pruned after 14 days)
 .sessions/                        the Claude sessions just destroy saved from each VM (git-ignored, 0700, kept until deleted)
 deploy.yml                        template (when missing) + provision + configure + the three sign-ins + VS Code
 CLAUDE.md                         agent-facing operating rules
@@ -81,7 +81,7 @@ filter_plugins/settings.py        init_answer, the rule each just init answer fo
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
                                   and github_repository, owner/repo of a remote URL here and of a GitHub one on the VM;
-                                  claude_project_folder, Claude Code's folder for a path; claude_session_dirs; make_code_dir,
+                                  claude_project_folder, Claude Code's folder for a path; claude_session_dirs; just_code_dir,
                                   just code's own directory on a VM; claude_sessions_saved, what of a VM's sessions destroy saves;
                                   claude_sessions_listed, how just code says the sessions it left out
 inventory/

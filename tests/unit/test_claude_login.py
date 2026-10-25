@@ -524,7 +524,7 @@ def test_a_forward_that_cannot_be_made_falls_back_to_the_code(tmp_path):
 @pytest.mark.parametrize(
     "here",
     [
-        # make run over SSH: the person's browser is on another machine, and the
+        # just run over SSH: the person's browser is on another machine, and the
         # page would send it to that machine's localhost.
         {"SSH_CONNECTION": "192.0.2.1 50000 192.0.2.2 22"},
         # Nothing on this machine to open the page in.

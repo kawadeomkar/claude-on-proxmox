@@ -4,7 +4,7 @@
 # (docs/architecture/lifecycle.md §4.9). They decide which of this machine's
 # Claude Code sessions go to which of the VM's checkouts - by the git origin
 # of the directory each session ran in, matched against the origin of each
-# checkout on the VM - and with SESSION, whether that one can be opened there:
+# checkout on the VM - and with --session, whether that one can be opened there:
 # found once, closed on both machines, its work committed and pushed here,
 # and a VM checkout free to be brought to the same commit. Nothing is
 # written anywhere; session_write.yml does that after every refusal just code
@@ -16,26 +16,26 @@
 # printed, and no output of a mistake here may carry it.
 #
 # Inputs: code.yml's play vars code_sessions (the sync is on), code_session_id
-# (SESSION, "" without), code_session_here and code_session_there (Claude
+# (--session, "" without), code_session_here and code_session_there (Claude
 # Code's directory on this machine and on the VM), code_session_days and
-# code_projects_dir. Sets code_session_plan, and with SESSION
+# code_projects_dir. Sets code_session_plan, and with --session
 # code_session_project, the folder the window opens.
 
-- name: session_read | Refuse a SESSION that is not a session ID
+- name: session_read | Refuse a --session that is not a session ID
   ansible.builtin.assert:
     that: code_session_id is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     fail_msg: >-
-      SESSION is the ID of one of this machine's Claude Code sessions, the name of its transcript under
+      --session is the ID of one of this machine's Claude Code sessions, the name of its transcript under
       ~/.claude/projects/ (/resume shows it, and so does /status in the session), such as
       0a608ad8-1b2c-4d3e-8f90-123456789abc. "{{ code_session_id }}" is not one.
     quiet: true
   when: code_session_id | length > 0
 
-- name: session_read | Refuse SESSION without the Claude terminal
+- name: session_read | Refuse --session without the Claude terminal
   ansible.builtin.assert:
     that: code_terminal | bool
     fail_msg: >-
-      SESSION opens the session in the window's Claude terminal, which vscode_claude_terminal: false turns
+      --session opens the session in the window's Claude terminal, which vscode_claude_terminal: false turns
       off. Without it, run `claude --resume {{ code_session_id }}` in the project's folder on {{ claude_vm_names[0] }}.
     quiet: true
   when: code_session_id | length > 0

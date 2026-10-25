@@ -442,7 +442,7 @@ def deployed(tmp_path_factory):
     return root, _deploy(root, _hosts(root, cases))
 
 
-def test_make_deploy_names_a_vm_it_cannot_reach_in_every_sign_in_and_goes_on(deployed):
+def test_just_deploy_names_a_vm_it_cannot_reach_in_every_sign_in_and_goes_on(deployed):
     root, report = deployed
     assert report["rc"] == 0, _failed(report)
     assert _failed(report) == {}
@@ -492,7 +492,7 @@ def _remote_control_failed(message: str, host: str) -> None:
     assert f"just deploy {host} --tags claude_code" in message, message
 
 
-def test_a_failure_after_the_claude_sign_in_is_said_as_such_and_fails_make_claude_login(after_claude):
+def test_a_failure_after_the_claude_sign_in_is_said_as_such_and_fails_just_login_only_claude(after_claude):
     root, report = after_claude
     # Signed in: what failed came after.
     assert _signed_in(root, "epsilon")
@@ -506,7 +506,7 @@ def test_a_failure_after_the_claude_sign_in_is_said_as_such_and_fails_make_claud
     assert not _ran(report, "remote_control | Install the systemd unit", "epsilon")
 
 
-def test_make_deploy_fails_at_its_end_on_a_failure_after_a_sign_in_and_not_on_a_failed_sign_in(deployed_after):
+def test_just_deploy_fails_at_its_end_on_a_failure_after_a_sign_in_and_not_on_a_failed_sign_in(deployed_after):
     root, report = deployed_after
     assert _signed_in(root, "b-after")
     # The sign-in play caught a-rejected's refused code, and nothing of b-after.
@@ -595,7 +595,7 @@ def test_deploy_sign_in_false_runs_neither_sign_in(switched_off):
     assert not _signed_in(root, "alpha")
 
 
-def test_make_deploy_names_a_refused_code_and_signs_in_the_vm_after_it(deployed):
+def test_just_deploy_names_a_refused_code_and_signs_in_the_vm_after_it(deployed):
     root, report = deployed
     assert report["rc"] == 0, _failed(report)
     said = _said(report, "Say why, and go on with the next VM", "a-rejected")
@@ -632,7 +632,7 @@ def _device_flow(root: Path, host: str) -> bool:
     return any(call.startswith("auth login ") and "--web" in call for call in _gh_calls(root, host))
 
 
-def test_make_login_signs_in_to_github_after_claude(logged_in):
+def test_just_login_signs_in_to_github_after_claude(logged_in):
     root, report = logged_in
     assert _signed_in(root, "b-accepted")
     assert _device_flow(root, "b-accepted")
@@ -645,7 +645,7 @@ def test_make_login_signs_in_to_github_after_claude(logged_in):
     assert max(claude) < min(github) and max(github) < min(tailscale)
 
 
-def test_make_login_starts_no_device_flow_for_a_vm_whose_claude_sign_in_nobody_answered(logged_in):
+def test_just_login_starts_no_device_flow_for_a_vm_whose_claude_sign_in_nobody_answered(logged_in):
     root, report = logged_in
     assert not _signed_in(root, "a-unanswered")
     assert _said(report, "Say that no code was entered", "a-unanswered")
@@ -654,7 +654,7 @@ def test_make_login_starts_no_device_flow_for_a_vm_whose_claude_sign_in_nobody_a
     assert _ran(report, "Report the login state, and sign the VM in when asked to", "a-unanswered")
 
 
-def test_make_login_goes_on_past_a_failure_as_deploy_does_and_fails_at_the_end(logged_in):
+def test_just_login_goes_on_past_a_failure_as_deploy_does_and_fails_at_the_end(logged_in):
     # A refused code, or Remote Control failing to start after a sign-in, is no
     # reason to leave the VM signed out of GitHub and Tailscale: under just
     # deploy neither is. Both are raised by login.yml's own last play, once
@@ -677,7 +677,7 @@ def test_make_login_goes_on_past_a_failure_as_deploy_does_and_fails_at_the_end(l
     ]
 
 
-def test_make_login_without_names_reports_every_vm_and_starts_nothing(tmp_path, github):
+def test_just_login_without_names_reports_every_vm_and_starts_nothing(tmp_path, github):
     cases = {"alpha": {"code": CODE}, "beta": {}}
     for case in cases.values():
         case["vars"] = {"github_projects_exclude": ["gone"]}
@@ -693,7 +693,7 @@ def test_make_login_without_names_reports_every_vm_and_starts_nothing(tmp_path, 
         assert not _ran(report, "Run the role now that gh is signed in", host)
 
 
-def test_make_login_imports_the_three_sign_ins_as_they_are():
+def test_just_login_imports_the_three_sign_ins_as_they_are():
     entries = yaml.safe_load(LOGIN.read_text())
     imported = [
         entry["ansible.builtin.import_playbook"] for entry in entries if "ansible.builtin.import_playbook" in entry
@@ -720,7 +720,7 @@ def _vars_of_import(path: Path, playbook: str) -> dict:
 
 @pytest.mark.parametrize("step", ["github_login.yml", "tailscale_login.yml"])
 @pytest.mark.parametrize("decision", ["claude_vm_login_interactive", "claude_vm_login_ask"])
-def test_make_login_decides_github_and_tailscale_as_make_deploy_does(step, decision):
+def test_just_login_decides_github_and_tailscale_as_just_deploy_does(step, decision):
     """login.yml's decisions are deploy.yml's own, behind the names given, so the two cannot drift."""
     deploy = _flat(_vars_of_import(DEPLOY, f"playbooks/{step}")[decision])
     login = _flat(_vars_of_import(LOGIN, step)[decision])
