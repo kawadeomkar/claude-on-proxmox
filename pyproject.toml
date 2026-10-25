@@ -21,18 +21,18 @@ dependencies = [
 # The linters, the tests and the git hooks: just lint, unit, molecule and init. uv installs this
 # group by default.
 dev = [
-    "ansible-lint==26.9.0",
-    "molecule==26.9.0",
-    "molecule-plugins[docker]==26.9.28",
+    "ansible-lint==26.10.1",
+    "molecule==26.10.0",
+    "molecule-plugins[docker]==26.10.12",
     # Required by the Docker driver for Molecule
     "docker==7.2.0",
     "yamllint==1.38.0",
-    "pre-commit==4.6.2",
+    "pre-commit==4.7.0",
     "pytest==9.1.1",
-    "ruff==0.17.0",
+    "ruff==0.17.1",
     # The uv CI runs: .github/actions/setup installs the version uv.lock pins, so Dependabot
     # bumps it with everything else.
-    "uv==0.13.0",
+    "uv==0.13.1",
 ]
 # The wiki in docs/: docsible renders each role's reference page - its variables, tasks and a
 # flowchart of each task file - with tools/templates/role.md.j2 (just docs), and Zensical builds the
