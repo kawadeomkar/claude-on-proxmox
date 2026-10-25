@@ -6,6 +6,8 @@
     - role: dev_tools
       vars:
         dev_tools_npm_global_packages: [cowsay]
+        # Off by default; on here, where the toolchain is installed and checked.
+        dev_tools_install_rust: true
         # rust-src is listed without a target, the others with one: the
         # idempotence run fails if either reads as missing.
         dev_tools_rust_components: [clippy, rustfmt, rust-src]

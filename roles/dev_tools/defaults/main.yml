@@ -6,7 +6,8 @@ dev_tools_install_node: true
 dev_tools_install_docker: true
 dev_tools_install_gh: true
 dev_tools_install_uv: true
-dev_tools_install_rust: true
+# Rust is optional, and off: the toolchain takes about 520 MB of the user's home.
+dev_tools_install_rust: false
 
 # Extra apt packages useful for development. python3-debian is required by the
 # deb822_repository module used to add the Node.js, Docker and GitHub CLI repos.

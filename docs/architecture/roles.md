@@ -155,7 +155,8 @@ Notable choices:
 
 ## 5.4 `dev_tools` — developer tooling
 
-Feature-toggled: Node.js (NodeSource), Docker Engine, GitHub CLI, uv, Rust (rustup). Each
+Feature-toggled: Node.js (NodeSource), Docker Engine, GitHub CLI, uv, and Rust (rustup), the last off by
+default (`dev_tools_install_rust`). Each
 apt-repository task follows the same shape:
 
 ```yaml
@@ -170,7 +171,8 @@ supply its own key. **uv is pinned by version and SHA-256 per architecture**, wi
 in `defaults/main.yml` rather than fetched alongside the archive, so a compromised release endpoint
 cannot swap both. Node.js is apt-pinned to NodeSource over the distro package.
 
-**Rust comes from rustup, never Ubuntu's `rustc` and `cargo`.** Noble's `rustup` package conflicts with
+**Rust, where `dev_tools_install_rust` turns it on, comes from rustup, never Ubuntu's `rustc` and
+`cargo`.** Noble's `rustup` package conflicts with
 both (its proxies in `/usr/bin` take their names), and its `rustc` is 1.75. rustup installs
 `dev_tools_rust_toolchain` for `dev_tools_user`, under `~/.rustup`, with the minimal profile and
 `dev_tools_rust_components`, as that user with `HOME` set from `getent`. The role decides from

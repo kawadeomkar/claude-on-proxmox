@@ -29,10 +29,10 @@ argument_specs:
             false skips it and removes nothing.
       dev_tools_install_rust:
         type: bool
-        default: true
+        default: false
         description:
           - Install rustup from Ubuntu's archive and, for dev_tools_user, the dev_tools_rust_toolchain toolchain with
-            dev_tools_rust_components. false skips it and removes nothing.
+            dev_tools_rust_components. Off by default; false skips it and removes nothing.
       dev_tools_apt_packages:
         type: list
         elements: str

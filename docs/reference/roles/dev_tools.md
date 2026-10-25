@@ -18,7 +18,7 @@ How it works: [§5.4](../../architecture/roles.md#54-dev_tools--developer-toolin
 | `dev_tools_install_docker` | bool | `true` | Install Docker Engine from Docker's repository and add dev_tools_user to the docker group. false skips it and removes nothing. |
 | `dev_tools_install_gh` | bool | `true` | Install the GitHub CLI from its repository; github_projects signs in and clones private repositories through it. false skips it and removes nothing. |
 | `dev_tools_install_uv` | bool | `true` | Install uv and uvx, a pinned release checked against dev_tools_uv_sha256, into dev_tools_uv_install_dir. false skips it and removes nothing. |
-| `dev_tools_install_rust` | bool | `true` | Install rustup from Ubuntu's archive and, for dev_tools_user, the dev_tools_rust_toolchain toolchain with dev_tools_rust_components. false skips it and removes nothing. |
+| `dev_tools_install_rust` | bool | `false` | Install rustup from Ubuntu's archive and, for dev_tools_user, the dev_tools_rust_toolchain toolchain with dev_tools_rust_components. Off by default; false skips it and removes nothing. |
 | `dev_tools_apt_packages` | list of `str` | `[cmake, libffi-dev, libssl-dev, make, pipx, pkg-config, python3-debian, python3-dev, shellcheck, sqlite3]` | Development packages installed from Ubuntu's archive. Keep python3-debian, which the role adds the Node.js, Docker and GitHub CLI repositories with. |
 | `dev_tools_node_major` | int | `22` | Node.js major version, which picks the NodeSource repository. |
 | `dev_tools_npm_global_packages` | list of `str` | `[]` | Packages npm installs globally, with dev_tools_install_node. |

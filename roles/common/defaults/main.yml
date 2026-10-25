@@ -20,8 +20,8 @@ common_harden_ssh: true
 # reads no profile, and Ubuntu's ~/.bashrc returns at once for it. Set through
 # an sshd drop-in (Match User + SetEnv), so no file of the user's is touched.
 # ~/.local/bin holds Claude Code, pipx and uv tools; ~/.cargo/bin what
-# `cargo install` builds (dev_tools installs Rust). A directory that does not
-# exist costs nothing. [] removes the drop-in.
+# `cargo install` builds (dev_tools installs Rust when dev_tools_install_rust
+# is on). A directory that does not exist costs nothing. [] removes the drop-in.
 common_ssh_path_dirs:
   - .local/bin
   - .cargo/bin

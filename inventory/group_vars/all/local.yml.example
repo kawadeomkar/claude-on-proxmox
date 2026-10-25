@@ -100,6 +100,7 @@
 # dev_tools_install_node: true
 # dev_tools_install_uv: true
 # dev_tools_install_gh: true
+# Rust: rustup, and a stable toolchain with clippy and rustfmt for vm_user. Off by default.
 # dev_tools_install_rust: true
 # dev_tools_node_major: 22
 

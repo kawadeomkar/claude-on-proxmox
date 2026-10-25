@@ -47,8 +47,8 @@ argument_specs:
         description:
           - Directories in common_user's home put first on PATH for every session sshd starts for that user, `ssh vm <command>`
             included, which reads no profile. Written as an sshd drop-in (Match User, SetEnv) holding the whole PATH, the
-            rest being /etc/environment's, and checked with sshd -T. Login shells get the same two directories from
-            /etc/profile.d. [] removes the drop-in.
+            rest being /etc/environment's, and checked with sshd -T. Login shells get ~/.local/bin from /etc/profile.d,
+            and ~/.cargo/bin there too where dev_tools installs Rust. [] removes the drop-in.
       common_apt_upgrade:
         type: bool
         default: true

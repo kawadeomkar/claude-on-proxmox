@@ -20,7 +20,7 @@ virtualenv.
 
 The weekly run is a canary. Most of what this project installs lives outside the repository - the
 Ubuntu cloud image, the Docker, NodeSource and GitHub CLI apt repositories, the Claude Code installer,
-the uv release and the Rust toolchain - and any of it can break without a commit here. (The Galaxy
+the uv release and, where it is turned on, the Rust toolchain - and any of it can break without a commit here. (The Galaxy
 collections are pinned to exact versions, so they cannot.) The Molecule scenarios never fetch the real
 cloud image, which is why the canary checks its URL and checksum list. The unpinned-image job never runs
 on a push or a pull request: its failure is how you learn the current Ubuntu image no longer works before

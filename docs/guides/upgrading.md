@@ -71,14 +71,14 @@ names that `just deploy --only configure` line.
 
 ## Programs in ~/.local/bin and ~/.cargo/bin over ssh
 
-From PR #73, which adds Rust to `dev_tools`. `ssh <vm> <command>` now finds what is in
-`~/.local/bin` and `~/.cargo/bin` (Claude Code, pipx and uv tools, anything you `cargo install`): the next
-`just deploy --only configure` gives sshd the PATH for the VM user, and every ssh command after it is a new
-session that gets it. `cargo`, `rustc` and `rustup` themselves live in `/usr/bin`, so they work everywhere
-at once.
+From PR #73. `ssh <vm> <command>` now finds what is in `~/.local/bin` and `~/.cargo/bin` (Claude Code,
+pipx and uv tools, anything you `cargo install`): the next `just deploy --only configure` gives sshd the
+PATH for the VM user, and every ssh command after it is a new session that gets it. The same pull request
+adds Rust to `dev_tools`, off unless you set `dev_tools_install_rust: true` in `local.yml`; `cargo`, `rustc`
+and `rustup` then live in `/usr/bin`, so they work everywhere at once.
 
-What was already running on the VM keeps the PATH it started with, which matters only for a program you
-`cargo install` after the upgrade:
+What was already running on the VM keeps the PATH it started with. `~/.local/bin` was on it already, so
+this matters only for a program you `cargo install` after turning Rust on:
 
 - In a terminal that was already open, run `. /etc/profile.d/cargo-bin-path.sh`, or open a new one.
 - In VS Code, run **Remote-SSH: Kill VS Code Server on Host** and reconnect, before relying on an
