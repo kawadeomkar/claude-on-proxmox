@@ -1,4 +1,4 @@
-"""playbooks/tasks/remote_tmp.yml, run as make's runs run it: with pipelining, before any module needs remote_tmp.
+"""playbooks/tasks/remote_tmp.yml, run as just's runs run it: with pipelining, before any module needs remote_tmp.
 
 With pipelining (ansible.cfg) a module that transfers no file gets no per-task
 temporary directory, so the first one running as root that needs one makes
@@ -70,7 +70,7 @@ def test_made_first_no_module_warns(tmp_path):
 
 
 def test_it_is_made_where_the_run_puts_remote_tmp(tmp_path):
-    # ANSIBLE_REMOTE_TMP in the shell reaches every make target; the task makes
+    # ANSIBLE_REMOTE_TMP in the shell reaches every recipe; the task makes
     # that directory, not the default one.
     report, home = _fetch(tmp_path, first=True, ANSIBLE_REMOTE_TMP="~/elsewhere/tmp")
     assert not _warnings(report), _warnings(report)

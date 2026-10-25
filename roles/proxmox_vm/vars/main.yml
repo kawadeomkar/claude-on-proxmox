@@ -102,7 +102,7 @@ proxmox_vm_forget_address: >-
   {{ proxmox_vm_reported_address }}
 
 # Internal: every name this machine may hold the VM's host key under - the
-# address, and <name>.<domain> when the SSH aliases and make code connect by
+# address, and <name>.<domain> when the SSH aliases and just code connect by
 # name (proxmox_vm_known_hosts_domain). A VM created again under the same name
 # would otherwise fail its first connection by name on the old key.
 proxmox_vm_forget_names: >-

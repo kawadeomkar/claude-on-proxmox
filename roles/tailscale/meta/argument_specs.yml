@@ -113,7 +113,7 @@ argument_specs:
       tailscale_sign_in_follows:
         type: bool
         default: false
-        description: make deploy signs the VM in next, in the same run, and the report says so.
+        description: just deploy signs the VM in next, in the same run, and the report says so.
   login:
     short_description: Say how the VM is on Tailscale, and sign it in by the web login when asked to
     description:
@@ -137,7 +137,7 @@ argument_specs:
         type: str
         default: auto
         choices: [auto, key, web]
-        description: Under key, a VM is joined by make deploy TYPE=configure with the key, never by the web login.
+        description: Under key, a VM is joined by just deploy --only configure with the key, never by the web login.
       tailscale_login_timeout:
         type: int
         default: 300

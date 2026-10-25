@@ -1,4 +1,4 @@
-"""Releasing a VM before make destroy deletes it: destroy.yml's release play and report, run for real.
+"""Releasing a VM before just destroy deletes it: destroy.yml's release play and report, run for real.
 
 Every host is the controller itself, over the local connection (harness.py),
 with the stand-in claude, gh and tailscale of tests/molecule first on its PATH,
@@ -25,7 +25,7 @@ What these guard:
   before it deletes - finding the address of a VM it started though the cluster
   listing, seconds behind, still says it is stopped.
 - Before anything is released, what of a VM's Claude Code sessions is only
-  there is saved here, into the test's own directory: never a copy make code
+  there is saved here, into the test's own directory: never a copy just code
   made still as written, never a link the VM holds or a name it made up, and
   without sudo, which a VM can refuse; a save that fails keeps the VM, neither
   released nor deleted, and destroy_release: false still saves.
@@ -112,17 +112,17 @@ CASES = {
     "two-accounts": {"gh": HAND_TOKEN, "two_accounts": True},
     # Nothing signed in at all.
     "nothing": {},
-    # Claude Code sessions of its own, and copies make code made: only the first are saved.
+    # Claude Code sessions of its own, and copies just code made: only the first are saved.
     "sessions": {"sessions": True},
     # The same, with the save turned off: they go with the VM.
     "unsaved": {"sessions": True, "save": False},
-    # The same, make code's own directory set elsewhere by vscode_workspaces_dir, its manifest there.
+    # The same, just code's own directory set elsewhere by vscode_workspaces_dir, its manifest there.
     "workspaces": {"sessions": True, "workspaces": True},
     # No address: stopped and would not start, or an agent that never answered.
     "unreached": {"address": ""},
 }
 
-# The VM's sessions in the "sessions" case: begun there, a copy make code wrote
+# The VM's sessions in the "sessions" case: begun there, a copy just code wrote
 # still as written, a copy continued there, and one with no message.
 STARTED = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
 COPIED = "bc0e637b-2c3d-4e4f-9a01-23456789abcd"
@@ -148,7 +148,7 @@ def _transcript(sid: str, cwd: str, conversation: bool = True) -> bytes:
 
 
 def _vm_sessions(home: Path, manifest_dir: Path | None = None) -> None:
-    """A VM's ~/.claude/projects/ as make code and the VM's own sessions leave it, and make code's manifest.
+    """A VM's ~/.claude/projects/ as just code and the VM's own sessions leave it, and just code's manifest.
 
     A link among them, to a file of this machine's outside the VM's home, and a session in a folder not
     named as Claude Code names one: neither may be saved.
@@ -501,7 +501,7 @@ def _saved(root: Path, vm: str) -> Path:
 
 def test_what_only_the_vm_has_of_its_sessions_is_saved_as_it_was(released):
     # Begun on the VM, and a copy continued there, each with its folder, and
-    # the auto memory: not a copy still as make code wrote it, which this
+    # the auto memory: not a copy still as just code wrote it, which this
     # machine has, nor a transcript without a message, which resumes nothing.
     root, report, _, _ = released
     saved = _saved(root, "sessions")
@@ -552,7 +552,7 @@ def test_a_link_the_vm_holds_never_reaches_or_changes_anything_here(released):
 
 
 def test_the_manifest_is_read_where_vscode_workspaces_dir_puts_make_code_s_directory(released):
-    # Read from the projects directory instead, every copy make code made would be saved as continued.
+    # Read from the projects directory instead, every copy just code made would be saved as continued.
     root, report, _, _ = released
     saved = _saved(root, "workspaces")
     assert sorted(path.name for path in (saved / "projects" / MAC_FOLDER).iterdir()) == [f"{CONTINUED}.jsonl"]
@@ -651,7 +651,7 @@ def test_a_vm_whose_sessions_could_not_be_saved_is_neither_released_nor_deleted(
         " here: The sessions could not be brought here: "
     )
     assert why.endswith(
-        "Run make destroy again once that is fixed, or set destroy_save_sessions: false to delete it without them."
+        "Run just destroy again once that is fixed, or set destroy_save_sessions: false to delete it without them."
     )
     assert MARKER not in json.dumps(report)
 

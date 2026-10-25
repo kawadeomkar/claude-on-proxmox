@@ -135,7 +135,7 @@ github_projects_login_expired: >-
 github_projects_login_answer: >-
   {{ (github_projects_login_asked | default({})).user_input | default('', true) | trim | lower }}
 # Internal: whether login.yml runs the device flow. Asked about a VM someone
-# is here for (github_projects_login_interactive: make deploy, for a VM whose
+# is here for (github_projects_login_interactive: just deploy, for a VM whose
 # Claude code was entered), Enter or "y" goes and anything else - "n" - stays;
 # asked about any other, only "y" goes, so that a run with no terminal skips
 # it. Not asked, the switch alone decides.
@@ -163,7 +163,7 @@ github_projects_home_dir: >-
 github_projects_marker_file: "{{ github_projects_home_dir }}/.config/claude-on-proxmox/gh-login"
 # The same, for a login this role's device flow made: the digest of the token
 # it left gh, apart from the marker above, whose logout rules are the vault
-# token's. make destroy's report tells a token with this digest - GitHub CLI's,
+# token's. just destroy's report tells a token with this digest - GitHub CLI's,
 # from this role's sign-in - from one pasted by hand, and from the vault's,
 # which every VM shares. None is revoked (release.yml).
 github_projects_device_marker_file: "{{ github_projects_home_dir }}/.config/claude-on-proxmox/gh-device-login"
@@ -259,10 +259,10 @@ github_projects_git_identity_wanted: >-
 # The command that signs gh in by the device flow, run on the controller: it
 # opens the page there, copies the code, waits for the approval, and then
 # runs this role so the private repositories arrive in the same run.
-github_projects_login_command: make login VM_NAME={{ inventory_hostname }} TYPE=github
+github_projects_login_command: just login {{ inventory_hostname }} --only github
 # The command that runs this role alone: the token sign-in, the listing and the
-# clones, with nothing else of make deploy TYPE=configure.
-github_projects_configure_command: make deploy VM_NAME={{ inventory_hostname }} TAGS=github_projects
+# clones, with nothing else of just deploy --only configure.
+github_projects_configure_command: just deploy {{ inventory_hostname }} --tags github_projects
 
 # --- releasing the VM before it is destroyed (release.yml) ---
 # The token gh held, read under no_log; '' when it held none. Every task that

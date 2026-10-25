@@ -1,0 +1,46 @@
+#!/bin/sh
+# Run a command with its Ansible output logged, as every recipe that runs
+# Ansible does: everything Ansible prints goes, with timestamps, to a file of
+# its own in LOG_DIR, named after the moment the just run started and the
+# name given here, so a run can be read back after the terminal has scrolled
+# away:
+#   .logs/20261007-203015-deploy.log
+#   .logs/20261007-204510-deploy-configure.log
+# The terminal shows what it always did - Ansible copies its output through
+# ANSIBLE_LOG_PATH, so prompts and colours are untouched - and tasks marked
+# no_log are hidden in the file as on screen. The files still name hosts and
+# addresses, so LOG_DIR is git-ignored, refused by tests/check_no_local_files.sh
+# and private to you (0700). Logs older than LOG_RETENTION_DAYS are deleted
+# whenever a logged run starts. LOG_DIR empty turns logging off, and an
+# ANSIBLE_LOG_PATH of your own is left as it is.
+#
+#   tools/run-logged <name> <command> [<argument>...]
+#
+# The justfile passes LOG_DIR, LOG_RETENTION_DAYS and the run's stamp
+# (CLAUDE_ON_PROXMOX_LOG_STAMP) in the environment, and builds <name> from the
+# recipe's name and a part its pattern has checked - never from a VM name, so
+# nothing a person typed becomes a file's name. Every command of one run
+# shares the stamp and the name, so one run is one file.
+set -eu
+name=$1
+shift
+log_dir=${LOG_DIR:-}
+if [ -z "${ANSIBLE_LOG_PATH:-}" ] && [ -n "$log_dir" ]; then
+  ANSIBLE_LOG_PATH="$log_dir/$CLAUDE_ON_PROXMOX_LOG_STAMP-$name.log"
+  export ANSIBLE_LOG_PATH
+fi
+if [ -n "${ANSIBLE_LOG_PATH:-}" ]; then
+  mkdir -p "$(dirname "$ANSIBLE_LOG_PATH")"
+  # Only files named the way this names them, and only in LOG_DIR: an
+  # ANSIBLE_LOG_PATH of your own elsewhere is used, its directory never touched.
+  if [ -n "$log_dir" ] && [ -d "$log_dir" ]; then
+    chmod 700 "$log_dir"
+    case "${LOG_RETENTION_DAYS:-}" in
+    '' | *[!0123456789]*) echo "warning: LOG_RETENTION_DAYS must be a number of days; nothing pruned" ;;
+    *) find "$log_dir" -maxdepth 1 -type f -name '[0-9]*-*.log' -mtime +"$LOG_RETENTION_DAYS" -delete ;;
+    esac
+  fi
+  # Said once a run: the second command of a run finds the file the first made.
+  test -e "$ANSIBLE_LOG_PATH" || echo "Logging this run to $ANSIBLE_LOG_PATH"
+fi
+exec "$@"

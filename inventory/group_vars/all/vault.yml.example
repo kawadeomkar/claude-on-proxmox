@@ -1,15 +1,15 @@
 ---
-# make init copies this to inventory/group_vars/all/vault.yml (git-ignored), asks
+# just init copies this to inventory/group_vars/all/vault.yml (git-ignored), asks
 # for the token secret and the GitHub username, and writes them encrypted, its
 # password in .vault_pass. By hand instead: copy it, fill it in, then encrypt:
 #
 #   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
 #   (umask 077; openssl rand -base64 32 > .vault_pass)
-#   make vault
+#   just vault
 #
 # Values are referenced indirectly (vault_* -> plain name) in defaults.yml so
 # `grep` finds their usage and ansible-lint's naming conventions are satisfied.
-# docs/reference/settings.md lists them, generated from this file (make docs).
+# docs/reference/settings.md lists them, generated from this file (just docs).
 
 # ---------------------------------------------------------------- Proxmox ---
 # Proxmox API token secret for proxmox_api_user (default ansible@pve). See
@@ -30,7 +30,7 @@ vault_github_username: "your-github-username"
 # token needs repo, workflow and read:org; a fine-grained one Metadata (read)
 # and Contents, Pull requests and Workflows (read and write) on all
 # repositories. Leave it empty to sign in once per VM by GitHub's device flow
-# instead (make login VM_NAME=<name> TYPE=github), with no secret here: that run
+# instead (just login <name> --only github), with no secret here: that run
 # clones the private repositories too, and later runs list with the token gh
 # stored. docs/guides/github.md.
 vault_github_token: ""
@@ -48,11 +48,11 @@ vault_anthropic_api_key: ""
 # fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale
 # removes an ephemeral node within the hour of it going offline, and a VM left
 # stopped would be. Leave it empty to sign each VM in by Tailscale's web login
-# instead (make login VM_NAME=<name> TYPE=tailscale), with no secret here. Only ever
+# instead (just login <name> --only tailscale), with no secret here. Only ever
 # used for a VM's first join. docs/guides/tailscale.md.
 vault_tailscale_auth_key: ""
 
-# Optional: what deletes a VM's device from your tailnet when make destroy
+# Optional: what deletes a VM's device from your tailnet when just destroy
 # deletes the VM - set either and it is used, the token when both are
 # (tailscale_api_auth_method in local.yml can say otherwise). Used only on this
 # machine, never sent to a VM. token: an API access token (Settings, Keys;

@@ -1,15 +1,15 @@
 ---
 name: Set up the Ansible toolchain
 description: >-
-  Install Python and uv, make a virtualenv, restore the uv and Galaxy caches,
-  then run `make install` so the job uses exactly the versions locked in uv.lock and pinned in
+  Install Python, uv and just, make a virtualenv, restore the uv and Galaxy caches, then run
+  `just install` so the job uses exactly the versions locked in uv.lock and pinned in
   requirements.yml.
 
 runs:
   using: composite
   steps:
     # The runner image already has this Python, so it is the fastest way to get
-    # one; uv uses it and never downloads its own (UV_PYTHON_DOWNLOADS in make).
+    # one; uv uses it and never downloads its own (UV_PYTHON_DOWNLOADS in the justfile).
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: "3.12"
@@ -23,12 +23,31 @@ runs:
         version-file: uv.lock
         python-version: "3.12"
         # A virtualenv for the job, first on PATH for every step after this
-        # one, so python3 is its Python: make install installs into the
+        # one, so python3 is its Python: just install installs into the
         # environment python3 is, and refuses one that is not a virtualenv.
         activate-environment: true
 
+    # just from its own release, never a build of someone else's: the archive is
+    # checked against the SHA256 upstream publishes for it (SHA256SUMS beside it),
+    # copied here when the pin was written. The version is the justfile's
+    # minimum-version and just_pin too (tests/unit/test_justfile.py holds the
+    # three to one), and moves by hand: docs/architecture/toolchain.md says how.
+    - name: Install just
+      shell: bash
+      env:
+        JUST_VERSION: "1.59.0"
+        JUST_SHA256: 409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
+      run: |
+        archive="just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+        dir="$RUNNER_TEMP/just"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/$archive" "https://github.com/casey/just/releases/download/${JUST_VERSION}/${archive}"
+        echo "${JUST_SHA256}  $dir/$archive" | sha256sum -c -
+        tar -xzf "$dir/$archive" -C "$dir" just
+        echo "$dir" >> "$GITHUB_PATH"
+
     # ansible-galaxy skips collections that are already installed, so a cache
-    # hit turns `make install` into a no-op for the Galaxy half.
+    # hit turns `just install` into a no-op for the Galaxy half.
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ~/.ansible/collections
@@ -39,5 +58,5 @@ runs:
         key: galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
 
     - name: Install tooling
-      run: make install
+      run: just install
       shell: bash

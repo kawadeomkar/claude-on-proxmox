@@ -187,7 +187,7 @@ constraint rather than an omission. Anthropic supports exactly one credential fo
 | Interactive claude.ai `/login` (Pro, Max, Team, Enterprise) | yes | **yes** |
 
 It is on by default, and what happens is **derived from the credentials on the VM** rather than from
-a switch — because no switch can create the one credential that works. `make deploy TYPE=configure` therefore
+a switch — because no switch can create the one credential that works. `just deploy --only configure` therefore
 does one of three things:
 
 | Credentials found | Outcome |
@@ -196,7 +196,7 @@ does one of three things:
 | No key, no claude.ai login | Unit installed, service left stopped, a path unit waiting for the login (below), the sign-in command printed |
 | No key, claude.ai login present | Service enabled and started; the session appears in the app |
 
-A login is what activates it: `make login TYPE=claude` and `make deploy` start the server in the run that
+A login is what activates it: `just login --only claude` and `just deploy` start the server in the run that
 signs the VM in, and a login made any other way starts it through the path unit.
 
 ### Remote Control, step by step
@@ -240,7 +240,7 @@ The role automates everything around the login and stops at it:
 5. **Check `claude auth status`**, which returns JSON carrying `loggedIn`, `authMethod`,
    `subscriptionType` and, when a key is in use, `apiKeySource`. Eligibility is
    `loggedIn && authMethod == "claude.ai" && !apiKeySource` and no blocker from step 2, defined once
-   in `vars/main.yml` as vars that read the registered results, and shared with `make login TYPE=claude`
+   in `vars/main.yml` as vars that read the registered results, and shared with `just login --only claude`
    (below), which reads the same two things over SSH. `authMethod` alone
    is not enough: it reads `claude.ai` whenever that login exists, even while an `ANTHROPIC_API_KEY`
    outranks it, and also for a Console login, whose key is reported as `/login managed key`. Only
@@ -252,7 +252,7 @@ The role automates everything around the login and stops at it:
    command, or what is in the way and how to remove it. The tasks that enable, start or stop the
    service also require the unit file to exist. In a real run it always does; in check mode on a VM
    that never had it, `template` wrote nothing and `systemd_service` fails on a missing unit whether
-   or not it is in check mode, so without that `make deploy TYPE=check` failed on every such VM.
+   or not it is in check mode, so without that `just deploy --check` failed on every such VM.
 7. **Confirm the server stayed up.** The service is restarted unless the unit file is unchanged and
    the service already active: a server waiting out its restart delay reports `activating`, which
    `started` treats as running. One `active` reading afterwards proves nothing, because `Type=simple` is active as soon
@@ -283,22 +283,22 @@ systemd 254; the VMs run Ubuntu 24.04 with 255.
 
 ### The sign-in playbook
 
-`playbooks/claude_login.yml` (`make login TYPE=claude`, and the sign-in step of `make deploy`) discovers
+`playbooks/claude_login.yml` (`just login --only claude`, and the sign-in step of `just deploy`) discovers
 the VMs and runs the role's `login` entry point (`tasks_from: login`) on them, one VM at a time
 (`serial: 1`). It reads `claude auth status` as `claude_code_user` through a login shell and decides
 from the same vars as step 5, so the two cannot disagree: when the playbook decided from `loggedIn`
 alone, a VM signed in with a Console account, a `setup-token` token or an API key was told by each
-command to run the other. Bare, it reports each VM, with `make login VM_NAME=<vm> TYPE=claude` and the
+command to run the other. Bare, it reports each VM, with `just login <vm> --only claude` and the
 by-hand `ssh -t dev@<address> "bash -lc 'claude auth login'"` for a VM with no login. The `bash -lc`
 is what puts `~/.local/bin` on `PATH`: `ssh` runs a command in a non-login shell, and Ubuntu's
 `.bashrc` returns early for one.
 
-Given names, or from `make deploy`, it signs a VM with no login and no API key in by the browser
+Given names, or from `just deploy`, it signs a VM with no login and no API key in by the browser
 (`browser_login.yml`). Once every VM has had its turn at the prompt, a follow-on play includes
-`after_login.yml` for each VM signed in just now, which runs `remote_control.yml` as root, as `make deploy
-TYPE=configure` would, to start the server in the same run. The report says how each VM is signed in, and a
+`after_login.yml` for each VM signed in just now, which runs `remote_control.yml` as root, as `just deploy
+--only configure` would, to start the server in the same run. The report says how each VM is signed in, and a
 VM whose Remote Control is off on purpose (an API key from the vault, or `claude_remote_control: false`)
-is said to be so, with nothing to fix; `make deploy VM_NAME=<vm> TAGS=claude_code` is named only for a
+is said to be so, with nothing to fix; `just deploy <vm> --tags claude_code` is named only for a
 VM signed in in a way Remote Control cannot use, which a fix by hand then needs started.
 
 ### The browser sign-in
@@ -345,8 +345,8 @@ for the whole code; then, in an `always`, give claude a moment, kill the recorde
 runs (an attempt nobody completes, or a malformed code it is still waiting on), collect and clean up the
 job, and remove the files. The outcome is `claude auth status` again, not what claude printed. A pasted
 code is never written as a bare newline, which claude would answer `Invalid code` and go on waiting.
-Before any of it, a sign-in of the same VM still waiting - a run left at its prompt, a second `make
-login TYPE=claude` - is refused by name: its pidfile names a live process whose command line `ps` shows as
+Before any of it, a sign-in of the same VM still waiting - a run left at its prompt, a second `just
+login --only claude` - is refused by name: its pidfile names a live process whose command line `ps` shows as
 `auth login`, and taking over its pipe and pidfile would hand one run's code to the other's claude. What
 claude printed reaches a message only without its control characters (`claude_code_login_said`): the VM
 user controls that text, and 2.21 writes a failure's `[ERROR]` line to this terminal and the run log
@@ -355,21 +355,21 @@ raw.
 ### No terminal probe
 
 Nothing decides from a terminal probe. A `( : < /dev/tty )` in a `pipe` lookup runs in an Ansible
-worker detached from the controlling terminal, so it says "no terminal" even on `make deploy` at one,
+worker detached from the controlling terminal, so it says "no terminal" even on `just deploy` at one,
 where `pause` reads fine; the main process reads only when it owns the terminal's foreground process
 group. An answer is the one proof of an attended run, and it is per VM: the sign-in sets
 `claude_code_login_answered` (a code entered, or the browser come back) or `claude_code_login_skipped`
-(Enter, no terminal, or a browser that never came back) on the VM itself, and `make deploy` runs GitHub's
+(Enter, no terminal, or a browser that never came back) on the VM itself, and `just deploy` runs GitHub's
 device flow and Tailscale's web login, which wait for a browser, never for the second
 ([§4.7](lifecycle.md#47-deployyml), §5.6).
 
 ### Failures under `serial: 1`
 
-The sign-in play is `serial: 1` only when it can prompt (names given, or `make deploy`); a bare report
+The sign-in play is `serial: 1` only when it can prompt (names given, or `just deploy`); a bare report
 reads the fleet at once. Under serial a VM whose sign-in fails is a whole batch failed, which
 `PlaybookExecutor` turns into the end of the run - every later VM and every later play. So the sign-in
 play rescues a failure, says it, records it, and a last play without serial fails each such VM, unless
-`make deploy` imported the playbook (`claude_vm_login_in_deploy`): deploy has done its job and goes on to
+`just deploy` imported the playbook (`claude_vm_login_in_deploy`): deploy has done its job and goes on to
 GitHub and VS Code. `rescue` handles failed tasks, never an unreachable host, so a play before it pings
 every VM with `ignore_unreachable` and records one that does not answer the same way. The rescued
 block's condition is on its task, not on the block, whose `when` would also skip the rescue's message
@@ -377,14 +377,14 @@ once the failure it tests for is recorded. The rescue's first
 task re-raises `pause`'s abort (Ctrl-C, then A): the person asked for the run to end, not for the next
 VM's page. The work after a sign-in - Remote Control's start and its stay-up check - is not a sign-in,
 so it runs in the follow-on play, after the last prompt, and a failure there is recorded in
-`claude_vm_configure_failures` with the command that retries it, failing the VM at the end of `make
-login TYPE=claude` and at the end of `make deploy` alike.
+`claude_vm_configure_failures` with the command that retries it, failing the VM at the end of `just
+login --only claude` and at the end of `just deploy` alike.
 
 ### The path unit
 
 A VM that waits for its first login also gets a path unit, `claude-remote-control.path`, with
 `PathChanged=` on the credentials file and `Unit=` the service, so a login made any other way - the
-Claude terminal of `make code`, or by hand - starts the server by itself. Probed in a systemd
+Claude terminal of `just code`, or by hand - starts the server by itself. Probed in a systemd
 container: `PathChanged=` starts the service when the file is created, by a plain write or an atomic
 rename, and leaves a stopped service stopped; `PathExists=` restarts it instantly whenever it stops
 while the file exists, which with no start limit would spin on a refused login and undo every
@@ -430,7 +430,7 @@ Remote Control's decision (§5.5): derived from what the VM holds, never from a 
    `github_projects_signed_in` and `github_projects_login_kind` - `env` from `tokenSource`, else
    `pat` (`ghp_`, `github_pat_`) or `oauth` (`gho_`) from the prefix of the token `gh auth token`
    printed, because the status JSON carries no token without `--show-token`. The kind is for
-   `make login TYPE=github`'s report; the logout in step 3 does not rely on it. A non-zero exit from the
+   `just login --only github`'s report; the logout in step 3 does not rely on it. A non-zero exit from the
    status command is gh refusing `--json`, which came in gh 2.81.0 (2025-10-01), and fails the host
    naming the version: read as "signed out" it would print the sign-in command on every run and
    never configure the helper. `auth_status.yml` is a file because it is included again after a
@@ -452,7 +452,7 @@ Remote Control's decision (§5.5): derived from what the VM holds, never from a 
    marker holds, removing the marker with it. No marker, a stale one, a device-flow login, a
    `GH_TOKEN`: each stays whatever the vault says. A device-flow login the role made leaves a marker
    of its own, `gh-device-login` (the digest of the token that sign-in stored), apart from this one so
-   that its logout rules stay the vault token's: `make destroy`'s `release` entry point reads it to say
+   that its logout rules stay the vault token's: `just destroy`'s `release` entry point reads it to say
    where that token is revoked ([§4.5](lifecycle.md#45-playbooksdestroyyml--confirm-release-delete)).
    It does not revoke it: GitHub ends every GitHub CLI sign-in of the account with it.
 4. **Make gh git's credential helper** with `gh auth setup-git --hostname github.com`, once:
@@ -460,7 +460,7 @@ Remote Control's decision (§5.5): derived from what the VM holds, never from a 
    helper chain and then `!/usr/bin/gh auth git-credential`, and the role looks for an entry whose
    command is `gh` the way gh itself does, so a second run changes nothing. The helpers are read
    whenever gh is signed in, `github_auth` or not.
-5. **Say what is missing** on a signed-out VM: the device-flow command (or, under `make deploy`,
+5. **Say what is missing** on a signed-out VM: the device-flow command (or, under `just deploy`,
    `github_projects_sign_in_follows`, that the deploy signs it in next), which adds `-s workflow` to
    gh's default scopes (`repo`, `read:org`, `gist`) so that a push changing `.github/workflows/` is
    not refused, and that private repositories are not listed until then.
@@ -487,17 +487,17 @@ under `sudo -H`, so git reads that user's `~/.gitconfig` and the helper reads th
 role first fetches GitHub's published host keys from `<api_url>/meta` and seeds them into the
 user's `known_hosts`. `update_existing` defaults to **false** so a re-run never disturbs local work.
 
-### `make login TYPE=github`
+### `just login --only github`
 
-`playbooks/github_login.yml` (`make login TYPE=github`) runs the role's `login` entry point, which looks
+`playbooks/github_login.yml` (`just login --only github`) runs the role's `login` entry point, which looks
 the user's home up for itself (the marker lives under it, and only `main.yml` had resolved it, which
 the first real run found), decides from the same vars and reports how a VM is signed in - and, for a
 device-flow login that lacks the `workflow` scope, the `gh auth refresh` that adds it. It names only
 what can run there: with `github_auth: false` nothing, and for a vault token not applied yet the
-`make deploy ... TAGS=github_projects` that applies it. Given names, any number, it runs the device
+`just deploy ... --tags github_projects` that applies it. Given names, any number, it runs the device
 flow itself (`device_flow.yml`) for each VM signed out, then, after the last approval, the whole role
 for every VM named, signed in now or before, so the private repositories arrive in that run (and a
-vault token is applied); under `make deploy`, whose configure has just run the role, only for the VMs
+vault token is applied); under `just deploy`, whose configure has just run the role, only for the VMs
 signed in just now.
 
 ### The device flow
@@ -531,19 +531,19 @@ takes the token when set and the device flow otherwise, `web` the device flow al
 used for the listing only, `token` the token only with an empty vault a named failure. The device
 flow asks for `github_projects_login_scopes` on top of gh's own and tells gh the clone protocol.
 
-### Under `make deploy`, one VM at a time
+### Under `just deploy`, one VM at a time
 
-`make deploy` asks first: Enter goes for a VM whose Claude code was entered and `n` skips it; any other
+`just deploy` asks first: Enter goes for a VM whose Claude code was entered and `n` skips it; any other
 VM goes on `y` only, and with no terminal a question returns nothing at once. One VM at a time:
-`github_login.yml` runs its sign-in play `serial: 1` where it can prompt (names given, or `make
+`github_login.yml` runs its sign-in play `serial: 1` where it can prompt (names given, or `just
 deploy`), and the fleet at once for a report, and `device_flow.yml` refuses a batch of
 more than one, since the browser step would otherwise run for each before any waiting began. The
 guard reads `ansible_play_batch`: `ansible_play_hosts` is every host of the play, serial or not. A
 failed VM is rescued, said and raised again by a later play without serial, so it neither stops the
-VMs after it nor, under `make deploy`, the run (§5.5); an unreachable one is caught by the reach play
+VMs after it nor, under `just deploy`, the run (§5.5); an unreachable one is caught by the reach play
 before it, and a failure of the role run after the sign-in is a configure failure, raised at the end
-of `make deploy` too, naming the failed repositories and `TAGS=github_projects`. The flow runs from
-`make login TYPE=github` and from `make deploy`, never from `make deploy TYPE=configure`.
+of `just deploy` too, naming the failed repositories and `--tags github_projects`. The flow runs from
+`just login --only github` and from `just deploy`, never from `just deploy --only configure`.
 
 ## 5.7 `vscode_server` — what VS Code's Remote - SSH needs on the host
 
@@ -642,7 +642,7 @@ plan's research record.
   page would end the one waiting. An expired login is signed in again only when it is the role's (the
   marker holds its node key, which an expired node keeps) or a sign-in of the role's is pending
   (`tailscale_login_expired_elsewhere`): `up --reset` over one made by hand would replace its settings and
-  make it the role's, so that one is reported, to be signed in again the way it was made. `make deploy`'s sign-in play still holds its configure play's join, so
+  make it the role's, so that one is reported, to be signed in again the way it was made. `just deploy`'s sign-in play still holds its configure play's join, so
   without that order a refusal from earlier in the run hid the page.
 - **The report.** One line per VM, built in `vars:`, everything the VM reports through `plain_text`, and
   the tailnet named (`CurrentTailnet.Name`), so a login someone else approved into their tailnet shows -

@@ -32,16 +32,16 @@ hand and kept on every run, which is where context goes.
 
 | Page | Generated from | Markers |
 |---|---|---|
-| `reference/make-targets.md` | the `## ` comment on each target in the `Makefile`, grouped by its `# --- name ---` banners | `BEGIN_GENERATED: make-targets` |
+| `reference/commands.md` | the `justfile`'s recipes as `just --json` gives them, grouped by their `[group]`: each one's `[doc]`, and the `help` of each of its options and words | `BEGIN_GENERATED: commands` |
 | `reference/settings.md` | `local.yml.example` and `vault.yml.example`: each comment block and the settings under it, grouped by banner; the default from `defaults.yml` or the role's `defaults/main.yml`; the role variable each setting ends up in, followed through `defaults.yml`'s wiring, with the first sentence of its `argument_specs` description | `BEGIN_GENERATED: settings` |
 | `reference/roles/<role>.md` | `roles/<role>/`: the variables of each entry point from `meta/argument_specs.yml` (a default it leaves out comes from `defaults/main.yml`), the internal values in `vars/main.yml`, and every task in `tasks/` with a flowchart of each task file, rendered by [docsible](https://github.com/docsible/docsible) with `tools/templates/role.md.j2` | `BEGIN_GENERATED: role` |
 
-`tools/docs.py` does all three; `make docs` runs it, and so does a pre-commit hook whenever a commit
+`tools/docs.py` does all three; `just docs` runs it, and so does a pre-commit hook whenever a commit
 touches one of the sources. To change what a generated section says, change its source - a role
 variable's `description:` in `argument_specs.yml`, the comment above a setting in `local.yml.example`
-or `vault.yml.example`, a default in `defaults.yml` or a role's `defaults/main.yml`, a task file, a target's
-`## ` text - and run `make docs`. A new role gets its page, with the markers and a title, the first time
-`make docs` runs; add it to the `nav` in `zensical.toml`. Text taken from a source is escaped outside
+or `vault.yml.example`, a default in `defaults.yml` or a role's `defaults/main.yml`, a task file, a recipe's
+`[doc()]` or `[arg(help=...)]` - and run `just docs`. A new role gets its page, with the markers and a title, the first time
+`just docs` runs; add it to the `nav` in `zensical.toml`. Text taken from a source is escaped outside
 code spans, so a placeholder such as `<name>` reads as text rather than vanishing as an HTML tag.
 
 The example files are parsed strictly: in `local.yml.example` a setting is a commented `# name: value`
@@ -56,7 +56,7 @@ up in a role to an entry in one of the example files.
 
 docsible renders the role pages because it reads the task files as well as `argument_specs.yml`: each
 page lists every task and draws a flowchart of each task file, so a task added, renamed or removed changes
-its page, and the drift test fails until `make docs` runs. The pages use this project's template rather
+its page, and the drift test fails until `just docs` runs. The pages use this project's template rather
 than docsible's own, which turns every `|` into `¦`, leaves the descriptions out on entry points other
 than `main`, drops the tasks under `rescue` and `always`, and shows a multi-line value as a placeholder -
 for that last reason `tools/docs.py` writes the internal-values table itself. The flowcharts are
@@ -69,9 +69,9 @@ values; should they grow too large to read, the internal values are the part to 
 ## Building the site
 
 ```bash
-make docs              # regenerate the generated sections
-make docs TYPE=serve    # the site at http://127.0.0.1:8000, rebuilt as you save
-make docs TYPE=build    # the site in site/ (git-ignored), failing on any warning
+just docs              # regenerate the generated sections
+just docs serve        # the site at http://127.0.0.1:8000, rebuilt as you save
+just docs build        # the site in site/ (git-ignored), failing on any warning
 ```
 
 The site is configured in `zensical.toml`: the navigation, the theme, Mermaid diagrams, and heading
@@ -88,15 +88,15 @@ build - so the pages would build with another generator unchanged.
 `.github/workflows/docs.yml` builds the site strictly and deploys it to GitHub Pages whenever a push
 to `main` changes `docs/`, `zensical.toml`, `pyproject.toml` or `uv.lock`, and on demand from the Actions
 tab. It installs only the `docs` group, at the versions `uv.lock` locks, so the published site is the
-one the tests build. Pull requests need no job of their own: `make test TYPE=unit` builds the site and compares it
+one the tests build. Pull requests need no job of their own: `just test unit` builds the site and compares it
 with GitHub's rendering already. The repository's Pages source must be set to GitHub Actions (Settings →
 Pages) for the deploy to run.
 
 ## What the tests hold
 
-`tests/unit/test_docs.py`, part of `make test TYPE=unit` and so of CI, fails when:
+`tests/unit/test_docs.py`, part of `just test unit` and so of CI, fails when:
 
-- a generated section is out of date with its source (run `make docs` and commit the result);
+- a generated section is out of date with its source (run `just docs` and commit the result);
 - a setting that ends up in a role is missing from both example files, or a role default from its
   `argument_specs.yml`;
 - the site does not build strictly - a link to a page or an anchor that does not exist;

@@ -15,8 +15,8 @@ description:
     the first directory it ran in, the newest Claude Code version that wrote it, the branch it last ran
     on and whether it holds a message at all. Nothing of what was said is returned, only those values.
   - A line still being written, the last one without its newline, is not read.
-  - Read-only. make code runs it on this machine and on the VM (playbooks/tasks/session_read.yml), and
-    make destroy on the VM, for what of its sessions to save (playbooks/tasks/session_save.yml).
+  - Read-only. just code runs it on this machine and on the VM (playbooks/tasks/session_read.yml), and
+    just destroy on the VM, for what of its sessions to save (playbooks/tasks/session_save.yml).
   - A session is open while C(sessions/) registers it to a running claude: a pid that now names another
     program is an entry a claude left behind, never an open session.
 options:
@@ -39,8 +39,8 @@ options:
     default: false
   manifest:
     description:
-      - The manifest make code's copies are recorded in on this machine (claude_sessions_copy). With it, each
-        session says whether make code copied it here, and whether its copy is still as make code wrote it.
+      - The manifest just code's copies are recorded in on this machine (claude_sessions_copy). With it, each
+        session says whether just code copied it here, and whether its copy is still as just code wrote it.
     type: path
   memory:
     description: Also return the folders under C(projects/) whose auto memory folder holds a file.
@@ -112,7 +112,7 @@ sessions:
       description: Whether O(manifest) records a copy of it, in this folder or another it moved to; false without one.
       type: bool
     copied:
-      description: Whether it is the copy O(manifest) records, still as make code wrote it; false without one.
+      description: Whether it is the copy O(manifest) records, still as just code wrote it; false without one.
       type: bool
 memory:
   description: The folders whose auto memory folder holds a file, sorted; [] without O(memory).
@@ -142,7 +142,7 @@ import time
 
 from ansible.module_utils.basic import AnsibleModule
 
-# A session's ID: what make code accepts as SESSION, and what Claude Code names a transcript.
+# A session's ID: what just code accepts as --session, and what Claude Code names a transcript.
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 VERSION = re.compile(r"\d+(?:\.\d+)+")
 # claude_sessions_copy's manifest, read as it reads it.
@@ -260,7 +260,7 @@ def open_sessions(path, proc="/proc"):
 
 
 def read_manifest(path):
-    """The copies make code recorded in ``path``: ``<folder>/<id>.jsonl`` to the digest it wrote, or {}."""
+    """The copies just code recorded in ``path``: ``<folder>/<id>.jsonl`` to the digest it wrote, or {}."""
     try:
         with open(path, encoding="utf-8") as handle:
             found = json.load(handle)
@@ -297,7 +297,7 @@ def memory_folders(path):
 def list_sessions(path, days, ids, now=None, every=False, manifest=None, opened=None):
     """Every transcript under ``path``/projects written in the last ``days`` days, named in ``ids``, or with ``every``.
 
-    With ``manifest`` - make code's record of its copies here, read_manifest's - each session also says
+    With ``manifest`` - just code's record of its copies here, read_manifest's - each session also says
     whether it was copied here and whether its copy is still as written. ``opened`` is open_sessions'.
     """
     now = time.time() if now is None else now

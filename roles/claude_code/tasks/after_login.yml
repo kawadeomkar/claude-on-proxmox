@@ -1,6 +1,6 @@
 ---
 # Entry point for playbooks/claude_login.yml, for a VM this run signed in:
-# start Remote Control as make deploy TYPE=configure would, now that the login it was
+# start Remote Control as just deploy --only configure would, now that the login it was
 # waiting for exists. Its own play, after every VM has had its turn at the
 # prompt, so the next VM's sign-in page does not wait on this one's
 # twenty-second stay-up check, and so a failure here is told apart from a

@@ -2,7 +2,7 @@
 
 | Where | What |
 |-------|------|
-| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core) in a virtualenv of its own for this project, [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+, `make`, `git`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `make code` (optional), and `rsync` for the Claude Code sessions it copies to the VM (macOS has it; a Linux controller may need `apt install rsync`) |
+| Controller (your machine) | Python 3.12+ (required by the pinned ansible-core) in a virtualenv of its own for this project, [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+, [just](https://github.com/casey/just) 1.59+ (from its own releases: `brew install just`, `cargo install just`, or the release archive, checked against its `SHA256SUMS`), `git`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `just code` (optional), and `rsync` for the Claude Code sessions it copies to the VM (macOS has it; a Linux controller may need `apt install rsync`) |
 | Proxmox VE 8.x or 9.x | Root SSH access (template build only) and an API token, see [Proxmox access](proxmox-access.md) |
 | Testing (optional) | Docker Engine for Molecule; Vagrant + VirtualBox for a full VM test |
 
@@ -16,7 +16,7 @@ VMs with a repository that fails `apt update`, or with static addresses and no D
 
 | Assumption | Why |
 |---|---|
-| `apt` works on the host | `make deploy TYPE=template` installs `libguestfs-tools` |
+| `apt` works on the host | `just deploy --only template` installs `libguestfs-tools` |
 | The host can run VMs | hardware virtualization is on |
 | A bridge exists, and something on it hands out DHCP leases | every VM takes its address from DHCP |
 | A storage for VM disks, named in `proxmox_storage` | the template and every clone go there |
@@ -29,7 +29,7 @@ the parts of it this project depends on.
 
 ## Package repositories
 
-`make deploy TYPE=template` installs `libguestfs-tools` on the host to bake the QEMU guest agent into the image,
+`just deploy --only template` installs `libguestfs-tools` on the host to bake the QEMU guest agent into the image,
 and it refreshes the package lists first. That refresh fails if *any* repository does. A fresh install
 enables two enterprise repositories, Proxmox VE's and Ceph's (Ceph's even if you never use Ceph), and
 without a subscription both return `401 Unauthorized`, so one left enabled is enough to stop the build.
@@ -42,7 +42,7 @@ the No-Subscription repository so the host keeps getting updates - see
 The installer creates `vmbr0`, bridged to your physical NIC. VMs attached to it sit on your LAN and
 get their addresses from whatever already serves it — normally your router. That is the arrangement
 this project expects, and it is the Proxmox default. The template's NIC is attached to `proxmox_bridge`
-(`vmbr0` unless set) when it is built, and every clone inherits it; before the template exists, `make init`
+(`vmbr0` unless set) when it is built, and every clone inherits it; before the template exists, `just init`
 lists the bridges your token can use on the node and asks which, when `vmbr0` is not among them, and once
 it exists checks that the token holds `SDN.Use` on the template's.
 
@@ -55,12 +55,12 @@ Proxmox:
 
 On the controller side, Ansible works on up to `forks` VMs at a time - 20, set in `ansible.cfg` -
 so a fleet larger than that is cloned, booted and configured in waves. Raise it for one run with
-`make deploy TYPE=provision ANSIBLE_ARGS="-f 30"`; the hypervisor, not Ansible, is the real limit.
+`ANSIBLE_ARGS='-f 30' just deploy --only provision`; the hypervisor, not Ansible, is the real limit.
 
 Expect a VM's address to change when you rebuild it. A DHCP reservation in your router pins an
 address to a MAC, and that only lasts as long as the VM: Proxmox gives every clone a new random MAC
 and this project cannot choose one, so a destroyed and re-provisioned VM is a new MAC and a new
-lease. You never need to know the address in advance anyway — `make list` shows it.
+lease. You never need to know the address in advance anyway — `just list` shows it.
 
 `proxmox_vm_ipconfig` in `local.yml` skips DHCP and assigns an address directly, for example
 `ip=192.0.2.50/24,gw=192.0.2.1`. It is one value applied to **every VM a run provisions**, so with
@@ -72,7 +72,7 @@ See [Network Configuration](https://pve.proxmox.com/wiki/Network_Configuration).
 ## Storage
 
 A default LVM install gives you two: `local` for ISOs and templates, and `local-lvm` for VM disks.
-**An install on ZFS has no `local-lvm`** — it has `local-zfs` instead. `make init` lists the storages for
+**An install on ZFS has no `local-lvm`** — it has `local-zfs` instead. `just init` lists the storages for
 VM disks your token can use on the node, and asks which, when `local-lvm` is not among them; or check
 *Datacenter → Storage* and set `proxmox_storage` in `local.yml` yourself.
 
@@ -95,14 +95,14 @@ reads the template's configuration on the node it is sent to, so a template on a
 to clone. Shared storage does not change that: it only matters to Proxmox's *target node* clone
 option, which this project does not use.
 
-`make deploy TYPE=template` builds the template on whichever node `inventory/hosts.yml` points at, over SSH, so
-point it at the node you create VMs on and set `proxmox_node` to that same node — `make deploy`
-does both in one run. `make init` sets `proxmox_node` for you while it is the default: to the node that
+`just deploy --only template` builds the template on whichever node `inventory/hosts.yml` points at, over SSH, so
+point it at the node you create VMs on and set `proxmox_node` to that same node — `just deploy`
+does both in one run. `just init` sets `proxmox_node` for you while it is the default: to the node that
 holds the template, or before there is one, to the node `inventory/hosts.yml` reaches. To create VMs on several nodes, build a
 template on each with its own `proxmox_template_vmid` and `proxmox_template_name` (VMIDs are unique
 across the cluster, and cloning by name fails when two templates share one), then set
 `proxmox_node` and `proxmox_template_name` together for each run. Only the clone cares about
 `proxmox_node`: a VM you later migrate to another node is found by name wherever it is, and every
-re-run — `make deploy TYPE=configure`, a repair, `proxmox_vm_force_update` — addresses the node it is on.
+re-run — `just deploy --only configure`, a repair, `proxmox_vm_force_update` — addresses the node it is on.
 
 See [Cluster Manager](https://pve.proxmox.com/wiki/Cluster_Manager).

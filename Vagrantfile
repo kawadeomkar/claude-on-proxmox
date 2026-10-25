@@ -4,9 +4,9 @@
 # the docker service and a full cloud image. qemu-guest-agent stays stopped:
 # VirtualBox gives the VM no guest-agent port.
 #
-#   make vagrant        # ~10 minutes on first run
+#   just vagrant        # ~10 minutes on first run
 #   vagrant ssh            # then: sudo -iu dev claude
-#   make vagrant TYPE=destroy
+#   just vagrant destroy
 #
 # Vagrant generates its own inventory, so inventory/group_vars is not loaded;
 # role variables are passed directly. No real credentials are needed. Set
@@ -29,13 +29,13 @@ Vagrant.configure("2") do |config|
 
   config.vm.provision "ansible" do |ansible|
     ansible.compatibility_mode = "2.0"
-    # The project's own, which make vagrant passes; run without it, the one of
-    # the virtualenv python3 is, found as the Makefile finds it - never one
+    # The project's own, which just vagrant passes; run without it, the one of
+    # the virtualenv python3 is, found as tools/env-run finds it - never one
     # merely first on PATH. With no virtualenv, a path that says what is missing,
     # so a provision fails on it rather than on another Ansible.
     ansible.playbook_command = ENV.fetch("ANSIBLE_PLAYBOOK") do
       bin = `#{ENV.fetch("PYTHON", "python3")} -c 'import sys, sysconfig; print(sysconfig.get_path("scripts") if sys.prefix != sys.base_prefix else "")' 2>/dev/null`.strip
-      File.join(bin.empty? ? "/no-virtualenv-for-claude-on-proxmox-run-make-install" : bin, "ansible-playbook")
+      File.join(bin.empty? ? "/no-virtualenv-for-claude-on-proxmox-run-just-install" : bin, "ansible-playbook")
     end
     ansible.playbook = "playbooks/configure.yml"
     ansible.groups = { "claude_vms" => ["default"] }

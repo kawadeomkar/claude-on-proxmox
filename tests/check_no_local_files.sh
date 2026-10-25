@@ -38,11 +38,11 @@ patterns=(
   # Credentials.
   '(^|/)\.vault_pass'
   '(^|/)\.env'
-  # Run logs: the Makefile writes every Ansible run to .logs/, and Ansible's
+  # Run logs: the justfile writes every Ansible run to .logs/, and Ansible's
   # output names the Proxmox host and every VM by address.
   '(^|/)\.logs/'
   '\.log$'
-  # Claude Code sessions make destroy saved from a VM: transcripts hold
+  # Claude Code sessions just destroy saved from a VM: transcripts hold
   # whatever their tools printed, secrets included.
   '(^|/)\.sessions/'
   # Working documents beside the wiki: a plan, a review or a smoke runbook

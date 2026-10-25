@@ -15,7 +15,7 @@ What these guard:
 
 - Without a token in the vault, private repositories were not even listed:
   the public endpoint was used. The listing now uses the token gh stored at
-  a login the user made, so the run after `make login TYPE=github` reaches them.
+  a login the user made, so the run after `just login --only github` reaches them.
 - A vault token signs gh in once, again when it changes, and is signed out
   when cleared - but only the login the role itself made, told by a marker
   holding the token's digest: a PAT the user pasted by hand, a device-flow
@@ -36,10 +36,10 @@ What these guard:
   prints a token: every task that renders one is no_log, and every report,
   with each module's arguments injected into it, is searched for every
   canned one. Text gh prints is quoted without control characters.
-- `make login TYPE=github` says how a VM is signed in, and the command otherwise -
+- `just login --only github` says how a VM is signed in, and the command otherwise -
   only one that can do something there - and looks the user's home up
   itself: run without one, as the playbook is.
-- Given names, `make login TYPE=github` runs GitHub's device flow itself, one VM
+- Given names, `just login --only github` runs GitHub's device flow itself, one VM
   after another: gh in the background with no terminal, the code read from
   its output and shown, the approval waited for, then the whole role. The
   outcome is gh's own login state. An expired code, a gh that shows no code
@@ -47,7 +47,7 @@ What these guard:
   ending ends gh and leaves no job file or output behind. The browser and
   clipboard steps never run in a test: every scenario and this harness
   switch them off, and a test here keeps it so.
-- make deploy asks VM by VM: Enter goes where a Claude code was entered, and
+- just deploy asks VM by VM: Enter goes where a Claude code was entered, and
   "n" skips; elsewhere only "y" goes.
 """
 
@@ -154,7 +154,7 @@ CASES = {
         "github_projects_auth": False,
         "github_projects_clone_protocol": "ssh",
     },
-    # make deploy's configure: the sign-in comes next in the same run.
+    # just deploy's configure: the sign-in comes next in the same run.
     "deploy-signed-out": {"token": "", "github_projects_sign_in_follows": True},
 }
 EXPECTED_CLONES = {
@@ -433,7 +433,7 @@ def test_only_a_refused_token_and_an_old_gh_fail_and_say_why(configured):
     assert set(failures) == FAILING, failures
     assert "GitHub refused the token" in failures["refused-token"]
     assert "Bad credentials" in failures["refused-token"]
-    assert "make login VM_NAME=refused-token TYPE=github" in failures["refused-token"]
+    assert "just login refused-token --only github" in failures["refused-token"]
     assert '(docs/guides/github.md, "Private repositories, and pushing from the VM")' in failures["refused-token"]
     # Not "signed out", which would print the sign-in command on every run
     # and never configure the helper: the flag the role needs, by version.
@@ -490,7 +490,7 @@ def test_a_vault_token_is_not_put_over_a_login_made_by_hand(configured):
             assert f"gh is signed in to GitHub as {USERNAME} by a login of your own" in message, message
             assert "vault_github_token only lists the repositories there" in message, message
             assert "github_auth_method: token" in message, message
-            assert message.endswith(f"make deploy VM_NAME={host} TAGS=github_projects"), message
+            assert message.endswith(f"just deploy {host} --tags github_projects"), message
     # github_auth_method: token asks for the token whatever gh holds.
     assert _marker(root, "token-method-over-own").read_text().strip() == _digest(TOKENS["vault"])
 
@@ -662,7 +662,7 @@ def test_an_organisation_gives_no_identity_and_says_so(configured):
     said = _messages(first, "Say that an organisation gives no git identity")
     assert set(said) == {"org-no-token"}, said
     assert "acme-org is an organisation" in said["org-no-token"]
-    assert said["org-no-token"].endswith("make login VM_NAME=org-no-token TYPE=github")
+    assert said["org-no-token"].endswith("just login org-no-token --only github")
 
 
 def test_a_token_gh_will_not_sign_in_with_still_lists_and_says_which_scopes_to_add(configured):
@@ -674,8 +674,8 @@ def test_a_token_gh_will_not_sign_in_with_still_lists_and_says_which_scopes_to_a
     assert set(said) == {"token-repo-only"}, said
     assert "missing required scope 'read:org'" in said["token-repo-only"]
     assert "Add read:org" in said["token-repo-only"]
-    assert "make deploy VM_NAME=token-repo-only TAGS=github_projects" in said["token-repo-only"]
-    assert said["token-repo-only"].endswith("make login VM_NAME=token-repo-only TYPE=github")
+    assert "just deploy token-repo-only --tags github_projects" in said["token-repo-only"]
+    assert said["token-repo-only"].endswith("just login token-repo-only --only github")
     assert not (root / "token-repo-only" / ".config" / "gh" / "fake-token").exists()
 
 
@@ -691,18 +691,18 @@ def test_a_signed_out_vm_is_told_the_one_command(configured):
     }, messages
     for host, message in messages.items():
         if host != "deploy-signed-out":
-            assert f"Run make login VM_NAME={host} TYPE=github on your machine" in message, message
+            assert f"Run just login {host} --only github on your machine" in message, message
     # Signed out by its own switch, not for want of a login: nothing to run.
     assert "auth-off-with-token" not in messages
 
 
 def test_under_deploy_a_signed_out_vm_is_told_the_sign_in_comes_next(configured):
-    # make deploy signs gh in after configuration, in the same run: sending
-    # the user to make login TYPE=github there would have them stop it to do so.
+    # just deploy signs gh in after configuration, in the same run: sending
+    # the user to just login --only github there would have them stop it to do so.
     _, first, _ = configured
     message = _messages(first, "Say how to sign gh in")["deploy-signed-out"]
-    assert "make deploy signs it in next, in this run" in message, message
-    assert "TYPE=github" not in message
+    assert "just deploy signs it in next, in this run" in message, message
+    assert "--only github" not in message
 
 
 def test_next_steps_keep_each_sign_in_left_to_do_and_nothing_where_none_is(configured):
@@ -713,7 +713,7 @@ def test_next_steps_keep_each_sign_in_left_to_do_and_nothing_where_none_is(confi
     told = _messages(first, "Say how to sign gh in")
     for host in ("signed-out-no-token", "token-cleared-ours", "email-by-hand", "org-no-token"):
         assert left[host]["github"] == told[host], host
-    # make deploy signs it in next, in this run: nothing to run, so nothing listed.
+    # just deploy signs it in next, in this run: nothing to run, so nothing listed.
     assert left["deploy-signed-out"]["github"] == ""
     assert left["token-repo-only"]["github"] == _messages(first, "Say that the token only lists")["token-repo-only"]
     # A login of the user's own, said with how to change it: nothing to do.
@@ -747,7 +747,7 @@ LOGINS = {
     "env": {"stored": TOKENS["env"], "source": "GH_TOKEN"},
     "old-gh": {"old": True},
     # A vault token gh is not signed in with yet: the device flow does not
-    # run for it, and make login TYPE=github is no answer.
+    # run for it, and just login --only github is no answer.
     "pending-token": {"token": TOKENS["vault"]},
     # gh left alone: nothing to run, and no advice to turn off what is off.
     "auth-off": {"github_projects_auth": False},
@@ -757,9 +757,9 @@ LOGINS = {
 
 @pytest.fixture(scope="module")
 def login_run(tmp_path_factory, fake_github):
-    """github_login.yml, run once for every canned login, as a bare make login TYPE=github runs it: the report."""
+    """github_login.yml, run once for every canned login, as a bare just login --only github runs it: the report."""
     root = tmp_path_factory.mktemp("github_login")
-    # No home given: `make login TYPE=github` gives none, and the playbook once
+    # No home given: `just login --only github` gives none, and the playbook once
     # failed on a VM for exactly that, reading the marker before anything had
     # looked the home up.
     hosts = _hosts(root, {name: {"token": "", **case} for name, case in LOGINS.items()}, fake_github, home_given=False)
@@ -785,7 +785,7 @@ def login(login_run):
 def test_github_login_prints_the_command_for_a_signed_out_vm(login):
     assert set(login) == set(LOGINS)
     assert "not signed in to GitHub" in login["signed-out"]
-    assert "Run make login VM_NAME=signed-out TYPE=github to sign in by the device flow" in login["signed-out"]
+    assert "Run just login signed-out --only github to sign in by the device flow" in login["signed-out"]
 
 
 @pytest.mark.parametrize(
@@ -806,8 +806,8 @@ def test_github_login_says_how_a_vm_is_signed_in(login, host, how):
 
 def test_github_login_records_what_is_left_to_do(login_run, login):
     left = {host: matters.get("github") for host, matters in _left_to_do(login_run).items()}
-    # The missing workflow scope names no make command and is still left to do;
-    # so is the make deploy TYPE=configure a vault token waits for, under a bare run.
+    # The missing workflow scope names no just command and is still left to do;
+    # so is the just deploy --only configure a vault token waits for, under a bare run.
     for host in ("signed-out", "old-gh", "oauth", "pending-token"):
         assert left[host] == login[host], host
     # Signed in, or gh left alone.
@@ -830,11 +830,11 @@ def test_github_login_names_a_missing_workflow_scope_of_a_device_flow_login(logi
 
 def test_github_login_names_what_signs_a_pending_vault_token_in(login):
     # The device flow does not run with a token in the vault, so sending the
-    # user to make login TYPE=github would only bring them back here.
+    # user to just login --only github would only bring them back here.
     said = login["pending-token"]
     assert "vault_github_token is set" in said, said
-    assert said.endswith("make deploy VM_NAME=pending-token TAGS=github_projects"), said
-    assert "TYPE=github" not in said
+    assert said.endswith("just deploy pending-token --tags github_projects"), said
+    assert "--only github" not in said
 
 
 def test_github_login_leaves_gh_alone_with_github_auth_off(login):
@@ -847,7 +847,7 @@ def test_github_login_leaves_gh_alone_with_github_auth_off(login):
 
 @pytest.fixture(scope="module")
 def pending_named(tmp_path_factory, fake_github):
-    """make login VM_NAME=pending TYPE=github with a vault token gh is not signed in with: the whole role follows."""
+    """just login pending --only github with a vault token gh is not signed in with: the whole role follows."""
     root = tmp_path_factory.mktemp("github_login_pending")
     hosts = _hosts(root, {"pending": {"token": TOKENS["vault"]}}, fake_github, home_given=False)
     hosts["pending"]["github_projects_user"] = ME
@@ -875,7 +875,7 @@ def test_github_login_says_the_role_signs_a_pending_vault_token_in_next(pending_
 
 
 # ------------------------------------------------------- the device flow ----
-# `make login VM_NAME=<one> TYPE=github`: github_login.yml with vm_name set, against
+# `just login <one> --only github`: github_login.yml with vm_name set, against
 # a signed-out host. The stand-in gh prints the code and the page as gh does
 # with no terminal, then approves itself after two seconds, or expires.
 # github_projects_user is this user: after the sign-in the playbook runs the
@@ -921,7 +921,7 @@ os.write(fd, b"failed to authenticate via web browser: context deadline exceeded
 
 
 def _device_flow(tmp_path_factory, fake_github, name: str, case: dict, extra: dict | None = None) -> tuple[Path, dict]:
-    """make login VM_NAME=<name> TYPE=github for one signed-out host; extra vars (the flow's limits) on top."""
+    """just login <name> --only github for one signed-out host; extra vars (the flow's limits) on top."""
     root = tmp_path_factory.mktemp("device_" + name)
     hosts = _hosts(root, {name: {"token": "", **case}}, fake_github, home_given=False)
     hosts[name]["github_projects_user"] = ME
@@ -1001,7 +1001,7 @@ def reworded(tmp_path_factory, fake_github):
 
 @pytest.fixture(scope="module")
 def two(tmp_path_factory, fake_github):
-    """github_login.yml given two names, as make login VM_NAME=first,second TYPE=github runs it; the first expires."""
+    """github_login.yml given two names, as just login first,second --only github runs it; the first expires."""
     root = tmp_path_factory.mktemp("device_two")
     cases = {"first": {"token": "", "expire": True}, "second": {"token": ""}}
     hosts = _hosts(root, cases, fake_github, home_given=False)
@@ -1037,7 +1037,7 @@ def test_a_failed_sign_in_does_not_stop_the_vms_after_it_and_fails_the_run_once_
     assert report["rc"] != 0
     failures = _failures(report)
     assert "failed to authenticate" in failures["first"]
-    assert "make login VM_NAME=first TYPE=github again" in failures["first"]
+    assert "just login first --only github again" in failures["first"]
     if _has_own_group():
         assert set(failures) == {"first"}, failures
     else:
@@ -1128,7 +1128,7 @@ def test_an_expired_code_is_a_named_failure(expired):
     assert set(failures) == {"expired"}, failures
     assert "did not complete" in failures["expired"]
     assert "failed to authenticate via web browser: context deadline exceeded." in failures["expired"]
-    assert failures["expired"].endswith("Run make login VM_NAME=expired TYPE=github again for a fresh code.")
+    assert failures["expired"].endswith("Run just login expired --only github again for a fresh code.")
     assert not (root / "expired" / ".config" / "gh" / "fake-token").exists()
     _flow_files_are_gone(root, "expired")
 
@@ -1142,7 +1142,7 @@ def test_a_gh_that_shows_no_code_is_a_named_failure_with_the_retry_command(nocod
     assert "error connecting to api.github.com" in failure
     assert "; check your internet connection or https://githubstatus.com." in failure
     assert "gh exited" not in failure
-    assert failure.endswith("Run make login VM_NAME=nocode TYPE=github again."), failure
+    assert failure.endswith("Run just login nocode --only github again."), failure
     assert not CONTROL.search(failure), repr(failure)
     _flow_files_are_gone(root, "nocode")
 
@@ -1206,7 +1206,7 @@ def test_a_gh_that_hangs_is_ended_and_its_job_cleaned_up(hang):
     root, report = hang
     failure = _failures(report)["hang"]
     assert "did not start the device flow: no output in 2 seconds." in failure, failure
-    assert failure.endswith("Run make login VM_NAME=hang TYPE=github again.")
+    assert failure.endswith("Run just login hang --only github again.")
     assert not _gh_still_runs(root, "hang")
     _flow_files_are_gone(root, "hang")
 
@@ -1403,7 +1403,7 @@ def test_the_harness_keeps_the_device_flow_off_the_developer_s_desktop(tmp_path)
     assert hosts["probe"]["github_projects_login_desktop"] is False
 
 
-# ------------------------------------------------------- make deploy's step ---
+# ------------------------------------------------------- just deploy's step ---
 # deploy.yml decides GitHub VM by VM, from what its Claude step left on each VM.
 # With github_login_auto_start, the default, the device flow starts by itself
 # for every VM but one whose Claude sign-in was skipped. Off, every VM but that
@@ -1417,7 +1417,7 @@ AFTER_CLAUDE = {
 
 
 def _deploy_github_step(root: Path) -> Path:
-    """make deploy's GitHub step, imported as deploy.yml imports it: the same playbook, vars and condition."""
+    """just deploy's GitHub step, imported as deploy.yml imports it: the same playbook, vars and condition."""
     imported = next(
         play
         for play in yaml.safe_load((REPO / "deploy.yml").read_text())
@@ -1440,7 +1440,7 @@ def _deploy_github_step(root: Path) -> Path:
 
 
 def _deploy_github(root: Path, fake_github, **extra) -> tuple[Path, dict]:
-    """make deploy's GitHub step for three signed-out VMs, with no terminal to ask at."""
+    """just deploy's GitHub step for three signed-out VMs, with no terminal to ask at."""
     hosts = _hosts(root, {name: {"token": ""} for name in AFTER_CLAUDE}, fake_github, home_given=False)
     for name, facts in AFTER_CLAUDE.items():
         hosts[name].update(facts, github_projects_user=ME)

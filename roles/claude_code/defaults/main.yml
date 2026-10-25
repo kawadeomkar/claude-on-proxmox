@@ -6,7 +6,7 @@ claude_code_user: dev
 claude_code_install_method: native
 
 # stable, latest, or an exact version such as 2.1.41 - the oldest with
-# `claude auth`, which the Claude terminal `make code` opens relies on.
+# `claude auth`, which the Claude terminal `just code` opens relies on.
 claude_code_version: stable
 claude_code_installer_url: https://claude.ai/install.sh
 
@@ -38,7 +38,7 @@ claude_code_global_instructions: ""
 #   an API key is set      -> off, because a key outranks the login
 #   no key, no login yet   -> everything installed and the service left stopped,
 #                             with a path unit that starts it the moment a login
-#                             lands; make login TYPE=claude and make deploy sign in
+#                             lands; just login --only claude and just deploy sign in
 #                             and start it in the same run
 #   no key, logged in      -> the session is started and appears in the app
 # Set false to turn it off. "Off" is enforced, not just skipped: a server an
@@ -65,12 +65,12 @@ claude_code_remote_control_spawn: same-dir
 claude_code_remote_control_service: claude-remote-control
 
 # ------------------------------------------------------------- Sign-in -----
-# The browser sign-in (tasks/browser_login.yml) that `make login TYPE=claude` and
-# `make deploy` run on a VM with no Claude login and no API key: claude auth
+# The browser sign-in (tasks/browser_login.yml) that `just login --only claude` and
+# `just deploy` run on a VM with no Claude login and no API key: claude auth
 # login starts on the VM with no terminal, its sign-in page opens in the browser
 # on this machine, and once you authorise, the browser comes back to claude on
 # the VM by itself - or, where it cannot, the page shows a code to paste at a
-# prompt in the terminal running make. Set by the playbooks.
+# prompt in the terminal running just. Set by the playbooks.
 claude_code_login_interactive: false
 # Open the sign-in page in this machine's browser. Off in every test.
 claude_code_login_desktop: true
@@ -90,6 +90,6 @@ claude_code_login_timeout: 120
 # The code, given instead of the prompt: for tests and scripts. Pass it from a
 # vars file (-e @file), never -e key=value, which ps and -vvvv show.
 claude_code_login_code: ""
-# Set by make deploy's configure step: the sign-in comes next in the same run,
-# so the role says so rather than naming make login TYPE=claude.
+# Set by just deploy's configure step: the sign-in comes next in the same run,
+# so the role says so rather than naming just login --only claude.
 claude_code_sign_in_follows: false

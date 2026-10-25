@@ -1,6 +1,6 @@
-"""The session notes make code writes on the VM: playbooks/templates/vm_session.md.j2, rendered as code.yml renders it.
+"""The session notes just code writes on the VM: playbooks/templates/vm_session.md.j2, rendered as code.yml renders it.
 
-Everything outside the live markers is make code's and must not change from one
+Everything outside the live markers is just code's and must not change from one
 run to the next for an unchanged VM, so it holds no time; the live section is
 the window's "Session notes" task's, carried over as it is. The VM's own state
 - who is signed in, its MagicDNS name - is only ever in that section.
@@ -108,7 +108,7 @@ def test_the_sections_in_order_with_the_placeholder_until_the_window_has_opened(
     live = text[text.index(START) : text.index(END) + len(END)]
     placeholder = 'Opening the window fills this in; "Tasks: Run Task", **Session notes** refreshes it.'
     assert live == f"{START}\n## Signed in\n\n{placeholder}\n{END}"
-    assert text.startswith("# alpha\n\nVM 101 on Proxmox node **pve** · written by `make code` on your machine")
+    assert text.startswith("# alpha\n\nVM 101 on Proxmox node **pve** · written by `just code` on your machine")
 
 
 def test_what_the_window_wrote_is_carried_over_as_it_is(tmp_path):
@@ -125,11 +125,11 @@ def test_the_vm_s_facts_and_the_commands_with_its_name(tmp_path):
     for command in (
         "`ssh alpha`",
         "`ssh dev@192.0.2.51`",
-        "`make code VM_NAME=alpha`",
-        "`make login VM_NAME=alpha TYPE=claude`",
-        "`make login VM_NAME=alpha TYPE=github`",
-        "`make login VM_NAME=alpha TYPE=tailscale`",
-        "`make destroy VM_NAME=alpha`",
+        "`just code alpha`",
+        "`just login alpha --only claude`",
+        "`just login alpha --only github`",
+        "`just login alpha --only tailscale`",
+        "`just destroy alpha`",
         "`ssh-keygen -R 192.0.2.51`",
         "`systemctl status claude-remote-control`",
     ):
@@ -143,7 +143,7 @@ def test_switched_off_parts_are_left_out(tmp_path):
     text = _render(tmp_path, tailscale_enabled=False, claude_code_remote_control=False, github_auth=False)
     assert "Tailscale" not in _outside(text)
     assert "Remote Control" not in text and "claude-remote-control" not in text
-    assert "TYPE=github" not in text
+    assert "--only github" not in text
 
 
 def test_a_listing_without_the_vm_s_sizes_leaves_the_machine_row_out(tmp_path):

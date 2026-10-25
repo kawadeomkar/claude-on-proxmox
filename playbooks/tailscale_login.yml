@@ -1,16 +1,16 @@
 ---
 # Sign the VMs in to Tailscale by its web login, or say how each one is on it.
 #
-#   make login VM_NAME=alpha TYPE=tailscale        -> signs alpha in: a page opens here
-#   make login VM_NAME=alpha,beta TYPE=tailscale   -> the same, one VM after the other
-#   make login TYPE=tailscale                      -> reports every VM's state
+#   just login alpha --only tailscale        -> signs alpha in: a page opens here
+#   just login alpha,beta --only tailscale   -> the same, one VM after the other
+#   just login --only tailscale                      -> reports every VM's state
 #
-# With vault_tailscale_auth_key set, make deploy TYPE=configure joins each new VM by
+# With vault_tailscale_auth_key set, just deploy --only configure joins each new VM by
 # itself. Without one the join is Tailscale's web login, which ends with a
 # person approving a page: this runs it as far as it goes - one `tailscale up`
 # on the VM, the page read from its state, the page opened on this machine
 # (login_desktop), the approval waited for, up to tailscale_login_timeout. A VM
-# approved after that joins by itself; this says so. make deploy imports this
+# approved after that joins by itself; this says so. just deploy imports this
 # playbook for the VMs it configured, after GitHub's sign-in, and asks VM by
 # VM first: Enter signs in a VM whose Claude code was entered, "y" one that
 # showed no Claude prompt, and one whose Claude prompt got Enter is left.
@@ -43,7 +43,7 @@
         msg: "{{ claude_vm_tailscale_login_failure }}"
       when: claude_vm_reach is unreachable
 
-# One VM at a time where a sign-in can prompt - names given, or make deploy -
+# One VM at a time where a sign-in can prompt - names given, or just deploy -
 # since each opens its own page and waits for its own approval; a report reads
 # the fleet at once. A failure is caught here, said, and raised by the last
 # play, unless it is the person aborting at a prompt.
@@ -59,7 +59,7 @@
   tasks:
     - name: Sign this VM in
       block:
-        # The decision is the tailscale role's, so this and make deploy TYPE=configure
+        # The decision is the tailscale role's, so this and just deploy --only configure
         # cannot disagree about how a VM is on Tailscale.
         # tests/unit/test_tailscale.py runs this playbook against stand-ins.
         - name: Report how the VM is on Tailscale, and sign it in when asked to
@@ -67,8 +67,8 @@
             name: tailscale
             tasks_from: login
           vars:
-            # Names given (any number), or make deploy for a VM whose Claude
-            # code was entered: sign in. make deploy asks first.
+            # Names given (any number), or just deploy for a VM whose Claude
+            # code was entered: sign in. just deploy asks first.
             tailscale_login_interactive: "{{ claude_vm_login_interactive | default(claude_vm_login_named) }}"
             tailscale_login_ask: "{{ claude_vm_login_ask | default(false) }}"
           # On the task, not the block: a block's condition is its rescue's
@@ -88,9 +88,9 @@
           ansible.builtin.debug:
             msg: "{{ claude_vm_tailscale_login_failure }}"
 
-# make deploy carries on past a sign-in that failed - the person's to finish
-# later with make login TYPE=tailscale; this command exists to sign in, so here the
-# run fails, VM by VM - unless make login runs the three sign-ins
+# just deploy carries on past a sign-in that failed - the person's to finish
+# later with just login --only tailscale; this command exists to sign in, so here the
+# run fails, VM by VM - unless just login runs the three sign-ins
 # (claude_vm_login_raised_later), whose own last play raises it.
 - name: Fail each VM whose sign-in failed
   hosts: claude_vms

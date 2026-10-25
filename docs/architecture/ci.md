@@ -5,15 +5,15 @@
 
 | Job | Contents |
 |---|---|
-| `lint` | tracked-file guard → `make lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → `make test TYPE=unit` → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
+| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → `just test unit` → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
 | `dependency-review` | PRs only, fails on moderate severity |
-| `molecule` | matrix over all eight roles, `make test ROLE=<role>`, `needs: lint` |
-| `playbooks` | matrix over the `configure` and `provision` scenarios, `make test TYPE=integration` and `TYPE=provision`, `needs: lint` |
+| `molecule` | matrix over all eight roles, `just test --role <role>`, `needs: lint` |
+| `playbooks` | matrix over the `configure` and `provision` scenarios, `just test integration` and `provision`, `needs: lint` |
 | `canary` | schedule/dispatch only: checks that the cloud image URL in `roles/proxmox_template/defaults/main.yml` still answers and that Ubuntu's `SHA256SUMS` still lists it, then runs `configure` against the **unpinned** Ubuntu container image (`MOLECULE_IMAGE=...:latest`); allowed to fail — that failure is the notification |
 
 `.github/actions/setup` is a composite action installing Python 3.12 and uv (at the version
 `uv.lock` pins), making a virtualenv first on `PATH` (`activate-environment`), restoring the uv and Galaxy caches, and
-running `make install`. The Galaxy cache key hashes
+running `just install`. The Galaxy cache key hashes
 `requirements.yml`, which is only correct because those versions are exact. Third-party actions are
 pinned to commit SHAs, and Dependabot updates them along with the uv lock every week. Locally, `pre-commit` runs the same linters from the
 virtualenv.
@@ -30,7 +30,7 @@ The gitleaks scans, and what they cannot see, are in [Secret scanning](security-
 A secret they find has already been pushed and is public: revoke it rather than only rewriting history.
 
 **No job uses a secret**, so the full suite runs on pull requests from forks. Keep it that way.
-`make test` runs everything the CI gate runs locally, the pre-commit hooks included, but it is not a strict
+`just test` runs everything the CI gate runs locally, the pre-commit hooks included, but it is not a strict
 superset: CI also scans the working tree and the commits a push brings in with gitleaks, which a
 local run cannot reproduce from the git index alone.
 

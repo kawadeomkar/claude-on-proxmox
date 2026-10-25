@@ -20,7 +20,7 @@ declared a second time. It is not used, because:
   does: `provision.yml`, `list.yml`, `ssh_config.yml`, `destroy.yml` and `code.yml` read the cluster at
   moments an inventory parsed as a run starts cannot see, such as a VM provisioning has just cloned or
   one `destroy` has just started. The plugin would replace `discover.yml` alone, and its checks would
-  come back as a play after it: a VM named in `VM_NAME` that was not found, two VMs with one name, a
+  come back as a play after it: a VM named on the command line that was not found, two VMs with one name, a
   refused token, an empty fleet. Two ways of finding a VM's address would then have to agree.
 - **A failure is a warning.** ansible-core turns any error in an inventory plugin, Proxmox not
   answering or the token refused among them, into "Unable to parse ... as an inventory source", keeps
@@ -33,14 +33,14 @@ declared a second time. It is not used, because:
   ID can end up beside the other's address; `discover.yml` refuses to go on
   ([§9](failure-modes.md)).
 - **Every command would call Proxmox.** Each `ansible-playbook` parses the inventory before anything
-  else: `make lint TYPE=syntax` would call the API once for each playbook it checks, ansible-lint would
+  else: `just lint syntax` would call the API once for each playbook it checks, ansible-lint would
   too, and so would CI, which has neither Proxmox nor the vault password. So would the commands that only
   need SSH to a VM. 2.0.0 sets no timeout on its requests; 2.1.0's `api_timeout` is 5 s.
 - **It makes four API calls per VM** (its status, its configuration, its snapshots and its agent's
   interfaces), where `tasks/vm_addresses.yml` makes two.
 
-Its one gain, a `--limit` that works, is not one here: `VM_NAME` selects the VMs, and is checked before
-anything runs.
+Its one gain, a `--limit` that works, is not one here: the names after a recipe select the VMs, and are
+checked before anything runs.
 
 ## 15.2 The guest agent starts where its port is
 
@@ -63,3 +63,59 @@ anything runs.
 So the agent starts only where its port exists, and every other listed service wherever systemd runs
 ([§5.3](roles.md#53-common--os-baseline)). The VMs this project creates always have the port:
 `proxmox_vm` enables the agent.
+
+## 15.3 The command line is just, not make
+
+`make` takes no options of a target's own: `make init --host x` fails, and `make init -- --storage
+test` runs the `test` target. So the `Makefile` grew an argument language of its own on make
+variables - `TYPE=`, `VM_NAME=`, `TAGS=`, `ROLE=`, `PROJECT=`, eleven of `init`'s - and about two hundred
+lines of parse-time guards against a stray word becoming a target, a VM name or an expansion. [`just`](https://github.com/casey/just)
+recipes take options and words of their own (`just deploy alpha --tags claude_code`, `just init --host
+pve.lan --no-prompt`), each held to a pattern before anything runs, with help that `just help <recipe>`
+and the [Commands](../reference/commands.md) page read from the recipe itself. What each command does
+did not change.
+
+How the justfile is built, and why (each tried on just 1.59.0, on macOS and in `ubuntu:24.04`):
+
+- **No recipe has a dependency.** `JUST_NO_DEPS` in the environment, or `--no-deps`, skips every one,
+  so a check written as one could be switched off, and its refusal would come after just had evaluated
+  what the recipe uses. Every check is a line of the recipe's own script instead: the checkout guard,
+  then the recipe's rules, then `tools/env-run --bin`, `tools/check vault` and `tools/check collections`,
+  then the work. A recipe that includes another's work (`test` lints, `init` installs) runs it as `{{ self
+  }}`, which passes on every setting, since a recursive just starts without the command line's `BIN=`.
+- **No assignment starts a program.** just evaluates every assignment a recipe uses, and the recipe's
+  own `{{ }}`, before its first line runs: a `shell()` there would start before any refusal, and a
+  `path_exists()` there reads the file as it was before the recipe ran - `init`'s checks would miss the
+  `.vault_pass` its questions had just made. So those are decided by the shell, when the line runs.
+- **Patterns for characters, the script for rules.** A pattern is checked against every value of a
+  variadic parameter, and against its default, anchored at both ends; it is literal, since one naming an
+  assignment could be loosened by overriding that assignment on the command line. A pattern refusal
+  quotes the regex, so the rules between options - `--tags` beside names, `--check` with `--only` - and
+  their messages are the script's. A value reaches the script as a positional argument, never as its
+  text, and what goes into JSON is checked again there.
+- **Bash, keeping to 3.2.** Ubuntu's `sh` is `dash`, which dies of a Ctrl-C that the playbook it waits on
+  has caught and survived - Ansible's `pause`, Ctrl-C then C - so the run would end with exit 130 even
+  under `[continue]`; bash waits for the playbook and carries on. macOS's `/bin/bash` is 3.2, under which
+  `"${a[@]}"` of an empty array is fatal with `-u`, so the scripts build argument lists with `set --`.
+- **The checkout guard.** just looks for a justfile upward and does not stop at a checkout's `.git`, so
+  started in a worktree of a branch without one - under `.claude/worktrees/` - it would run this checkout's
+  recipes, with its inventory and vault. `tools/check checkout` refuses that, comparing git's top level of
+  where just was started with git's of this checkout: never the shell's `pwd`, which keeps a directory in
+  the case it was typed in, while macOS's file system takes any case and git gives the disk's.
+- **A catch-all on `init`.** A word after a recipe that takes none becomes the name of a recipe to run,
+  and just prints it when there is none: `just init TOKEN_SECRET=...`, make's spelling, would print the
+  secret. `init` takes the words after its options as `EXTRA`, which it refuses without saying them.
+- **VM names start with a letter or a digit.** A recipe without options takes `--project` as a word, so a
+  name may not start with `-`.
+- **just is the user's, from its own releases.** PyPI's `rust-just` would have let `uv.lock` pin it, but
+  it is a third party's own build of just: its binaries are not upstream's, and every bump would bring a
+  new one onto the machine that holds the vault password. So just, like uv, is installed by the user, at
+  least the version the justfile's `minimum-version` names, and CI installs upstream's archive checked
+  against a pinned SHA256 ([§13](toolchain.md)).
+- **What was dropped.** The `Makefile`, with its refusal of a target's name among VM names (just takes
+  every word after a recipe with a variadic parameter as one of its values, and runs no second recipe),
+  of names given both ways (there is no `VM_NAME`), of `$(...)` that make would expand (just expands
+  nothing it is given), and the table of the targets an earlier version had: the project had one user, and
+  [Upgrading](../guides/upgrading.md#make-became-just) maps every old command.
+- **What just does not do.** Shell completion completes recipe names, not their options, and
+  `just deploy --help` is an unknown option: `just help deploy` is the way in.

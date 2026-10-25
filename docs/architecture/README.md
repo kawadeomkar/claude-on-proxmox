@@ -106,7 +106,7 @@ most of the design.
 
 | Identifier | Assigned by | Used for | Persisted? |
 |---|---|---|---|
-| **Name** (`alpha`) | the user, via `VM_NAME` | the key for every lookup | in Proxmox, as the VM name |
+| **Name** (`alpha`) | the user, after the recipe (`just deploy alpha`) | the key for every lookup | in Proxmox, as the VM name |
 | **VMID** (`9001`) | Proxmox (`/cluster/nextid`; a fleet's are numbered from it once, in `provision.yml`) | API calls after the clone | in Proxmox |
 | **Address** (`192.0.2.51`) | the LAN's DHCP server | SSH | nowhere — re-read every run |
 | **Tag** (`claude-on-proxmox`) | this project | ownership and discovery | in Proxmox, on the VM |

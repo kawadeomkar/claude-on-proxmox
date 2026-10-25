@@ -24,7 +24,7 @@ What these guard:
   after the run, a join still under way when its time ran out. A refused key
   leaves nothing pending, and an expired node's old key is never recorded.
 - A page still waiting for its approval is what a report says, before an
-  expired key or a refused one - make deploy's refusal from its configure play
+  expired key or a refused one - just deploy's refusal from its configure play
   included.
 - Tags are compared only when configured, and the fix named is the admin
   console - never a logout or a web login.
@@ -34,10 +34,10 @@ What these guard:
 - Each report is one line, names the tailnet (not under a control server of
   the user's own), and carries nothing the VM printed but plain text.
 - configure.yml runs the role last, in a rescued block, so a failure leaves the
-  VM its alias and fails the run at its end - or under make deploy, deploy's.
+  VM its alias and fails the run at its end - or under just deploy, deploy's.
 - Every test setup keeps off Tailscale's services and this machine's tailscale:
   this harness, the Molecule scenarios, the Vagrantfile; and the role's
-  scenario is in the Makefile's ROLES and CI's matrix.
+  scenario is in the justfile's scenario_roles and CI's matrix.
 """
 
 from __future__ import annotations
@@ -313,7 +313,7 @@ def test_a_node_whose_key_expired_is_never_handed_the_key(configured):
     root, first, first_calls, second = configured
     assert _ups(_calls(root, "expired-key-set")) == []
     assert _said(first)["expired-key-set"] == (
-        "expired-key-set: signed out of Tailscale (its key expired). make login VM_NAME=expired-key-set TYPE=tailscale"
+        "expired-key-set: signed out of Tailscale (its key expired). just login expired-key-set --only tailscale"
         " signs it in again."
     )
 
@@ -341,9 +341,9 @@ def test_a_refused_key_is_a_report_naming_tailscale_s_reason(configured):
     assert "refused" not in _failures(first) and "slow" not in _failures(first)
     assert _said(first)["refused"] == (
         "refused: Tailscale refused vault_tailscale_auth_key (invalid key: API key does not exist) - it has expired,"
-        " been used up or been revoked. Put a new one in the vault (reusable, pre-approved, tagged) and run make"
-        " deploy VM_NAME=refused TAGS=tailscale, or sign in by the browser: make login VM_NAME=refused"
-        " TYPE=tailscale"
+        " been used up or been revoked. Put a new one in the vault (reusable, pre-approved, tagged) and run just"
+        " deploy refused --tags tailscale, or sign in by the browser: just login refused"
+        " --only tailscale"
     )
     # A refusal that came back as the timeout is named from the health message.
     assert "(invalid key: API key does not exist)" in _said(first)["slow"]
@@ -356,8 +356,8 @@ def test_a_join_still_under_way_is_this_role_s_and_a_refused_one_leaves_nothing(
     assert (root / "late" / "markers" / "tailscale-joined").read_text() == "pending\n"
     assert _said(first)["late"] == (
         "late: Tailscale did not join with vault_tailscale_auth_key (timeout waiting for Tailscale service to enter a"
-        ' Running state; check health with "tailscale status"). make deploy VM_NAME=late TAGS=tailscale tries'
-        " again, or sign in by the browser: make login VM_NAME=late TYPE=tailscale"
+        ' Running state; check health with "tailscale status"). just deploy late --tags tailscale tries'
+        " again, or sign in by the browser: just login late --only tailscale"
     )
     for host in ("refused", "denied-tags"):
         assert not (root / host / "markers" / "tailscale-joined").exists(), host
@@ -384,8 +384,8 @@ def test_a_join_refused_in_other_words_leaves_nothing_pending(configured):
     assert "denied-tags" not in _failures(first)
     assert _said(first)["denied-tags"] == (
         "denied-tags: Tailscale did not join with vault_tailscale_auth_key (backend error: requested tags"
-        " [tag:claude-vm] are invalid or not permitted). make deploy VM_NAME=denied-tags TAGS=tailscale tries"
-        " again, or sign in by the browser: make login VM_NAME=denied-tags TYPE=tailscale"
+        " [tag:claude-vm] are invalid or not permitted). just deploy denied-tags --tags tailscale tries"
+        " again, or sign in by the browser: just login denied-tags --only tailscale"
     )
 
 
@@ -394,8 +394,8 @@ def test_an_oauth_secret_without_tags_is_refused_before_any_up(configured):
     assert _ups(_calls(root, "client-no-tags")) == []
     assert _said(first)["client-no-tags"] == (
         "client-no-tags: Tailscale refused vault_tailscale_auth_key (oauth authkeys require --advertise-tags): an"
-        " OAuth client secret needs the tags it may apply in tailscale_advertise_tags. Set them and run make deploy"
-        " VM_NAME=client-no-tags TAGS=tailscale"
+        " OAuth client secret needs the tags it may apply in tailscale_advertise_tags. Set them and run just deploy"
+        " client-no-tags --tags tailscale"
     )
 
 
@@ -472,8 +472,8 @@ def test_a_page_still_waiting_is_said_before_an_expired_key(configured):
     assert _ups(_calls(root, "page-waiting-expired")) == []
     assert _said(first)["page-waiting-expired"] == (
         "page-waiting-expired: not signed in to Tailscale yet - the page stays valid for 7 days and"
-        " page-waiting-expired joins by itself once you approve it; make login VM_NAME=page-waiting-expired"
-        " TYPE=tailscale gives a fresh page."
+        " page-waiting-expired joins by itself once you approve it; just login page-waiting-expired"
+        " --only tailscale gives a fresh page."
     )
     # The old key is not the login the page will give.
     assert (root / "page-waiting-expired" / "markers" / "tailscale-joined").read_text() == "pending\n"
@@ -498,8 +498,8 @@ def test_a_node_still_starting_is_reported_not_changed(configured):
     root, first, first_calls, second = configured
     assert [call for call in _calls(root, "starting") if call.startswith(("set ", "up "))] == []
     assert _said(first)["starting"] == (
-        "starting: Tailscale is still connecting (Starting) after 3 seconds, so nothing was changed. make deploy"
-        " VM_NAME=starting TAGS=tailscale reads it again."
+        "starting: Tailscale is still connecting (Starting) after 3 seconds, so nothing was changed. just deploy"
+        " starting --tags tailscale reads it again."
     )
 
 
@@ -523,11 +523,11 @@ def test_a_node_with_no_key_is_left_for_the_web_login(configured):
     root, first, first_calls, second = configured
     assert _ups(_calls(root, "fresh-no-key")) == []
     assert _said(first)["fresh-no-key"] == (
-        "fresh-no-key: Tailscale is installed but not signed in. make login VM_NAME=fresh-no-key TYPE=tailscale"
-        " signs it in from your browser; vault_tailscale_auth_key joins it on the next make deploy TYPE=configure."
+        "fresh-no-key: Tailscale is installed but not signed in. just login fresh-no-key --only tailscale"
+        " signs it in from your browser; vault_tailscale_auth_key joins it on the next just deploy --only configure."
     )
     assert _said(first)["fresh-no-key-deploy"] == (
-        "fresh-no-key-deploy: Tailscale is installed; make deploy signs it in next, in this run."
+        "fresh-no-key-deploy: Tailscale is installed; just deploy signs it in next, in this run."
     )
 
 
@@ -536,7 +536,7 @@ def test_tailscale_auth_method_decides_whether_the_key_is_used(configured):
     # web: a key in the vault is left unused, and only the browser is named.
     assert _ups(_calls(root, "web-with-key")) == []
     assert _said(first)["web-with-key"] == (
-        "web-with-key: Tailscale is installed but not signed in. make login VM_NAME=web-with-key TYPE=tailscale"
+        "web-with-key: Tailscale is installed but not signed in. just login web-with-key --only tailscale"
         " signs it in from your browser."
     )
     # key: the key joins a fresh node, as under auto.
@@ -547,7 +547,7 @@ def test_tailscale_auth_method_decides_whether_the_key_is_used(configured):
     assert _said(first)["key-method-expired"] == (
         "key-method-expired: signed out of Tailscale (its key expired), and tailscale_auth_method key never signs a"
         " VM in by the browser nor sends the key to a node that had a login: run sudo tailscale logout on it, then"
-        " make deploy VM_NAME=key-method-expired TAGS=tailscale joins it with the key."
+        " just deploy key-method-expired --tags tailscale joins it with the key."
     )
 
 
@@ -597,7 +597,7 @@ def test_no_key_reaches_a_report_an_argument_or_a_file(configured):
 LOGIN = REPO / "playbooks" / "tailscale_login.yml"
 SAY_PAGE = "web_login | Say where to sign in"
 
-# One host per way make login TYPE=tailscale meets a VM. The stand-in approves a
+# One host per way just login --only tailscale meets a VM. The stand-in approves a
 # page `approve-after` seconds after minting it - here, after `up --timeout=5s`
 # has exited, as Phase 0 saw tailscaled finish a login on its own.
 WEB_CASES = {
@@ -638,7 +638,7 @@ WEB_EXTRA = {**EXTRA, "claude_vm_discovery": False, "tailscale_login_poll_second
 
 @pytest.fixture(scope="module")
 def web_logins(tmp_path_factory):
-    """make login VM_NAME=<every host> TYPE=tailscale: one VM at a time, each signed in where it can be."""
+    """just login <every host> --only tailscale: one VM at a time, each signed in where it can be."""
     root = tmp_path_factory.mktemp("tailscale-web")
     hosts = _hosts(root, WEB_CASES)
     for name in hosts:
@@ -687,7 +687,7 @@ def test_a_wait_that_runs_out_is_a_report_and_the_page_stays_pending(web_logins)
     assert "waited-out" not in _failures(report)
     assert _said(report)["waited-out"] == (
         "waited-out: not signed in to Tailscale yet - the page stays valid for 7 days and waited-out joins by itself"
-        " once you approve it; make login VM_NAME=waited-out TYPE=tailscale gives a fresh page."
+        " once you approve it; just login waited-out --only tailscale gives a fresh page."
     )
     assert len(_ups(_calls(root, "waited-out"))) == 1
     # Marked before the page was shown: approved later, it is the role's login.
@@ -795,8 +795,8 @@ def test_a_vm_it_cannot_sign_in_gets_one_line_and_nothing_else(web_logins):
     root, report = web_logins
     messages = _messages(report, "login | Say why there is nothing to sign in")
     assert messages["not-installed"] == (
-        "not-installed: Tailscale is not installed; make deploy VM_NAME=not-installed TAGS=tailscale installs it,"
-        " and make login VM_NAME=not-installed TYPE=tailscale then signs it in."
+        "not-installed: Tailscale is not installed; just deploy not-installed --tags tailscale installs it,"
+        " and just login not-installed --only tailscale then signs it in."
     )
     assert (
         messages["switched-off"]
@@ -810,7 +810,7 @@ def test_a_vm_it_cannot_sign_in_gets_one_line_and_nothing_else(web_logins):
         "installed-outside-dpkg: Tailscale is installed (NeedsLogin) outside this project, so it is left as it is."
     )
     assert _said(report)["key-only"] == (
-        "key-only: Tailscale is installed but not signed in. make deploy VM_NAME=key-only TAGS=tailscale joins it"
+        "key-only: Tailscale is installed but not signed in. just deploy key-only --tags tailscale joins it"
         " with vault_tailscale_auth_key (tailscale_auth_method: key)."
     )
     assert _said(report)["expired-by-hand"].startswith(
@@ -841,7 +841,7 @@ def test_without_names_every_vm_is_reported_at_once_and_none_signed_in(tmp_path)
     assert report["rc"] == 0, _failures(report)
     assert all(_ups(_calls(tmp_path, host)) == [] for host in hosts)
     assert _said(report)["one"].startswith(
-        "one: Tailscale is installed but not signed in. make login VM_NAME=one TYPE=tailscale"
+        "one: Tailscale is installed but not signed in. just login one --only tailscale"
     )
     batches = [
         sorted({host for task in entry["tasks"] for host in task["hosts"]})
@@ -851,7 +851,7 @@ def test_without_names_every_vm_is_reported_at_once_and_none_signed_in(tmp_path)
     assert batches == [["one", "two"]], batches
 
 
-# ---------------------------------------------------- make deploy's step ---
+# ---------------------------------------------------- just deploy's step ---
 # What deploy.yml's Tailscale import decides, VM by VM, from what each VM's
 # Claude step left. With tailscale_login_auto_start, the default, the web login
 # starts by itself for every VM but one whose Claude sign-in was skipped. Off,
@@ -966,13 +966,13 @@ def test_check_mode_says_what_a_run_would_do_and_does_none_of_it(tmp_path):
     assert _failures(report) == {}
     said = _said(report)
     assert said["check-no-package"] == (
-        "check-no-package: Tailscale is not installed, and check mode installs nothing; make deploy"
-        " VM_NAME=check-no-package TYPE=configure installs it."
+        "check-no-package: Tailscale is not installed, and check mode installs nothing; just deploy"
+        " check-no-package --only configure installs it."
     )
     assert _calls(tmp_path, "check-no-package") == []
     assert said["check-would-join"] == (
-        "check-would-join: Tailscale would join with vault_tailscale_auth_key; check mode sends nothing. make"
-        " deploy VM_NAME=check-would-join TAGS=tailscale joins it."
+        "check-would-join: Tailscale would join with vault_tailscale_auth_key; check mode sends nothing. just"
+        " deploy check-would-join --tags tailscale joins it."
     )
     assert _ups(_calls(tmp_path, "check-would-join")) == []
     assert said["check-would-join-over-a-page"].startswith(
@@ -1019,8 +1019,8 @@ def test_a_tailscale_failure_leaves_the_vm_its_alias_and_fails_the_run_at_its_en
     line = (
         'badname: Tailscale failed at "Fail when tailscale_hostname is not one DNS label": tailscale_hostname is'
         ' "bad_name!", which Tailscale refuses as a machine name: it must be one DNS label - letters, digits and'
-        " hyphens, at most 63, not starting or ending with a hyphen. Retry it with: make deploy VM_NAME=badname"
-        " TAGS=tailscale"
+        " hyphens, at most 63, not starting or ending with a hyphen. Retry it with: just deploy badname"
+        " --tags tailscale"
     )
     assert _failures(report) == {"badname": f"Fail where Tailscale failed: {line}"}, _failures(report)
 
@@ -1204,11 +1204,11 @@ def test_the_vagrantfile_keeps_tailscale_off_the_network():
     assert re.search(r'^\s*tailscale_auth_key: "",', text, flags=re.M)
 
 
-def test_every_role_scenario_is_in_the_makefile_and_ci():
+def test_every_role_scenario_is_in_the_justfile_and_ci():
     # Both lists are written by hand: a role left out of them is never tested.
     with_scenarios = {path.parent.parent.name for path in (REPO / "roles").glob("*/molecule/default")}
-    makefile = (REPO / "Makefile").read_text()
-    roles = set(re.search(r"^ROLES\s*:=\s*(.*)$", makefile, flags=re.M).group(1).split())
+    justfile = (REPO / "justfile").read_text()
+    roles = set(re.search(r"^scenario_roles := '(.*)'$", justfile, flags=re.M).group(1).split())
     ci = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text())
     matrix = set(ci["jobs"]["molecule"]["strategy"]["matrix"]["role"])
     assert with_scenarios == roles == matrix, (with_scenarios, roles, matrix)

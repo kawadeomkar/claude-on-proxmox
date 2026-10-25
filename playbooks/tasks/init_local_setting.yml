@@ -1,5 +1,5 @@
 ---
-# Write one setting into local.yml for make init, in place of its commented
+# Write one setting into local.yml for just init, in place of its commented
 # example line, under that line's explanation; a file without one gets it at
 # its end. Inputs, through the include's vars (never facts):
 #
@@ -8,7 +8,7 @@
 #                       stays a string and a boolean a boolean
 #   init_local_file     the file
 #
-# make init writes only what is not set yet, so a key already set on a line of
+# just init writes only what is not set yet, so a key already set on a line of
 # its own fails here: the caller has said so before it got this far, and a
 # second line would silently win over the first.
 - name: init_local_setting | Read local.yml
@@ -19,7 +19,7 @@
 - name: init_local_setting | Refuse a setting local.yml already has
   ansible.builtin.assert:
     that: init_setting_key not in ((init_local_setting_read.content | b64decode | from_yaml) or {})
-    fail_msg: "{{ init_setting_key }} is already set in {{ init_local_file }}, and make init never writes over it."
+    fail_msg: "{{ init_setting_key }} is already set in {{ init_local_file }}, and just init never writes over it."
     quiet: true
 
 - name: init_local_setting | Write {{ init_setting_key }}
