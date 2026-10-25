@@ -41,6 +41,52 @@
           - dev_tools_verify_out.uv is match('^uv ' ~ dev_tools_verify_defaults.dev_tools_uv_version)
         quiet: true
 
+    - name: Check the Rust toolchain runs for dev
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - [rustup, --version]
+        - [cargo, --version]
+        - [rustc, --version]
+        - [cargo, clippy, --version]
+        - [rustfmt, --version]
+      become: true
+      become_user: dev
+      changed_when: false
+
+    - name: Check the default toolchain is the role's
+      ansible.builtin.command:
+        argv: [rustup, default]
+      become: true
+      become_user: dev
+      register: dev_tools_verify_rust_default
+      changed_when: false
+      failed_when: >-
+        dev_tools_verify_rust_default.stdout
+        is not match(dev_tools_verify_defaults.dev_tools_rust_toolchain ~ '-')
+
+    # In one login shell that starts before ~/.cargo/bin exists - rustup from
+    # Ubuntu's archive does not create it - as when the user runs
+    # `cargo install` after logging in.
+    - name: Check a program cargo installs after login runs at once
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -lc
+          - >-
+            test ! -e ~/.cargo/bin
+            && mkdir -p ~/.cargo/bin
+            && printf '#!/bin/sh\necho installed\n' > ~/.cargo/bin/dev-tools-verify-probe
+            && chmod +x ~/.cargo/bin/dev-tools-verify-probe
+            && dev-tools-verify-probe
+        # let the login shell expand ~ and $PATH, not the command module
+        expand_argument_vars: false
+      become: true
+      become_user: dev
+      register: dev_tools_verify_cargo_path
+      changed_when: false
+      failed_when: dev_tools_verify_cargo_path.stdout != 'installed'
+
     - name: Check dev is in the docker group
       ansible.builtin.command:
         argv: [id, -nG, dev]

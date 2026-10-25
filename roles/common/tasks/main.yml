@@ -134,7 +134,7 @@
     owner: root
     group: root
     mode: "0755"
-  when: common_harden_ssh
+  when: common_harden_ssh or common_ssh_path_dirs | length > 0
 
 - name: Harden sshd
   ansible.builtin.template:
@@ -161,6 +161,10 @@
     owner: root
     group: root
     mode: "0644"
+
+# The same directories for what sshd starts without a login shell.
+- name: Put the per-user directories on PATH for ssh commands
+  ansible.builtin.include_tasks: ssh_path.yml
 
 - name: Enable and start services
   ansible.builtin.include_tasks: services.yml

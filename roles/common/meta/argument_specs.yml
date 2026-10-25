@@ -40,6 +40,15 @@ argument_specs:
         type: bool
         default: true
         description: Write an sshd drop-in that turns password logins off, root's included, even where cloud-init was given a password. false removes it.
+      common_ssh_path_dirs:
+        type: list
+        elements: str
+        default: [.local/bin, .cargo/bin]
+        description:
+          - Directories in common_user's home put first on PATH for every session sshd starts for that user, `ssh vm <command>`
+            included, which reads no profile. Written as an sshd drop-in (Match User, SetEnv) holding the whole PATH, the
+            rest being /etc/environment's, and checked with sshd -T. Login shells get the same two directories from
+            /etc/profile.d. [] removes the drop-in.
       common_apt_upgrade:
         type: bool
         default: true

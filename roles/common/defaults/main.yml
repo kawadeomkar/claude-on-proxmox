@@ -15,6 +15,17 @@ common_hostname: "{{ inventory_hostname }}"
 # Keeps password authentication off even if cloud-init was given a password.
 common_harden_ssh: true
 
+# Directories in common_user's home put first on PATH for everything sshd
+# starts for that user, `ssh vm <command>` included: that runs a shell that
+# reads no profile, and Ubuntu's ~/.bashrc returns at once for it. Set through
+# an sshd drop-in (Match User + SetEnv), so no file of the user's is touched.
+# ~/.local/bin holds Claude Code, pipx and uv tools; ~/.cargo/bin what
+# `cargo install` builds (dev_tools installs Rust). A directory that does not
+# exist costs nothing. [] removes the drop-in.
+common_ssh_path_dirs:
+  - .local/bin
+  - .cargo/bin
+
 common_apt_upgrade: true
 common_apt_cache_valid_time: 3600
 # Fresh cloud images run unattended-upgrades right after first boot; wait for

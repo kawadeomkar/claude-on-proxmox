@@ -118,7 +118,9 @@ Finds VMs by tag so `configure.yml` works standalone, not only straight after pr
    and exiting 0, which looks like success. "Refused" is the `proxmox_access_denied` filter
    ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)), shared with `list.yml` and the role's agent wait.
 6. `add_host` each VM for which `guest_address(proxmox_nic)`
-   ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)) returns an address. Without the MAC of that NIC
+   ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)) returns an address, with
+   `ansible_python_interpreter` set to `claude_vm_python` ([§5.3](roles.md#53-common--os-baseline)), as
+   provisioning's play 3 does. Without the MAC of that NIC
    the VM is skipped rather than guessed at — an address picked without one could be a bridge the
    guest grew later (`docker0`).
 7. If nothing was found, print a diagnostic that distinguishes "no tagged VMs exist", "tagged VMs
@@ -486,8 +488,8 @@ sign-in ends with, the path unit's file, GitHub's line, the git protocol, the sc
 the session notes' four (below) and `--session`, read as the last word by a `for` loop,
 `cwd` the folder, `runOptions.runOn:
 folderOpen`, presented in a dedicated, focused terminal. A login shell, because VS Code starts task
-shells non-login and `claude` is on the login `PATH` only (`just login --only claude` uses `bash -lc` for
-the same reason). The script checks `claude` is installed, runs `claude auth login` when
+shells non-login, and on a VM configured before `common`'s sshd PATH drop-in `claude` is on the login
+`PATH` only (`just login --only claude` uses `bash -lc` for the same reason). The script checks `claude` is installed, runs `claude auth login` when
 `claude auth status` fails (a failed one says how to retry), signs gh in by the device flow when
 `gh auth status --hostname github.com --active` fails (Ctrl-C skips it: `trap ':' INT`), and then,
 given `--session`, `claude --resume <id>` and nothing after it, or else

@@ -6,3 +6,6 @@
     - role: dev_tools
       vars:
         dev_tools_npm_global_packages: [cowsay]
+        # rust-src is listed without a target, the others with one: the
+        # idempotence run fails if either reads as missing.
+        dev_tools_rust_components: [clippy, rustfmt, rust-src]

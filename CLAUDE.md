@@ -499,8 +499,11 @@ block can each override it silently. `roles/vscode_server` therefore reads
 `SSH_CONNECTION` - and fails on forwarding that is off, limited to the remote direction, or removed
 by `DisableForwarding`, naming the file. Plain `sshd -T` skips `Match` blocks entirely. `sshd -T`
 parses the files on disk, so nothing is restarted before the check; do not add a `flush_handlers`
-back. Keep the two drop-ins with two owners: `10-` is `common`'s hardening, `20-` is VS Code's
-forwarding and keepalives.
+back. Keep each drop-in with its owner: `10-` is `common`'s hardening, `15-` `common`'s PATH for the
+VM user's ssh sessions (`Match User` + `SetEnv`, checked the same way, since sshd keeps the first
+`SetEnv` that applies), `20-` VS Code's forwarding and keepalives. That PATH starts with `~/.local/bin`,
+so every `add_host` that publishes a VM gives it `ansible_python_interpreter: "{{ claude_vm_python }}"`:
+discovery would take a `python3.13` that `uv python install` put there, and run it as root.
 
 **The alias play reads a fact the configure play set last.** `configure.yml`'s second play ends
 with a `getent` of `vm_user` and a `claude_vm_workspace` fact, both tagged `always`; the third play

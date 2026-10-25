@@ -68,6 +68,7 @@
         groups: claude_vms
         ansible_host: "{{ claude_vm_found.address }}"
         ansible_user: "{{ vm_user }}"
+        ansible_python_interpreter: "{{ claude_vm_python }}"
         proxmox_vm_id: "{{ claude_vm_found.vmid }}"
       changed_when: false
       loop: "{{ claude_vm_addressed | selectattr('address') | list }}"

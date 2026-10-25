@@ -76,10 +76,11 @@ A sign-in made any other way starts the service by itself too. While a VM waits 
 the moment one lands - from `just login --only claude`, the Claude terminal of `just code`, or by hand with
 `ssh -t dev@<address> "bash -lc 'claude auth login'"` - it starts the server. The next `just deploy --only configure`
 enables the server for boot, runs the stay-up check below, and removes the path unit, so a server you
-stop later stays stopped ([the path unit](../architecture/roles.md#the-path-unit) says why). By hand, it goes
-through `bash -lc` because only a login shell puts `~/.local/bin`, where the native installer puts
-`claude`, on `PATH`; a command given to `ssh` runs without one, so a bare `claude auth login` is
-`command not found`.
+stop later stays stopped ([the path unit](../architecture/roles.md#the-path-unit) says why). By hand,
+`bash -lc` works on any VM. On a VM last configured by an earlier version it is needed: only a login
+shell put `~/.local/bin`, where the native installer puts `claude`, on `PATH` there, so a bare
+`ssh -t dev@<address> claude auth login` was `command not found`. sshd now puts it on the PATH of every
+ssh session of the VM user ([§5.3](../architecture/roles.md#53-common--os-baseline)).
 
 `just login --only claude` decides from the same `claude auth status` fields as `just deploy --only configure`, so a VM
 signed in another way — a Console account, a `claude setup-token` token, an API key — is told by both

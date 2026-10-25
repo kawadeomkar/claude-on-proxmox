@@ -21,3 +21,7 @@
 - name: Install uv
   ansible.builtin.include_tasks: uv.yml
   when: dev_tools_install_uv
+
+- name: Install Rust
+  ansible.builtin.include_tasks: rust.yml
+  when: dev_tools_install_rust

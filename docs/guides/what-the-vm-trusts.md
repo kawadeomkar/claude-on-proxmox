@@ -18,7 +18,9 @@ and the [security model](../architecture/security-model.md) is how each is enfor
 - Downloads are verified where the vendor makes that possible: the uv release by a pinned SHA256, the
   Ubuntu cloud image against Ubuntu's `SHA256SUMS`, apt repositories by vendored signing keys. The Claude
   Code installer script is fetched over TLS from `claude.ai` and itself verifies the binary against a
-  release manifest; there is no independently signed artifact to pin.
+  release manifest; there is no independently signed artifact to pin. rustup comes from Ubuntu's archive,
+  and the Rust toolchain it installs is fetched over TLS from `static.rust-lang.org` and checked against
+  the hashes in the channel manifest, which comes from the same place.
 - sshd is restricted to key-based logins (`common_harden_ssh`), even if `vm_password` is set.
 - `just code` gives each VM this machine's Claude Code sessions of the repositories it has checked out
   ([This machine's Claude sessions on the VM](vscode.md#this-machines-claude-sessions-on-the-vm)): their

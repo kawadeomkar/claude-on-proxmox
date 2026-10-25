@@ -18,6 +18,7 @@ How it works: [§5.4](../../architecture/roles.md#54-dev_tools--developer-toolin
 | `dev_tools_install_docker` | bool | `true` | Install Docker Engine from Docker's repository and add dev_tools_user to the docker group. false skips it and removes nothing. |
 | `dev_tools_install_gh` | bool | `true` | Install the GitHub CLI from its repository; github_projects signs in and clones private repositories through it. false skips it and removes nothing. |
 | `dev_tools_install_uv` | bool | `true` | Install uv and uvx, a pinned release checked against dev_tools_uv_sha256, into dev_tools_uv_install_dir. false skips it and removes nothing. |
+| `dev_tools_install_rust` | bool | `true` | Install rustup from Ubuntu's archive and, for dev_tools_user, the dev_tools_rust_toolchain toolchain with dev_tools_rust_components. false skips it and removes nothing. |
 | `dev_tools_apt_packages` | list of `str` | `[cmake, libffi-dev, libssl-dev, make, pipx, pkg-config, python3-debian, python3-dev, shellcheck, sqlite3]` | Development packages installed from Ubuntu's archive. Keep python3-debian, which the role adds the Node.js, Docker and GitHub CLI repositories with. |
 | `dev_tools_node_major` | int | `22` | Node.js major version, which picks the NodeSource repository. |
 | `dev_tools_npm_global_packages` | list of `str` | `[]` | Packages npm installs globally, with dev_tools_install_node. |
@@ -29,6 +30,8 @@ How it works: [§5.4](../../architecture/roles.md#54-dev_tools--developer-toolin
 | `dev_tools_uv_arch_map` | dict | `{aarch64: aarch64-unknown-linux-gnu, x86_64: x86_64-unknown-linux-gnu}` | uv's release target for each value of the architecture fact, which names the archive downloaded. |
 | `dev_tools_uv_sha256` | dict | `{aarch64: 9db0c2f6683099f86bfeea47f4134e915f382512278de95b2a0e625957594ff3, x86_64: 2cf10babba653310606f8b49876cfb679928669e7ddaa1fb41fb00ce73e64f66}` | SHA256 of the uv release archive per architecture key of dev_tools_uv_arch_map. |
 | `dev_tools_uv_install_dir` | path | `/usr/local/bin` | Directory uv and uvx are installed into. |
+| `dev_tools_rust_toolchain` | str | `stable` | Toolchain rustup installs for dev_tools_user when it is missing - a channel (stable, beta, nightly) or a version such as 1.90.0 - and makes the default when no default is set. The role never updates it. |
+| `dev_tools_rust_components` | list of `str` | `["clippy", "rustfmt"]` | Components added to dev_tools_rust_toolchain on top of rustup's minimal profile (rustc, cargo, rust-std), such as rust-src or rust-analyzer. One taken off the list stays installed. |
 
 ## Tasks
 
@@ -44,6 +47,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Install Docker Engine | `ansible.builtin.include_tasks` | <code>dev_tools_install_docker</code> |
 | Install GitHub CLI | `ansible.builtin.include_tasks` | <code>dev_tools_install_gh</code> |
 | Install uv | `ansible.builtin.include_tasks` | <code>dev_tools_install_uv</code> |
+| Install Rust | `ansible.builtin.include_tasks` | <code>dev_tools_install_rust</code> |
 
 ```mermaid
 flowchart TD
@@ -62,7 +66,8 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Install_Node_js_node_yml_1-->|Include task| Install_Docker_Engine_docker_yml_2[install docker engine<br>When: **dev tools install docker**<br>include_task: docker yml]:::includeTasks
   Install_Docker_Engine_docker_yml_2-->|Include task| Install_GitHub_CLI_gh_yml_3[install github cli<br>When: **dev tools install gh**<br>include_task: gh yml]:::includeTasks
   Install_GitHub_CLI_gh_yml_3-->|Include task| Install_uv_uv_yml_4[install uv<br>When: **dev tools install uv**<br>include_task: uv yml]:::includeTasks
-  Install_uv_uv_yml_4-->End
+  Install_uv_uv_yml_4-->|Include task| Install_Rust_rust_yml_5[install rust<br>When: **dev tools install rust**<br>include_task: rust yml]:::includeTasks
+  Install_Rust_rust_yml_5-->End
 ```
 
 ### `docker.yml`
@@ -143,6 +148,41 @@ classDef rescue stroke:#665352,stroke-width:2px;
   node___Pin_Node_js_to_NodeSource_over_the_distro_package1-->|Task| node___Install_Node_js2[node   install node js]:::task
   node___Install_Node_js2-->|Task| node___Install_global_npm_packages3[node   install global npm packages]:::task
   node___Install_global_npm_packages3-->End
+```
+
+### `rust.yml`
+
+| Task | Module | When |
+|---|---|---|
+| Install rustup | `ansible.builtin.apt` |  |
+| Put ~/.cargo/bin on PATH for all users | `ansible.builtin.template` |  |
+| Look up home directory of {{ dev_tools_user }} | `ansible.builtin.getent` |  |
+| Install the toolchain for {{ dev_tools_user }} | block |  |
+| &emsp;Read the components installed for {{ dev_tools_rust_toolchain }} | `ansible.builtin.command` |  |
+| &emsp;Install Rust {{ dev_tools_rust_toolchain }} | `ansible.builtin.command` | <code>dev_tools_rust_installed.rc != 0</code> |
+| &emsp;Add the components the toolchain is missing | `ansible.builtin.command` | <code>dev_tools_rust_installed.rc == 0 and dev_tools_rust_missing &#124; length > 0</code> |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| rust___Install_rustup0[rust   install rustup]:::task
+  rust___Install_rustup0-->|Task| rust___Put____cargo_bin_on_PATH_for_all_users1[rust   put    cargo bin on path for all users]:::task
+  rust___Put____cargo_bin_on_PATH_for_all_users1-->|Task| rust___Look_up_home_directory_of_dev_tools_user2[rust   look up home directory of dev tools user]:::task
+  rust___Look_up_home_directory_of_dev_tools_user2-->|Block Start| rust___Install_the_toolchain_for_dev_tools_user3_block_start_0[[rust   install the toolchain for dev tools user]]:::block
+  rust___Install_the_toolchain_for_dev_tools_user3_block_start_0-->|Task| rust___Read_the_components_installed_for_dev_tools_rust_toolchain0[rust   read the components installed for dev tools<br>rust toolchain]:::task
+  rust___Read_the_components_installed_for_dev_tools_rust_toolchain0-->|Task| rust___Install_Rust_dev_tools_rust_toolchain1[rust   install rust dev tools rust toolchain<br>When: **dev tools rust installed rc    0**]:::task
+  rust___Install_Rust_dev_tools_rust_toolchain1-->|Task| rust___Add_the_components_the_toolchain_is_missing2[rust   add the components the toolchain is missing<br>When: **dev tools rust installed rc    0 and dev tools<br>rust missing   length   0**]:::task
+  rust___Add_the_components_the_toolchain_is_missing2-.->|End of Block| rust___Install_the_toolchain_for_dev_tools_user3_block_start_0
+  rust___Add_the_components_the_toolchain_is_missing2-->End
 ```
 
 ### `uv.yml`

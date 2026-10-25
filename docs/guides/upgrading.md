@@ -69,6 +69,27 @@ once (or `just deploy alpha`), or sign it in with `just login alpha --only claud
 starts Remote Control itself. The Claude terminal of `just code` tells the two apart, and on such a VM
 names that `just deploy --only configure` line.
 
+## Programs in ~/.local/bin and ~/.cargo/bin over ssh
+
+From PR #73, which adds Rust to `dev_tools`. `ssh <vm> <command>` now finds what is in
+`~/.local/bin` and `~/.cargo/bin` (Claude Code, pipx and uv tools, anything you `cargo install`): the next
+`just deploy --only configure` gives sshd the PATH for the VM user, and every ssh command after it is a new
+session that gets it. `cargo`, `rustc` and `rustup` themselves live in `/usr/bin`, so they work everywhere
+at once.
+
+What was already running on the VM keeps the PATH it started with, which matters only for a program you
+`cargo install` after the upgrade:
+
+- In a terminal that was already open, run `. /etc/profile.d/cargo-bin-path.sh`, or open a new one.
+- In VS Code, run **Remote-SSH: Kill VS Code Server on Host** and reconnect, before relying on an
+  extension or a new terminal to find such a program. A window `just code` opens again gets it anyway: its
+  shell pane is a login shell, and its Claude pane starts a new session.
+- In a Claude Code session that was already running, including one served by Remote Control, call the
+  program by its full path, `~/.cargo/bin/<name>`, or start a new session. In a terminal, quitting and
+  running `claude --continue` keeps the conversation.
+
+New sessions get it by themselves, and nothing needs restarting.
+
 ## Tailscale on VMs configured by an earlier version
 
 From PR #24, which joins the VMs to a tailnet. Tailscale is on by default, so the next `just deploy --only configure` installs it on every VM and reports each one

@@ -86,7 +86,8 @@ clear: the project has no fact cache ([§13](toolchain.md)).
 apt deletes each package it downloads once installed → apt cache refresh → optional safe upgrade →
 baseline packages (~26, including `qemu-guest-agent` and `python3-debian`) → empty apt's download
 cache of what was left → timezone → hostname → user, groups and passwordless sudo → authorised keys
-→ sshd hardening → `~/.local/bin` on PATH for login shells → enable and start services → mask the
+→ sshd hardening → `~/.local/bin` on PATH for login shells → the same directories on PATH for ssh
+commands, through an sshd drop-in checked with `sshd -T -C` → enable and start services → mask the
 units a headless VM has no use for.
 
 Notable choices:
@@ -95,8 +96,8 @@ Notable choices:
   works in containers with no `timedatectl`/dbus.
 - **Every toggle is a pair of tasks** (`Grant`/`Revoke` sudo, `Harden`/`Remove` sshd). `template` has
   no `state: absent`, so this is the idiom for a reversible setting.
-- **`validate:` on both templates** — `visudo -cf` and `sshd -t -f`, so a bad render cannot lock
-  anyone out. `sshd -t` needs `/run/sshd`, which is created first because it does not exist in a
+- **`validate:` on the sudoers and sshd templates** — `visudo -cf` and `sshd -t -f`, so a bad render
+  cannot lock anyone out. `sshd -t` needs `/run/sshd`, which is created first because it does not exist in a
   fresh container.
 - **`lock_timeout: 600`** on every apt call: fresh cloud images run `unattended-upgrades` right after
   first boot, and the module's 60-second default is not enough.
@@ -125,12 +126,37 @@ Notable choices:
   and on bare metal with the `kvm` module loaded, and not `kvm` under VirtualBox, which has no port. The
   other `common_enabled_services` start wherever systemd runs, containers included. See
   [§15.2](decisions.md#152-the-guest-agent-starts-where-its-port-is).
+- **`~/.local/bin` is on PATH before it exists** (`/etc/profile.d/local-bin-path.sh`). Ubuntu's own
+  `~/.profile` adds it only when it is there at login, so the first tool pipx or `uv tool` installs into
+  it would not run until the next login - on a VM whose Claude Code came from npm, which installs into
+  `/usr/bin`, nothing else makes it. Claude Code takes its shell snapshot with a login shell (`$SHELL -c -l`) when a
+  session starts, so the same goes for a session Remote Control already started. A directory on PATH that
+  is not there costs nothing. `dev_tools` does the same for `~/.cargo/bin` ([§5.4](#54-dev_tools--developer-tooling)),
+  and ssh commands get both from the drop-in below.
+- **`ssh vm <command>` gets the same directories from sshd** (`common_ssh_path_dirs`,
+  `/etc/ssh/sshd_config.d/15-claude-on-proxmox-path.conf`). A command given to ssh runs in a shell that is
+  neither login nor interactive: Debian's bash reads `/etc/bash.bashrc` and `~/.bashrc` for it, both return at
+  once, so `/etc/profile.d` never runs and PATH is `/etc/environment`'s. sshd applies `SetEnv` after PAM's
+  environment, so `SetEnv PATH=` under `Match User <vm_user>` wins for that user's sessions alone - root's, and
+  sudo's `secure_path`, are untouched - and edits nothing of the user's. A block at the top of `~/.bashrc` would
+  work too, but a dotfiles manager can remove it, the user can move it below the early return, and a switch to
+  zsh skips it, each without a word. `SetEnv` takes no variables, so the drop-in holds the whole PATH: the
+  directories in the user's home from `getent`, then the PATH line of `/etc/environment` as it is. sshd keeps the
+  first `SetEnv` that applies, a `Match` block's replacing any global one, so the role asks `sshd -T -C` what
+  applies to the user's connection, as `vscode_server` does ([§5.7](#57-vscode_server--what-vs-codes-remote---ssh-needs-on-the-host)),
+  and fails naming the file that sets another. `~/.cargo/bin` is listed whether or not `dev_tools` installs
+  Rust.
+- **Ansible's modules run with the VM's `/usr/bin/python3`** (`claude_vm_python`, given to each VM by the
+  `add_host` that publishes it), never a discovered interpreter. Discovery runs `command -v python3.14`,
+  `python3.13` and so on over the connection and takes the first hit, and with `~/.local/bin` first on that
+  PATH it would take a Python `uv python install` put there: one without `python3-apt`, run as root under
+  `become`.
 - Host-level settings are skipped under `common_container_virt_types`.
 
 ## 5.4 `dev_tools` — developer tooling
 
-Feature-toggled: Node.js (NodeSource), Docker Engine, GitHub CLI, uv. Each apt-repository task
-follows the same shape:
+Feature-toggled: Node.js (NodeSource), Docker Engine, GitHub CLI, uv, Rust (rustup). Each
+apt-repository task follows the same shape:
 
 ```yaml
 deb822_repository:
@@ -143,6 +169,19 @@ apt: { update_cache: "{{ dev_tools_docker_repo.changed }}" }        # refresh on
 supply its own key. **uv is pinned by version and SHA-256 per architecture**, with the digests stored
 in `defaults/main.yml` rather than fetched alongside the archive, so a compromised release endpoint
 cannot swap both. Node.js is apt-pinned to NodeSource over the distro package.
+
+**Rust comes from rustup, never Ubuntu's `rustc` and `cargo`.** Noble's `rustup` package conflicts with
+both (its proxies in `/usr/bin` take their names), and its `rustc` is 1.75. rustup installs
+`dev_tools_rust_toolchain` for `dev_tools_user`, under `~/.rustup`, with the minimal profile and
+`dev_tools_rust_components`, as that user with `HOME` set from `getent`. The role decides from
+`rustup component list --installed`, which reads the installed toolchain's manifest offline: the toolchain
+is installed only when it is missing, and only components the list lacks are added. It never re-runs
+`rustup toolchain install`, which syncs the channel over the network and updates the toolchain - that is
+`rustup update`, the user's to run. A new toolchain becomes the default only when none is set, so a
+default chosen by hand stays. `/etc/profile.d/cargo-bin-path.sh` puts `~/.cargo/bin`, where
+`cargo install` puts what it builds, on PATH for login shells, before it exists, as `common` does for
+`~/.local/bin` ([§5.3](#53-common--os-baseline)): rustup from Ubuntu's archive never makes it. ssh commands
+get it from `common`'s sshd drop-in.
 
 ## 5.5 `claude_code` — install Claude Code
 
@@ -290,7 +329,8 @@ from the same vars as step 5, so the two cannot disagree: when the playbook deci
 alone, a VM signed in with a Console account, a `setup-token` token or an API key was told by each
 command to run the other. Bare, it reports each VM, with `just login <vm> --only claude` and the
 by-hand `ssh -t dev@<address> "bash -lc 'claude auth login'"` for a VM with no login. The `bash -lc`
-is what puts `~/.local/bin` on `PATH`: `ssh` runs a command in a non-login shell, and Ubuntu's
+puts `~/.local/bin` on `PATH` on any VM: on one configured before `common`'s sshd PATH drop-in
+([§5.3](#53-common--os-baseline)), `ssh` runs a command in a non-login shell without it, and Ubuntu's
 `.bashrc` returns early for one.
 
 Given names, or from `just deploy`, it signs a VM with no login and no API key in by the browser
@@ -553,7 +593,7 @@ allows the port forward the VS Code Server is reached through, and an inotify li
 watch a workspace. The image and `common` give the first two; this role checks them, writes the other
 two, and proves the sshd one.
 
-- **A second drop-in, `20-vscode-server.conf`**, with `AllowTcpForwarding yes`,
+- **A drop-in of its own, `20-vscode-server.conf`**, with `AllowTcpForwarding yes`,
   `AllowStreamLocalForwarding yes` and `ClientAliveInterval`/`CountMax`, validated with `sshd -t`.
   Two files, two owners: `10-` is `common`'s hardening, `20-` is this.
 - **`sshd -T -C` for the editor's connection.** sshd keeps the first value it reads for a keyword,

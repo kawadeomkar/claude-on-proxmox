@@ -22,6 +22,7 @@ What those defaults mean for the VM: [What the VM trusts](../../guides/what-the-
 | `common_manage_hostname` | bool | `true` | Set the hostname to common_hostname. Never done in a container (common_container_virt_types). |
 | `common_hostname` | str | same as `inventory_hostname` | Hostname given to the VM. Defaults to the inventory hostname, the VM's name. |
 | `common_harden_ssh` | bool | `true` | Write an sshd drop-in that turns password logins off, root's included, even where cloud-init was given a password. false removes it. |
+| `common_ssh_path_dirs` | list of `str` | `[".local/bin", ".cargo/bin"]` | Directories in common_user's home put first on PATH for every session sshd starts for that user, `ssh vm <command>` included, which reads no profile. Written as an sshd drop-in (Match User, SetEnv) holding the whole PATH, the rest being /etc/environment's, and checked with sshd -T. Login shells get the same two directories from /etc/profile.d. [] removes the drop-in. |
 | `common_apt_upgrade` | bool | `true` | Upgrade the installed packages (apt safe upgrade) on every run. |
 | `common_apt_cache_valid_time` | int | `3600` | Seconds the apt cache counts as fresh. An older one is refreshed at the start of the role. |
 | `common_apt_lock_timeout` | int | `600` | Seconds each apt task waits for the apt lock, which unattended-upgrades holds on a fresh cloud image after first boot. |
@@ -34,11 +35,14 @@ What those defaults mean for the VM: [What the VM trusts](../../guides/what-the-
 
 ## Internal values
 
-Set in `roles/common/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect.
+Set in `roles/common/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. 2 of the 4 are computed during a run, from earlier tasks' results.
 
 | Name | Value |
 |---|---|
 | `common_guest_agent_port` | `/dev/virtio-ports/org.qemu.guest_agent.0` |
+| `common_ssh_path_system` | <code>{{ common_environment.content &#124; default('') &#124; b64decode &#124; regex_findall('^PATH="?([^"\n]*)"?[ \t]*$', multiline=True) &#124; first &#124; default('', true) or '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin' }}</code> |
+| `common_ssh_path` | <code>{{ (common_ssh_path_dirs &#124; map('regex_replace', '^', ansible_facts.getent_passwd[common_user][4] ~ '/') &#124; list + [common_ssh_path_system]) &#124; join(':') }}</code> |
+| `common_ssh_path_dropin` | `/etc/ssh/sshd_config.d/15-claude-on-proxmox-path.conf` |
 
 ## Tasks
 
@@ -63,10 +67,11 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 | Grant passwordless sudo | `ansible.builtin.template` | <code>common_user_passwordless_sudo</code> |
 | Revoke passwordless sudo | `ansible.builtin.file` | <code>not common_user_passwordless_sudo</code> |
 | Authorise SSH keys | `ansible.posix.authorized_key` |  |
-| Ensure sshd privilege separation directory exists | `ansible.builtin.file` | <code>common_harden_ssh</code> |
+| Ensure sshd privilege separation directory exists | `ansible.builtin.file` | <code>common_harden_ssh or common_ssh_path_dirs &#124; length > 0</code> |
 | Harden sshd | `ansible.builtin.template` | <code>common_harden_ssh</code> |
 | Remove sshd hardening | `ansible.builtin.file` | <code>not common_harden_ssh</code> |
 | Put ~/.local/bin on PATH for all users | `ansible.builtin.template` |  |
+| Put the per-user directories on PATH for ssh commands | `ansible.builtin.include_tasks` |  |
 | Enable and start services | `ansible.builtin.include_tasks` | <code>ansible_facts['service_mgr'] == 'systemd'</code> |
 | Mask the services a headless VM has no use for | `ansible.builtin.include_tasks` | <code>ansible_facts['service_mgr'] == 'systemd' and common_masked_units &#124; length > 0</code> |
 
@@ -96,13 +101,14 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Create_user_common_user10-->|Task| Grant_passwordless_sudo11[grant passwordless sudo<br>When: **common user passwordless sudo**]:::task
   Grant_passwordless_sudo11-->|Task| Revoke_passwordless_sudo12[revoke passwordless sudo<br>When: **not common user passwordless sudo**]:::task
   Revoke_passwordless_sudo12-->|Task| Authorise_SSH_keys13[authorise ssh keys]:::task
-  Authorise_SSH_keys13-->|Task| Ensure_sshd_privilege_separation_directory_exists14[ensure sshd privilege separation directory exists<br>When: **common harden ssh**]:::task
+  Authorise_SSH_keys13-->|Task| Ensure_sshd_privilege_separation_directory_exists14[ensure sshd privilege separation directory exists<br>When: **common harden ssh or common ssh path dirs   length<br>  0**]:::task
   Ensure_sshd_privilege_separation_directory_exists14-->|Task| Harden_sshd15[harden sshd<br>When: **common harden ssh**]:::task
   Harden_sshd15-->|Task| Remove_sshd_hardening16[remove sshd hardening<br>When: **not common harden ssh**]:::task
   Remove_sshd_hardening16-->|Task| Put____local_bin_on_PATH_for_all_users17[put    local bin on path for all users]:::task
-  Put____local_bin_on_PATH_for_all_users17-->|Include task| Enable_and_start_services_services_yml_18[enable and start services<br>When: **ansible facts  service mgr       systemd**<br>include_task: services yml]:::includeTasks
-  Enable_and_start_services_services_yml_18-->|Include task| Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_19[mask the services a headless vm has no use for<br>When: **ansible facts  service mgr       systemd  and<br>common masked units   length   0**<br>include_task: masked units yml]:::includeTasks
-  Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_19-->End
+  Put____local_bin_on_PATH_for_all_users17-->|Include task| Put_the_per_user_directories_on_PATH_for_ssh_commands_ssh_path_yml_18[put the per user directories on path for ssh<br>commands<br>include_task: ssh path yml]:::includeTasks
+  Put_the_per_user_directories_on_PATH_for_ssh_commands_ssh_path_yml_18-->|Include task| Enable_and_start_services_services_yml_19[enable and start services<br>When: **ansible facts  service mgr       systemd**<br>include_task: services yml]:::includeTasks
+  Enable_and_start_services_services_yml_19-->|Include task| Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_20[mask the services a headless vm has no use for<br>When: **ansible facts  service mgr       systemd  and<br>common masked units   length   0**<br>include_task: masked units yml]:::includeTasks
+  Mask_the_services_a_headless_VM_has_no_use_for_masked_units_yml_20-->End
 ```
 
 ### `masked_units.yml`
@@ -162,6 +168,44 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Start-->|Task| services___Look_for_the_guest_agent_s_port0[services   look for the guest agent s port]:::task
   services___Look_for_the_guest_agent_s_port0-->|Task| services___Enable_and_start_services1[services   enable and start services]:::task
   services___Enable_and_start_services1-->End
+```
+
+### `ssh_path.yml`
+
+| Task | Module | When |
+|---|---|---|
+| Look up the home directory of {{ common_user }} | `ansible.builtin.getent` | <code>common_ssh_path_dirs &#124; length > 0</code> |
+| Read the PATH /etc/environment sets | `ansible.builtin.slurp` | <code>common_ssh_path_dirs &#124; length > 0</code> |
+| Fail when that PATH cannot be written into sshd's configuration | `ansible.builtin.assert` | <code>common_ssh_path_dirs &#124; length > 0</code> |
+| Put the same directories on PATH for ssh commands | `ansible.builtin.template` | <code>common_ssh_path_dirs &#124; length > 0</code> |
+| Remove the PATH for ssh commands | `ansible.builtin.file` | <code>common_ssh_path_dirs &#124; length == 0</code> |
+| Find where the connections come from, for {{ common_user }} | `ansible.builtin.command` | <code>common_ssh_path_dirs &#124; length > 0</code> |
+| Read the PATH sshd gives the sessions of {{ common_user }} | `ansible.builtin.command` | <code>common_ssh_path_dirs &#124; length > 0</code> |
+| Find what else sets sshd's environment, if anything does | `ansible.builtin.find` | <code>common_ssh_path_dirs &#124; length > 0</code> |
+| Fail when sshd does not give that PATH to the sessions of {{ common_user }} | `ansible.builtin.assert` | <code>common_ssh_path_dirs &#124; length > 0 and not ansible_check_mode</code> |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| ssh_path___Look_up_the_home_directory_of_common_user0[ssh path   look up the home directory of common<br>user<br>When: **common ssh path dirs   length   0**]:::task
+  ssh_path___Look_up_the_home_directory_of_common_user0-->|Task| ssh_path___Read_the_PATH__etc_environment_sets1[ssh path   read the path  etc environment sets<br>When: **common ssh path dirs   length   0**]:::task
+  ssh_path___Read_the_PATH__etc_environment_sets1-->|Task| ssh_path___Fail_when_that_PATH_cannot_be_written_into_sshd_s_configuration2[ssh path   fail when that path cannot be written<br>into sshd s configuration<br>When: **common ssh path dirs   length   0**]:::task
+  ssh_path___Fail_when_that_PATH_cannot_be_written_into_sshd_s_configuration2-->|Task| ssh_path___Put_the_same_directories_on_PATH_for_ssh_commands3[ssh path   put the same directories on path for<br>ssh commands<br>When: **common ssh path dirs   length   0**]:::task
+  ssh_path___Put_the_same_directories_on_PATH_for_ssh_commands3-->|Task| ssh_path___Remove_the_PATH_for_ssh_commands4[ssh path   remove the path for ssh commands<br>When: **common ssh path dirs   length    0**]:::task
+  ssh_path___Remove_the_PATH_for_ssh_commands4-->|Task| ssh_path___Find_where_the_connections_come_from__for_common_user5[ssh path   find where the connections come from <br>for common user<br>When: **common ssh path dirs   length   0**]:::task
+  ssh_path___Find_where_the_connections_come_from__for_common_user5-->|Task| ssh_path___Read_the_PATH_sshd_gives_the_sessions_of_common_user6[ssh path   read the path sshd gives the sessions<br>of common user<br>When: **common ssh path dirs   length   0**]:::task
+  ssh_path___Read_the_PATH_sshd_gives_the_sessions_of_common_user6-->|Task| ssh_path___Find_what_else_sets_sshd_s_environment__if_anything_does7[ssh path   find what else sets sshd s environment <br>if anything does<br>When: **common ssh path dirs   length   0**]:::task
+  ssh_path___Find_what_else_sets_sshd_s_environment__if_anything_does7-->|Task| ssh_path___Fail_when_sshd_does_not_give_that_PATH_to_the_sessions_of_common_user8[ssh path   fail when sshd does not give that path<br>to the sessions of common user<br>When: **common ssh path dirs   length   0 and not ansible<br>check mode**]:::task
+  ssh_path___Fail_when_sshd_does_not_give_that_PATH_to_the_sessions_of_common_user8-->End
 ```
 
 <!-- END_GENERATED: role -->

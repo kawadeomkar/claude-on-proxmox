@@ -165,6 +165,7 @@
         ansible_host: "{{ hostvars[claude_vm_name_item].proxmox_vm_address }}"
         ansible_user: "{{ vm_user }}"
         ansible_connection: ssh
+        ansible_python_interpreter: "{{ claude_vm_python }}"
         proxmox_vm_id: "{{ hostvars[claude_vm_name_item].proxmox_vm_resolved_id }}"
       changed_when: false
       when: hostvars[claude_vm_name_item].proxmox_vm_address | default('') | length > 0

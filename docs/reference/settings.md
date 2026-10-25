@@ -172,6 +172,7 @@ Packages/tools installed on the VM. See roles/*/defaults/main.yml for the full l
 | `dev_tools_install_node` | `true` | Install Node.js from NodeSource, and the packages in dev_tools_npm_global_packages. A variable of [`dev_tools`](roles/dev_tools.md). |
 | `dev_tools_install_uv` | `true` | Install uv and uvx, a pinned release checked against dev_tools_uv_sha256, into dev_tools_uv_install_dir. A variable of [`dev_tools`](roles/dev_tools.md). |
 | `dev_tools_install_gh` | `true` | Install the GitHub CLI from its repository; github_projects signs in and clones private repositories through it. A variable of [`dev_tools`](roles/dev_tools.md). |
+| `dev_tools_install_rust` | `true` | Install rustup from Ubuntu's archive and, for dev_tools_user, the dev_tools_rust_toolchain toolchain with dev_tools_rust_components. A variable of [`dev_tools`](roles/dev_tools.md). |
 | `dev_tools_node_major` | `22` | Node.js major version, which picks the NodeSource repository. A variable of [`dev_tools`](roles/dev_tools.md). |
 
 ### VS Code and SSH

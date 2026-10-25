@@ -1,0 +1,64 @@
+---
+# Ubuntu's rustup conflicts with its rustc and cargo packages: rustup's
+# proxies in /usr/bin take their names, and the toolchain they run is the
+# user's, under ~/.rustup.
+- name: rust | Install rustup
+  ansible.builtin.apt:
+    name: rustup
+    state: present
+
+- name: rust | Put ~/.cargo/bin on PATH for all users
+  ansible.builtin.template:
+    src: cargo-bin-path.sh.j2
+    dest: /etc/profile.d/cargo-bin-path.sh
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: rust | Look up home directory of {{ dev_tools_user }}
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ dev_tools_user }}"
+
+# As the user, never as root: the toolchain lives in the user's home.
+- name: rust | Install the toolchain for {{ dev_tools_user }}
+  become: true
+  become_user: "{{ dev_tools_user }}"
+  environment:
+    HOME: "{{ ansible_facts.getent_passwd[dev_tools_user][4] }}"
+  block:
+    # Read from the toolchain's own manifest, without the network. A toolchain
+    # that is not installed exits 1, as does a rustup a dry run has not
+    # installed.
+    - name: rust | Read the components installed for {{ dev_tools_rust_toolchain }}
+      ansible.builtin.command:
+        argv: [rustup, component, list, --installed, --toolchain, "{{ dev_tools_rust_toolchain }}"]
+      register: dev_tools_rust_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # Only when missing: an install of one that is there syncs the channel
+    # over the network and updates it, which is `rustup update`'s job. It
+    # becomes the default only when there is none.
+    - name: rust | Install Rust {{ dev_tools_rust_toolchain }}
+      ansible.builtin.command:
+        argv: >-
+          {{ ['rustup', 'toolchain', 'install', dev_tools_rust_toolchain, '--profile', 'minimal']
+             + dev_tools_rust_components | map('regex_replace', '^', '--component=') | list }}
+      changed_when: true
+      when: dev_tools_rust_installed.rc != 0
+
+    - name: rust | Add the components the toolchain is missing
+      ansible.builtin.command:
+        argv: "{{ ['rustup', 'component', 'add', '--toolchain', dev_tools_rust_toolchain] + dev_tools_rust_missing }}"
+      vars:
+        # Listed with the host's target appended (clippy-x86_64-unknown-linux-gnu),
+        # all but the ones for every target (rust-src).
+        dev_tools_rust_missing: >-
+          {{ dev_tools_rust_components
+             | difference(dev_tools_rust_installed.stdout_lines
+                          | map('regex_replace', '-' ~ ansible_facts['architecture'] ~ '-unknown-linux-gnu$', '')
+                          | list) }}
+      changed_when: true
+      when: dev_tools_rust_installed.rc == 0 and dev_tools_rust_missing | length > 0
