@@ -17,6 +17,7 @@ import re
 import sys
 import textwrap
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ansible.errors import AnsibleFilterError
@@ -37,9 +38,10 @@ def _load_text():
 
 one_line = _load_text().one_line
 
-# The report's sections, in the order they are drawn: vms and storage read only the API, the rest the VMs too.
-SECTIONS = ("vms", "storage", "access")
-SSH_SECTIONS = frozenset()
+# The report's sections, in the order they are drawn: vms and storage read only the API, the rest the VMs over SSH
+# too - access for the tailnet column, sign-ins for the roles' reads, system for vm_status_info.
+SECTIONS = ("vms", "storage", "access", "sign-ins", "system")
+SSH_SECTIONS = frozenset({"access", "sign-ins", "system"})
 # The widest line the report draws, a tested limit.
 WIDTH = 100
 # A field a VM supplies is cut to this; a role's whole line, which carries a command, to the longer.
@@ -389,6 +391,30 @@ def status_vm_api(results, now=None):
     }
 
 
+SYSTEM_KEYS = (
+    "os",
+    "kernel",
+    "kernel_newest",
+    "reboot_required",
+    "reboot_packages",
+    "load",
+    "memory",
+    "uptime",
+    "upgrades",
+    "security",
+    "claude",
+    "vscode_windows",
+    "unread",
+)
+
+
+def status_system_read(result):
+    """What vm_status_info read of a VM, as the "system" part: its fields alone, or None when it was not read."""
+    if not isinstance(result, dict) or result.get("failed") or result.get("unreachable") or result.get("skipped"):
+        return None
+    return {key: result.get(key) for key in SYSTEM_KEYS}
+
+
 # ------------------------------------------------------------------------------------------------ the model ----
 
 
@@ -523,7 +549,8 @@ def _vm_items(vm, settings, live):
     if vm.get("unfinished"):
         items.append(_item("todo", name, name, "its first deploy did not finish", f"just deploy {name}"))
     api = vm.get("api")
-    if api is None and not live and vm.get("read"):
+    # A VM of the inventory's, with discovery off, is never asked of Proxmox.
+    if api is None and not live and vm.get("read") and not vm.get("inventory"):
         items.append(_item("unread", name, name, "Proxmox did not answer for it"))
     status = vm.get("state")
     if status == "running" and not vm.get("address") and api is not None:
@@ -574,6 +601,250 @@ def _vm_items(vm, settings, live):
     return items
 
 
+def _short_kernel(release):
+    """A kernel release as the report shows it: Ubuntu's flavour suffix dropped (6.8.0-85-generic is 6.8.0-85)."""
+    return re.sub(r"-(generic|virtual|kvm|lowlatency)$", "", str(release or ""))
+
+
+def status_refusal(said):
+    """What kind of refusal ssh's message is, read from the whole of it before anything is cut: "changed" (a host
+    key other than the one this machine holds), "unknown" (none held), "timeout", "refused", "denied", or ""."""
+    low = str(said or "").lower()
+    if "host identification has changed" in low or ("host key for" in low and "has changed" in low):
+        return "changed"
+    if "host key verification failed" in low or "host key is known" in low:
+        return "unknown"
+    if "timed out" in low or "timeout" in low:
+        return "timeout"
+    if "connection refused" in low:
+        return "refused"
+    if "permission denied" in low:
+        return "denied"
+    return ""
+
+
+def _ssh_refusal(vm, ssh, settings):
+    """What ssh's refusal of a VM means, and what to do about it: (text, command)."""
+    name = vm.get("name")
+    address = vm.get("address") or name
+    user = settings.get("vm_user") or "dev"
+    said = ssh.get("unreachable") or ""
+    kind = ssh.get("refusal") or status_refusal(said)
+    if kind == "changed":
+        return (
+            f"not read: the SSH host key at {address} is not the one this machine holds. {name} was rebuilt or"
+            " renamed, or another machine answers at that address",
+            f"find out which first. If {name} was rebuilt or renamed: ssh-keygen -R {address}, then just deploy"
+            f" {name} --only configure",
+        )
+    if kind == "unknown":
+        return (
+            f"not read: this machine holds no SSH host key for {address}, and status adds none. Its address"
+            " changed, or nothing here has connected to it yet",
+            f"just deploy {name} --only configure takes a new VM's key, as every run does; or ssh {user}@{address}"
+            " true, which shows you the fingerprint and asks first",
+        )
+    if kind == "timeout":
+        return (f"not read: it did not answer SSH at {address}", f"check {name} in Proxmox's console")
+    if kind == "refused":
+        return (
+            f"not read: it refused SSH at {address}: sshd is not running there",
+            f"check {name} in Proxmox's console",
+        )
+    if kind == "denied":
+        return (
+            f"not read: it refused this machine's SSH key as {user}",
+            "check vm_ssh_public_keys in local.yml against the key this machine offers",
+        )
+    return (f"not read: SSH to {address} failed: {one_line(said, 160)}", "")
+
+
+def _when(stamp, now):
+    """How long ago systemd's timestamp (\"Sat 2026-10-25 10:02:11 UTC\") was, or "" when it cannot be read."""
+    try:
+        moment = datetime.strptime(" ".join(str(stamp).split()[1:3]), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return ""
+    if str(stamp).split()[-1] not in ("UTC", "GMT"):
+        return ""
+    return _ago(now - moment.replace(tzinfo=timezone.utc).timestamp()).replace(" ago", "")
+
+
+def _remote_control(claude, now):
+    """Remote Control as one state, ("running" | "down" | "waits" | "stopped" | "not-set-up" | "off"), and its words."""
+    if not claude.get("remote_control_wanted"):
+        return "off", "off: API key" if claude.get("api_key") else "off"
+    service = claude.get("service") or {}
+    path = claude.get("path_unit") or {}
+    load, active, sub = service.get("LoadState"), service.get("ActiveState"), service.get("SubState")
+    if load in (None, "", "not-found"):
+        return "not-set-up", "not set up"
+    since = _when(service.get("StateChangeTimestamp"), now)
+    if active == "active" and sub == "running":
+        return "running", "running" + (f" {since}" if since else "")
+    restarts = str(service.get("NRestarts") or "0")
+    if active == "failed" or sub == "auto-restart" or (active == "activating" and restarts != "0"):
+        said = "down" + (f" {since}" if since else "")
+        if restarts not in ("", "0"):
+            said += f", {_plural(int(restarts), 'restart')}" if restarts.isdigit() else ""
+        return "down", said
+    if path.get("ActiveState") == "active":
+        return "waits", "waits for the login"
+    return "stopped", "stopped"
+
+
+def _ssh_items(vm, settings, live, now):
+    """The attention items of what was read of a VM over SSH, each role's own line among them."""
+    items = []
+    name = vm.get("name")
+    ssh = vm.get("ssh")
+    if not vm.get("needs_ssh"):
+        return items
+    if ssh is None:
+        if not live:
+            items.append(_item("unread", name, name, "not read over SSH: the run ended before it was"))
+        return items
+    if ssh.get("unreachable"):
+        text, command = _ssh_refusal(vm, ssh, settings)
+        items.append(_item("unread", name, name, text, command))
+        return items
+    unread = ssh.get("unread") or {}
+    for part, said in (
+        ("system", "its system"),
+        ("claude", "Claude Code"),
+        ("github", "gh"),
+        ("tailscale", "Tailscale"),
+    ):
+        if unread.get(part):
+            items.append(_item("unread", name, name, f"{said} was not read: {unread[part]}"))
+    system = ssh.get("system")
+    if system:
+        if (system.get("unread") or {}).get("upgrades"):
+            items.append(_item("unread", name, name, f"apt's upgrades were not read: {system['unread']['upgrades']}"))
+        if system.get("reboot_required"):
+            running, newest = system.get("kernel") or "", system.get("kernel_newest") or ""
+            why = (
+                f"kernel {_short_kernel(newest)} is installed, {_short_kernel(running)} runs"
+                if newest and running and newest != running
+                else f"{_and(system.get('reboot_packages') or []) or 'an upgrade'} asks for one"
+            )
+            busy = []
+            if system.get("claude"):
+                busy.append(_plural(system["claude"], "claude process", "claude processes"))
+            if system.get("vscode_windows"):
+                busy.append(_plural(system["vscode_windows"], "VS Code window"))
+            text = f"waits for a reboot: {why}" + (
+                f"; {_and(busy)} {'is' if len(busy) == 1 and busy[0].startswith('1 ') else 'are'} open there"
+                if busy
+                else ""
+            )
+            items.append(
+                _item(
+                    "todo",
+                    name,
+                    name,
+                    text,
+                    "restart it from Proxmox once they are done, then just deploy --only ssh-config"
+                    if busy
+                    else "restart it from Proxmox, then just deploy --only ssh-config",
+                )
+            )
+        if isinstance(system.get("security"), int) and system["security"] > 0:
+            user = settings.get("vm_user") or "dev"
+            waits = "waits" if system["security"] == 1 else "wait"
+            items.append(
+                _item(
+                    "todo",
+                    name,
+                    name,
+                    f"{_plural(system['security'], 'security upgrade')} {waits} to be installed",
+                    f"ssh -t {user}@{vm.get('address') or name} sudo apt-get upgrade",
+                )
+            )
+    claude = ssh.get("claude")
+    if claude:
+        if not claude.get("installed"):
+            items.append(
+                _item("todo", name, name, "Claude Code is not installed", f"just deploy {name} --tags claude_code")
+            )
+        elif not claude.get("api_key") and not claude.get("login_stored"):
+            items.append(
+                _item(
+                    "todo",
+                    name,
+                    name,
+                    "not signed in. Run "
+                    + (claude.get("login_command") or f"just login {name} --only claude")
+                    + " to sign in from your machine: it opens the sign-in page and asks for the code the page shows.",
+                    source="claude_code",
+                )
+            )
+        state, said = _remote_control(claude, now)
+        unit = claude.get("unit") or "claude-remote-control"
+        user = settings.get("vm_user") or "dev"
+        if state == "down":
+            items.append(
+                _item(
+                    "problem",
+                    name,
+                    name,
+                    f"Remote Control is not running: {unit} is {said}",
+                    f"ssh {user}@{vm.get('address') or name} journalctl -u {unit} -n 50, then just deploy {name}"
+                    " --tags claude_code starts it again",
+                )
+            )
+        elif state == "not-set-up":
+            items.append(
+                _item("todo", name, name, "Remote Control is not set up", f"just deploy {name} --tags claude_code")
+            )
+        elif state == "stopped" and claude.get("login_stored"):
+            items.append(
+                _item(
+                    "todo",
+                    name,
+                    name,
+                    "Remote Control is stopped",
+                    f"just deploy {name} --tags claude_code starts it, or says what stops it",
+                )
+            )
+    github = ssh.get("github")
+    if github:
+        if github.get("unchecked"):
+            items.append(
+                _item("unread", name, name, f"gh could not check its login with GitHub: {github.get('error')}")
+            )
+        elif github.get("left") and github.get("line"):
+            items.append(_item("todo", name, name, github["line"], source="github_projects"))
+    tailscale = ssh.get("tailscale")
+    if tailscale and tailscale.get("enabled"):
+        case = tailscale.get("case")
+        if case == "check-daemon-down":
+            items.append(
+                _item(
+                    "problem", name, name, "tailscaled is not running", f"just deploy {name} --tags tailscale starts it"
+                )
+            )
+        elif case == "check-no-package":
+            items.append(
+                _item(
+                    "todo", name, name, "Tailscale is not installed", f"just deploy {name} --tags tailscale installs it"
+                )
+            )
+        elif case == "would-join":
+            items.append(
+                _item(
+                    "todo",
+                    name,
+                    name,
+                    "Tailscale is not signed in; vault_tailscale_auth_key joins it",
+                    f"just deploy {name} --tags tailscale",
+                )
+            )
+        elif tailscale.get("left") and tailscale.get("line"):
+            items.append(_item("todo", name, name, tailscale["line"], source="tailscale"))
+    return items
+
+
 def _storage_items(storages):
     items = []
     for s in storages:
@@ -608,6 +879,7 @@ def status_report(found, read_at="", now=None, live=False):
     aliases = fleet.get("aliases")
     settings["aliases_enabled"] = aliases is not None
     proxmox = dict(fleet.get("proxmox") or {})
+    ssh_wanted = status_needs_ssh(sections)
     template = dict(fleet.get("template") or {})
     if template.get("ctime"):
         template["built_ago"] = _ago(now - template["ctime"])
@@ -638,6 +910,11 @@ def status_report(found, read_at="", now=None, live=False):
             else None
         )
         vm["pending_api"] = live and vm.get("read") and api is None
+        # Read over SSH by play 2's own test: a section that needs it, and a VM the listing shows running with an
+        # address.
+        vm["ssh"] = parts.get("ssh")
+        vm["needs_ssh"] = bool(ssh_wanted and vm.get("read") and vm.get("status") == "running" and vm.get("address"))
+        vm["pending_ssh"] = live and vm["needs_ssh"] and vm["ssh"] is None
         vms.append(vm)
     # With discovery off the VMs are the inventory's (claude_vms), which the API never listed: each is shown from
     # what was read of it over SSH.
@@ -659,6 +936,9 @@ def status_report(found, read_at="", now=None, live=False):
                 "created_ago": "",
                 "pending_api": False,
                 "alias": None,
+                "ssh": found[host].get("ssh"),
+                "needs_ssh": ssh_wanted,
+                "pending_ssh": live and ssh_wanted and found[host].get("ssh") is None,
             }
         )
     items = []
@@ -673,6 +953,7 @@ def status_report(found, read_at="", now=None, live=False):
         items.append(_item("unread", name, name, text, "just status lists every VM this project created"))
     for vm in vms:
         items += _vm_items(vm, settings, live)
+        items += _ssh_items(vm, settings, live, now)
     items += _storage_items(fleet.get("storages") or [])
     # Two VMs of one name each say the same thing about it: once is enough.
     seen = set()
@@ -710,7 +991,10 @@ def status_report(found, read_at="", now=None, live=False):
         "template": template,
         "attention": items,
         "counts": counts,
-        "settings": {k: settings.get(k) for k in ("names", "tag", "tailscale_enabled", "nic", "aliases_enabled")},
+        "settings": {
+            k: settings.get(k) for k in ("names", "tag", "tailscale_enabled", "nic", "aliases_enabled", "vm_user")
+        },
+        "now": now,
     }
 
 
@@ -902,16 +1186,33 @@ def _storage_lines(model):
     return lines
 
 
+def _ssh_vms(model):
+    """The VMs a section read over SSH shows: each this project created that is read over SSH, by name."""
+    return [vm for vm in model["vms"] if vm.get("name") and vm.get("needs_ssh")]
+
+
+def _name_width(vms):
+    return min(13, max([5] + [len(vm["name"]) for vm in vms]))
+
+
+def _cell(text, width, style=""):
+    """One column's cell: ``text`` cut to ``width`` - 1 and padded, so a long value never pushes the next column."""
+    text = text if len(text) < width else text[: width - 2] + "…"
+    return [_seg(f"{text:<{width}}", style)]
+
+
 def _access_lines(model):
     vms = [vm for vm in model["vms"] if vm.get("name")]
     if not vms:
         return []
     aliases = model["settings"].get("aliases_enabled")
-    nw = min(20, max([5] + [len(vm["name"]) for vm in vms]))
-    # The tailnet column, from the Tailscale role's own read, once the report reads the VMs (S2).
-    show_tailnet = status_needs_ssh(model["sections"]) or not model["settings"].get("tailscale_enabled")
+    nw = _name_width(vms)
+    # The tailnet column, from the Tailscale role's read: whenever the VMs are read over SSH, or Tailscale is off.
+    show_tailnet = any(vm.get("needs_ssh") for vm in vms) or not model["settings"].get("tailscale_enabled")
     head = "LAN           " + ("SSH ALIAS   " if aliases else "") + ("TAILNET" if show_tailnet else "")
-    lines = [[_seg("ACCESS", "h"), _seg(" " * (nw + 4 - len("ACCESS")) + head, "d")]]
+    # The tailnet names padded to the longest, so their addresses line up.
+    dns_width = max([0] + [len(((vm.get("ssh") or {}).get("tailscale") or {}).get("dns_name") or "") for vm in vms])
+    lines = [[_seg("ACCESS", "h"), _seg(" " * max(1, nw + 4 - len("ACCESS")) + head, "d")]]
     for vm in vms:
         state = vm.get("state")
         lan = vm.get("address") or ("stopped" if state == "stopped" else "—")
@@ -920,16 +1221,175 @@ def _access_lines(model):
         if aliases:
             row.append(_seg(f"{vm['name'] if vm.get('alias') else 'none':<12}", "" if vm.get("alias") else "y"))
         if show_tailnet:
-            row += _tailnet_cells(vm, model)
+            row += _tailnet_cells(vm, model, dns_width)
         lines.append(row)
     lines.append([_seg(" VS Code: just code <name> [--project <repo>] [--session <id>]", "d")])
     return lines
 
 
-def _tailnet_cells(vm, model):
+def _tailnet_cells(vm, model, dns_width=0):
     if not model["settings"].get("tailscale_enabled"):
         return [_seg("off: tailscale_enabled is false", "d")]
-    return [_seg("—", "d")]
+    if vm.get("pending_ssh"):
+        return [_seg(PENDING, "c")]
+    tailscale = (vm.get("ssh") or {}).get("tailscale")
+    if not tailscale:
+        return [_seg("—", "d")]
+    if tailscale.get("backend") == "Running" and tailscale.get("dns_name"):
+        return [_seg(f"{tailscale['dns_name']:<{dns_width}}  {tailscale.get('ipv4') or ''}".rstrip())]
+    return [_seg(_tailscale_cell(tailscale)[0][2:], "d")]
+
+
+def _claude_cell(claude):
+    if not claude.get("installed"):
+        return "○ not installed", "y"
+    version = f"{claude['version']} " if claude.get("version") else ""
+    if claude.get("api_key"):
+        return f"● {version}API key", "g"
+    if claude.get("login_stored"):
+        return f"● {version}signed in", "g"
+    return f"○ {version}not signed in", "y"
+
+
+def _remote_control_cell(claude, now):
+    state, said = _remote_control(claude, now)
+    if state == "running":
+        return f"● {said}", "g"
+    if state == "down":
+        return f"● {said}", "r"
+    if state in ("not-set-up", "stopped"):
+        return f"○ {said}", "y"
+    return f"○ {said}", "d"
+
+
+def _github_cell(github):
+    if not github.get("installed"):
+        return "○ no gh", "d"
+    if not github.get("readable"):
+        return "? gh too old to say", "y"
+    if github.get("unchecked"):
+        return "? not checked", "r"
+    if github.get("signed_in"):
+        return f"● {github.get('account') or 'signed in'}", "g"
+    if not github.get("managed"):
+        return "○ left alone", "d"
+    return "○ not signed in", "y"
+
+
+TAILSCALE_CELLS = {
+    "off": ("○ off", "d"),
+    "not-ours": ("● installed by hand", "d"),
+    "Running": ("● running", "g"),
+    "NeedsLogin": ("○ needs a login", "y"),
+    "would-join": ("○ needs a login", "y"),
+    "page-pending": ("○ page waiting", "y"),
+    "expired": ("○ key expired", "y"),
+    "refused": ("○ key refused", "y"),
+    "NeedsMachineAuth": ("○ needs approval", "y"),
+    "Stopped": ("○ stopped", "y"),
+    "connecting": ("○ connecting", "y"),
+    "check-no-package": ("○ not installed", "y"),
+    "check-daemon-down": ("● daemon down", "r"),
+}
+
+
+def _tailscale_cell(tailscale):
+    if not tailscale.get("enabled"):
+        return TAILSCALE_CELLS["off"]
+    return TAILSCALE_CELLS.get(tailscale.get("case"), (f"○ {tailscale.get('backend') or 'unknown'}", "y"))
+
+
+def _not_read_cell(vm):
+    """The cell of a VM read over SSH that a part could not be read of: pending while live, else why not."""
+    if vm.get("pending_ssh"):
+        return PENDING, "c"
+    if (vm.get("ssh") or {}).get("unreachable"):
+        return "? not reached", "r"
+    return "? not read", "r"
+
+
+def _signins_lines(model):
+    vms = _ssh_vms(model)
+    if not vms:
+        return []
+    nw = _name_width(vms)
+    first = max(nw + 3, len("SIGN-INS") + 2)
+    widths = (25, 25, 18)
+    head = [
+        _seg("SIGN-INS", "h"),
+        _seg(
+            " " * (first - len("SIGN-INS"))
+            + "CLAUDE CODE".ljust(widths[0])
+            + "REMOTE CONTROL".ljust(widths[1])
+            + "GITHUB".ljust(widths[2])
+            + "TAILSCALE",
+            "d",
+        ),
+    ]
+    lines = [head]
+    now = model.get("now") or time.time()
+    for vm in vms:
+        ssh = vm.get("ssh") or {}
+        row = [_seg(f" {vm['name'][:nw]:<{first - 1}}")]
+        claude, github, tailscale = ssh.get("claude"), ssh.get("github"), ssh.get("tailscale")
+        cells = [
+            _claude_cell(claude) if claude else _not_read_cell(vm),
+            _remote_control_cell(claude, now) if claude else _not_read_cell(vm),
+            _github_cell(github) if github else _not_read_cell(vm),
+        ]
+        for (text, style), width in zip(cells, widths, strict=True):
+            row += _cell(text, width, style)
+        text, style = _tailscale_cell(tailscale) if tailscale else _not_read_cell(vm)
+        row.append(_seg(text, style))
+        lines.append(row)
+    return lines
+
+
+def _system_lines(model):
+    vms = _ssh_vms(model)
+    if not vms:
+        return []
+    nw = _name_width(vms)
+    first = max(nw + 3, len("SYSTEM") + 4)
+    widths = (16, 27, 18)
+    head = [
+        _seg("SYSTEM", "h"),
+        _seg(
+            " " * (first - len("SYSTEM"))
+            + "OS".ljust(widths[0])
+            + "KERNEL".ljust(widths[1])
+            + "LOAD 1 / 15 MIN".ljust(widths[2])
+            + "UPDATES",
+            "d",
+        ),
+    ]
+    lines = [head]
+    for vm in vms:
+        system = (vm.get("ssh") or {}).get("system")
+        row = [_seg(f" {vm['name'][:nw]:<{first - 1}}")]
+        if not system:
+            text, style = _not_read_cell(vm)
+            lines.append(row + [_seg(text, style)])
+            continue
+        os_name = re.sub(r"\s+LTS$", "", str(system.get("os") or "—"))
+        running, newest = _short_kernel(system.get("kernel")), _short_kernel(system.get("kernel_newest"))
+        kernel = running or "—"
+        if newest and running and system.get("kernel_newest") != system.get("kernel"):
+            kernel += f" · {newest} waits"
+        load = system.get("load") or []
+        load_text = f"{load[0]:.2f} / {load[2]:.2f}" if len(load) == 3 else "—"
+        upgrades, security = system.get("upgrades"), system.get("security")
+        if not isinstance(upgrades, int):
+            updates, style = "not read", "d"
+        elif upgrades == 0:
+            updates, style = "none", ""
+        else:
+            updates = f"{upgrades}" + (f", {security} of them security" if security else "")
+            style = "y" if security else ""
+        row += _cell(os_name, widths[0]) + _cell(kernel, widths[1], "y" if " waits" in kernel else "")
+        row += _cell(load_text, widths[2]) + [_seg(updates, style)]
+        lines.append(row)
+    return lines
 
 
 def _attention_lines(model):
@@ -989,7 +1449,13 @@ def _footer(model, reading):
     return lines
 
 
-SECTION_LINES = {"vms": _vms_lines, "storage": _storage_lines, "access": _access_lines}
+SECTION_LINES = {
+    "vms": _vms_lines,
+    "storage": _storage_lines,
+    "access": _access_lines,
+    "sign-ins": _signins_lines,
+    "system": _system_lines,
+}
 
 
 def status_lines(model, reading=""):
@@ -1033,6 +1499,8 @@ class FilterModule:
             "status_aliases": status_aliases,
             "status_storages": status_storages,
             "status_vm_api": status_vm_api,
+            "status_system_read": status_system_read,
+            "status_refusal": status_refusal,
             "status_report": status_report,
             "status_text": status_text,
         }

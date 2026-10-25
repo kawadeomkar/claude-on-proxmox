@@ -9,8 +9,9 @@ printed once at the end, or nothing at all under --json, whose report the recipe
 Every piece of the report arrives as a status_found fact, already one line of plain text a value; the report is
 drawn by filter_plugins/status.py, the same functions as the finished report, loaded by path. Nothing of Ansible's
 own task output is shown: a task that failed is said on stderr only if the run ends without a report, since the
-report says what each failure meant. Task warnings, which since ansible-core 2.19 travel on the task result, are
-printed in every hook, or a stdout callback of one's own drops them without a word.
+report says what each failure meant, and an unreachable VM is the report's too. Task warnings, which since
+ansible-core 2.19 travel on the task result, are printed in every hook, or a stdout callback of one's own drops them
+without a word.
 
 The live region (proven in the prototype docs/plan-status-2026-10-25-live-proto/ records): one write per redraw,
 inside synchronized-output marks, the cursor moved up exactly the lines drawn, each line cut to the width so none
@@ -236,14 +237,16 @@ class CallbackModule(CallbackBase):
                 model = facts["status_report"]
                 self._display.display(self._status.status_text(model, self._color, reading=self._reading(model)))
 
+    # A failure or an unreachable VM is the report's to say - a rescue records it, or the ping's register does - so
+    # neither prints Ansible's error: only its warnings, and its message at the end of a run that left no report.
     def v2_runner_on_failed(self, result, ignore_errors=False):
-        self._handle_warnings_and_exception(result)
+        self._handle_warnings(result.result)
         if not ignore_errors:
             message = result.result.get("msg") or result.result.get("stderr") or "failed"
             self._failures.append(f"{result.host.get_name()}: {result.task.get_name()}: {message}")
 
     def v2_runner_on_unreachable(self, result):
-        self._handle_warnings_and_exception(result)
+        self._handle_warnings(result.result)
 
     def v2_runner_on_skipped(self, result):
         pass

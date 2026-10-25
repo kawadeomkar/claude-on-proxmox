@@ -68,7 +68,7 @@ environment where `python3` is not it.
 | &emsp;`--only SIGN_IN` | One sign-in: claude (by the browser, then Remote Control), github (the device flow, then the private repositories) or tailscale (its web login) |
 | &emsp;`<name>` | The VMs to sign in, one after another; none reports every VM this project created |
 | `just status [<name>...]` | What every VM this project created is doing, and what needs doing next, read without changing anything |
-| &emsp;`--only ONLY` | Only these sections, comma-separated: vms storage access |
+| &emsp;`--only ONLY` | Only these sections, comma-separated: vms storage access sign-ins system; vms,storage reads only the Proxmox API, never a VM |
 | &emsp;`--json` | The report as JSON, alone on standard output, with the same exit code |
 | &emsp;`<name>` | Only these VMs; none reads every VM this project created |
 | &emsp;`just list` | Another name for `just status`, and the same in every way |

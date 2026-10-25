@@ -51,6 +51,46 @@
 # there, the hardest case: a copy left bound refuses to resume into them.
 # Last, the copy continued there, saved as just destroy saves one, resumes by
 # its path from the laptop's checkout, as the save's sessions.json says.
+# just status inside the VM, as the converge left it: the real claude of the native installer, no login, Remote
+# Control waiting for one, gh signed out, Tailscale joined with the stand-in. With discovery off it reads the
+# container as configure reached it - no Proxmox here - and only the sections that read the VM.
+- name: Report on the container the way just status does
+  ansible.builtin.import_playbook: ../../playbooks/status.yml
+  vars:
+    status_report_file: ""
+    status_only: access,sign-ins,system
+
+- name: Assert what just status read inside the container
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Assert the report is what the converge left
+      vars:
+        side_effect_status_vm: "{{ status_report.vms | selectattr('name', 'equalto', 'claude-dev') | first }}"
+        side_effect_status_ssh: "{{ side_effect_status_vm.ssh }}"
+        side_effect_status_items: >-
+          {{ status_report.attention | selectattr('vm', 'equalto', 'claude-dev') | map(attribute='source') | list }}
+      ansible.builtin.assert:
+        that:
+          - side_effect_status_ssh.reached
+          # The version from where the native installer's link points: status never runs claude.
+          - side_effect_status_ssh.claude.installed
+          - side_effect_status_ssh.claude.version is match('^[0-9]+[.][0-9]+[.][0-9]+')
+          - not side_effect_status_ssh.claude.login_stored
+          - side_effect_status_ssh.claude.service.LoadState == 'loaded'
+          - side_effect_status_ssh.claude.path_unit.ActiveState == 'active'
+          - not side_effect_status_ssh.github.signed_in
+          - not side_effect_status_ssh.github.unchecked
+          - side_effect_status_ssh.tailscale.case == 'Running'
+          - side_effect_status_ssh.system.os is match('^Ubuntu 24[.]04')
+          - side_effect_status_ssh.system.upgrades is number
+          - side_effect_status_ssh.unread.values() | select | list == []
+          # The two sign-ins to make, in the roles' own words, and nothing else wrong.
+          - "'claude_code' in side_effect_status_items and 'github_projects' in side_effect_status_items"
+          - status_report.counts.unread == 0 and status_report.counts.problem == 0
+        fail_msg: "just status inside the container produced {{ status_report | to_json }}"
+        quiet: true
+
 - name: Resume a session copied as just code copies one, with the real claude
   hosts: claude_vms
   become: true

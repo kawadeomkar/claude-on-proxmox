@@ -45,6 +45,8 @@ per playbook:
 | `claude_vm_requested` | `discover.yml`, `status.yml`, `ssh_config.yml` and `code.yml`, for what the names given (`vm_name`) select |
 | `claude_vm_api_timeout` | the seconds each read in `tasks/cluster_vms.yml` and `tasks/vm_addresses.yml` waits for Proxmox: 30, uri's own, which `status.yml` passes as `status_api_timeout`, 10, so a report that cannot reach the API says so soon |
 | `status_api_timeout`, `status_report_file` | `status.yml`: how long each of its own reads waits, and the file the recipe reads the exit code from, named in `STATUS_REPORT_FILE`; none for a run by hand, which writes no file |
+| `status_ssh_args` | `status.yml`'s SSH options for each VM, set as `ansible_ssh_args` by `add_host`: `ansible.cfg`'s `ssh_args` with `StrictHostKeyChecking=yes` and `UpdateHostKeys=no`, so status adds and changes no host key |
+| `status_read_upgrades`, `status_system_root` | `vm_status_info`: whether apt's simulation is run, and where the VM's files are read from - `/`, but for the tests' fixture trees |
 | `vm_projects_dir` | where the code lives on a VM, read by `github_projects` (`github_projects_dir`), `claude_code` (`claude_code_remote_control_dir`) and the alias play; empty means `~/projects` of `vm_user`, resolved on the VM |
 | `claude_ssh_config`, `claude_ssh_config_file`, `claude_ssh_user_config`, `claude_ssh_config_include`, `claude_ssh_host_domain`, `claude_ssh_identity_file`, `claude_ssh_forward_agent`, `claude_ssh_options` | `tasks/ssh_config.yml`, from every caller ([§4.8](lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml)) |
 

@@ -1,0 +1,70 @@
+---
+# Entry point for `just status` (playbooks/status.yml): what Claude Code is on this VM - the version installed,
+# whether a login is stored, and how Remote Control's service is - changing nothing. It never runs claude: whether
+# `claude auth status` can refresh a login's token, and so write, is still to be checked on a real VM
+# (docs/architecture/lifecycle.md §4.6), so the login is read as the file it is stored in being there, never its
+# content, and the version from where the native installer's link points.
+- name: status | Look up home directory of {{ claude_code_user }}
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ claude_code_user }}"
+  when: claude_code_home is not defined
+
+- name: status | Record where the user's files are
+  ansible.builtin.set_fact:
+    claude_code_home: "{{ ansible_facts.getent_passwd[claude_code_user][4] }}"
+  when: claude_code_home is not defined
+
+# As the user: the home may be closed to anyone else. The link is read, never followed into.
+- name: status | Read where the installed claude points
+  ansible.builtin.stat:
+    path: "{{ claude_code_home }}/.local/bin/claude"
+    follow: false
+    get_checksum: false
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_status_bin
+
+- name: status | Look for the stored login
+  ansible.builtin.stat:
+    path: "{{ claude_code_home }}/.claude/.credentials.json"
+    get_checksum: false
+  become: true
+  become_user: "{{ claude_code_user }}"
+  register: claude_code_status_login
+
+# With no state asked for, systemd_service only reads a unit; one that does not exist fails, and reads as not
+# there.
+- name: status | Read Remote Control's service and the unit that waits for a login
+  ansible.builtin.systemd_service:
+    name: "{{ claude_code_remote_control_service }}.{{ item }}"
+  loop: [service, path]
+  register: claude_code_status_units
+  failed_when: false
+  check_mode: false
+
+- name: status | Keep what Claude Code is on this VM
+  vars:
+    claude_code_status_target: "{{ claude_code_status_bin.stat.lnk_target | default('') }}"
+    claude_code_status_unit: >-
+      {{ dict(claude_code_status_units.results | map(attribute='item')
+              | zip(claude_code_status_units.results | map(attribute='status', default={}))) }}
+  ansible.builtin.set_fact:
+    claude_code_status_found:
+      installed: "{{ claude_code_status_bin.stat.exists | default(false) }}"
+      method: "{{ claude_code_install_method }}"
+      version: >-
+        {{ claude_code_status_target | basename
+           if claude_code_status_target | basename is match('^[0-9]+[.][0-9]+[.][0-9]+') else '' }}
+      login_stored: "{{ claude_code_status_login.stat.exists | default(false) }}"
+      api_key: "{{ claude_code_anthropic_api_key | length > 0 }}"
+      remote_control_wanted: "{{ claude_code_remote_control_wanted | bool }}"
+      service: >-
+        {{ claude_code_status_unit.service | default({})
+           | dict2items | selectattr('key', 'in', ['LoadState', 'ActiveState', 'SubState', 'NRestarts', 'Result',
+                                                   'StateChangeTimestamp']) | items2dict }}
+      path_unit: >-
+        {{ claude_code_status_unit.path | default({})
+           | dict2items | selectattr('key', 'in', ['LoadState', 'ActiveState', 'SubState']) | items2dict }}
+      login_command: "{{ claude_code_login_command }}"
+      unit: "{{ claude_code_remote_control_service }}"

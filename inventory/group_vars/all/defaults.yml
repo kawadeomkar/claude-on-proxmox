@@ -66,6 +66,19 @@ claude_vm_api_timeout: 30
 # names in STATUS_REPORT_FILE; none for a run by hand, which writes no file.
 status_api_timeout: 10
 status_report_file: "{{ lookup('ansible.builtin.env', 'STATUS_REPORT_FILE') }}"
+# How just status reaches a VM over SSH: ansible.cfg's ssh_args, with the host key held to what this machine
+# already knows (StrictHostKeyChecking=yes) and never updated (UpdateHostKeys=no, OpenSSH's default is yes):
+# status adds and changes no host key, so a VM rebuilt or renamed is "not read", naming what takes its key. Per
+# host as ansible_ssh_args, since ssh keeps the first value it is given for an option and Ansible puts
+# ssh_args first: ansible_ssh_extra_args would come after accept-new, and lose to it.
+status_ssh_args: >-
+  {{ (lookup('ansible.builtin.config', 'ssh_args', plugin_type='connection', plugin_name='ssh')
+      | regex_replace('-o\s*StrictHostKeyChecking=\S+', '') | regex_replace('-o\s*UpdateHostKeys=\S+', '')
+      | regex_replace('\s+', ' ') | trim) ~ ' -o StrictHostKeyChecking=yes -o UpdateHostKeys=no' }}
+# Whether just status asks apt what an upgrade would install: a simulation, which changes nothing. And where it reads
+# a VM's /proc, /run, /boot and os-release from: the VM's own, but for the tests' fixture trees.
+status_read_upgrades: true
+status_system_root: /
 
 # Cloud-init template that VMs are cloned from (built by playbooks/template.yml)
 proxmox_template_vmid: 9000

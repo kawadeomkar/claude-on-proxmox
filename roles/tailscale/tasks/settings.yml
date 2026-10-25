@@ -19,5 +19,5 @@
 
 # The set runs only when something differs, so having run is having changed.
 - name: settings | Read the state after the change
-  ansible.builtin.include_tasks: status.yml
+  ansible.builtin.include_tasks: state.yml
   when: tailscale_set is not skipped

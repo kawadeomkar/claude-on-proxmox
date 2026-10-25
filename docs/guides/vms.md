@@ -70,17 +70,28 @@ in as each value is read; piped, or in `just logs`, only the finished report app
   when it was created; the other VMs on the cluster as one line of totals, never by name.
 - **STORAGE** - the storage your VMs' disks are on, how full it is and this project's share of it, and
   the template and when it was built.
-- **ACCESS** - each VM's LAN address and whether it has its SSH alias.
+- **ACCESS** - each VM's LAN address, whether it has its SSH alias, and its tailnet name and address.
+- **SIGN-INS** - Claude Code's version and whether it is signed in, Remote Control, gh's GitHub account,
+  and Tailscale.
+- **SYSTEM** - the OS, the kernel running and a newer one waiting for a reboot, the load, and the
+  upgrades waiting, security ones counted.
 - **ATTENTION** - what needs you, most pressing first, each with the command that deals with it: what
   could not be read (Proxmox did not answer or refused the token, a name that matches no VM, a node that
-  is down, a running VM whose agent gives no address), then problems (two VMs of one name, a disk 90%
-  full), then things to do (settings in `local.yml` that differ from the VM, a change in Proxmox waiting
-  for a restart, a first deploy that did not finish, a missing alias, a disk 80% full).
+  is down, a running VM whose agent gives no address, a VM that did not answer SSH or whose host key this
+  machine does not hold), then problems (two VMs of one name, a disk 90% full, Remote Control down,
+  `tailscaled` not running), then things to do (settings in `local.yml` that differ from the VM, a change
+  in Proxmox waiting for a restart, a first deploy that did not finish, a missing alias, a disk 80% full,
+  a reboot waiting, security upgrades, a sign-in to make - in the words `just login` uses).
+
+It reads each VM over SSH as the VM user, with the host key this machine already holds: a VM rebuilt or
+renamed since is "not read", and status never takes its new key - `just deploy <vm> --only configure`
+does. It never runs `claude` there, so a stored login shows as signed in, without its plan.
 
 It exits 0 when nothing is wrong (things to do included), 1 for a problem, 2 when something could not be
-read, and 3 when the run itself failed. `--only` takes `vms`, `storage` and `access`, comma-separated;
-`--json` prints the report as JSON, with the same values the text shows, for a script. `just list` is the
-same command by its old name.
+read, and 3 when the run itself failed. `--only` takes `vms`, `storage`, `access`, `sign-ins` and `system`,
+comma-separated; `--only vms,storage` asks Proxmox alone and never connects to a VM, the quick form for a
+scheduled check. `--json` prints the report as JSON, with the same values the text shows, for a script.
+`just list` is the same command by its old name.
 
 ## Re-running
 

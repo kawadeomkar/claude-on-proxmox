@@ -155,6 +155,40 @@ argument_specs:
         type: path
         default: /var/lib/claude-on-proxmox
 
+  # tasks_from: status, which playbooks/status.yml (just status) runs on each VM.
+  status:
+    short_description: Say how the VM is on Tailscale, changing nothing
+    description:
+      - Reads what Tailscale is installed and whose, and its state once, without waiting for it to settle, and gives
+        the report configure gives, keeping what just status shows in tailscale_status_found. Never installs, joins,
+        signs in, changes a setting or removes anything.
+    options:
+      tailscale_enabled:
+        type: bool
+        default: true
+      tailscale_auth_method:
+        type: str
+        default: auto
+        choices: [auto, key, web]
+      tailscale_auth_key:
+        type: str
+        default: ""
+        no_log: true
+        description: Only whether one is set is read, for the line that says what joins the VM.
+      tailscale_hostname:
+        type: str
+        description: The machine name asked for, which a name taken is told by.
+      tailscale_login_server:
+        type: str
+        default: ""
+      tailscale_advertise_tags:
+        type: list
+        elements: str
+        default: []
+      tailscale_marker_dir:
+        type: path
+        default: /var/lib/claude-on-proxmox
+
   # tasks_from: release, which playbooks/destroy.yml runs on each VM before it
   # is deleted.
   release:

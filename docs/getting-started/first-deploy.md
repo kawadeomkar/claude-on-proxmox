@@ -193,14 +193,22 @@ STORAGE
  local-lvm  lvmthin  ███░░░░░░░░░  24%  34 / 141 GiB · this project's disks 96 GiB
  template   ubuntu-24.04-cloudinit (9000) · built 40 d ago
 
-ACCESS   LAN           SSH ALIAS
- alpha   192.0.2.51    alpha
- beta    192.0.2.52    beta
- gamma   stopped       gamma
+ACCESS   LAN           SSH ALIAS   TAILNET
+ alpha   192.0.2.51    alpha       alpha.tailnet-example.ts.net  100.64.0.5
+ beta    192.0.2.52    beta        beta.tailnet-example.ts.net   100.64.0.6
+ gamma   stopped       gamma       —
  VS Code: just code <name> [--project <repo>] [--session <id>]
 
-read in 3.2 s · proxmox 0.9 s · vms 3 of 3 2.4 s
-exit 0 · nothing is wrong · sections: vms storage access · --only · --json
+SIGN-INS  CLAUDE CODE              REMOTE CONTROL           GITHUB            TAILSCALE
+ alpha    ● 2.1.310 signed in      ● running                ● octocat         ● running
+ beta     ● 2.1.310 signed in      ● running                ● octocat         ● running
+
+SYSTEM    OS              KERNEL                     LOAD 1 / 15 MIN   UPDATES
+ alpha    Ubuntu 24.04.3  6.8.0-87                   0.42 / 0.20       none
+ beta     Ubuntu 24.04.3  6.8.0-87                   0.02 / 0.00       none
+
+read in 7.9 s · proxmox 0.9 s · vms 3 of 3 6.1 s
+exit 0 · nothing is wrong · sections: vms storage access sign-ins system · --only · --json
 ```
 
 It exits 0 when nothing is wrong, 1 for a problem, 2 when something could not be read, so a script can

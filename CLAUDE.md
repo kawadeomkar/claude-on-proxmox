@@ -42,7 +42,7 @@ just deploy alpha --only configure   # one stage of it: template, provision, con
 just deploy alpha --tags claude_code # re-run one role, e.g. to push an API key (--tags beside names means --only configure)
 just destroy alpha                   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
 just login alpha                     # Claude, GitHub, Tailscale in deploy's order, one VM after another (--only claude, github or tailscale: one)
-just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access; --json; exit 0/1/2, 3 failed); just list too
+just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system; --json; exit 0/1/2, 3 failed); just list too
 just code alpha [--project repo] [--session <id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
 just logs                            # the run logs, newest first: read these instead of asking for terminal output
 just docs                            # regenerate the wiki's reference pages; serve previews the site, build builds it strictly
@@ -400,9 +400,15 @@ token; `github_auth_method: token` still fails. The status JSON carries
   root SSH, and its tests give the Proxmox host a local stand-in or a refusing `ssh`, never a real one
   (`tests/unit/test_init_check.py` holds all three).
 
-- **`just status` is read-only information, and must never change anything.** Not the VMs, not Proxmox
-  (GETs only), not GitHub or Tailscale, not this machine: no host key, no alias, nothing in `~/.ssh` or
-  `~/.claude`. It writes only its run's report into `.cache/status/` (git-ignored, refused by
+- **`just status` is read-only information, and must never change anything.** Not the VMs (reads over
+  SSH only: no sign-in, no start or stop, no install, never `claude` itself until a real VM shows `claude
+  auth status` refreshes nothing), not Proxmox (GETs only), not GitHub or Tailscale, not this machine: no
+  host key - each VM gets `status_ssh_args` through `add_host`, `ansible.cfg`'s with
+  `StrictHostKeyChecking=yes` and `UpdateHostKeys=no`, as `ansible_ssh_args` since ssh keeps an option's
+  first value - no alias, nothing in `~/.ssh` or `~/.claude`. The roles are read through `status` entry
+  points of their own (`claude_code`, `github_projects`, `tailscale`), which reuse their reads and reports
+  (`login_read.yml`/`login_report.yml`, `ownership.yml`/`state.yml`/`report.yml`), so a line status shows
+  is NEXT STEPS' own. It writes only its run's report into `.cache/status/` (git-ignored, refused by
   `tests/check_no_local_files.sh`; the recipe removes it once read) and the log. `tests/unit/test_status.py`
   holds every task in `playbooks/status.yml`, and in every task file and role entry point it reaches, to
   an allowlist - a `uri` only with `url` (under `{{ proxmox_api_url }}/`), `headers`, `validate_certs`,
@@ -418,7 +424,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the screen into the scrollback; it never hides the cursor, shows task warnings (ansible-core 2.19+
   carries them on the result), and prints only the finished report piped, in the log, or under `--json`
   (`STATUS_QUIET`). Every status run in a test pins `status_report_file` and `claude_ssh_config_file`
-  into its own directory (`status_root`). See docs/architecture/lifecycle.md §4.6.
+  into its own directory and gets a refusing stand-in `ssh` (`status_root`); the reads inside a VM run
+  against stand-in VMs (`tests/unit/test_status_vms.py`), which hold that every file there is unchanged.
+  See docs/architecture/lifecycle.md §4.6.
 
 ## Architecture, and why it looks like this
 

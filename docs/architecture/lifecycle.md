@@ -294,17 +294,21 @@ offers no way to revoke from outside - and where its sessions were saved, or tha
 ## 4.6 `playbooks/status.yml` — read-only, drawn live
 
 What every VM this project created is doing, and what needs doing next. **Status changes nothing**: it
-reads Proxmox through GETs, and adds nothing on this machine, not a host key or an alias, and nothing to
-`~/.ssh` or `~/.claude`. It writes only its own run's files inside the checkout: the report, removed as
+reads Proxmox through GETs and each VM over SSH, signs nothing in, starts and stops nothing, and adds
+nothing on this machine, not a host key or an alias, and nothing to `~/.ssh` or `~/.claude`. It writes only its own run's files inside the checkout: the report, removed as
 soon as the recipe has read it, and the log every recipe keeps. Proxmox's access log records its
-requests, as it records every run's. `tests/unit/test_status.py` holds every task it runs, and every task
+requests and each VM its SSH login and its sudo, as for every run. `tests/unit/test_status.py` holds every task it runs, and every task
 file and role entry point it reaches, to a fixed set:
 
 - `uri` with the keys `url`, `headers`, `validate_certs`, `ca_path` and `timeout` only, a `url` that
   starts with `{{ proxmox_api_url }}/`, `check_mode: false` and `no_log`; no `method`, no `body`;
-- the shared listing (`tasks/cluster_vms.yml`, `tasks/vm_addresses.yml`) and `proxmox_vm`'s
-  `settings_drift` entry point;
-- `stat`, `slurp`, `set_fact`, `assert`, `add_host`;
+- the shared listing (`tasks/cluster_vms.yml`, `tasks/vm_addresses.yml`), `proxmox_vm`'s `settings_drift`
+  entry point and the `status` entry points of `claude_code`, `github_projects` and `tailscale`, every file
+  they include followed;
+- `command` with one of a fixed list of argvs, the roles' reads (`gh auth status`, `tailscale status
+  --json`, ...), and `systemd_service` with no state, which only reads a unit;
+- `vm_status_info`, `ping`, `getent`, `stat`, `slurp`, `set_fact`, `assert`, `add_host`, and the roles'
+  `debug` and `set_stats`, which status's callback does not show;
 - the report's `file` and `copy`, into `status_report_file`.
 
 The recipe runs it as a dry run, which guards Ansible's other modules; `uri` never runs in check mode,
@@ -329,7 +333,26 @@ container, a Vagrant box.
 delegated to this machine, so the VMs are read at once: `status/current`, a day of `rrddata`, `pending`,
 and from a running VM's agent `get-osinfo` and `get-fsinfo`. `proxmox_vm`'s `settings_drift` compares
 the VM's config with what `just deploy` would send (`proxmox_vm_drift`,
-[§7.1](custom-code.md#71-filter_pluginsproxmoxpy)); it needs no connection.
+[§7.1](custom-code.md#71-filter_pluginsproxmoxpy)); it needs no connection. Then, where a section asked
+for needs it (`access`, `sign-ins`, `system`) and the VM runs and has an address, over SSH: one `ping`
+with `ignore_unreachable` first, whose refusal is said for what it is - no host key held here, a host key
+changed, a timeout, a refusal - and leaves the VM there; then each read in a block of its own whose rescue
+records it as not read: `vm_status_info` (the OS, the kernels, a reboot waiting, the load, apt's
+simulation, the user's claude processes and VS Code windows), and the `status` entry points of
+`claude_code`, `github_projects` and `tailscale` ([§5.5](roles.md#55-claude_code--install-claude-code),
+[§5.6](roles.md#56-github_projects--sign-in-to-github-clone-an-accounts-repositories),
+[§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)), the roles' own reads and reports, so a line
+status shows is the one `just login` and NEXT STEPS give. Claude's never runs `claude`: whether `claude auth
+status` can refresh a login's token is still to be checked on a real VM, so the login is the file it is
+stored in being there, and the version where the installer's link points.
+
+**Host keys.** Status adds and changes none. Each VM gets `ansible_ssh_args` from `add_host`
+(`status_ssh_args`): `ansible.cfg`'s own `ssh_args` with `StrictHostKeyChecking=yes` and
+`UpdateHostKeys=no`, OpenSSH's default being yes. As `ansible_ssh_args` and not the extra args, since ssh
+keeps the first value it is given for an option and Ansible puts `ssh_args` first: extra args would come
+after `accept-new`, and lose to it. A VM whose key this machine does not hold - rebuilt, renamed, its
+address changed - is "not read", naming `just deploy <vm> --only configure`, which takes a new VM's key
+as every run does, or the `ssh` that shows the fingerprint and asks.
 
 **Play 3 — the report (localhost).** `status_report` ranks what every host found and works out the exit
 code; the report's file is written when `status_report_file` is set.
@@ -346,12 +369,12 @@ code is the highest found:
 
 | Level | When |
 |---|---|
-| not read | Proxmox did not answer, or refused the token. A name given that matches no tagged VM. A VM on a node that is down. A running VM whose agent reports no address on `proxmox_nic` after three minutes. A VM whose reads Proxmox did not answer |
-| problem | Two tagged VMs of one name. A root disk or a storage 90% full |
-| to do | The VM's settings differ from `local.yml`'s, with the `proxmox_vm_force_update` run that sends them and what else it does. A change waiting for a restart. A first deploy that did not finish (the unfinished tag). A VM with no SSH alias. A root disk or a storage 80% full |
+| not read | Proxmox did not answer, or refused the token. A name given that matches no tagged VM. A VM on a node that is down. A running VM whose agent reports no address on `proxmox_nic` after three minutes. A VM whose reads Proxmox did not answer. A VM that did not answer SSH, or whose host key is not held here or changed. A read inside a VM that failed or ran past 30 s. gh's login that could not be checked with GitHub |
+| problem | Two tagged VMs of one name. A root disk or a storage 90% full. Remote Control failed or restarting. `tailscaled` not running where the role installed it |
+| to do | The VM's settings differ from `local.yml`'s, with the `proxmox_vm_force_update` run that sends them and what else it does. A change waiting for a restart. A first deploy that did not finish (the unfinished tag). A VM with no SSH alias. A root disk or a storage 80% full. A reboot waiting, with the claude processes and VS Code windows open. Security upgrades waiting. Claude Code not signed in or not installed. Remote Control stopped or not set up. The GitHub and Tailscale roles' own lines, wherever NEXT STEPS would give them |
 
 Stopped VMs, CPU pressure over a tenth of the last hour, other VMs, a thin pool provisioned beyond its
-size and the template's age are shown and not counted. A run that failed or wrote no report exits 3.
+size, the template's age, Remote Control off on purpose and a gh left alone are shown and not counted. A run that failed or wrote no report exits 3.
 
 **Live at a terminal.** The recipe chooses its own stdout callback,
 `callback_plugins/claude_on_proxmox_status.py`
@@ -369,7 +392,8 @@ its own and reads the bytes back through a small terminal (`tests/unit/vt.py`).
 `tools/run-logged` with a report path of its own run in `STATUS_DIR` (`.cache/status/`, git-ignored and
 refused by `tests/check_no_local_files.sh`, since the report holds addresses), then `tools/status-exit`,
 which prints the report under `--json`, removes it and exits with its code. `--only` takes `vms`,
-`storage` and `access`. `just list` is the same recipe by the name it had before.
+`storage`, `access`, `sign-ins` and `system`; `--only vms,storage` reads the API alone and never opens
+SSH. `just list` is the same recipe by the name it had before.
 
 ## 4.7 `deploy.yml`
 

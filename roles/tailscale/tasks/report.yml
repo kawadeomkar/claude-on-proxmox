@@ -17,29 +17,6 @@
          if tailscale_tailnet | length > 0 and tailscale_login_server | length == 0 else '' }}
     tailscale_report_as: >-
       {{ tailscale_report_tailnet ~ 'as ' ~ tailscale_report_name ~ ' (' ~ (tailscale_ipv4 or 'no IPv4 address yet') ~ ')' }}
-    tailscale_report_case: >-
-      {{ 'not-ours' if not (tailscale_ours | bool)
-         else 'check-no-package' if tailscale_check_without_package | bool
-         else 'check-daemon-down' if ansible_check_mode and not (tailscale_daemon_up | bool)
-         else 'connecting' if not (tailscale_settled | bool)
-         else 'would-join' if ansible_check_mode and tailscale_first_join | bool and tailscale_key_wanted | bool
-                              and not (tailscale_key_refused_locally | bool)
-         else 'page-pending' if tailscale_backend == 'NeedsLogin' and tailscale_auth_url | length > 0
-         else 'expired' if tailscale_backend == 'NeedsLogin' and tailscale_joined | bool
-         else 'refused' if tailscale_backend == 'NeedsLogin' and tailscale_key_wanted | bool
-                           and (tailscale_join_ran | bool or tailscale_key_refused_locally | bool)
-         else tailscale_backend }}
-    # The cases that leave something to do whatever else holds (NEXT STEPS).
-    tailscale_report_open:
-      - check-no-package
-      - check-daemon-down
-      - connecting
-      - would-join
-      - page-pending
-      - expired
-      - refused
-      - NeedsMachineAuth
-      - Stopped
     tailscale_report_running:
       - >-
         {{ ('joined Tailscale ' if tailscale_joined_now | bool else 'on Tailscale ') ~ tailscale_report_as
@@ -131,12 +108,6 @@
       ansible.builtin.set_stats:
         data:
           tailscale_next: >-
-            {{ {inventory_hostname: {'tailscale': tailscale_report_reported.msg
-                 if tailscale_report_case in tailscale_report_open
-                    or (tailscale_report_case == 'NeedsLogin'
-                        and not (tailscale_sign_in_follows | bool and tailscale_auth_method != 'key'))
-                    or (tailscale_report_case == 'Running'
-                        and (tailscale_name_taken | bool or tailscale_tags_missing | length > 0))
-                 else ''}} }}
+            {{ {inventory_hostname: {'tailscale': tailscale_report_reported.msg if tailscale_report_left | bool else ''}} }}
         aggregate: true
         per_host: false

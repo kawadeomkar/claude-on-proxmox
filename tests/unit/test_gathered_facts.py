@@ -38,6 +38,7 @@ NOT_FACTS = {
     "ansible_ssh_extra_args",
     "ansible_ssh_timeout",
     "ansible_timeout",
+    "ansible_ssh_args",
     "ansible_check_mode",
     "ansible_play_batch",
     "ansible_play_hosts",

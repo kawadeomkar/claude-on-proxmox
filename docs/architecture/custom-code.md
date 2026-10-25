@@ -268,12 +268,17 @@ the managed SSH file (`status_aliases`); the names given that match no VM; and t
 needs. **`status_vm_api(results, now)`** — one VM's own GETs as the report keeps them: its state, a day
 of CPU in twelve buckets (Proxmox VE 9 keeps a point a minute, 8 one every twenty), the last hour's CPU
 pressure (9 only), the root filesystem from the agent, the OS, and the settings waiting for a restart.
+**`status_system_read(result)`** — what `vm_status_info` read of a VM, its fields alone, or none when it
+was not read. **`status_refusal(message)`** — which refusal ssh's message is, `changed` (a host key other
+than the one held here), `unknown` (none held), `timeout`, `refused` or `denied`, read from the whole
+message before it is cut: ssh's banner for a changed key runs past the 120 characters a value keeps.
 **`status_clean(value)`** — every string in a value `one_line` (§7.4), the roles' lines to 400
 characters and every other field to 120.
 
 **`status_report(found, read_at, now, live=False)`** — the report's model from what every host found:
-the VMs, the storages, the template, the attention items ranked "not read", problem, to do, and the exit
-code, 2, 1 or 0, from the highest. With `live` a value not read yet is pending, and nothing is ranked: the
+the VMs, the storages, the template, what each VM said over SSH, the attention items ranked "not read",
+problem, to do, and the exit code, 2, 1 or 0, from the highest. A role's own line is an item of that
+role's (`source`), drawn after its name as NEXT STEPS draws it. With `live` a value not read yet is pending, and nothing is ranked: the
 model of a frame the callback draws while the run goes on. **`status_text(model, color, reading, glyph,
 cols)`** — the report as text, every line within 100 columns, or within `cols` for a live frame, where
 `glyph` marks each pending value. The same functions draw the frames and the finished report.
@@ -292,7 +297,18 @@ printed. It shows each task's warnings, which since ansible-core 2.19 travel on 
 stdout callback of one's own otherwise drops, and a task's failure on stderr only when the run ends
 without a report.
 
+**`vm_status_info`** (`playbooks/library/`), the one module status runs on a VM, as the VM user and
+never through sudo: the OS and the running and newest kernels, the reboot flag and the packages that set
+it, the load, memory and uptime, the upgrades apt's simulation (`apt-get -s`, which takes no lock and
+refreshes nothing) would make and how many are security ones, and the user's own claude processes and VS
+Code extension hosts, one per window. Every read is fixed in its code, runs in a thread of its own with
+its own time limit - one that runs out is said by name and the rest still land - and the one program it
+runs, `/usr/bin/apt-get`, by its absolute path: the VM user's PATH over SSH starts with directories the user
+owns. Its `root` option reads a fixture tree in the tests.
+
 Covered by `tests/unit/test_status.py` (the filters, a hostile corpus, the 100-column limit, the callback
 driven in process with a stand-in terminal, and the playbook against the fake Proxmox) and
 `tests/unit/test_status_live.py` (the real playbook at a pseudo-terminal: a window it fits, a short one, a
-narrow one, a resize each way, Ctrl-C, a dumb terminal, a pipe, and a warning between frames).
+narrow one, a resize each way, Ctrl-C, a dumb terminal, a pipe, and a warning between frames), and
+`tests/unit/test_status_vms.py` (the module on fixture trees, the reads inside stand-in VMs and that they
+change nothing there, and the host key's options and refusals).

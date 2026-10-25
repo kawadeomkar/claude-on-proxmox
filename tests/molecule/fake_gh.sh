@@ -17,8 +17,11 @@
 # GitHub cannot be reached) and no code; with fake-hang it prints nothing and
 # waits until it is ended; and fake-said is printed in place of its "Logged in
 # as" line. With fake-two-accounts, `auth logout` without --user fails as gh
-# does with two accounts on github.com and no terminal to ask which. Every call
-# is appended to calls.log there.
+# does with two accounts on github.com and no terminal to ask which. With
+# fake-unchecked the login's check never reached GitHub, and with fake-refused
+# GitHub refused its token: both state "error", the first with Go's transport
+# error and the second with GitHub's "HTTP 401", as gh 2.103.0 reports them
+# offline and for a revoked token. Every call is appended to calls.log there.
 #
 # Faithful where it matters: the status JSON carries no token field (gh
 # empties it without --show-token, and omits it), so the role has to read the
@@ -47,7 +50,15 @@ case "$*" in
       if [ -s "$state/fake-old" ]; then cat "$state/fake-old" >&2; else echo "unknown flag: --json" >&2; fi
       exit 1
     fi
-    if [ -s "$token_file" ]; then
+    if [ -s "$token_file" ] && { [ -e "$state/fake-unchecked" ] || [ -e "$state/fake-refused" ]; }; then
+      if [ -e "$state/fake-unchecked" ]; then
+        error='Get \"https://api.github.com/\": dial tcp: lookup api.github.com: no such host'
+      else
+        error='HTTP 401: Bad credentials (https://api.github.com/)'
+      fi
+      printf '{"hosts":{"github.com":[{"state":"error","error":"%s","active":true,"host":"github.com",' "$error"
+      printf '"login":"%s","tokenSource":"%s/hosts.yml","gitProtocol":"https"}]}}\n' "$login" "$state"
+    elif [ -s "$token_file" ]; then
       source=$(cat "$state/fake-source" 2>/dev/null || echo "$state/hosts.yml")
       printf '{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"%s",' "$login"
       printf '"tokenSource":"%s","scopes":"gist, read:org, repo","gitProtocol":"https"}]}}\n' "$source"

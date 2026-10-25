@@ -100,15 +100,15 @@ sections)
   case ",$2," in
   ,,) ;;
   *,,* | *[!abcdefghijklmnopqrstuvwxyz,-]*)
-    echo "error: --only takes the report's sections, comma-separated: vms storage access (got: [$2])" >&2
+    echo "error: --only takes the report's sections, comma-separated: vms storage access sign-ins system (got: [$2])" >&2
     exit 1
     ;;
   esac
   for section in $(printf %s "$2" | tr , ' '); do
     case "$section" in
-    vms | storage | access) ;;
+    vms | storage | access | sign-ins | system) ;;
     *)
-      echo "error: the report has no section [$section]: its sections are vms storage access" >&2
+      echo "error: the report has no section [$section]: its sections are vms storage access sign-ins system" >&2
       exit 1
       ;;
     esac

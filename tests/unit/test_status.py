@@ -404,10 +404,29 @@ def fake_pve(tmp_path):
     yield from fake_fleet(tmp_path)
 
 
+# The ssh every status run in a test is given: it records how it was called, one JSON line each, and refuses with
+# what ssh-says holds (ssh's own words for a refused connection, unless a test says otherwise). No test reaches a
+# real VM, or this machine's ssh.
+SSH = """#!/bin/sh
+here=$(dirname "$0")
+"$here/python" -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "$@" >> "$here/ssh.log"
+if [ -f "$here/ssh-says" ]; then
+  cat "$here/ssh-says" >&2
+else
+  echo "ssh: connect to host stand-in port 22: Connection refused" >&2
+fi
+exit 255
+"""
+
+
 def status_root(tmp_path: Path, base: str, settings: dict | None = None) -> tuple[Path, Path]:
     """A run directory for status.yml against the fake at base, with settings on top: the directory and playbook."""
     root = tmp_path / "run"
     (root / "group_vars" / "all").mkdir(parents=True, exist_ok=True)
+    (root / "ssh").write_text(SSH)
+    (root / "ssh").chmod(0o755)
+    if not (root / "python").exists():
+        (root / "python").symlink_to(sys.executable)
     defaults = root / "group_vars" / "all" / "defaults.yml"
     if not defaults.exists():
         defaults.symlink_to(REPO / "inventory" / "group_vars" / "all" / "defaults.yml")
@@ -422,6 +441,10 @@ def status_root(tmp_path: Path, base: str, settings: dict | None = None) -> tupl
                 "vm_ssh_public_keys": [],
                 # Never the developer's ~/.ssh: the managed file is the test's own.
                 "claude_ssh_config_file": str(tmp_path / "ssh.conf"),
+                # Never a real ssh: the stand-in refuses as an unreachable VM does.
+                "ansible_ssh_executable": str(root / "ssh"),
+                # apt's simulation is the VM's: this machine has none.
+                "status_read_upgrades": False,
                 "status_report_file": "",
                 **(settings or {}),
             }
@@ -520,9 +543,29 @@ READS = {
     "ansible.builtin.add_host",
     "ansible.builtin.stat",
     "ansible.builtin.slurp",
+    "ansible.builtin.getent",
+    "ansible.builtin.ping",
+    # The roles' reports, which status's callback does not show: a message, and NEXT STEPS' record.
+    "ansible.builtin.debug",
+    "ansible.builtin.set_stats",
+    "vm_status_info",
+}
+# Every command a task status reaches runs, whole: the roles' reads, and none of their writes.
+COMMANDS = {
+    ("which", "gh"),
+    ("gh", "auth", "status", "--hostname", "github.com", "--json", "hosts"),
+    ("gh", "auth", "token", "--hostname", "github.com"),
+    ("dpkg-query", "--show", "--showformat=${db:Status-Status}", "tailscale"),
+    ("tailscale", "status", "--json"),
+    ("tailscale", "debug", "prefs"),
 }
 SHARED = {"tasks/cluster_vms.yml", "tasks/vm_addresses.yml"}
-ENTRY_POINTS = {("proxmox_vm", "settings_drift")}
+ENTRY_POINTS = {
+    ("proxmox_vm", "settings_drift"),
+    ("claude_code", "status"),
+    ("github_projects", "status"),
+    ("tailscale", "status"),
+}
 URI_KEYS = {"url", "headers", "validate_certs", "ca_path", "timeout"}
 TASK_KEYS = {
     "name",
@@ -537,16 +580,25 @@ TASK_KEYS = {
     "vars",
     "changed_when",
     "ignore_unreachable",
+    "become",
+    "become_user",
+    "until",
+    "retries",
+    "delay",
 }
 
 
 def _tasks(items, base):
+    """Every task in ``items``, through blocks, imports, a role's entry point and the files it includes."""
     for item in items:
         if "block" in item:
             for section in ("block", "rescue", "always"):
                 yield from _tasks(item.get(section) or [], base)
         elif item.get("ansible.builtin.import_tasks") and item["ansible.builtin.import_tasks"] not in SHARED:
             yield from _tasks(yaml.safe_load((base / item["ansible.builtin.import_tasks"]).read_text()), base)
+        elif "ansible.builtin.include_tasks" in item:
+            yield item
+            yield from _tasks(yaml.safe_load((base / item["ansible.builtin.include_tasks"]).read_text()), base)
         elif "ansible.builtin.include_role" in item:
             role = item["ansible.builtin.include_role"]
             yield item
@@ -562,12 +614,14 @@ def _every_task():
 
 
 def _action(task):
-    return next(key for key in task if "." in key or key in ("status_vm_info", "git_checkouts_info"))
+    return next(key for key in task if "." in key or key in ("vm_status_info", "git_checkouts_info"))
 
 
 def test_every_task_status_runs_is_a_read_or_the_reports_one_write() -> None:
+    seen = set()
     for task in _every_task():
         action = _action(task)
+        seen.add(action)
         if action == "ansible.builtin.uri":
             args = task[action]
             assert set(args) <= URI_KEYS, (task["name"], set(args) - URI_KEYS)
@@ -578,12 +632,41 @@ def test_every_task_status_runs_is_a_read_or_the_reports_one_write() -> None:
             assert (task[action]["name"], task[action]["tasks_from"]) in ENTRY_POINTS, task["name"]
         elif action == "ansible.builtin.import_tasks":
             assert task[action] in SHARED, task["name"]
+        elif action == "ansible.builtin.include_tasks":
+            pass  # followed, and every task in it held here
+        elif action == "ansible.builtin.command":
+            assert tuple(task[action]["argv"]) in COMMANDS, (task["name"], task[action])
+            assert set(task[action]) == {"argv"} and task.get("changed_when") is False, task["name"]
+        elif action == "ansible.builtin.systemd_service":
+            # With no state, enabled or daemon_reload asked for, it only reads the unit.
+            assert set(task[action]) == {"name"}, (task["name"], task[action])
         elif action in ("ansible.builtin.file", "ansible.builtin.copy"):
             # The report, and its directory: the one write, into the file the recipe names.
             assert "status_report_file" in json.dumps(task[action]), task["name"]
         else:
             assert action in READS, (task["name"], action)
         assert set(task) - {action} <= TASK_KEYS, (task["name"], set(task) - {action} - TASK_KEYS)
+    # The walk reaches the roles' reads, so the allowlist holds what they run.
+    assert {"ansible.builtin.command", "ansible.builtin.systemd_service", "vm_status_info"} <= seen
+
+
+def test_the_roles_reports_are_the_ones_configure_gives() -> None:
+    # status shows the line a role's own report gives and records for NEXT STEPS, never one of its own making.
+    for role, report in (("github_projects", "login_report.yml"), ("tailscale", "report.yml")):
+        entry = yaml.safe_load((REPO / "roles" / role / "tasks" / "status.yml").read_text())
+        assert any(task.get("ansible.builtin.include_tasks") == report for task in entry), role
+    login = yaml.safe_load((REPO / "roles" / "github_projects" / "tasks" / "login.yml").read_text())
+    assert [t.get("ansible.builtin.include_tasks") for t in login if "ansible.builtin.include_tasks" in t][-1] == (
+        "login_report.yml"
+    )
+
+
+def test_status_never_runs_claude() -> None:
+    # Whether `claude auth status` can refresh a login's token, and so write, is still to be checked on a real VM:
+    # until then status reads the login file's being there and the installer's link, and runs no claude at all.
+    for task in _every_task():
+        assert "claude" not in json.dumps(task.get("ansible.builtin.command", {})), task["name"]
+        assert "claude auth" not in json.dumps(task), task["name"]
 
 
 def test_every_status_run_in_a_test_writes_into_its_own_directory() -> None:
@@ -591,6 +674,7 @@ def test_every_status_run_in_a_test_writes_into_its_own_directory() -> None:
     # status_root, and every import in a scenario empties status_report_file whatever the environment says.
     source = inspect.getsource(status_root)
     assert '"claude_ssh_config_file": str(tmp_path' in source and '"status_report_file": ""' in source
+    assert '"ansible_ssh_executable": str(root / "ssh")' in source
     for path in (REPO / "tests" / "unit").glob("test_*.py"):
         text = path.read_text()
         if path.name not in ("test_status.py", "test_justfile.py") and "status.yml" in text:
@@ -601,7 +685,7 @@ def test_every_status_run_in_a_test_writes_into_its_own_directory() -> None:
             if isinstance(play, dict) and str(play.get("ansible.builtin.import_playbook", "")).endswith("status.yml"):
                 imports += 1
                 assert play.get("vars", {}).get("status_report_file") == "", path
-    assert imports == 3
+    assert imports == 4
 
 
 def test_no_play_of_status_sets_how_to_reach_a_host() -> None:

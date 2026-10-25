@@ -132,6 +132,19 @@ argument_specs:
             gh is not yet signed in with is said to be signed in by it rather than
             by a command to run.
 
+  # tasks_from: status, which playbooks/status.yml (just status) runs on each VM.
+  status:
+    short_description: Say whether gh is signed in to GitHub, and how, changing nothing
+    description:
+      - Reads gh's login state on the VM, as the login entry point does, and gives its report, keeping what just
+        status shows in github_projects_status_found. A check gh could not make with GitHub - no network - is kept
+        as not checked, never as signed out. Never signs in, writes a token or clones.
+    options:
+      github_projects_auth:
+        type: bool
+        default: true
+        description: Whether gh's login is this project's business; with it off, gh is left alone and only said.
+
   # tasks_from: release, which playbooks/destroy.yml runs on each VM before it
   # is deleted.
   release:
