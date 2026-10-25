@@ -225,8 +225,21 @@ deploy_code: true
 # revoking GitHub CLI at GitHub signs out every gh you have, so the report says
 # where, and destroy does not), and it leaves your tailnet (its device deleted
 # with tailscale_api_auth_method). A stopped VM is started for it. false deletes
-# the VMs as they are.
+# the VMs without releasing them - their sessions still saved first, below,
+# unless destroy_save_sessions is off too.
 destroy_release: true
+# Before that, save what of each VM's Claude Code sessions exists only on its
+# disk - those begun there, the copies make code made that were continued there,
+# and their auto memory - into destroy_sessions_dir on this machine, as the VM
+# had them; `claude --resume <path>` continues one here. Only plain files and
+# folders are written, never a link the VM holds. A VM whose save fails is
+# kept, neither released nor deleted. false deletes them with the VM.
+destroy_save_sessions: true
+# Where: a folder per VM and run, <name>-<YYYYMMDD-HHMMSS>, 0700; an absolute
+# path, or one starting with ~. Empty: .sessions/ in this checkout, which git
+# ignores. Transcripts hold whatever their tools printed, secrets included,
+# and stay until you delete them.
+destroy_sessions_dir: ""
 # The browser and clipboard steps of both sign-ins happen on this machine.
 # Off, the run only prints the page and the code (a headless controller).
 # Every test turns this off; tests/unit/test_github_auth.py and
@@ -329,6 +342,14 @@ vscode_workspaces_dir: ""
 # time it opens. They need that task, so they come with vscode_claude_terminal
 # (docs/guides/vscode.md). Set false for neither.
 vscode_session_notes: true
+# This machine's Claude Code sessions on the VM: every make code copies the ones
+# of the last 30 days whose repository the VM has checked out - matched by git
+# origin - into the VM's ~/.claude/projects/, so that /resume there (Ctrl+A for
+# every project) lists them, and `make code VM_NAME=alpha SESSION=<id>` opens one
+# in the Claude terminal. A transcript holds whatever its tools printed, secrets
+# included, so a VM gets those too: set false for none. SESSION still copies
+# its one session with this off (docs/guides/vscode.md).
+vscode_claude_sessions: true
 # The VS Code user settings make code reads, and never writes, to say whether
 # that terminal will start on its own. Empty: where VS Code itself would keep
 # them - $VSCODE_APPDATA or $XDG_CONFIG_HOME if set, else

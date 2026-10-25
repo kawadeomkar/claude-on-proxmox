@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `make test TYPE=unit`
 
-pytest over `tests/unit/`: 1557 tests. By file:
+pytest over `tests/unit/`: 1742 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -19,7 +19,7 @@ pytest over `tests/unit/`: 1557 tests. By file:
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
-  94), both ways.
+  96), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins that fail a run that reaches for them, no terminal).
@@ -61,32 +61,61 @@ pytest over `tests/unit/`: 1557 tests. By file:
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
   that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
-- **Destroy's release** (`test_release.py` 31): `destroy.yml`'s release play and report against the
+- **Destroy's release** (`test_release.py` 44): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
   Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
   pasted by hand signed out and told apart, the vault token even under a marker claiming it, and a logout
   gh refuses said as such; a
   device deleted by an API token and by an OAuth client, refused, already gone, and never when the ID the
-  VM reports names another device; a VM that could not be reached, with what is left of it named; every
+  VM reports names another device; a VM that could not be reached, with what is left of it named; the
+  Claude Code sessions a VM alone holds saved first, byte for byte and 0700/0600 with their `sessions.json`,
+  never a copy make code made still as written nor a transcript without a message, never a link the VM
+  holds nor a folder not named as Claude Code names one - the file a link points at here left as it was -
+  make code's manifest read where `vscode_workspaces_dir` puts it, the save turned off, the save without
+  the release under `destroy_release: false`, a VM whose sudo refuses saved and then deleted unreleased,
+  said so, and one that fails keeping the VM neither released nor deleted, with no transcript in the
+  output, the save's tasks held to an allowlist that keeps them off sudo and unreachable-safe; every
   canned credential searched for in the output; and, read from `destroy.yml`, a name two VMs share
   refused before anything starts, the wait for a started VM's address on its own NIC, and a VM it started
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
-  against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address.
-- **`make code`** (`test_code_session.py` 127): the Claude terminal's script against stand-ins, once at a
+  against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address,
+  and a relative `destroy_sessions_dir` refused before any VM is started.
+- **`make code`** (`test_code_session.py` 192): the Claude terminal's script against stand-ins, once at a
   pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
-  for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine. The
+  for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine, followed
+  through every import its task files make. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
   exit 0 and the notes opened when its Python raises, hangs or is missing, a read that hangs costing
   2 s, a symlink neither followed nor opened, the time in the zone it is given or in UTC for one it
   cannot find - the refresh after a sign-in in the terminal, the zone `code.yml` finds (`TZ`, the
   `/etc/localtime` link on Linux and macOS, `/etc/timezone`, else UTC, shell syntax and paths refused),
   and the workspace each window gets: the notes' folder only where its own folder holds them.
-- **The session handoff** (`test_session_handoff.py` 63): the plan - by origin in every URL form here,
+- **The session handoff** (`test_session_handoff.py` 151): the plan - by origin in every URL form here,
   a GitHub one only on the VM, a renamed clone, a gone worktree's checkout, `githubRepoPaths`, another
-  owner's repository of the same name refused - the transcripts read without their content, an open
-  session only at a pid that is still a claude's, the registry whatever the transcripts, a transcript
-  gone as it is listed, the git reads against real checkouts (the origin as configured and without its
-  credential, a path holding `$` or `~`), and an ID in two folders here or open on the VM left out.
+  owner's repository of the same name refused, `SESSION`'s reasons - the transcripts read without their
+  content, an open session only at a pid that is still a claude's, the registry whatever the
+  transcripts, a manifest of another format read as none, a transcript gone as it is listed, the git
+  reads against real checkouts (the origin as configured and without its
+  credential, a detached `HEAD` no ref holds, the ignored files a move would replace, untracked files a
+  config hides, a path or branch holding `$` or `~`) and a branch name or commit git would take as an
+  option refused, an ID in two folders here or open on the VM left out,
+  the four edits byte for byte with the records of requests sent, an assistant's signed thinking and
+  another project's memory folder left as they are, the manifest's rule and its write after each copy, a copy moved to another folder on the VM
+  never written again and one moved here following, the time a copy is given against the 30-day sweep,
+  check mode, and what of a VM's sessions destroy saves - every one with `all`, make code's copies told
+  apart by the manifest, the memory folders, names the VM made up left out, the command that continues
+  each, its path quoted - and how: archives with absolute paths, `..`, links, hard links, devices and
+  names not asked for unpacked into nothing outside the folder, an archive cut short, GNU tar's exit 2
+  for a name it cannot find said as that name, a failing or a stand-in `ssh` given the port, key and
+  arguments. In `test_code_session.py`, the window step's session tasks between two real checkouts,
+  the VM's with a GitHub origin: the copies and their edits, a second run changing nothing, the sync
+  off, a sync whose rsync fails opening the window all the same, syncs
+  that leave their one session out - open on the VM, in two folders here, changed on both - saying so
+  and never that none is of the VM's repositories,
+  `SESSION`'s fast-forward from a VM branch behind it, on it or not, and each refusal - open on either
+  machine, changed on both, unpushed, tracking another remote, gone, a fetch that fails, a detached `HEAD`,
+  an ignored file in the way, an rsync that fails - leaving the VM's checkout where it was, and no run
+  printing the marker the transcripts carry.
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
@@ -145,9 +174,10 @@ pytest over `tests/unit/`: 1557 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 389): `vm-name-check` accepts DNS-like names and refuses
-  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII; a
-  `$(shell ...)` typed as `VM_NAME`, `PROJECT` or one of `make init`'s values never run, by make
+- **The Makefile** (`test_makefile.py` 406): `vm-name-check` accepts DNS-like names and refuses
+  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII, and
+  `session-name-check` anything but a lowercase session ID, `make code` alone passing it on; a
+  `$(shell ...)` typed as `VM_NAME`, `PROJECT`, `SESSION` or one of `make init`'s values never run, by make
   reading the Makefile or exporting them to the first recipe, `-n` or not; `deploy
   TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
   check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
@@ -245,7 +275,7 @@ that no build started.
 | Scenario | What it proves |
 |---|---|
 | `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `make deploy TYPE=configure` needs nothing stored locally |
-| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM |
+| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM; then the sign-ins, `make code`'s session handoff with the real `claude` against a stand-in Messages API - copies resumed as the VM's own, `--continue` never picking one up, the records of requests sent left unsent, a saved copy resumed by its path - and `make destroy`'s pause of Remote Control around its save, with the real systemd |
 
 Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scenario inventory, so the
 actual variable wiring is exercised rather than a copy. Test overrides live in `host_vars/`. The
@@ -337,6 +367,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 | `fake_tailscale_api.py` | Tailscale's API | the OAuth client exchange, and a device looked up and deleted by node ID, each device with the name it was started with; 403 and 404 on cue, and `/fake/deleted` lists what went |
 | `fake_gh.sh` | `gh` | the auth commands only, installed ahead of the real one on PATH; one login per user, in a file under HOME, with every call logged |
 | `fake_tailscale.sh` | `tailscale` | output that is Tailscale's own, as the research and a Headscale run recorded it, for the commands the role runs, against a node whose state is files under HOME: `status --json` and `debug prefs` shaped as a Running and a signed-out node really print, a join with a canned key on stdin, a refused or slow key, the web login's page and an approval that lands after `up` has exited, `NeedsMachineAuth`, a taken name, `NoState` reads after a start, logout resetting the prefs, a node ID (`node-id`), and with `real-daemon` an answer only while the real daemon's socket exists; a key is never written, and `calls.log` shows `KEY` in its place |
+| `fake_anthropic_api.py` | the Anthropic Messages API | for the real `claude` in the `configure` scenario: one short answer to every request, streamed or not, on 127.0.0.1 only, with each request's body logged, so a test reads the system prompt and the history a resume sent |
 | `fake_claude.sh` | `claude` | `auth status` and `auth login` as probed against Claude Code: the page, the `Paste code here if prompted >` prompt, then `Login successful.`, `Login failed: ...` or `Invalid code` for the line read from stdin, writing `~/.claude/.credentials.json` on success; given `BROWSER`, it hands it the page that redirects to its own callback on `127.0.0.1` and takes a code from there as from stdin; `auth logout`; `fake-refusal`, `fake-no-page`, `fake-gone` and `fake-foreign-page` in its state directory make it refuse in other words, print an error in place of the page, exit before reading a code, or hand its browser a page that is not Claude's |
 
 `fake_pve_api.py` is deliberately faithful where fidelity has caught bugs:

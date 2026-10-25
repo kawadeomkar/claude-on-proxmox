@@ -15,7 +15,8 @@ description:
     the first directory it ran in, the newest Claude Code version that wrote it, the branch it last ran
     on and whether it holds a message at all. Nothing of what was said is returned, only those values.
   - A line still being written, the last one without its newline, is not read.
-  - Read-only. Run on this machine and on the VM.
+  - Read-only. make code runs it on this machine and on the VM (playbooks/tasks/session_read.yml), and
+    make destroy on the VM, for what of its sessions to save (playbooks/tasks/session_save.yml).
   - A session is open while C(sessions/) registers it to a running claude: a pid that now names another
     program is an entry a claude left behind, never an open session.
 options:
@@ -24,9 +25,27 @@ options:
     type: path
     required: true
   days:
-    description: The sessions written in the last this many days. C(0) lists none.
+    description: The sessions written in the last this many days. C(0) lists none by age.
     type: int
     default: 0
+  ids:
+    description: These sessions too, whatever their age.
+    type: list
+    elements: str
+    default: []
+  all:
+    description: Every session, whatever its age.
+    type: bool
+    default: false
+  manifest:
+    description:
+      - The manifest make code's copies are recorded in on this machine (claude_sessions_copy). With it, each
+        session says whether make code copied it here, and whether its copy is still as make code wrote it.
+    type: path
+  memory:
+    description: Also return the folders under C(projects/) whose auto memory folder holds a file.
+    type: bool
+    default: false
   repo_paths:
     description:
       - Also return C(githubRepoPaths) from Claude Code's C(.claude.json), the one in O(path) or the one beside
@@ -89,6 +108,17 @@ sessions:
     dir:
       description: Whether it has a folder of its own beside it, for its tool results, subagents and MCP tasks.
       type: bool
+    recorded:
+      description: Whether O(manifest) records a copy of it, in this folder or another it moved to; false without one.
+      type: bool
+    copied:
+      description: Whether it is the copy O(manifest) records, still as make code wrote it; false without one.
+      type: bool
+memory:
+  description: The folders whose auto memory folder holds a file, sorted; [] without O(memory).
+  returned: always
+  type: list
+  elements: str
 registered:
   description: Every session C(sessions/) registers to a running claude, whatever its transcript, its ID to the pid.
   returned: always
@@ -103,6 +133,7 @@ version:
   type: str
 """
 
+import hashlib
 import json
 import os
 import re
@@ -111,9 +142,11 @@ import time
 
 from ansible.module_utils.basic import AnsibleModule
 
-# A session's ID, what Claude Code names a transcript.
+# A session's ID: what make code accepts as SESSION, and what Claude Code names a transcript.
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 VERSION = re.compile(r"\d+(?:\.\d+)+")
+# claude_sessions_copy's manifest, read as it reads it.
+MANIFEST_FORMAT = 1
 
 
 def _version_key(text):
@@ -226,14 +259,51 @@ def open_sessions(path, proc="/proc"):
     return found
 
 
-def list_sessions(path, days, now=None, opened=None):
-    """Every transcript under ``path``/projects written in the last ``days`` days.
+def read_manifest(path):
+    """The copies make code recorded in ``path``: ``<folder>/<id>.jsonl`` to the digest it wrote, or {}."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            found = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    copies = found.get("sessions") if isinstance(found, dict) and found.get("format") == MANIFEST_FORMAT else None
+    return {str(key): str(value) for key, value in copies.items()} if isinstance(copies, dict) else {}
 
-    ``opened`` is open_sessions'.
+
+def _file_digest(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def memory_folders(path):
+    """The folders under ``path``/projects whose memory/ holds at least one file, at any depth."""
+    found = []
+    try:
+        folders = sorted(
+            entry.name for entry in os.scandir(os.path.join(path, "projects")) if entry.is_dir(follow_symlinks=False)
+        )
+    except OSError:
+        return found
+    for folder in folders:
+        memory = os.path.join(path, "projects", folder, "memory")
+        if os.path.isdir(memory) and not os.path.islink(memory) and any(files for _, _, files in os.walk(memory)):
+            found.append(folder)
+    return found
+
+
+def list_sessions(path, days, ids, now=None, every=False, manifest=None, opened=None):
+    """Every transcript under ``path``/projects written in the last ``days`` days, named in ``ids``, or with ``every``.
+
+    With ``manifest`` - make code's record of its copies here, read_manifest's - each session also says
+    whether it was copied here and whether its copy is still as written. ``opened`` is open_sessions'.
     """
     now = time.time() if now is None else now
-    projects, sessions = os.path.join(path, "projects"), []
+    projects, wanted, sessions = os.path.join(path, "projects"), set(ids), []
     opened = open_sessions(path) if opened is None else opened
+    copied_ids = {os.path.basename(key)[: -len(".jsonl")] for key in manifest or {}}
     try:
         folders = sorted(
             (entry for entry in os.scandir(projects) if entry.is_dir(follow_symlinks=False)),
@@ -255,10 +325,12 @@ def list_sessions(path, days, now=None, opened=None):
                 stat = item.stat(follow_symlinks=False)
             except OSError:
                 continue
-            if not (days > 0 and now - stat.st_mtime <= days * 86400):
+            if not every and session not in wanted and not (days > 0 and now - stat.st_mtime <= days * 86400):
                 continue
             try:
                 summary = summarize(item.path)
+                recorded = (manifest or {}).get(f"{folder.name}/{item.name}")
+                copied = recorded is not None and _file_digest(item.path) == recorded
             except OSError:
                 continue
             sessions.append(
@@ -269,6 +341,8 @@ def list_sessions(path, days, now=None, opened=None):
                     "open": opened.get(session, 0),
                     "tools": os.path.isdir(os.path.join(folder.path, session, "tool-results")),
                     "dir": os.path.isdir(os.path.join(folder.path, session)),
+                    "recorded": session in copied_ids,
+                    "copied": copied,
                     **summary,
                 }
             )
@@ -316,16 +390,24 @@ def main():
         argument_spec={
             "path": {"type": "path", "required": True},
             "days": {"type": "int", "default": 0},
+            "ids": {"type": "list", "elements": "str", "default": []},
+            "all": {"type": "bool", "default": False},
+            "manifest": {"type": "path"},
+            "memory": {"type": "bool", "default": False},
             "repo_paths": {"type": "bool", "default": False},
             "claude": {"type": "list", "elements": "path", "default": []},
         },
         supports_check_mode=True,
     )
     params = module.params
+    manifest = read_manifest(params["manifest"]) if params["manifest"] else None
     opened = open_sessions(params["path"])
     module.exit_json(
         changed=False,
-        sessions=list_sessions(params["path"], params["days"], opened=opened),
+        sessions=list_sessions(
+            params["path"], params["days"], params["ids"], every=params["all"], manifest=manifest, opened=opened
+        ),
+        memory=memory_folders(params["path"]) if params["memory"] else [],
         registered=opened,
         repo_paths=repo_paths(params["path"]) if params["repo_paths"] else {},
         version=claude_version(params["claude"]) if params["claude"] else "",

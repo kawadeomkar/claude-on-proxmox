@@ -21,15 +21,21 @@ What these guard:
 - A VM with no address is left as it is, and the report names what is left of
   it to remove by hand.
 - No token, key or secret reaches the output, module arguments included.
-- destroy starts a stopped VM to release it, only with destroy_release, and
-  releases before it deletes - finding the address of a VM it started though
-  the cluster listing, seconds behind, still says it is stopped.
+- destroy starts a stopped VM to release it or save its sessions, and releases
+  before it deletes - finding the address of a VM it started though the cluster
+  listing, seconds behind, still says it is stopped.
+- Before anything is released, what of a VM's Claude Code sessions is only
+  there is saved here, into the test's own directory: never a copy make code
+  made still as written, never a link the VM holds or a name it made up, and
+  without sudo, which a VM can refuse; a save that fails keeps the VM, neither
+  released nor deleted, and destroy_release: false still saves.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import stat
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -106,9 +112,80 @@ CASES = {
     "two-accounts": {"gh": HAND_TOKEN, "two_accounts": True},
     # Nothing signed in at all.
     "nothing": {},
+    # Claude Code sessions of its own, and copies make code made: only the first are saved.
+    "sessions": {"sessions": True},
+    # The same, with the save turned off: they go with the VM.
+    "unsaved": {"sessions": True, "save": False},
+    # The same, make code's own directory set elsewhere by vscode_workspaces_dir, its manifest there.
+    "workspaces": {"sessions": True, "workspaces": True},
     # No address: stopped and would not start, or an agent that never answered.
     "unreached": {"address": ""},
 }
+
+# The VM's sessions in the "sessions" case: begun there, a copy make code wrote
+# still as written, a copy continued there, and one with no message.
+STARTED = "0a608ad8-1b2c-4d3e-8f90-123456789abc"
+COPIED = "bc0e637b-2c3d-4e4f-9a01-23456789abcd"
+CONTINUED = "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
+EMPTY = "d4e5f6a7-8b9c-4d0e-9f1a-2b3c4d5e6f70"
+VM_FOLDER = "-home-dev-projects-demo"
+MAC_FOLDER = "-Users-me-demo"
+# A folder no Claude Code names so, and a session in it: the VM's to make up, and never saved.
+ODD_FOLDER = "-home-dev-projects-a b"
+ODD = "e5f6a7b8-9c0d-4e1f-8a2b-3c4d5e6f7a81"
+# What a tool printed, as a transcript holds it: it must never reach a run's output.
+MARKER = "TRANSCRIPT-MARKER-5e2a9c"
+
+
+def _transcript(sid: str, cwd: str, conversation: bool = True) -> bytes:
+    base = {"cwd": cwd, "sessionId": sid, "version": "2.1.308", "gitBranch": "main"}
+    entries = (
+        [{**base, "type": "user", "message": {"role": "user", "content": f"run it {MARKER}"}}]
+        if conversation
+        else [{**base, "type": "summary", "summary": "nothing"}]
+    )
+    return "".join(json.dumps(entry, separators=(",", ":")) + "\n" for entry in entries).encode()
+
+
+def _vm_sessions(home: Path, manifest_dir: Path | None = None) -> None:
+    """A VM's ~/.claude/projects/ as make code and the VM's own sessions leave it, and make code's manifest.
+
+    A link among them, to a file of this machine's outside the VM's home, and a session in a folder not
+    named as Claude Code names one: neither may be saved.
+    """
+    projects = home / ".claude" / "projects"
+    (projects / VM_FOLDER / STARTED / "subagents").mkdir(parents=True)
+    (projects / VM_FOLDER / STARTED / "subagents" / "agent-1.jsonl").write_text("{}\n")
+    outside = home.parent / f"{home.name}-outside.txt"
+    outside.write_text("this machine's\n")
+    outside.chmod(0o644)
+    (projects / VM_FOLDER / STARTED / "subagents" / "link").symlink_to(outside)
+    (projects / ODD_FOLDER).mkdir()
+    (projects / ODD_FOLDER / f"{ODD}.jsonl").write_bytes(_transcript(ODD, "/home/dev/projects/a b"))
+    (projects / VM_FOLDER / f"{STARTED}.jsonl").write_bytes(_transcript(STARTED, "/home/dev/projects/demo"))
+    (projects / VM_FOLDER / f"{EMPTY}.jsonl").write_bytes(_transcript(EMPTY, "/home/dev/projects/demo", False))
+    (projects / VM_FOLDER / "memory").mkdir()
+    (projects / VM_FOLDER / "memory" / "MEMORY.md").write_text("- a note\n")
+    (projects / MAC_FOLDER).mkdir()
+    copied = _transcript(COPIED, "/Users/me/demo")
+    (projects / MAC_FOLDER / f"{COPIED}.jsonl").write_bytes(copied)
+    written = _transcript(CONTINUED, "/Users/me/demo")
+    (projects / MAC_FOLDER / f"{CONTINUED}.jsonl").write_bytes(
+        written + _transcript(CONTINUED, "/home/dev/projects/demo")
+    )
+    manifest = (manifest_dir or home / "projects" / ".claude-on-proxmox") / "claude-sessions" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "sessions": {
+                    f"{MAC_FOLDER}/{COPIED}.jsonl": hashlib.sha256(copied).hexdigest(),
+                    f"{MAC_FOLDER}/{CONTINUED}.jsonl": hashlib.sha256(written).hexdigest(),
+                },
+            }
+        )
+    )
 
 
 def _get(url: str):
@@ -150,11 +227,16 @@ def _hosts(root: Path, cases: dict, github: str, tailscale: str) -> dict:
         if case.get("node"):
             (state / "joined").write_text("")
             (state / "node-id").write_text(case["node"])
+        if case.get("sessions"):
+            _vm_sessions(home, home / "ws" if case.get("workspaces") else None)
         (home / "python").symlink_to(bin_dir / "python")
         api = case.get("api", "")
         hosts[name] = {
             "ansible_connection": "local",
             "ansible_python_interpreter": str(home / "python"),
+            "vm_user": "dev",
+            **({"destroy_save_sessions": case["save"]} if "save" in case else {}),
+            **({"vscode_workspaces_dir": str(home / "ws")} if case.get("workspaces") else {}),
             "claude_vm_release_address": case.get("address", "192.0.2.10"),
             "github_projects_home": str(home),
             "github_projects_api_url": github,
@@ -171,10 +253,16 @@ def _hosts(root: Path, cases: dict, github: str, tailscale: str) -> dict:
     return hosts
 
 
-def _destroy_tail(root: Path) -> Path:
-    """destroy.yml's release play, the deletion marked as done, and its report: as destroy.yml has them."""
+def _destroy_tail(root: Path, saved: Path | None = None) -> Path:
+    """destroy.yml's release play, the deletion marked as done, and its report: as destroy.yml has them.
+
+    The sessions a VM's save brings back go to ``saved``, root/saved without one: never the checkout's .sessions/.
+    """
     plays = yaml.safe_load(DESTROY.read_text())
     release = next(play for play in plays if play.get("name") == "Release each VM from what it signed in to")
+    # Its task files where they are: the play runs from a copy here.
+    release = json.loads(json.dumps(release).replace('"tasks/', f'"{REPO / "playbooks" / "tasks"}/'))
+    release["vars"] = {**release.get("vars", {}), "destroy_sessions_dir": str(saved or root / "saved")}
     tasks = next(play["tasks"] for play in plays if any(task.get("name") == REPORT for task in play.get("tasks", [])))
     at = next(index for index, task in enumerate(tasks) if task.get("name") == REPORT)
     # The report and its record for NEXT STEPS, then the kept aliases' and
@@ -197,7 +285,13 @@ def _destroy_tail(root: Path) -> Path:
                     "name": "Mark each VM deleted, as destroy's deletion does",
                     "hosts": "claude_vms",
                     "gather_facts": False,
-                    "tasks": [{"ansible.builtin.set_fact": {"claude_vm_deleted": True}}],
+                    # But one the release play kept, as the deletion leaves it.
+                    "tasks": [
+                        {
+                            "ansible.builtin.set_fact": {"claude_vm_deleted": True},
+                            "when": "claude_vm_delete_failure is not defined",
+                        }
+                    ],
                 },
                 {"name": "Report", "hosts": "localhost", "gather_facts": False, "tasks": on_these},
             ]
@@ -400,6 +494,90 @@ def test_a_vm_with_nothing_signed_in_is_said_to_have_nothing_to_end(released):
     assert _said(report)["nothing"] == "nothing: released - it had nothing signed in to end."
 
 
+def _saved(root: Path, vm: str) -> Path:
+    (folder,) = (root / "saved").glob(f"{vm}-*")
+    return folder
+
+
+def test_what_only_the_vm_has_of_its_sessions_is_saved_as_it_was(released):
+    # Begun on the VM, and a copy continued there, each with its folder, and
+    # the auto memory: not a copy still as make code wrote it, which this
+    # machine has, nor a transcript without a message, which resumes nothing.
+    root, report, _, _ = released
+    saved = _saved(root, "sessions")
+    assert saved.name.removeprefix("sessions-").replace("-", "").isdigit()
+    here = sorted(str(path.relative_to(saved)) for path in saved.rglob("*") if path.is_file())
+    assert here == [
+        f"projects/{MAC_FOLDER}/{CONTINUED}.jsonl",
+        f"projects/{VM_FOLDER}/{STARTED}.jsonl",
+        f"projects/{VM_FOLDER}/{STARTED}/subagents/agent-1.jsonl",
+        f"projects/{VM_FOLDER}/memory/MEMORY.md",
+        "sessions.json",
+    ]
+    vm = root / "sessions" / ".claude" / "projects"
+    for name in here[:4]:
+        assert (saved / name).read_bytes() == (vm / name.removeprefix("projects/")).read_bytes(), name
+    # This machine's user's alone.
+    for path in [saved, *saved.rglob("*")]:
+        assert stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600), path
+    listed = json.loads((saved / "sessions.json").read_text())
+    assert listed["vm"] == "sessions"
+    assert [(item["id"], item["started_on_the_vm"], item["cwd"]) for item in listed["sessions"]] == [
+        (CONTINUED, False, "/Users/me/demo"),
+        (STARTED, True, "/home/dev/projects/demo"),
+    ]
+    started = listed["sessions"][1]
+    assert started["transcript"] == str(saved / "projects" / VM_FOLDER / f"{STARTED}.jsonl")
+    assert started["resume"] == f"claude --resume {started['transcript']}"
+    assert listed["memory"] == [str(saved / "projects" / VM_FOLDER / "memory")]
+    assert _said(report)["sessions"] == (
+        "sessions: released - Claude Code sessions: 2 saved (1 started there, 1 continued there), with the auto"
+        f" memory of 1 project, in {saved} - its sessions.json has the `claude --resume <path>` that continues each"
+        " here, with Claude Code 2.1.308 or newer, and what they hold is the VM's writing; left out 2 entries of the"
+        " VM that were a link, not a plain file or folder, or not named as Claude Code names its own."
+    )
+    # What it is, and what resumes it.
+    assert listed["note"].startswith("Written on sessions and saved as it sent them, plain files only")
+    assert listed["newest_version"] == "2.1.308" and {item["version"] for item in listed["sessions"]} == {"2.1.308"}
+
+
+def test_a_link_the_vm_holds_never_reaches_or_changes_anything_here(released):
+    # rsync brought a VM's link over as a link, and the chmod after it followed it out of the folder.
+    root, _, _, _ = released
+    saved = _saved(root, "sessions")
+    assert not any(path.is_symlink() for path in saved.rglob("*"))
+    outside = root / "sessions-outside.txt"
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o644 and outside.read_text() == "this machine's\n"
+    assert not any(ODD in str(path) for path in saved.rglob("*"))
+
+
+def test_the_manifest_is_read_where_vscode_workspaces_dir_puts_make_code_s_directory(released):
+    # Read from the projects directory instead, every copy make code made would be saved as continued.
+    root, report, _, _ = released
+    saved = _saved(root, "workspaces")
+    assert sorted(path.name for path in (saved / "projects" / MAC_FOLDER).iterdir()) == [f"{CONTINUED}.jsonl"]
+    assert "2 saved (1 started there, 1 continued there)" in _said(report)["workspaces"]
+
+
+def test_a_vm_with_none_of_its_own_saves_nothing_and_says_nothing_of_it(released):
+    root, report, _, _ = released
+    assert sorted(path.name.rsplit("-", 2)[0] for path in (root / "saved").iterdir()) == ["sessions", "workspaces"]
+    assert "Claude Code sessions" not in _said(report)["nothing"]
+
+
+def test_with_the_save_off_the_sessions_go_with_the_vm_and_it_is_said(released):
+    root, report, _, _ = released
+    assert not list((root / "saved").glob("unsaved-*"))
+    assert _said(report)["unsaved"] == (
+        "unsaved: released - Claude Code sessions: not saved (destroy_save_sessions: false)."
+    )
+
+
+def test_no_transcript_reaches_the_output(released):
+    _, report, _, _ = released
+    assert MARKER not in json.dumps(report)
+
+
 def test_a_vm_that_could_not_be_reached_is_left_as_it_is_and_what_is_left_named(released):
     root, report, _, _ = released
     assert _calls(root, "unreached", ".tailscale-fake", "calls.log") == []
@@ -407,7 +585,8 @@ def test_a_vm_that_could_not_be_reached_is_left_as_it_is_and_what_is_left_named(
         "unreached: could not be reached, so it was not released: its Tailscale device, if it was on your tailnet,"
         f" stays until you delete it at {ADMIN} (or a VM built again under its name joins as <name>-1); a GitHub token"
         " its sign-in made stays valid until revoked at https://github.com/settings/applications, under GitHub CLI"
-        " (which signs out every gh); and Anthropic has no way to revoke its Claude Code login from outside."
+        " (which signs out every gh); and Anthropic has no way to revoke its Claude Code login from outside. Claude"
+        " Code sessions: not saved, nor its auto memory, if it had any."
     )
 
 
@@ -433,7 +612,7 @@ def test_next_steps_keep_each_vm_with_something_left_to_do_and_nothing_for_one_r
         "unreached",
     ):
         assert left[vm] == said[vm], vm
-    for vm in ("gone", "both", "marked-vault", "nothing"):
+    for vm in ("gone", "both", "marked-vault", "nothing", "sessions", "unsaved", "workspaces"):
         assert left[vm] == "", (vm, said[vm])
 
 
@@ -443,7 +622,103 @@ def test_no_token_key_or_secret_reaches_the_output(released):
     assert [secret for secret in SECRETS if secret in text] == []
 
 
+@pytest.fixture(scope="module")
+def kept(tmp_path_factory, fake_github, fake_tailscale):
+    """A destroy whose save fails, its folder here not writable: the VM signed in to Claude, with a session."""
+    root = tmp_path_factory.mktemp("kept")
+    hosts = _hosts(root, {"kept": {"claude": True, "sessions": True}}, fake_github, fake_tailscale)
+    locked = root / "locked"
+    locked.mkdir(mode=0o500)
+    try:
+        report = _run(root, _destroy_tail(root, locked / "saved"), hosts, "-e", json.dumps({"ansible_become": False}))
+    finally:
+        locked.chmod(0o700)
+    return root, report
+
+
+def test_a_vm_whose_sessions_could_not_be_saved_is_neither_released_nor_deleted(kept):
+    root, report = kept
+    assert (root / "kept" / ".claude" / ".credentials.json").exists()
+    assert "auth logout" not in _calls(root, "kept", ".claude", "fake", "calls.log")
+    assert "kept" not in _said(report)
+    (why,) = [
+        result["ansible_facts"]["claude_vm_delete_failure"]
+        for name, host, result in _results_of(report)
+        if name == "Keep the VM, whose sessions could not be saved"
+    ]
+    assert why.startswith(
+        "kept was neither released nor deleted: its Claude Code sessions could not be saved (session_save | Bring them"
+        " here: The sessions could not be brought here: "
+    )
+    assert why.endswith(
+        "Run make destroy again once that is fixed, or set destroy_save_sessions: false to delete it without them."
+    )
+    assert MARKER not in json.dumps(report)
+
+
+@pytest.fixture(scope="module")
+def unreleased(tmp_path_factory, fake_github, fake_tailscale):
+    """destroy_release: false, the save on: a VM signed in to Claude, with sessions of its own."""
+    root = tmp_path_factory.mktemp("unreleased")
+    hosts = _hosts(root, {"held": {"claude": True, "sessions": True}}, fake_github, fake_tailscale)
+    extra = {"ansible_become": False, "destroy_release": False}
+    return root, _run(root, _destroy_tail(root), hosts, "-e", json.dumps(extra))
+
+
+def test_without_the_release_the_save_still_reaches_the_vm_first(unreleased):
+    root, report = unreleased
+    assert report["rc"] == 0, _failures(report)
+    saved = _saved(root, "held")
+    assert (saved / "projects" / VM_FOLDER / f"{STARTED}.jsonl").exists()
+    # Nothing is released: still signed in.
+    assert (root / "held" / ".claude" / ".credentials.json").exists()
+    assert "auth logout" not in _calls(root, "held", ".claude", "fake", "calls.log")
+    said = _said(report)["held"]
+    assert said.startswith("held: deleted without being released (destroy_release: false): its Tailscale device")
+    assert said.endswith(
+        f"Claude Code sessions: 2 saved (1 started there, 1 continued there), with the auto memory of 1 project, in"
+        f" {saved} - its sessions.json has the `claude --resume <path>` that continues each here, with Claude Code"
+        " 2.1.308 or newer, and what they hold is the VM's writing; left out 2 entries of the VM that were a link,"
+        " not a plain file or folder, or not named as Claude Code names its own."
+    )
+
+
+@pytest.fixture(scope="module")
+def unsudo(tmp_path_factory, fake_github, fake_tailscale):
+    """A VM that answers as its user but whose sudo refuses, as one asking for a password does without a terminal."""
+    root = tmp_path_factory.mktemp("unsudo")
+    hosts = _hosts(root, {"unsudo": {"claude": True, "sessions": True}}, fake_github, fake_tailscale)
+    sudo = root / "bin" / "sudo"
+    sudo.write_text('#!/bin/sh\necho "sudo: a password is required" >&2\nexit 1\n')
+    sudo.chmod(0o755)
+    hosts["unsudo"]["ansible_become_exe"] = str(sudo)
+    # The play's become stands: no -e ansible_become here.
+    return root, _run(root, _destroy_tail(root), hosts)
+
+
+def test_a_vm_whose_sudo_refuses_is_saved_and_deleted_unreleased_and_said_why(unsudo):
+    # The save reads the VM user's own files and needs no sudo; the releases do.
+    root, report = unsudo
+    assert report["rc"] == 0, _failures(report)
+    saved = _saved(root, "unsudo")
+    assert (saved / "projects" / VM_FOLDER / f"{STARTED}.jsonl").exists()
+    assert (root / "unsudo" / ".claude" / ".credentials.json").exists()
+    assert "auth logout" not in _calls(root, "unsudo", ".claude", "fake", "calls.log")
+    said = _said(report)["unsudo"]
+    assert said.startswith("unsudo: sudo on it failed (")
+    assert ", so it was not released: its Tailscale device" in said
+    assert (
+        "Claude Code sessions: 2 saved (1 started there, 1 continued there), with the auto memory of 1 project," in said
+    )
+    assert f" in {saved} - its sessions.json" in said
+
+
 # ------------------------------------------------------------- destroy.yml ---
+def _action(task: dict) -> str:
+    (action,) = [key for key in task if "." in key]
+    return action
+
+
 def _flat(tasks: list) -> list:
     """Every task, those in a block, its rescue and its always included."""
     flat = []
@@ -472,9 +747,103 @@ def test_destroy_releases_before_it_deletes_and_starts_a_stopped_vm_only_to_rele
     start = next(
         task for task in confirm["tasks"] if task["name"] == "Start each stopped VM, to release it before it goes"
     )
-    assert start["when"] == "claude_vm_releasing | bool"
+    assert start["when"] == "claude_vm_reaching | bool"
     assert "selectattr('status', 'equalto', 'stopped')" in start["loop"]
-    assert confirm["vars"]["claude_vm_releasing"] == "{{ destroy_release | default(true) | bool }}"
+    # Started for the release, or for the save alone, which destroy_release: false still makes.
+    assert confirm["vars"]["claude_vm_reaching"] == (
+        "{{ destroy_release | default(true) | bool or destroy_save_sessions | default(true) | bool }}"
+    )
+    release = plays[names.index("Release each VM from what it signed in to")]
+    tasks = [task["name"] for task in release["tasks"]]
+    assert tasks.index("Leave the VM signed in, as destroy_release asks") == (
+        tasks.index("Save what of the VM's Claude Code sessions is only there") + 1
+    )
+
+
+def test_the_save_comes_before_every_release_and_a_failed_one_keeps_the_vm():
+    plays = yaml.safe_load(DESTROY.read_text())
+    release = next(play for play in plays if play.get("name") == "Release each VM from what it signed in to")
+    names = [task["name"] for task in release["tasks"]]
+    at = names.index("Save what of the VM's Claude Code sessions is only there")
+    assert at == names.index("Leave a VM that did not answer as it is") + 2
+    assert at < names.index("Sign Claude Code out, and stop Remote Control")
+    save = release["tasks"][at]
+    # The condition on the tasks inside the block, never the block, whose rescue it would also be.
+    pause, run = save["block"]
+    assert pause["ansible.builtin.include_role"] == {"name": "claude_code", "tasks_from": "release_pause"}
+    assert run["ansible.builtin.import_tasks"] == "tasks/session_save.yml" and "when" not in save
+    assert pause["when"][0] == run["when"] == "destroy_save_sessions | default(true) | bool"
+    # A VM kept: the reason first, while ansible_failed_result is the save's, then Remote Control again.
+    keep, resume, end = save["rescue"]
+    assert "claude_vm_delete_failure" in keep["ansible.builtin.set_fact"]
+    assert resume["ansible.builtin.include_role"] == {"name": "claude_code", "tasks_from": "release_resume"}
+    assert end["ansible.builtin.meta"] == "end_host"
+    # Reached without sudo for the save. Sudo is asked for before it, in a block: a sudo that fails is
+    # an error failed_when never sees, which would take the VM out of the run unsaved and unreported.
+    reach = release["tasks"][names.index("Reach the VM")]
+    assert reach["become"] is False and release["become"] is True
+    sudo = release["tasks"][names.index("Ask whether sudo works on the VM")]
+    assert names.index("Ask whether sudo works on the VM") == at - 1
+    assert [_action(task) for task in sudo["block"]] == ["ansible.builtin.ping"] and "become" not in sudo["block"][0]
+    assert "claude_vm_release_blocked" in sudo["rescue"][0]["ansible.builtin.set_fact"]
+    assert pause["when"][1] == "claude_vm_release_blocked is not defined"
+    end = release["tasks"][names.index("Leave a VM whose sudo failed unreleased")]
+    assert end["when"] == "claude_vm_release_blocked is defined"
+    assert (
+        at
+        < names.index("Leave a VM whose sudo failed unreleased")
+        < names.index("Sign Claude Code out, and stop Remote Control")
+    )
+    defaults = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults.yml").read_text())
+    assert defaults["destroy_save_sessions"] is True and defaults["destroy_sessions_dir"] == ""
+
+
+# Every task session_save.yml may hold, by action: where it runs, and how.
+SAVE_ON_VM = {"ansible.builtin.getent", "claude_sessions_info"}
+SAVE_HERE = {"claude_sessions_fetch", "ansible.builtin.copy"}
+SAVE_ANYWHERE = {"ansible.builtin.set_fact", "ansible.builtin.assert"}
+
+
+def test_the_save_reads_the_vm_under_no_log_and_writes_only_here_as_this_user(tmp_path):
+    tasks = yaml.safe_load((REPO / "playbooks" / "tasks" / "session_save.yml").read_text())
+    for at, task in enumerate(tasks):
+        (action,) = set(task) - {
+            "name",
+            "vars",
+            "register",
+            "when",
+            "delegate_to",
+            "become",
+            "no_log",
+            "ignore_unreachable",
+        }
+        assert action in SAVE_ON_VM | SAVE_HERE | SAVE_ANYWHERE, (task["name"], action)
+        if action in SAVE_ON_VM:
+            # As the VM user, never sudo; and one that stops answering fails into destroy's rescue, never
+            # out of the run unseen, which an unreachable host does.
+            assert "delegate_to" not in task and task["become"] is False, task["name"]
+            assert task["ignore_unreachable"] is True, task["name"]
+            after = tasks[at + 1]
+            assert (
+                "ansible.builtin.assert" in after
+                and f"{task['register']}.unreachable" in after["ansible.builtin.assert"]["that"]
+            )
+        if action == "claude_sessions_info":
+            assert task["no_log"] is True, task["name"]
+        if action in SAVE_HERE:
+            assert task["delegate_to"] == "localhost" and task["become"] is False, task["name"]
+    # By default into the checkout's .sessions/, which git ignores and the tracked-file guard refuses;
+    # in a test, always into its own directory.
+    settle = next(task for task in tasks if task["name"] == "session_save | Settle where on each machine")
+    assert "(playbook_dir | dirname) ~ '/.sessions'" in settle["ansible.builtin.set_fact"]["claude_vm_save_dir"]
+    assert ".sessions/" in (REPO / ".gitignore").read_text().splitlines()
+    tail = yaml.safe_load(_destroy_tail(tmp_path).read_text())
+    assert tail[0]["vars"]["destroy_sessions_dir"] == str(tmp_path / "saved")
+    # The scenario that runs destroy.yml, into Molecule's ephemeral directory.
+    provision = yaml.safe_load((REPO / "molecule" / "provision" / "group_vars" / "all" / "fake_api.yml").read_text())
+    assert provision["destroy_sessions_dir"].startswith(
+        "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/"
+    )
 
 
 def test_a_vm_started_for_its_release_is_stopped_again_when_its_deletion_fails():
@@ -502,7 +871,9 @@ def test_a_deletion_that_fails_is_raised_only_after_the_stop_and_the_report():
     plays = yaml.safe_load(DESTROY.read_text())
     delete = next(play for play in plays if play.get("name") == "Delete the VMs on Proxmox")
     assert "roles" not in delete and "post_tasks" not in delete
-    (step,) = delete["tasks"]
+    # A VM the release play kept, its sessions unsaved, ends here; every other is deleted.
+    kept, step = delete["tasks"]
+    assert kept["ansible.builtin.meta"] == "end_host" and kept["when"] == "claude_vm_delete_failure is defined"
     assert step["block"][0]["ansible.builtin.import_role"] == {"name": "proxmox_vm"}
     assert step["block"][0]["vars"] == {"proxmox_vm_state": "absent"}
     assert step["block"][-1]["ansible.builtin.set_fact"] == {"claude_vm_deleted": True}
@@ -650,10 +1021,8 @@ def fake_pve(tmp_path):
         yield base
 
 
-def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_stopped(tmp_path, fake_pve):
-    # Proxmox lists the status it last polled, up to ten seconds old. A VM that
-    # booted within those seconds of destroy's start was listed as stopped
-    # after it, not asked for its address, and deleted without its release.
+def _head(tmp_path, fake_pve):
+    """A directory to run destroy.yml's first play from against the fake, and that play with the addresses after it."""
     root = tmp_path / "run"
     (root / "group_vars" / "all").mkdir(parents=True)
     (root / "group_vars" / "all" / "defaults.yml").symlink_to(
@@ -687,6 +1056,14 @@ def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_sto
             ]
         )
     )
+    return root, playbook
+
+
+def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_stopped(tmp_path, fake_pve):
+    # Proxmox lists the status it last polled, up to ten seconds old. A VM that
+    # booted within those seconds of destroy's start was listed as stopped
+    # after it, not asked for its address, and deleted without its release.
+    root, playbook = _head(tmp_path, fake_pve)
     report = _run(root, playbook, {}, "-e", json.dumps({"vm_name": "parked", "confirm_destroy": "yes"}), timeout=120)
     assert report["rc"] == 0, _failures(report)
     said = {
@@ -696,3 +1073,18 @@ def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_sto
     # The listing did lag: the run's own relisting still showed it stopped.
     calls = [json.loads(line) for line in (tmp_path / "pve" / "calls.log").read_text().splitlines()]
     assert [c["path"] for c in calls].count("/api2/json/cluster/resources") >= 2
+
+
+@pytest.mark.parametrize("folder", ["saved-sessions", "./saved"])
+def test_a_relative_folder_for_the_saved_sessions_is_refused_before_anything_starts(tmp_path, folder):
+    # The module that writes them ran in playbooks/, where such a folder is not git-ignored. Refused
+    # before Proxmox is asked anything: nothing listens at the API's address.
+    root, playbook = _head(tmp_path, "https://127.0.0.1:9")
+    extra = {"vm_name": "parked", "confirm_destroy": "yes", "destroy_sessions_dir": folder}
+    report = _run(root, playbook, {}, "-e", json.dumps(extra), timeout=120)
+    assert report["rc"] != 0
+    (failure,) = _failures(report).values()
+    assert failure.startswith(
+        "Refuse a folder for the saved sessions that is not an absolute path: destroy_sessions_dir"
+    )
+    assert not [name for name, _, _ in _results_of(report) if name.startswith("cluster_vms |")]
