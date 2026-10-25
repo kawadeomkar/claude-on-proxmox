@@ -1,9 +1,9 @@
 ---
 # Create one or more VMs on Proxmox and report the address each one was given.
 #
-#   make deploy TYPE=provision                          -> claude-on-proxmox-default
-#   make deploy VM_NAME=alpha TYPE=provision
-#   make deploy VM_NAME=alpha,beta,gamma TYPE=provision
+#   just deploy --only provision                          -> claude-on-proxmox-default
+#   just deploy alpha --only provision
+#   just deploy alpha,beta,gamma --only provision
 #
 # Nothing has to be declared in inventory first: the VM is created by name,
 # its VMID is the next free one Proxmox has, the LAN's DHCP server assigns the
@@ -50,7 +50,7 @@
         that: claude_vm_names | length > 0
         fail_msg: >-
           No VM name to provision. Separate several with commas and no spaces:
-          make deploy VM_NAME=alpha,beta
+          just deploy alpha,beta
         quiet: true
 
     # Several new VMs are given their VMIDs here, so that play 2 can clone them
@@ -65,7 +65,7 @@
     # every VMID in use - containers too - from /cluster/resources. Both are
     # read raw rather than through proxmox_vm_info, which also asks every node
     # that holds a guest and fails outright if one is offline; the listing is
-    # the same shared task discovery, make list and destroy use. The token
+    # the same shared task discovery, just list and destroy use. The token
     # docs/getting-started/proxmox-access.md creates can see every guest. Something that takes one of these IDs before
     # its clone runs still fails that clone rather than being cloned over:
     # proxmox_kvm checks, and the role asserts the clone changed something.
@@ -180,7 +180,7 @@
           {{ 'is up at ' ~ hostvars[claude_vm_name_item].proxmox_vm_address
              if hostvars[claude_vm_name_item].proxmox_vm_address | default('') | length > 0
              else 'is stopped and was left that way, so it is not configured. Start it, or re-run with:'
-                  ~ ' make deploy VM_NAME=' ~ claude_vm_name_item ~ ' ANSIBLE_ARGS="-e proxmox_vm_start_existing=true"'
+                  ~ ' just deploy ' ~ claude_vm_name_item ~ ' --start'
              if hostvars[claude_vm_name_item].proxmox_vm_stopped | default(false) | bool
              else 'failed - see its error above - so it is not configured.' }}
       loop: "{{ claude_vm_names }}"

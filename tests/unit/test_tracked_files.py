@@ -87,7 +87,7 @@ MUST_BLOCK = [
     "roles/common/.logs/20261007-203015-molecule.log",
     "ansible.log",
     "molecule/provision/verify.log",
-    # Sessions make destroy saved hold whatever their tools printed.
+    # Sessions just destroy saved hold whatever their tools printed.
     ".sessions/alpha-20261023-153000/projects/-home-dev-projects-demo/0a608ad8-1b2c-4d3e-8f90-123456789abc.jsonl",
     ".sessions/alpha-20261023-153000/sessions.json",
     # Working documents beside the wiki name the Proxmox host and the VMs,

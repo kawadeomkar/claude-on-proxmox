@@ -139,7 +139,7 @@ def test_present_writes_one_block_per_vm_and_the_include_at_the_top(tmp_path: Pa
     assert resolved["hostname"] == "192.0.2.51"
     assert resolved["user"] == "dev"
     assert resolved["serveraliveinterval"] == "30"
-    assert "alpha: ssh alpha   |   make code VM_NAME=alpha   (opens /home/dev/projects)" in result.stdout
+    assert "alpha: ssh alpha   |   just code alpha   (opens /home/dev/projects)" in result.stdout
 
 
 def test_a_second_run_changes_nothing(tmp_path: Path) -> None:
@@ -252,7 +252,7 @@ def test_identity_file_agent_forwarding_and_options_are_written_when_set(tmp_pat
 def test_without_a_workspace_the_connect_line_says_make_code_and_guesses_no_path(tmp_path: Path) -> None:
     result = _run(tmp_path, [{"name": "solo", "address": "192.0.2.60", "user": "dev"}])
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "solo: ssh solo   |   make code VM_NAME=solo" in result.stdout
+    assert "solo: ssh solo   |   just code solo" in result.stdout
     assert "/home/dev/projects" not in result.stdout
 
 
@@ -405,7 +405,7 @@ def test_a_name_or_address_that_is_not_one_word_is_refused_and_nothing_is_writte
 
 
 # ---------------------------------------------------------------- guards ---
-# These keep `make test` out of the developer's ~/.ssh.
+# These keep `just test` out of the developer's ~/.ssh.
 
 SCENARIO_DIRS = sorted(p for p in (REPO / "molecule").iterdir() if p.is_dir())
 EPHEMERAL = "MOLECULE_EPHEMERAL_DIRECTORY"

@@ -1,11 +1,11 @@
 ---
 # Stop and delete VMs by name. Destructive; requires confirmation.
 #
-#   make destroy VM_NAME=alpha
-#   make destroy VM_NAME=alpha,beta
+#   just destroy alpha
+#   just destroy alpha,beta
 #
-# Without VM_NAME this targets claude-on-proxmox-default, the same name
-# `make deploy TYPE=provision` uses when none is given. The confirmation prompt runs first,
+# Without vm_name this targets claude-on-proxmox-default, the same name
+# `just deploy --only provision` uses when none is given. The confirmation prompt runs first,
 # since it is a play-level vars_prompt; the task right after it then checks that
 # every VM asked for actually exists, so a wrong name fails loudly rather than
 # being "deleted" silently once confirmed.
@@ -34,7 +34,7 @@
     # destroy_release - is undefined there, and fails every run of this
     # playbook before it asks, even one that answers with -e. So this repeats
     # claude_vm_names' split on vm_name, the one value there is then, through
-    # plain_text since a direct ansible-playbook -e skips the Makefile's check.
+    # plain_text since a direct ansible-playbook -e skips the justfile's check.
     claude_vm_confirm_names: >-
       {{ (vm_name | default('', true) | string | plain_text).split(',') | map('trim') | select | list }}
 
@@ -79,7 +79,7 @@
     # the VMs that do exist, once, instead of one refusal per host.
     #
     # A guest on a node that is down is listed without a name (see
-    # tasks/cluster_vms.yml). It cannot be what VM_NAME means, and it must not
+    # tasks/cluster_vms.yml). It cannot be what vm_name means, and it must not
     # take the check down for the VMs that can be: every `name` is read with
     # a default and the blanks dropped.
     #
@@ -103,7 +103,7 @@
         claude_vm_deletable: "{{ claude_vm_fleet + (claude_vm_untagged if claude_vm_untagged_ok else []) }}"
         claude_vm_missing: "{{ claude_vm_names | difference(claude_vm_deletable) | list }}"
         claude_vm_created: >-
-          {{ 'It created: ' ~ (claude_vm_fleet | join(', ')) ~ '. Name what to delete with VM_NAME=.'
+          {{ 'It created: ' ~ (claude_vm_fleet | join(', ')) ~ '. Name what to delete after it: just destroy <name>.'
              if claude_vm_fleet else 'It has not created any VMs on this host.' }}
         claude_vm_missing_untagged: "{{ claude_vm_missing | intersect(claude_vm_untagged) }}"
         claude_vm_untagged_hint: >-
@@ -354,7 +354,7 @@
               {{ inventory_hostname }} was neither released nor deleted: its Claude Code sessions could not be saved
               ({{ ansible_failed_task.name | default('a task') }}: {{ (ansible_failed_result.stderr | default('', true)
               or ansible_failed_result.msg | default('failed', true)) | plain_text | regex_replace('\s+', ' ') | trim
-              | regex_replace('[.]$', '') }}). Run make destroy again once that is fixed, or set destroy_save_sessions:
+              | regex_replace('[.]$', '') }}). Run just destroy again once that is fixed, or set destroy_save_sessions:
               false to delete it without them.
 
         - name: Start Remote Control again on the VM kept
@@ -584,7 +584,7 @@
       ansible.builtin.debug:
         msg: >-
           Kept the SSH alias of {{ claude_ssh_kept | join(', ') }}: its deletion failed above, so the VM is
-          still there. `make destroy VM_NAME={{ claude_ssh_kept | join(',') }}` again once the cause is fixed
+          still there. `just destroy {{ claude_ssh_kept | join(',') }}` again once the cause is fixed
           removes it with the VM.
       register: claude_ssh_kept_reported
       when:

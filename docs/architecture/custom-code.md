@@ -24,7 +24,7 @@ that parses as one IPv4 address inside `100.64.0.0/10`, else `""`: tailscaled on
 it is held to the same rule as `guest_ipv4`.
 
 **`guest_address(vm_info, nic="net0")`** — the two above, composed the one way discovery and
-`make list` need: given what `proxmox_vm_info` registered for one VM read with `config` and
+`just list` need: given what `proxmox_vm_info` registered for one VM read with `config` and
 `network`, the IPv4 the agent reports on the interface whose MAC is `config[nic]`. Returns `""` —
 never raises — for a failed or skipped call, a stopped VM, a silent agent or a missing NIC, so a
 caller sweeping the fleet skips that VM. Both playbooks pass `proxmox_nic`; they used to read
@@ -34,10 +34,10 @@ caller sweeping the fleet skips that VM. Both playbooks pass `proxmox_nic`; they
 `40[13]` only in proxmoxer's status position (`"<status> <reason>: <detail>"`, after the module's own
 `"...: "` prefix), or the words Proxmox uses for it. The unanchored `40[13]` it replaces also matched
 a VMID in the detail — `500 Internal Server Error: VM 4013 is not running` — which failed
-`make list` and `make deploy TYPE=configure` for the whole fleet over one stopped VM.
+`just list` and `just deploy --only configure` for the whole fleet over one stopped VM.
 
 **`ssh_config_blocks(content)`** — the alias blocks in the managed file, as `{name}`, in file order. **`ssh_config_prune(blocks, resources,
-tag_pattern)`** — the decision `make deploy TYPE=ssh-config` makes fleet-wide, as data: `prune` (no VM of that
+tag_pattern)`** — the decision `just deploy --only ssh-config` makes fleet-wide, as data: `prune` (no VM of that
 name anywhere), `untagged` (a VM of that name exists without the tag; left alone), and `nameless`
 (tagged VMs the listing shows without a name, a node that is down), which when non-empty empties
 `prune` into `held`. Pure, so every rule is a unit test rather than a fake-API fixture.
@@ -90,7 +90,7 @@ character but tab and newline. The VM's user controls what `claude`, `gh` and `s
 ansible-core 2.21 writes a failure's `[ERROR]` line to the terminal and the run log raw; removing only
 the control characters left a clipboard write's base64 or a window title behind as text. Every message
 that quotes the VM's text goes through it: the Claude sign-in's (`claude_code_login_said`), gh's
-(`github_projects_login_text`, `_status_said`, `_token_said`) and `make code`'s SSH failure. Covered by
+(`github_projects_login_text`, `_status_said`, `_token_said`) and `just code`'s SSH failure. Covered by
 `tests/unit/test_text_filter.py`, and by the sign-in tests, which feed both flows escape sequences.
 
 **`banner(body, title, host='', topic='')`** — the `#` block that sets a moment the run waits for the
@@ -110,7 +110,7 @@ through it. It subclasses the default callback and carries the
 default's `DOCUMENTATION` fragments (`default_callback`, `result_format_callback`). Without them the
 subclass has no options: every hook fails on its first `get_option`, Ansible only warns, and every task's
 result disappears from the screen and the log in a run that still exits 0. `--syntax-check` loads no
-callback, so `make lint TYPE=syntax` would not notice; `tests/unit/test_attention_callback.py` runs real playbooks
+callback, so `just lint syntax` would not notice; `tests/unit/test_attention_callback.py` runs real playbooks
 through it and compares its untagged output with the default's, byte for byte.
 
 A run waits for the person in three ways, and each is set apart:
@@ -132,9 +132,9 @@ A run waits for the person in three ways, and each is set apart:
   `github_projects_next`, `tailscale_next`, `claude_vm_next` (provision and destroy) and `code_next` - as
   `{vm: {matter: line}}`: the message itself while something is left, `''` once nothing is. `aggregate`
   merges the records, so the last one of a VM and matter wins across plays: configure's "not signed in"
-  is cleared by the sign-in's own report later in the same `make deploy`. The decision is made in Jinja
+  is cleared by the sign-in's own report later in the same `just deploy`. The decision is made in Jinja
   beside the message, from the same facts, because the text cannot carry it: a stopped Tailscale or a
-  missing workflow scope names no `make` command, and "make deploy signs it in next" names one with
+  missing workflow scope names no `just` command, and "just deploy signs it in next" names one with
   nothing to do. A looped report records each VM in a looped `set_stats` keyed by the loop var, so the
   callback reads no task result for this at all. Printed by VM name, the matters in a fixed order (`vm`,
   `claude`, `remote_control`, `github`, `github_identity`, `tailscale`, `vscode`, `destroy`), each line
@@ -148,8 +148,8 @@ JSON report (`_left_to_do`), in every state they already run.
 
 ## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
 
-What `make code` carries of this machine's Claude Code sessions to a VM
-([§4.9](lifecycle.md#49-playbookscodeyml), **The session handoff**), and what `make destroy` brings
+What `just code` carries of this machine's Claude Code sessions to a VM
+([§4.9](lifecycle.md#49-playbookscodeyml), **The session handoff**), and what `just destroy` brings
 back of a VM's own before deleting it ([§4.5](lifecycle.md#45-playbooksdestroyyml--confirm-release-delete)).
 Four modules, each in `playbooks/library/` beside the playbook that runs them, read and write the
 files; the filters decide from what they read, and touch no file.
@@ -162,7 +162,7 @@ pid of a live `claude` that `sessions/` says has it open - one whose command lin
 is still claude's, never a pid another program took since its entry was left; and that registry
 whole, whatever the transcripts (`registered`): the VM's, for which copies a `claude` there has open.
 Every complete line is parsed and only those values kept, so nothing that was said comes back. With
-`manifest`, make code's on that machine, whether it was copied there (by ID, in whatever folder it is
+`manifest`, just code's on that machine, whether it was copied there (by ID, in whatever folder it is
 now) and whether it is still the copy as written (by digest); with `memory`, the folders whose auto
 memory folder holds a file; with `repo_paths`, `githubRepoPaths` from Claude Code's `.claude.json`, and
 nothing else of that file; with `claude`, the version of the first of those executables there is - only
@@ -197,7 +197,7 @@ module's own, still as written: the session moved on the other machine, and its 
 The manifest is written after each copy. Sessions that are no longer asked for leave the
 mirror. Check mode writes nothing.
 
-**`claude_sessions_fetch`** — run on the controller, for `make destroy`'s save: `tar -cf - -T -` on the
+**`claude_sessions_fetch`** — run on the controller, for `just destroy`'s save: `tar -cf - -T -` on the
 VM over SSH (`ssh` given as user, host, port, key and Ansible's SSH arguments, with `BatchMode`; none
 where the VM is this machine, as in the tests), the names on stdin each after `./`, so that none reads
 as an option, and the stream unpacked by Python's `tarfile` into a folder it creates: plain files and
@@ -213,25 +213,25 @@ the decision as data: `sessions` to copy, each with the checkout it continues in
 its prompt is pointed at; `files` for rsync; `newer`, `ambiguous`, `twice` (an ID in two folders here)
 and `open` (one a `claude` on the VM has open, given as `open_there`), one of no repository the VM
 has in none; and with
-`wanted` (`SESSION`), its entry and the `problem` that refuses it, or `""`. A session's repository is
+`wanted` (`--session`), its entry and the `problem` that refuses it, or `""`. A session's repository is
 its first directory's origin, else its gone worktree's checkout's, else `githubRepoPaths`; the VM's
 checkout of it is the one whose GitHub origin names it, of two the one named after it.
 **`git_repository(url)`** is `owner/repo`, lowercased, of https, ssh and scp-like URLs and local paths
 alike, the host not compared: this machine's side, where a clone may reach GitHub by an SSH alias.
 **`github_repository(url)`** is the same of a GitHub origin only, and `""` of any other: the VM's side,
-whose checkouts make deploy cloned from GitHub, so that a local path or another host's repository there
-claims nothing. **`make_code_dir(projects, given)`** is make code's own directory on a VM -
+whose checkouts just deploy cloned from GitHub, so that a local path or another host's repository there
+claims nothing. **`make_code_dir(projects, given)`** is just code's own directory on a VM -
 `vscode_workspaces_dir`, else `.claude-on-proxmox` in the projects directory - for code.yml and for
 destroy's save, which reads the manifest there. **`claude_project_folder(path)`** is Claude Code's folder name for a path - every character
 but an ASCII letter or digit as `-` - refusing one over 200 characters, which Claude Code shortens with
 a hash of its own. **`claude_session_dirs(sessions)`** is the directories to ask git about for them:
 each first directory, and the checkout of a Claude worktree's, which a gone worktree leaves behind.
-**`claude_sessions_listed(rows)`** is make code's words for the sessions it left out, each
+**`claude_sessions_listed(rows)`** is just code's words for the sessions it left out, each
 `[before, ids, after]` that has IDs, each ID by its first eight characters as `/resume` lists them.
 
-**`claude_sessions_saved(sessions, memory, dest)`** — what of a VM's sessions `make destroy` saves into
+**`claude_sessions_saved(sessions, memory, dest)`** — what of a VM's sessions `just destroy` saves into
 `dest`, from `claude_sessions_info`'s reading of the VM with its manifest: every session that holds a
-message and is not a copy still as make code wrote it, with the folder beside it, and every auto memory
+message and is not a copy still as just code wrote it, with the folder beside it, and every auto memory
 folder. A folder not named as Claude Code names one or an ID that is not a session's - the VM's to make
 up - is left out and counted in `refused`, never handed to tar. Returns `files` for
 `claude_sessions_fetch`; `sessions` for `sessions.json`, each with its first directory, branch, last

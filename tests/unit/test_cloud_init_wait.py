@@ -88,8 +88,8 @@ def test_a_failed_first_boot_names_what_failed_and_how_to_get_past_it(waited):
         "Fail with what cloud-init reported: failed: cloud-init's first boot ended in an error (in"
         " package_update_upgrade_install), so the VM may be half set up. /var/log/cloud-init-output.log on it says"
         " why. Building it again is the sure way past a failure that will not repeat - a mirror, a corrupted"
-        " download: make destroy VM_NAME=failed, then make deploy VM_NAME=failed. Or repair it by hand, then make"
-        ' deploy VM_NAME=failed TYPE=configure ANSIBLE_ARGS="-e configure_wait_for_cloud_init=false".'
+        " download: just destroy failed, then just deploy failed. Or repair it by hand, then"
+        " ANSIBLE_ARGS='-e configure_wait_for_cloud_init=false' just deploy failed --only configure."
     )
 
 

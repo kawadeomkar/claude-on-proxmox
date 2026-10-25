@@ -142,7 +142,7 @@ tailscale_tags_missing: >-
 
 # What this run did: a join with the key, or a web login's `up`. The login entry
 # point runs neither connect.yml nor settings.yml, so their registers may not
-# exist at all - or, in make deploy's sign-in play, are the configure play's,
+# exist at all - or, in just deploy's sign-in play, are the configure play's,
 # from the same run, which said the join itself: that play's report
 # (tailscale_report_from_login, set by login.yml) leaves it out.
 tailscale_join_ran: "{{ (tailscale_join | default({'skipped': true})) is not skipped }}"
@@ -152,7 +152,7 @@ tailscale_joined_now: >-
      and tailscale_backend == 'Running' }}
 
 # --- The web login (login.yml, web_login.yml) ---
-# Asked about a VM someone is here for (make deploy, a Claude code entered),
+# Asked about a VM someone is here for (just deploy, a Claude code entered),
 # Enter or "y" goes and anything else - "n" - stays; asked about any other,
 # only "y" goes, so that a run with no terminal, where pause returns at once
 # with nothing, skips it. Not asked, the switch alone decides.
@@ -313,5 +313,5 @@ tailscale_absent_login_left: "{{ tailscale_absent_unasked | bool or tailscale_ab
 # --- Where to fix what the report names ---
 tailscale_admin_page: >-
   {{ 'your control server' if tailscale_login_server | length > 0 else 'https://login.tailscale.com/admin/machines' }}
-tailscale_configure_command: make deploy VM_NAME={{ inventory_hostname }} TAGS=tailscale
-tailscale_login_command: make login VM_NAME={{ inventory_hostname }} TYPE=tailscale
+tailscale_configure_command: just deploy {{ inventory_hostname }} --tags tailscale
+tailscale_login_command: just login {{ inventory_hostname }} --only tailscale

@@ -1,4 +1,4 @@
-"""Filters for the Claude Code sessions make code carries from this machine to a VM, and make destroy brings back.
+"""Filters for the Claude Code sessions just code carries from this machine to a VM, and just destroy brings back.
 
 playbooks/tasks/session_read.yml reads both ends with the modules in
 playbooks/library/ and decides here, from what they read, which session goes
@@ -7,7 +7,7 @@ recorded directory is a checkout of, by that checkout's git origin: never by
 a folder's name, which a renamed clone, a subfolder or another owner's
 repository of the same name all get wrong (docs/architecture/lifecycle.md §4.9).
 playbooks/tasks/session_save.yml decides here what of a VM's sessions exists
-only there, before make destroy deletes it (§4.5).
+only there, before just destroy deletes it (§4.5).
 Nothing here reads a file: the modules do, and only these values reach a filter.
 """
 
@@ -25,7 +25,7 @@ _FOLDER_LENGTH = 200
 # A Claude Code worktree: <checkout>/.claude/worktrees/<name>, or a folder inside one.
 _WORKTREE = re.compile(r"^(?P<checkout>/.+?)/\.claude/worktrees/[^/]+(?:/.*)?$")
 _VERSION = re.compile(r"^(\d+(?:\.\d+)*)")
-# What make destroy saves by: a folder as Claude Code names one, and a session's ID. Anything else
+# What just destroy saves by: a folder as Claude Code names one, and a session's ID. Anything else
 # a VM reports is left out, since the names travel to tar and become paths on this machine.
 _SAVED_FOLDER = re.compile(r"^[A-Za-z0-9-]+$")
 _SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -48,7 +48,7 @@ def claude_project_folder(path):
     if len(folder) > _FOLDER_LENGTH:
         raise AnsibleFilterError(
             f"{path} is too long a path for a Claude Code project folder ({len(folder)} characters, at most"
-            f" {_FOLDER_LENGTH}): Claude Code shortens such a name in a way make code does not repeat."
+            f" {_FOLDER_LENGTH}): Claude Code shortens such a name in a way just code does not repeat."
         )
     return folder
 
@@ -80,7 +80,7 @@ def git_repository(url):
 def github_repository(url):
     """Return the ``owner/repo`` a GitHub origin names, lowercased, or "" for any other URL.
 
-    The VM's checkouts are the ones make deploy cloned from GitHub, so on the VM nothing else names
+    The VM's checkouts are the ones just deploy cloned from GitHub, so on the VM nothing else names
     a repository: not a local path, which names only folders, nor another host's repository of the
     same owner and name, which is another repository.
     """
@@ -91,9 +91,9 @@ def github_repository(url):
 
 
 def make_code_dir(projects, given=""):
-    """make code's own directory on a VM: ``given`` (vscode_workspaces_dir), else .claude-on-proxmox in ``projects``.
+    """just code's own directory on a VM: ``given`` (vscode_workspaces_dir), else .claude-on-proxmox in ``projects``.
 
-    code.yml keeps the workspace files and the session copies' manifest there, and make destroy's
+    code.yml keeps the workspace files and the session copies' manifest there, and just destroy's
     save reads the manifest from it: one definition, so the two cannot disagree. No trailing "/".
     """
     path = str(given or "") or f"{str(projects).rstrip('/')}/.claude-on-proxmox"
@@ -197,7 +197,7 @@ def claude_sessions_plan(
     what rsync sends for them, relative to the projects folder; ``repositories`` their repositories.
     ``newer``, ``ambiguous``, ``twice`` (an ID in more than one folder here, which ``claude --resume
     <id>`` could not choose between) and ``open`` are the sessions left out for a reason worth saying;
-    one of no repository the VM has cloned is in none. ``session`` is SESSION's own entry, with
+    one of no repository the VM has cloned is in none. ``session`` is --session's own entry, with
     ``problem`` the reason it cannot be opened, or "".
     """
     here = {item["path"]: item for item in here or [] if item.get("path")}
@@ -241,7 +241,7 @@ def claude_sessions_plan(
         # Without Claude Code on the VM there is nothing to resume a copy with: none is made, and the run says why.
         if not session.get("conversation") or vm_version is None:
             continue
-        # SESSION's own cases are refused with their reason instead (_session_problem, session_read.yml).
+        # --session's own cases are refused with their reason instead (_session_problem, session_read.yml).
         if not own and len(folders_of[session["id"]]) > 1:
             if session["id"] not in plan["twice"]:
                 plan["twice"].append(session["id"])
@@ -297,14 +297,14 @@ def _session_problem(entry, sessions, wanted, by_repo, project, version, vm):
             " cannot be checked."
         )
     if _version(version) is None:
-        return f"Claude Code is not installed on {vm} yet: make deploy {vm} TYPE=configure installs it."
+        return f"Claude Code is not installed on {vm} yet: just deploy {vm} --only configure installs it."
     if not entry.get("checkout") and project and names:
-        return f"PROJECT={project} on {vm} is not a checkout of {repo}; {names} is."
+        return f"--project {project} on {vm} is not a checkout of {repo}; {names} is."
     if not entry.get("checkout") and names:
-        return f"{vm} has more than one checkout of {repo} ({names}): name the one to open with PROJECT=<folder>."
+        return f"{vm} has more than one checkout of {repo} ({names}): name the one to open with --project <folder>."
     if not entry.get("checkout"):
         return (
-            f"{vm} has no checkout of {repo}. make deploy {vm} TYPE=configure clones your own repositories; one of"
+            f"{vm} has no checkout of {repo}. just deploy {vm} --only configure clones your own repositories; one of"
             " another owner's, or a fork, is not cloned."
         )
     if (_version(session.get("version")) or ()) > _version(version):
@@ -325,10 +325,10 @@ def _written(mtime):
 
 
 def claude_sessions_saved(sessions, memory, dest):
-    """What of a VM's Claude Code sessions make destroy saves into ``dest``, and the list kept beside them.
+    """What of a VM's Claude Code sessions just destroy saves into ``dest``, and the list kept beside them.
 
     ``sessions`` and ``memory`` are claude_sessions_info's for the VM, read with its manifest. Saved:
-    every session that holds a message and is not a copy make code wrote that is still as written -
+    every session that holds a message and is not a copy just code wrote that is still as written -
     this machine has that one - with the folder beside it, and every auto memory folder. What the VM
     reports is not trusted: a session or folder not named as Claude Code names them is left out and
     counted, never handed on. Returns ``files``, relative to the VM's projects folder, for
@@ -386,7 +386,7 @@ def claude_sessions_saved(sessions, memory, dest):
 
 
 def claude_sessions_listed(rows):
-    """make code's words for the sessions it left out: each ``[before, ids, after]`` with IDs, the IDs between.
+    """just code's words for the sessions it left out: each ``[before, ids, after]`` with IDs, the IDs between.
 
     An ID is said by its first eight characters, as /resume lists it; nothing of a transcript is.
     """

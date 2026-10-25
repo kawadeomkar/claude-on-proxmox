@@ -59,7 +59,7 @@ ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
 # The ansible.cfg of every run a test makes. None of the project's settings but
 # the one that changes what a play can read: gathered facts only under
 # ansible_facts, as ansible.cfg has it (test_gathered_facts.py), so the plays only
-# these tests run read facts as make's runs do.
+# these tests run read facts as just's runs do.
 ANSIBLE_CFG = "[defaults]\ninject_facts_as_vars = false\n"
 
 
@@ -230,7 +230,7 @@ def _env(root: Path, config: str = "", **settings: str) -> dict:
         ANSIBLE_CONFIG=ansible_config(root, config),
         ANSIBLE_ROLES_PATH=str(REPO / "roles"),
         ANSIBLE_FILTER_PLUGINS=str(REPO / "filter_plugins"),
-        # As ansible.cfg's library: playbooks a test writes elsewhere use make code's and destroy's modules too.
+        # As ansible.cfg's library: playbooks a test writes elsewhere use just code's and destroy's modules too.
         ANSIBLE_LIBRARY=str(REPO / "playbooks" / "library"),
         ANSIBLE_NOCOLOR="1",
     )

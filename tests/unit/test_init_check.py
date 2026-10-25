@@ -1,4 +1,4 @@
-"""playbooks/init_check.yml, make init's read-only checks: run against the fake Proxmox, never a real one.
+"""playbooks/init_check.yml, just init's read-only checks: run against the fake Proxmox, never a real one.
 
 Each run's inventory is the test's own: group_vars/all/defaults.yml is the
 project's, beside a file of the test's settings, and the Proxmox host is either
@@ -195,7 +195,7 @@ def test_every_check_passes_on_a_host_with_its_template(tmp_path: Path, fake_pve
     said = _said(report)
     assert f"ok   Proxmox VE 8.2.4 at 127.0.0.1:{_port(fake_pve)} accepted ansible@pve!ansible" in said
     assert "ok   the token holds every privilege the project uses on /vms" in said
-    assert "ok   the template ubuntu-24.04-cloudinit is on pve, so make deploy needs no root SSH" in said
+    assert "ok   the template ubuntu-24.04-cloudinit is on pve, so just deploy needs no root SSH" in said
     assert "ok   the VMs get 1 SSH key" in said and "!!" not in said
     # The template exists: no SSH at all.
     assert _ssh_calls(root) == ""
@@ -208,7 +208,7 @@ def test_a_wrong_secret_names_the_token(tmp_path: Path, fake_pve: str) -> None:
     assert "!!   Proxmox at 127.0.0.1:" in _said(report) and "refused the token ansible@pve!ansible (401)" in _said(
         report
     )
-    assert "make init found" in "\n".join(_failures(report).values())
+    assert "just init found" in "\n".join(_failures(report).values())
 
 
 def test_nothing_listening_names_the_address(tmp_path: Path, fake_pve: str) -> None:
@@ -246,7 +246,7 @@ def test_without_the_template_root_ssh_is_checked_and_reads_the_node(tmp_path: P
     report = _check(root, fake_pve, "local", NO_TEMPLATE)
     assert report["rc"] == 0, _failures(report)
     said = _said(report)
-    assert "ok   there is no template not-built-yet yet: make deploy builds it at VMID 9999, over root SSH" in said
+    assert "ok   there is no template not-built-yet yet: just deploy builds it at VMID 9999, over root SSH" in said
     assert "ok   root SSH to 127.0.0.1 works, and it is node pve (the template is not built yet)" in said
     assert _hostname_calls(root).splitlines() == ["-s"]
     facts = [r.get("ansible_facts", {}) for name, _, r in _results(report) if name == "Record root SSH's result"]
@@ -268,12 +268,12 @@ def test_a_vmid_taken_where_the_template_would_be_built_is_a_problem(tmp_path: P
     report = _check(root, fake_pve, "local", {"proxmox_template_name": "not-built-yet", "proxmox_template_vmid": 9050})
     assert report["rc"] != 0
     said = _said(report)
-    assert "!!   there is no template not-built-yet yet, and VMID 9050, where make deploy would build it" in said
+    assert "!!   there is no template not-built-yet yet, and VMID 9050, where just deploy would build it" in said
     assert "is taken by just-a-vm on pve:" in said
 
 
 def test_a_template_of_another_name_at_the_template_vmid_is_no_template(tmp_path: Path, fake_pve: str) -> None:
-    # make deploy finds the template by its name: one of another name at
+    # just deploy finds the template by its name: one of another name at
     # proxmox_template_vmid is no template of this project's, and in the way.
     root = tmp_path / "run"
     report = _check(root, fake_pve, "local", {"proxmox_template_name": "the-one-deploy-looks-for"})
@@ -320,7 +320,7 @@ def test_no_key_suggests_one_from_the_ssh_directory(tmp_path: Path, fake_pve: st
 
 
 def test_a_password_alone_is_a_problem(tmp_path: Path, fake_pve: str) -> None:
-    # The console takes it; SSH, which make deploy configures the VMs over, does not.
+    # The console takes it; SSH, which just deploy configures the VMs over, does not.
     root = tmp_path / "run"
     report = _check(root, fake_pve, "ssh", {"vm_ssh_public_keys": [], "vm_password": "a-console-password"})
     assert report["rc"] != 0
@@ -367,7 +367,7 @@ def test_a_plaintext_vault_is_a_problem(tmp_path: Path, fake_pve: str) -> None:
     root = tmp_path / "run"
     report = _check(root, fake_pve, "ssh", vault="vault_proxmox_api_token_secret: x\n")
     assert report["rc"] != 0
-    assert "!!   vault.yml is not encrypted, and every make target refuses it: make vault encrypts it" in _said(report)
+    assert "!!   vault.yml is not encrypted, and every recipe refuses it: just vault encrypts it" in _said(report)
 
 
 def test_the_token_secret_appears_nowhere(tmp_path: Path, fake_pve: str) -> None:
@@ -388,7 +388,7 @@ def test_every_default_fits_and_nothing_is_written(tmp_path: Path, fake_pve: str
     report = _check(root, fake_pve, "ssh", extra={"init_ask": True})
     assert report["rc"] == 0, _failures(report)
     said = _said(report)
-    assert "ok   node pve: it holds the template, and make deploy creates the VMs there" in said
+    assert "ok   node pve: it holds the template, and just deploy creates the VMs there" in said
     assert "ok   storage local-lvm: the token can use it" in said
     assert "ok   bridge vmbr0, the template's: the token has SDN.Use on it" in said
     assert "written" not in said
@@ -416,7 +416,7 @@ def test_the_templates_node_is_written_in_place_of_the_default(tmp_path: Path, f
         assert report["rc"] != 0
         assert (
             "!!   the template is on pve2, but proxmox_node is pve" in said
-            and "(make init at a terminal writes it)" in said
+            and "(just init at a terminal writes it)" in said
         )
         assert "# proxmox_node: pve\n" in _local(root)
 
@@ -479,7 +479,7 @@ def test_without_a_terminal_a_storage_that_does_not_fit_is_reported(tmp_path: Pa
     assert report["rc"] != 0
     said = _said(report)
     assert "!!   storage local-lvm is not on pve: set proxmox_storage in local.yml to one the token can use" in said
-    assert "- local-zfs, tank-vms - or run make init at a terminal" in said
+    assert "- local-zfs, tank-vms - or run just init at a terminal" in said
     assert "\nproxmox_storage:" not in _local(root)
 
 
@@ -521,8 +521,8 @@ def test_a_storage_given_that_will_not_do_fails_and_writes_nothing(tmp_path: Pat
     _pve(fake_pve, "PUT", "fake/storages", node="pve", storages="local-lvm:lvmthin,local:dir")
     _pve(fake_pve, "PUT", "fake/privileges", token="ansible", path="/storage/local", privs="Datastore.Audit")
     root = tmp_path / "run"
-    for storage, said in (("local", "STORAGE=local: the token lacks Datastore.AllocateSpace on /storage/local"),
-                          ("nfs", "STORAGE=nfs: the token cannot see it on pve (local-lvm, local)")):  # fmt: skip
+    for storage, said in (("local", "--storage local: the token lacks Datastore.AllocateSpace on /storage/local"),
+                          ("nfs", "--storage nfs: the token cannot see it on pve (local-lvm, local)")):  # fmt: skip
         report = _check(root, fake_pve, "ssh", extra={"init_given": {"storage": storage}})
         assert report["rc"] != 0
         assert said in "\n".join(_failures(report).values())
@@ -543,13 +543,13 @@ def test_a_bridge_given_while_the_template_exists_is_refused(tmp_path: Path, fak
     root = tmp_path / "run"
     report = _check(root, fake_pve, "ssh", extra={"init_given": {"bridge": "vmbr1", "storage": "local-lvm"}})
     assert report["rc"] != 0
-    assert "BRIDGE=vmbr1: the template ubuntu-24.04-cloudinit is built" in "\n".join(_failures(report).values())
+    assert "--bridge vmbr1: the template ubuntu-24.04-cloudinit is built" in "\n".join(_failures(report).values())
     # Refused before anything was written: the storage given too.
     assert "\nproxmox_storage:" not in _local(root)
 
 
 def test_a_bridge_given_equal_to_the_templates_is_nothing_to_do(tmp_path: Path, fake_pve: str) -> None:
-    # A scripted make init that gave BRIDGE runs again once deploy built the template.
+    # A scripted just init that gave --bridge runs again once deploy built the template.
     root = tmp_path / "run"
     report = _check(root, fake_pve, "ssh", extra={"init_given": {"bridge": "vmbr0"}})
     assert report["rc"] == 0, _failures(report)
@@ -577,7 +577,7 @@ def test_a_storage_given_while_the_node_is_unknown_is_refused(tmp_path: Path, fa
     root = tmp_path / "run"
     report = _check(root, fake_pve, "ssh", NO_TEMPLATE, extra={"init_given": {"storage": "local-lvm"}})
     assert report["rc"] != 0
-    assert "STORAGE=local-lvm cannot be checked yet (the node is not known yet)" in "\n".join(
+    assert "--storage local-lvm cannot be checked yet (the node is not known yet)" in "\n".join(
         _failures(report).values()
     )
     assert "\nproxmox_storage:" not in _local(root)
@@ -694,7 +694,7 @@ def test_a_setting_is_written_only_at_a_terminal_or_as_given():
 
 
 def test_the_playbook_has_no_duplicate_key():
-    # A YAML merge that redefines a key loads with a warning on every make init.
+    # A YAML merge that redefines a key loads with a warning on every just init.
     result = subprocess.run(
         [str(Path(sys.executable).with_name("ansible-playbook")), "--syntax-check", str(PLAYBOOK)],
         env=os.environ | {"ANSIBLE_DUPLICATE_YAML_DICT_KEY": "error"},

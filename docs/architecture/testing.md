@@ -4,9 +4,9 @@ Three tiers. **No test ever talks to a real Proxmox, a real GitHub, a real Tails
 hypervisor** - nor this machine's own `tailscale`, which the unit harness stands in for with one that
 fails the test if it is called.
 
-## 11.1 Unit — `make test TYPE=unit`
+## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 1742 tests. By file:
+pytest over `tests/unit/`: 1777 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -15,7 +15,7 @@ pytest over `tests/unit/`: 1742 tests. By file:
 - **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
-  the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `make init`'s two among them),
+  the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
@@ -39,9 +39,9 @@ pytest over `tests/unit/`: 1742 tests. By file:
 - **The sign-in playbooks** (`test_sign_in_plays.py` 33): `claude_login.yml`, `github_login.yml` and
   `deploy.yml`'s own sign-in steps end to end - a VM whose ssh refuses the connection among VMs that
   sign in, a failed sign-in said in its turn, a failure after a sign-in (Remote Control's start, a
-  clone) told apart from a failed one and raised at the end of `make deploy`, deploy with no terminal,
+  clone) told apart from a failed one and raised at the end of `just deploy`, deploy with no terminal,
   a refused code and `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts; and
-  `login.yml` - `make login` - running the three in deploy's order and by its rules, held to deploy.yml's
+  `login.yml` - `just login` - running the three in deploy's order and by its rules, held to deploy.yml's
   own decisions: no device flow for a VM whose Claude sign-in nobody answered, a VM whose code was refused
   or whose Remote Control failed to start still given its GitHub and Tailscale turns and failed at the
   end, and a report without names.
@@ -55,12 +55,12 @@ pytest over `tests/unit/`: 1742 tests. By file:
   wait that runs out; a page approved after the run, recorded as the role's login by the next configure,
   and a join still under way marked pending - an earlier key's refusal still in Health included - a refused
   key or refused tags leaving nothing; a control server's page trusted however its address ends, and never
-  one on another host; make deploy's sign-in step saying nothing its configure play did again; an expired
+  one on another host; just deploy's sign-in step saying nothing its configure play did again; an expired
   login made by hand left to whoever made it, never signed in again by the web; a page still waiting reported
-  before an expired or refused key, make deploy's two plays included; a Tailscale dpkg does not know only
+  before an expired or refused key, just deploy's two plays included; a Tailscale dpkg does not know only
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
-  that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in `ROLES` and CI.
+  that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in the justfile's `scenario_roles` and CI.
 - **Destroy's release** (`test_release.py` 44): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
   Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
@@ -69,9 +69,9 @@ pytest over `tests/unit/`: 1742 tests. By file:
   device deleted by an API token and by an OAuth client, refused, already gone, and never when the ID the
   VM reports names another device; a VM that could not be reached, with what is left of it named; the
   Claude Code sessions a VM alone holds saved first, byte for byte and 0700/0600 with their `sessions.json`,
-  never a copy make code made still as written nor a transcript without a message, never a link the VM
+  never a copy just code made still as written nor a transcript without a message, never a link the VM
   holds nor a folder not named as Claude Code names one - the file a link points at here left as it was -
-  make code's manifest read where `vscode_workspaces_dir` puts it, the save turned off, the save without
+  just code's manifest read where `vscode_workspaces_dir` puts it, the save turned off, the save without
   the release under `destroy_release: false`, a VM whose sudo refuses saved and then deleted unreleased,
   said so, and one that fails keeping the VM neither released nor deleted, with no transcript in the
   output, the save's tasks held to an allowlist that keeps them off sudo and unreachable-safe; every
@@ -80,8 +80,8 @@ pytest over `tests/unit/`: 1742 tests. By file:
   stopped again however the run then fails - before it deletes anything, or at every deletion; and, run
   against the fake Proxmox API with its listing lagging a start, a VM destroy started given its address,
   and a relative `destroy_sessions_dir` refused before any VM is started.
-- **`make code`** (`test_code_session.py` 192): the Claude terminal's script against stand-ins, once at a
-  pseudo-terminal for Ctrl-C, the window step's own tasks in `make deploy` and out of it with stand-ins
+- **`just code`** (`test_code_session.py` 192): the Claude terminal's script against stand-ins, once at a
+  pseudo-terminal for Ctrl-C, the window step's own tasks in `just deploy` and out of it with stand-ins
   for `which` and `code`, and the allowlist that holds `code.yml` read-only on this machine, followed
   through every import its task files make. The
   session notes' helper with nothing but stand-ins on PATH - the live section rewritten and nothing else,
@@ -92,7 +92,7 @@ pytest over `tests/unit/`: 1742 tests. By file:
   and the workspace each window gets: the notes' folder only where its own folder holds them.
 - **The session handoff** (`test_session_handoff.py` 151): the plan - by origin in every URL form here,
   a GitHub one only on the VM, a renamed clone, a gone worktree's checkout, `githubRepoPaths`, another
-  owner's repository of the same name refused, `SESSION`'s reasons - the transcripts read without their
+  owner's repository of the same name refused, `--session`'s reasons - the transcripts read without their
   content, an open session only at a pid that is still a claude's, the registry whatever the
   transcripts, a manifest of another format read as none, a transcript gone as it is listed, the git
   reads against real checkouts (the origin as configured and without its
@@ -102,7 +102,7 @@ pytest over `tests/unit/`: 1742 tests. By file:
   the four edits byte for byte with the records of requests sent, an assistant's signed thinking and
   another project's memory folder left as they are, the manifest's rule and its write after each copy, a copy moved to another folder on the VM
   never written again and one moved here following, the time a copy is given against the 30-day sweep,
-  check mode, and what of a VM's sessions destroy saves - every one with `all`, make code's copies told
+  check mode, and what of a VM's sessions destroy saves - every one with `all`, just code's copies told
   apart by the manifest, the memory folders, names the VM made up left out, the command that continues
   each, its path quoted - and how: archives with absolute paths, `..`, links, hard links, devices and
   names not asked for unpacked into nothing outside the folder, an archive cut short, GNU tar's exit 2
@@ -112,14 +112,14 @@ pytest over `tests/unit/`: 1742 tests. By file:
   off, a sync whose rsync fails opening the window all the same, syncs
   that leave their one session out - open on the VM, in two folders here, changed on both - saying so
   and never that none is of the VM's repositories,
-  `SESSION`'s fast-forward from a VM branch behind it, on it or not, and each refusal - open on either
+  `--session`'s fast-forward from a VM branch behind it, on it or not, and each refusal - open on either
   machine, changed on both, unpushed, tracking another remote, gone, a fetch that fails, a detached `HEAD`,
   an ignored file in the way, an rsync that fails - leaving the VM's checkout where it was, and no run
   printing the marker the transcripts carry.
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
-- **`make init`'s questions** (`test_init_settings.py` 60, `test_settings_filter.py` 73):
+- **`just init`'s questions** (`test_init_settings.py` 60, `test_settings_filter.py` 73):
   `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
   which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
   a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
@@ -131,12 +131,12 @@ pytest over `tests/unit/`: 1742 tests. By file:
   encryption that fails said, a host named without an `ansible_host` taken as set, a vault line over several
   lines left alone, a vault left plaintext said, and a run that keeps the modules' files refused; the
   Tailscale notice, naming the auth key or the sign-in page, gone once `tailscale_enabled` is set, and
-  `TAILSCALE` writing it; the vault decrypted to the example with the answered lines replaced,
+  `--tailscale` writing it; the vault decrypted to the example with the answered lines replaced,
   `0600`, and the secret in neither the output nor the log, typed or given, with module arguments injected
   and the log at `-vvv`; statically, every write under `init_ask` and every task that renders the secret
   or the vault's text `no_log`. The filter: each kind's accepted answers in their normal form, and what
   each refuses.
-- **`make init`'s checks** (`test_init_check.py` 51): `init_check.yml` against the fake Proxmox on a
+- **`just init`'s checks** (`test_init_check.py` 51): `init_check.yml` against the fake Proxmox on a
   loopback port, in an inventory of the test's own with the project's `defaults.yml`: nothing asked of
   Proxmox while a value is the example's; every check `ok` on a host with its template, on 8.x and on 9.x,
   and no SSH then; a wrong secret, a closed port (an IPv6 address said bracketed), a missing privilege on
@@ -150,8 +150,8 @@ pytest over `tests/unit/`: 1742 tests. By file:
   reaches, or none without SSH; a storage chosen by number among those the token can use, an Audit-only one
   shown and not offered, one offered y or n, Enter leaving it, none written without a terminal, one set
   that is not listed; the template's bridge without `SDN.Use`; a bridge offered before the template; and
-  `STORAGE` and `BRIDGE` given - written even where the default fits, refused when the token cannot use
-  them or they differ from what is set, or while the node is unknown, `BRIDGE` refused beside a template
+  `--storage` and `--bridge` given - written even where the default fits, refused when the token cannot use
+  them or they differ from what is set, or while the node is unknown, `--bridge` refused beside a template
   unless it is the template's own, before anything is written. Also: nothing asked or written while the node
   is unknown, a token that sees no storage told what lists one, an inactive storage, a template without a
   bridge, no host in the `proxmox` group, and the playbook loading with duplicate keys made fatal. Statically: every task a read (a `uri` a GET that saves nothing), every `uri` with the CA
@@ -174,41 +174,45 @@ pytest over `tests/unit/`: 1742 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The Makefile** (`test_makefile.py` 406): `vm-name-check` accepts DNS-like names and refuses
-  whitespace, quotes, shell metacharacters, `$(...)`, an embedded newline and non-ASCII, and
-  `session-name-check` anything but a lowercase session ID, `make code` alone passing it on; a
-  `$(shell ...)` typed as `VM_NAME`, `PROJECT`, `SESSION` or one of `make init`'s values never run, by make
-  reading the Makefile or exporting them to the first recipe, `-n` or not; `deploy
-  TYPE=provision`, `TYPE=ssh-config` and the sign-ins pass `VM_NAME` as one JSON extra-var and run the
-  check before the playbook; every target that takes `VM_NAME` passes the names after it exactly as
-  `VM_NAME`, runs the check on them without make expanding them, and refuses a word that is a make
-  target, one of its own TYPEs, or names given both ways, before anything runs; each `TYPE` of `deploy`
-  and `login` runs the playbook its old target ran, with the same arguments, and every target that runs
-  a playbook is among those checked; a `TYPE` that is not the target's, in two words, on a target that
-  takes none, or written as `$(shell ...)`, is refused unexpanded, and narrows only its own target; `TAGS`
-  means `TYPE=configure` beside names and is refused without them, works with `TYPE=check`, is refused
-  with the other stages and outside the six role names, and `ROLE` likewise for `make test`, while an
-  exported `TYPE`, `TAGS`, `ROLE` or `SKIP`, and a `MOLECULE_ROLES` on the command line, change nothing;
-  every replaced target names its replacement, and is refused among VM names; the
-  `#: TYPE=` lines are the TYPEs each target takes, and `make help` lists them; `make install` syncs the
-  lock into `PYTHON`'s own environment, removing nothing, and reinstalls each locked package whose commands
-  start another Python - one by a link to the environment among them, and never pip's - failing if the
-  reinstall left one, every target runs that environment's tools and
-  refuses a Python that is not a virtualenv, a `BIN` in the environment is ignored, `make help` starts no
-  Python, and `clean` never touches the environment; `tools/env-run`, which every local git hook runs
-  through, does the same, and `make vagrant` hands the Vagrantfile the environment's `ansible-playbook`; `lint`, `test`, `docs`, `vagrant`, `vault` and `init` run what
-  their `TYPE` says; `code` refuses no name and several, and passes `PROJECT` as its own JSON extra-var
-  after `project-name-check` has accepted real repository names and refused `/`, `.`, `..`, quotes,
-  shell syntax, a newline, non-ASCII and more than 100 characters; a run with no terminal turns the
-  desktop steps off, and `make init` asks only at a terminal and never with `PROMPT=no`; `make init`
-  passes the values given as one JSON extra-var after `init-args-check` has refused each outside its
-  characters, ignores the same names exported, and stops at a token secret on its command line, which
-  then reaches no argument from the environment either; every playbook target exports its own `ANSIBLE_LOG_PATH`, named after the target
-  and its `TYPE` (never `VM_NAME`), into a `0700` directory, `LOG_DIR=` turns it off, old run logs are
-  pruned and nothing else is, and `clean TYPE=logs` deletes only run logs; and every target that runs
-  Ansible runs `collections-check` first, which asks `ansible-galaxy --offline` about
-  `requirements.yml` and stops a run, naming `make install`, at collections that are not the pins, or an
-  environment without the tools.
+- **The justfile** (`test_justfile.py` 436): the real `just`, at least the pinned version, run against
+  stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
+  --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
+  nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its
+  help and a literal pattern, the VM recipes share one name pattern, no parameter is named like an
+  assignment, `self` passes on every setting, the justfile is as `just --fmt` leaves it, and its
+  `minimum-version`, `just_pin` and CI's `JUST_VERSION` are one version. Run: the vault and collections
+  checks, each before any playbook, and the rules with `JUST_NO_DEPS` set; a run from another checkout
+  refused, and run from a subdirectory, from the checkout spelt in another case and from a copy inside
+  another work tree; every VM recipe passing its names as one JSON extra-var and none
+  without, refusing a name outside its characters (quotes, `$(...)`, `{{ }}`, a newline, non-ASCII, a
+  leading `-` or `.`) before anything runs, and `deploy`'s question for a stage where the names go,
+  each answer run as if typed and none taken without a terminal, but none for a recipe's name (`test`); `code` one VM, its
+  `--project` after `tools/check project` and its `--session` after `tools/check session`, each as its own
+  JSON extra-var, refused outside its characters and never run as code, and taken by `code` alone; each
+  stage, `--check`, the sign-ins and `--start` running their
+  playbooks, an option before or after the names, and anything a recipe does not take - an unknown option,
+  a stage, a setting, make's `TAGS=` - refused; `--tags` beside names and refused without them, with the
+  stages that have none, and outside the six roles; `just` and `just help` listing every recipe and
+  option; each run logged to its own file, never named after a VM, `LOG_DIR=` off, an `ANSIBLE_LOG_PATH`
+  of your own kept, old logs pruned and nothing else; a run with no terminal turning the desktop steps
+  off, and Ctrl-C that the playbook survives ending the run well, `init`'s first playbook included, on
+  the five recipes whose playbooks prompt, which carry `[continue]` (and the control: without it, just exits
+  130); `vault`, `install` (the lock into
+  `PYTHON`'s environment, `--lock` alone, the stale-script repair, and a Python that is no virtualenv
+  refused by every recipe), and `init` from the questions to the checks - the `.vault_pass` its questions
+  just made found, the values given as one JSON extra-var, a relative secret file where `just` was
+  started, and the token secret refused in every spelling without being said; an exported name changing
+  nothing; `tools/env-run`, which every local hook runs through, and its `--bin`; `vagrant`, `lint` (its
+  parts, each linter's failure failing it, and the hooks skipping what lint runs itself), `test` (lint
+  through `self` only without parts, each part, every role scenario, `--role`, and a failing part ending
+  the run) and `docs`.
+- **The commands named** (`test_commands.py` 5): every `just` command the playbooks, roles, wiki,
+  README, CLAUDE.md, CI and the justfile's own messages tell a person to type, read with a placeholder
+  where Jinja, an f-string or a shell variable splices a value in, is one the justfile takes, over `just
+  --json` - the settings before it the justfile's, its options the recipe's own and their values ones they
+  take, no `NAME=value` after the recipe, no misspelt part, no second recipe chained to it - and no `make`
+  command, no target only the Makefile had and no misspelt recipe is left outside the pages that tell the
+  history.
 - **The wiki** (`test_docs.py` 20): the generated reference sections are up to date, and every setting
   and role default is documented; the site builds strictly from the pages git knows, every heading
   reaches its built page, and every page renders the same on GitHub as on the site, its diagrams
@@ -218,7 +222,7 @@ pytest over `tests/unit/`: 1742 tests. By file:
   cites all exist, a section cited from another page is a link, and the README's quick start matches the
   wiki.
 
-## 11.2 Role scenarios — `make test ROLE=...`
+## 11.2 Role scenarios — `just test role`
 
 One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting driver and platform
 from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
@@ -235,7 +239,7 @@ converge's keepalive values in effect).
 `tailscale`'s scenario runs two VMs - one that never had Tailscale and one where it was installed and
 signed in by hand - with the real package and daemon, log upload off, and the stand-in `tailscale` in front
 of it from `prepare` on. Molecule's `check` stage runs converge in check mode before converge, as every
-VM meets the first `make deploy TYPE=check` after the upgrade. The side effect sets back a hostname changed behind the
+VM meets the first `just deploy --check` after the upgrade. The side effect sets back a hostname changed behind the
 role's back with one `set`, turns Tailscale off twice (removed once, then nothing) and on again, and makes
 `pkgs.tailscale.com` unreachable: the install fails at the package, the repository comes back out, `apt`
 still works, and turning Tailscale off removes what the failed run left. Verify reads the conffile -
@@ -270,12 +274,12 @@ before any request is made, while converge's 2048 reaches the settings call as `
 VMID the fake `/etc/pve/.vmlist` places on a second node and asserts the refusal names that node and
 that no build started.
 
-## 11.3 Playbook scenarios — `make test TYPE=...`
+## 11.3 Playbook scenarios — `just test integration` and `provision`
 
 | Scenario | What it proves |
 |---|---|
-| `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `make deploy TYPE=configure` needs nothing stored locally |
-| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM; then the sign-ins, `make code`'s session handoff with the real `claude` against a stand-in Messages API - copies resumed as the VM's own, `--continue` never picking one up, the records of requests sent left unsent, a saved copy resumed by its path - and `make destroy`'s pause of Remote Control around its save, with the real systemd |
+| `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `just deploy --only configure` needs nothing stored locally |
+| `configure` | `configure.yml` end to end against a container standing in for a provisioned VM; then the sign-ins, `just code`'s session handoff with the real `claude` against a stand-in Messages API - copies resumed as the VM's own, `--continue` never picking one up, the records of requests sent left unsent, a saved copy resumed by its path - and `just destroy`'s pause of Remote Control around its save, with the real systemd |
 
 Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scenario inventory, so the
 actual variable wiring is exercised rather than a copy. Test overrides live in `host_vars/`. The
@@ -291,7 +295,7 @@ that must not be claimed, or that are this project's but once broke a fleet-wide
 | `nonic`, correctly tagged but with its `net0` removed (`delete=net0`) | `net_mac` used to raise and take discovery down for the fleet |
 | `commas`, tagged `ansible,claude-on-proxmox` and kept comma-joined | exercises the `,` separator of `claude_vm_tag_pattern`; every other VM has the `;` form |
 | `netone`, tagged, LAN NIC on `net1` and no `net0` | skipped with `proxmox_nic: net0`, found at `192.0.2.59` with `net1` — discovery and the listing used to hard-code `net0` |
-| `parked`, tagged, **stopped**, VMID **4013** | its agent answers `VM 4013 is not running`, which the unanchored `40[13]` took for a 401 and failed discovery and `make list` |
+| `parked`, tagged, **stopped**, VMID **4013** | its agent answers `VM 4013 is not running`, which the unanchored `40[13]` took for a 401 and failed discovery and `just list` |
 | `legacy`, tagged `claude;ansible` as `main` tagged VMs, stopped | `destroy.yml` must refuse it, and delete it with `proxmox_vm_allow_untagged_delete` |
 
 Every running fixture's agent is waited on, and a check before discovery confirms the fake really
@@ -304,8 +308,8 @@ That unrelated VM on a node that is down is always there (§11.4), so every flee
 Proxmox scenarios runs against a cluster with one unreachable node.
 
 `vm_name` is passed only to converge's import of `provision.yml`, not set in `group_vars`, so
-discovery and the listing each run three times: once without it, as a bare `make deploy TYPE=configure` or
-`make list` does, where the ownership filter is all that stands between them and every running VM;
+discovery and the listing each run three times: once without it, as a bare `just deploy --only configure` or
+`just list` does, where the ownership filter is all that stands between them and every running VM;
 once with it, to prove the narrowing; and once for `netone` with `proxmox_nic: net1`. The fleet-wide
 passes assert that discovery considered exactly `alpha`, `beta`, `commas`, `netone`, `nonic` and
 `parked`, published only `alpha`, `beta` and `commas`, and that the listing shows all six, with a
@@ -320,7 +324,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   refusal;
 - re-running `provision.yml` after shutting `beta` down must exit 0, publish `alpha`, report `beta` as
   stopped and leave it stopped;
-- `discover.yml --check`, as `make deploy TYPE=check` runs it, must still find `alpha`;
+- `discover.yml --check`, as `just deploy --check` runs it, must still find `alpha`;
 - `deploy.yml` for the stopped `beta` must report the template as built, and with
   `proxmox_template_name` pointing at nothing, as about to be built;
 - `destroy.yml` must refuse without confirmation (the prompt's non-interactive default), refuse
@@ -334,7 +338,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 - `ssh_config.yml` fleet-wide, with aliases seeded for a VM that exists nowhere and for the untagged
   `stranger`: with the node that is down still down it prunes nothing and says which VMID holds it;
   with that node switched back on (§11.4) it prunes the vanished one, leaves `stranger` alone and
-  reports it, and refreshes `alpha` with the workspace the destroy fixtures recorded; with `VM_NAME`
+  reports it, and refreshes `alpha` with the workspace the destroy fixtures recorded; with names given
   it prunes nothing.
 - `code.yml` against a stand-in `code` on `PATH` that records its arguments and lists what a file
   says. The VM side is read with Ansible's local connection, against a projects directory made in
@@ -411,7 +415,7 @@ first start - with the stand-in `tailscale` in front of it, so no test reaches a
 Every scenario and both unit harnesses turn `login_desktop` off, so no test opens this machine's
 browser or touches its clipboard.
 
-## 11.5 Vagrant — `make vagrant`
+## 11.5 Vagrant — `just vagrant`
 
 `configure.yml` against a real VirtualBox VM, with `claude_vm_discovery: false`. Not part of CI.
 

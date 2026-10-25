@@ -1,7 +1,7 @@
 """The wiki in docs/ must stay true to the code, whole as a site, and the same on GitHub.
 
 The reference pages are generated from the files they describe (tools/docs.py,
-`make docs`), so a role variable, a setting or a make target cannot change
+`just docs`), so a role variable, a setting or a recipe cannot change
 without its page saying so - as long as somebody runs the generator, which is
 what the first test is for, and as long as every setting is in the files the
 generator reads, which the completeness tests hold.
@@ -123,7 +123,7 @@ def site(tmp_path_factory) -> tuple[Path, subprocess.CompletedProcess]:
     under the config's directory, and a developer's own working documents are no part of the wiki."""
     zensical = Path(sys.executable).parent / "zensical"
     if not zensical.exists():
-        pytest.fail(f"{zensical} is missing: run make init")
+        pytest.fail(f"{zensical} is missing: run just init")
     root = tmp_path_factory.mktemp("wiki")
     shutil.copy(REPO / "zensical.toml", root)
     for page in _files("docs"):
@@ -437,5 +437,5 @@ def test_the_quick_start_matches_the_wiki():
     readme = REPO / "README.md"
     started = DOCS / "getting-started"
     assert fragment(readme, "pveum role add") == fragment(started / "proxmox-access.md", "pveum role add")
-    for marker in ("git clone", "make deploy VM_NAME=alpha", "| File | Contents |"):
+    for marker in ("git clone", "just deploy alpha\n```", "| File | Contents |"):
         assert fragment(readme, marker) == fragment(started / "first-deploy.md", marker), marker

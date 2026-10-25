@@ -13,7 +13,7 @@
 # is down ("unknown"), is not asked and gets "". Any other failure is one VM's
 # own - an agent not up yet, a NIC removed in the UI - and leaves that VM
 # without an address rather than failing the fleet. A refused token is not: it
-# applies to every VM, and swallowing it would make `make deploy TYPE=configure` run
+# applies to every VM, and swallowing it would make `just deploy --only configure` run
 # against zero hosts and exit 0, so it is reported and the run stops.
 #
 # A VM the caller has just started is asked whatever the listing says: the
@@ -31,7 +31,7 @@
     validate_certs: "{{ proxmox_validate_certs }}"
     ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
   register: claude_vm_configs
-  # A GET changes nothing, and `make deploy TYPE=check` needs the answers to find anything
+  # A GET changes nothing, and `just deploy --check` needs the answers to find anything
   # to check, so this runs in check mode too.
   check_mode: false
   no_log: true

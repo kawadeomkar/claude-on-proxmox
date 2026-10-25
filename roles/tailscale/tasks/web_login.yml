@@ -11,7 +11,7 @@
     that: ansible_play_batch | length == 1
     fail_msg: >-
       Tailscale's web login signs in one VM at a time, each with a page of its own, but this batch holds
-      {{ ansible_play_batch | join(', ') }}: make login TYPE=tailscale runs one VM after another.
+      {{ ansible_play_batch | join(', ') }}: just login --only tailscale runs one VM after another.
     quiet: true
 
 # --reset, and every managed setting, as for a join with the key: an earlier

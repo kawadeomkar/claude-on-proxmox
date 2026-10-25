@@ -1,5 +1,5 @@
 ---
-# Entry point for playbooks/tailscale_login.yml (make login TYPE=tailscale, and make
+# Entry point for playbooks/tailscale_login.yml (just login --only tailscale, and just
 # deploy's step): say how the VM is on Tailscale, and sign it in by Tailscale's
 # web login when asked to. In the role, so that it decides from the same
 # vars/main.yml definitions configuration does, and the two cannot disagree.
@@ -36,7 +36,7 @@
     per_host: false
   when: not (tailscale_enabled | bool) or not (tailscale_installed | bool)
 
-# make deploy, for every VM but one whose Claude prompt got Enter: the web
+# just deploy, for every VM but one whose Claude prompt got Enter: the web
 # login waits up to tailscale_login_timeout for a browser, so it can always be
 # left for later. Where a Claude code was entered someone is here, and Enter
 # goes; elsewhere only "y" does. With no terminal pause returns at once with
@@ -72,7 +72,7 @@
 - name: login | Report how the VM is on Tailscale
   ansible.builtin.include_tasks: report.yml
   vars:
-    # This play neither joins with the key nor changes a setting. In make
+    # This play neither joins with the key nor changes a setting. In just
     # deploy the configure play earlier in the run may have, and said so: its
     # registers are still there, and are not this play's to say again.
     tailscale_report_from_login: true

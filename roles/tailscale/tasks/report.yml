@@ -73,10 +73,10 @@
                ~ '). ' ~ tailscale_configure_command ~ ' tries again' ~ tailscale_report_or_browser) }}
     tailscale_report_said:
       check-no-package: >-
-        Tailscale is not installed, and check mode installs nothing; make deploy VM_NAME={{ inventory_hostname }} TYPE=configure
+        Tailscale is not installed, and check mode installs nothing; just deploy {{ inventory_hostname }} --only configure
         installs it.
       check-daemon-down: >-
-        tailscaled is not running, and check mode starts nothing; make deploy VM_NAME={{ inventory_hostname }} TYPE=configure
+        tailscaled is not running, and check mode starts nothing; just deploy {{ inventory_hostname }} --only configure
         starts it.
       not-ours: >-
         {{ ('on Tailscale ' ~ tailscale_report_as ~ '; installed') if tailscale_backend == 'Running'
@@ -109,12 +109,12 @@
         not signed in to Tailscale yet - the page stays valid for 7 days and {{ inventory_hostname }} joins by itself
         once you approve it; {{ tailscale_login_command }} gives a fresh page.
       NeedsLogin: >-
-        {{ 'Tailscale is installed; make deploy signs it in next, in this run.'
+        {{ 'Tailscale is installed; just deploy signs it in next, in this run.'
            if tailscale_sign_in_follows | bool and tailscale_auth_method != 'key'
            else ('Tailscale is installed but not signed in. ' ~ tailscale_configure_command ~ ' joins it with'
                  ~ ' vault_tailscale_auth_key (tailscale_auth_method: key).') if tailscale_auth_method == 'key'
            else 'Tailscale is installed but not signed in. ' ~ tailscale_login_command ~ ' signs it in from your'
-                ~ ' browser' ~ ('; vault_tailscale_auth_key joins it on the next make deploy TYPE=configure.'
+                ~ ' browser' ~ ('; vault_tailscale_auth_key joins it on the next just deploy --only configure.'
                                if tailscale_auth_method == 'auto' else '.') }}
   block:
     - name: report | Say how this VM is on Tailscale

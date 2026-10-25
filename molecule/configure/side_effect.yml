@@ -1,6 +1,6 @@
 ---
 # After converge and idempotence, which left Claude Code and gh both signed out:
-# the two sign-ins make deploy and make login TYPE=claude / make login TYPE=github run,
+# the two sign-ins just deploy and just login --only claude / just login --only github run,
 # against the container, with stand-ins for the two vendors.
 #
 # Claude first. The converge prepared Remote Control and left it stopped, with
@@ -39,7 +39,7 @@
         fail_msg: "{{ side_effect_units.results | map(attribute='stdout') | list }}"
         quiet: true
 
-# make code's session handoff against the Claude Code the converge installed,
+# just code's session handoff against the Claude Code the converge installed,
 # since verify.yml only meets the stand-in: a release that files, records or
 # resumes sessions otherwise fails here first (docs/architecture/lifecycle.md
 # §4.9). One Claude configuration directory stands for the laptop, another for
@@ -49,9 +49,9 @@
 # writes the VM's copies, under the laptop's folder name; then claude in the
 # VM's checkout resumes each. The laptop's checkout and worktree are still
 # there, the hardest case: a copy left bound refuses to resume into them.
-# Last, the copy continued there, saved as make destroy saves one, resumes by
+# Last, the copy continued there, saved as just destroy saves one, resumes by
 # its path from the laptop's checkout, as the save's sessions.json says.
-- name: Resume a session copied as make code copies one, with the real claude
+- name: Resume a session copied as just code copies one, with the real claude
   hosts: claude_vms
   become: true
   become_user: dev
@@ -61,7 +61,7 @@
     side_effect_handoff_worktree: /home/dev/handoff/laptop/demo/.claude/worktrees/fix
     side_effect_handoff_checkout: /home/dev/handoff/vm/demo
     side_effect_handoff_api: /home/dev/handoff/requests.jsonl
-    # Where make destroy would save it on the laptop: <destroy_sessions_dir>/<vm>-<time>/projects/<folder>/<id>.jsonl.
+    # Where just destroy would save it on the laptop: <destroy_sessions_dir>/<vm>-<time>/projects/<folder>/<id>.jsonl.
     side_effect_handoff_saved: >-
       /home/dev/handoff/saved/claude-dev-20261023-150000/projects/{{ side_effect_handoff_folder }}/{{ side_effect_handoff_ids[0] }}.jsonl
     # The folder Claude Code files each directory's sessions under.
@@ -152,7 +152,7 @@
                                   'originalHeadCommit': '0000000000000000000000000000000000000000',
                                   'sessionId': side_effect_handoff_ids[1]}} | to_json(separators=[',', ':']) }}
 
-    - name: Read the sessions as make code reads them on the laptop
+    - name: Read the sessions as just code reads them on the laptop
       claude_sessions_info:
         path: "{{ side_effect_handoff_dir }}/laptop-claude"
         days: 30
@@ -257,10 +257,10 @@
           {{ side_effect_handoff_runs | map(attribute='stderr') | map('truncate', 300) | list }}
         quiet: true
 
-    # Then back, as make destroy saves a session continued on the VM: the
+    # Then back, as just destroy saves a session continued on the VM: the
     # transcript where it lies, outside any Claude configuration directory, and
     # resumed by its path from the laptop's checkout, as its sessions.json says.
-    - name: Make a folder for the saved session, as make destroy does
+    - name: Make a folder for the saved session, as just destroy does
       ansible.builtin.file:
         path: "{{ side_effect_handoff_saved | dirname }}"
         state: directory
@@ -377,17 +377,17 @@
         group: dev
         mode: "0755"
 
-- name: Sign Claude Code in as make login TYPE=claude does, for this one VM
+- name: Sign Claude Code in as just login --only claude does, for this one VM
   ansible.builtin.import_playbook: ../../playbooks/claude_login.yml
   vars:
     vm_name: claude-dev
     claude_code_login_code: fake-code#fake-state
 
-# make destroy's pause around its save of the VM's sessions, against the real
+# just destroy's pause around its save of the VM's sessions, against the real
 # systemd and the Remote Control the sign-in just started: stopped while the
 # sessions are read, then started again as for a VM the save failed on and
 # destroy keeps. verify.yml then finds it running, as the sign-in left it.
-- name: Pause Remote Control as make destroy's save does, and start it again
+- name: Pause Remote Control as just destroy's save does, and start it again
   hosts: claude_vms
   become: true
   tasks:
@@ -424,7 +424,7 @@
         fail_msg: "{{ side_effect_paused.stdout }} then {{ side_effect_resumed.stdout }}"
         quiet: true
 
-# Then gh, which has no token in this scenario: what make login TYPE=github does for
+# Then gh, which has no token in this scenario: what just login --only github does for
 # one VM, against the container.
 # The stand-in gh prints the code and the page, then approves itself after two
 # seconds, so the device flow runs end to end offline: the role waits on gh's
@@ -446,7 +446,7 @@
         that: side_effect_before.results | map(attribute='stat.exists') | list == [false, false]
         quiet: true
 
-- name: Run the device flow as make login TYPE=github does, for this one VM
+- name: Run the device flow as just login --only github does, for this one VM
   ansible.builtin.import_playbook: ../../playbooks/github_login.yml
   vars:
     vm_name: claude-dev

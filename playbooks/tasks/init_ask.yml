@@ -1,5 +1,5 @@
 ---
-# One question of make init (playbooks/init_settings.yml), included once per
+# One question of just init (playbooks/init_settings.yml), included once per
 # question with its inputs in the include's vars, never as facts: a fact would
 # outrank the next include's vars and answer every later question with this one.
 #
@@ -10,8 +10,8 @@
 #                     (filter_plugins/settings.py)
 #   init_ask_choices  for a choice: the items, which the text numbers
 #   init_ask_hidden   true for a secret: not echoed, and every task here no_log
-#   init_ask_given    the value given on make's command line instead, or ""
-#   init_ask_flag     how it was given, for a message: HOST
+#   init_ask_given    the value given on just init's command line instead, or ""
+#   init_ask_flag     how it was given, for a message: --host
 #
 # A given value is held to the same rule as a typed one, and one that breaks it
 # fails the run: nobody may be there to ask. Otherwise the question is asked
@@ -29,7 +29,7 @@
 
 - name: init_ask | Ask for {{ init_ask_label }}
   ansible.builtin.pause:
-    prompt: "{{ init_ask_text | banner('USER INPUT REQUIRED', topic='make init') ~ init_ask_label }}"
+    prompt: "{{ init_ask_text | banner('USER INPUT REQUIRED', topic='just init') ~ init_ask_label }}"
     echo: "{{ not (init_ask_hidden | default(false)) }}"
   register: init_ask_typed
   no_log: "{{ init_ask_hidden | default(false) }}"
@@ -39,7 +39,7 @@
   ansible.builtin.pause:
     prompt: >-
       {{ ['That is not ' ~ (init_ask_kind | init_answer_rule) ~ '.', 'Enter to decide later.']
-         | banner('USER INPUT REQUIRED', topic='make init') ~ init_ask_label }}
+         | banner('USER INPUT REQUIRED', topic='just init') ~ init_ask_label }}
     echo: "{{ not (init_ask_hidden | default(false)) }}"
   register: init_ask_retyped
   no_log: "{{ init_ask_hidden | default(false) }}"
@@ -52,7 +52,7 @@
   ansible.builtin.debug:
     msg: >-
       That is not {{ init_ask_kind | init_answer_rule }} either, so {{ init_ask_label }} is left as it was:
-      the next make init asks again.
+      the next just init asks again.
   when: >-
     init_ask_retyped is not skipped
     and init_ask_retyped.user_input | trim | length > 0

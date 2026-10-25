@@ -1,8 +1,8 @@
-"""Filters for make init: what an answer must look like, and writing one into a settings file's text.
+"""Filters for just init: what an answer must look like, and writing one into a settings file's text.
 
 Each question of playbooks/init_settings.yml has a kind, and an answer of that
 kind is accepted in one normal form or refused. A value typed at a prompt and
-one given on make's command line go through the same filter, so both are held
+one given on just init's command line go through the same filter, so both are held
 to the same rule before they reach a file.
 """
 
@@ -100,7 +100,7 @@ def with_setting(text, key, value, placeholder=""):
     Only a line that leaves the key empty or holds ``placeholder`` - the value
     the example file ships with - is replaced, in place, trailing comment and
     all; a text without the key gets the line at its end. A key set to
-    anything else raises: make init writes only what is not set yet, and the
+    anything else raises: just init writes only what is not set yet, and the
     caller has already said so.
     """
     pattern = re.compile(rf"^{re.escape(key)}:(?P<rest>.*)$", re.MULTILINE)
@@ -112,7 +112,7 @@ def with_setting(text, key, value, placeholder=""):
         except yaml.YAMLError:
             current = object()
         if current not in (None, "", placeholder):
-            raise AnsibleFilterError(f"with_setting: {key} is already set; make init writes only a value not set yet")
+            raise AnsibleFilterError(f"with_setting: {key} is already set; just init writes only a value not set yet")
         written = text[: match.start()] + line + text[match.end() :]
         break
     if written is None:
@@ -124,7 +124,7 @@ def with_setting(text, key, value, placeholder=""):
     except yaml.YAMLError:
         parsed = None
     if not isinstance(parsed, dict) or parsed.get(key) != value:
-        raise AnsibleFilterError(f"with_setting: {key} cannot be written into this file in place: use make vault")
+        raise AnsibleFilterError(f"with_setting: {key} cannot be written into this file in place: use just vault")
     return written
 
 

@@ -41,8 +41,8 @@ per playbook:
 |---|---|
 | `proxmox_api_module_defaults` | the `module_defaults: {group/community.proxmox.proxmox: "{{ proxmox_api_module_defaults }}"}` of every localhost play that calls `community.proxmox` modules — a templated group entry, which ansible-core 2.21 accepts |
 | `proxmox_api_url` | the `/cluster/resources` request in `playbooks/tasks/cluster_vms.yml`; brackets a bare IPv6 host, as proxmoxer does |
-| `proxmox_nic` | discovery and `make list` directly, and the role through `proxmox_vm_nic` |
-| `claude_vm_requested` | `discover.yml`, `list.yml`, `ssh_config.yml` and `code.yml`, for what `VM_NAME` selects |
+| `proxmox_nic` | discovery and `just list` directly, and the role through `proxmox_vm_nic` |
+| `claude_vm_requested` | `discover.yml`, `list.yml`, `ssh_config.yml` and `code.yml`, for what the names given (`vm_name`) select |
 | `vm_projects_dir` | where the code lives on a VM, read by `github_projects` (`github_projects_dir`), `claude_code` (`claude_code_remote_control_dir`) and the alias play; empty means `~/projects` of `vm_user`, resolved on the VM |
 | `claude_ssh_config`, `claude_ssh_config_file`, `claude_ssh_user_config`, `claude_ssh_config_include`, `claude_ssh_host_domain`, `claude_ssh_identity_file`, `claude_ssh_forward_agent`, `claude_ssh_options` | `tasks/ssh_config.yml`, from every caller ([§4.8](lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml)) |
 
@@ -81,7 +81,7 @@ RSA or ECDSA gets the role's actionable "set vm_ssh_public_keys" message rather 
 same pattern: they read the `claude_vm_all` register that `playbooks/tasks/cluster_vms.yml` sets, so
 any play using them must include that first, and is meant to fail loudly if it has not. They are
 defined once so `discover.yml`, `list.yml` and `destroy.yml` cannot drift on what "ours" means or on
-what `VM_NAME` selects.
+what the names given select.
 
 The four facts that *are* facts — `proxmox_vm_exists` and `proxmox_vm_resolved_id`, set in
 `main.yml`, and `proxmox_vm_stopped` and `proxmox_vm_address`, set in `present.yml` — are each set

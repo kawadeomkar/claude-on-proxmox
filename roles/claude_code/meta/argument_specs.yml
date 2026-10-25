@@ -82,9 +82,9 @@ argument_specs:
         type: bool
         default: false
         description:
-          - Set by make deploy's configure step, whose sign-in comes next in the
+          - Set by just deploy's configure step, whose sign-in comes next in the
             same run. The message for a VM with no login then says so, rather
-            than naming make login TYPE=claude.
+            than naming just login --only claude.
 
   # tasks_from: login, which playbooks/claude_login.yml runs on VMs this role
   # has configured.
@@ -159,7 +159,7 @@ argument_specs:
     short_description: Start Remote Control on a VM that was signed in just now
     description:
       - Includes remote_control.yml as root when Remote Control is wanted, as
-        make deploy TYPE=configure would, now that the login it was waiting for exists.
+        just deploy --only configure would, now that the login it was waiting for exists.
     options:
       claude_code_remote_control:
         type: bool
@@ -191,7 +191,7 @@ argument_specs:
     short_description: Stop Remote Control while destroy saves the VM's Claude Code sessions
     description:
       - Stops the path unit that starts Remote Control, then the service, so that the transcript of the session it
-        serves is whole when make destroy saves it. Nothing here fails the run. The release entry point's report says
+        serves is whole when just destroy saves it. Nothing here fails the run. The release entry point's report says
         Remote Control was stopped.
     options:
       claude_code_remote_control_service: *cc_remote_control_service
@@ -199,6 +199,6 @@ argument_specs:
     short_description: Start again what release_pause stopped, on a VM destroy keeps
     description:
       - Starts the service, then the path unit, that release_pause stopped in the same run, for a VM whose sessions
-        could not be saved and that make destroy therefore neither releases nor deletes.
+        could not be saved and that just destroy therefore neither releases nor deletes.
     options:
       claude_code_remote_control_service: *cc_remote_control_service
