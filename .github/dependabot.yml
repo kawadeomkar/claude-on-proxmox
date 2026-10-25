@@ -1,4 +1,7 @@
 ---
+# Each pull request asks for its review through .github/CODEOWNERS, which names
+# the files these updates change: GitHub no longer reads a `reviewers` option
+# here. An ecosystem or directory added below needs its files there too.
 version: 2
 updates:
   # Bumps the pins in pyproject.toml, uv included, and re-locks uv.lock.

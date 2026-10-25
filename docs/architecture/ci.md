@@ -15,7 +15,9 @@
 `uv.lock` pins), making a virtualenv first on `PATH` (`activate-environment`), restoring the uv and Galaxy caches, and
 running `make install`. The Galaxy cache key hashes
 `requirements.yml`, which is only correct because those versions are exact. Third-party actions are
-pinned to commit SHAs, and Dependabot updates them along with the uv lock every week. Locally, `pre-commit` runs the same linters from the
+pinned to commit SHAs, and Dependabot updates them along with the uv lock every week. Each of its pull
+requests asks the repository's owner for a review through `.github/CODEOWNERS`, which names the files
+those updates change; `dependabot.yml` has no `reviewers` option any more. Locally, `pre-commit` runs the same linters from the
 virtualenv.
 
 The weekly run is a canary. Most of what this project installs lives outside the repository - the
