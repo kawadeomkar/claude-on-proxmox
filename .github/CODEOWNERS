@@ -1,0 +1,9 @@
+# A pull request asks the code owners of the files it changes for a review,
+# never its own author. GitHub retired Dependabot's `reviewers` option for this
+# file (August 2025), so these are the files Dependabot's updates change - the
+# uv pins and lock, the workflows and the composite setup action - and each of
+# its pull requests asks the repository's owner to review it.
+/pyproject.toml @kawadeomkar
+/uv.lock @kawadeomkar
+/.github/workflows/ @kawadeomkar
+/.github/actions/ @kawadeomkar
