@@ -58,9 +58,9 @@ playbooks/
 roles/                            one role per concern, each with defaults/, meta/argument_specs.yml, molecule/
   proxmox_template/               qm + virt-customize on the PVE node
   proxmox_vm/                     the Proxmox API role (tasks/{main,present,absent}.yml, vars/main.yml)
-  common/                         OS baseline, user, sudo, keys, sshd hardening
+  common/                         OS baseline, user, sudo, keys, sshd hardening, PATH for ssh commands
   vscode_server/                  sshd forwarding drop-in checked with sshd -T, inotify limit
-  dev_tools/                      Node.js, Docker, gh, uv  (files/*.asc are vendored signing keys)
+  dev_tools/                      Node.js, Docker, gh, uv, Rust  (files/*.asc are vendored signing keys)
   claude_code/                    native or npm install, settings.json, Remote Control and the path unit that
                                   starts it when a login lands; tasks/login.yml, browser_login.yml (the sign-in),
                                   after_login.yml, path_unit_absent.yml; release.yml, and release_pause.yml and

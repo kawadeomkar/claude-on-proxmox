@@ -109,7 +109,12 @@ overwrite a file the user cannot. `ansible.cfg` uses
 if a known host's key changes later. The `vscode_server` drop-in keeps TCP and Unix-socket
 forwarding on, which OpenSSH defaults to anyway; the role then asserts the values sshd runs with,
 so a hardening drop-in of the user's own that turns them off is a named failure, not a VS Code
-window that cannot connect.
+window that cannot connect. `common`'s PATH drop-in puts the VM user's `~/.local/bin` and `~/.cargo/bin`
+first on the PATH of that user's ssh sessions, under `Match User`: what the user installs there can
+shadow a system program in their own sessions, which their own shell profile could already do, while
+root's sessions and sudo's `secure_path` are untouched. Ansible runs its modules with `/usr/bin/python3`
+(`claude_vm_python`), never a Python it finds on that PATH, so `become` never runs one the user put
+there as root.
 
 ## Run logs
 

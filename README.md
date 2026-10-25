@@ -6,9 +6,9 @@ One command, `just deploy alpha`:
 1. **Template** – builds a cloud-init Ubuntu 24.04 template on the Proxmox host, once.
 2. **Provision** – clones it into a VM named `alpha`, with your SSH key; your DHCP server gives it an
    address, and the guest agent reports it back.
-3. **Configure** – installs a baseline, developer tooling (Node.js, Docker, GitHub CLI, uv), Claude Code
-   and Tailscale, and clones every repository of your GitHub account (or the ones you list) into
-   `~/projects`.
+3. **Configure** – installs a baseline, developer tooling (Node.js, Docker, GitHub CLI, uv, and optionally Rust),
+   Claude Code and Tailscale, and clones every repository of your GitHub account (or the ones you list)
+   into `~/projects`.
 4. **Sign in** – to Claude, which starts Remote Control so the session is on your phone too; `gh` to
    GitHub, ready to push; and Tailscale, to reach the VM from anywhere. Each is a page in your browser.
 5. **Open** – the VM in VS Code, with a terminal running Claude.

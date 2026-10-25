@@ -27,6 +27,12 @@ argument_specs:
         description:
           - Install uv and uvx, a pinned release checked against dev_tools_uv_sha256, into dev_tools_uv_install_dir.
             false skips it and removes nothing.
+      dev_tools_install_rust:
+        type: bool
+        default: false
+        description:
+          - Install rustup from Ubuntu's archive and, for dev_tools_user, the dev_tools_rust_toolchain toolchain with
+            dev_tools_rust_components. Off by default; false skips it and removes nothing.
       dev_tools_apt_packages:
         type: list
         elements: str
@@ -72,3 +78,16 @@ argument_specs:
         type: path
         default: /usr/local/bin
         description: Directory uv and uvx are installed into.
+      dev_tools_rust_toolchain:
+        type: str
+        default: stable
+        description:
+          - Toolchain rustup installs for dev_tools_user when it is missing - a channel (stable, beta, nightly) or a
+            version such as 1.90.0 - and makes the default when no default is set. The role never updates it.
+      dev_tools_rust_components:
+        type: list
+        elements: str
+        default: [clippy, rustfmt]
+        description:
+          - Components added to dev_tools_rust_toolchain on top of rustup's minimal profile (rustc, cargo, rust-std),
+            such as rust-src or rust-analyzer. One taken off the list stays installed.

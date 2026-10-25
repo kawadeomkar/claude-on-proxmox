@@ -40,24 +40,56 @@
           - common_verify_tz.stat.lnk_source == '/usr/share/zoneinfo/Europe/Amsterdam'
         quiet: true
 
-    - name: Create ~/.local/bin as an installer would
-      ansible.builtin.file:
-        path: /home/dev/.local/bin
-        state: directory
-        owner: dev
-        group: dev
-        mode: "0755"
-
-    - name: Check PATH snippet is sourced by a login shell
+    # In one login shell that starts before ~/.local/bin exists, as on a VM
+    # whose first tool lands there after the user logged in.
+    - name: Check a tool installed into ~/.local/bin after login runs at once
       ansible.builtin.command:
-        argv: [bash, -lc, 'echo "$PATH"']
-        # let the login shell expand $PATH, not the command module
+        argv:
+          - bash
+          - -lc
+          - >-
+            test ! -e ~/.local/bin
+            && mkdir -p ~/.local/bin
+            && printf '#!/bin/sh\necho installed\n' > ~/.local/bin/common-verify-probe
+            && chmod +x ~/.local/bin/common-verify-probe
+            && common-verify-probe
+        # let the login shell expand ~ and $PATH, not the command module
         expand_argument_vars: false
       become: true
       become_user: dev
       register: common_verify_path
       changed_when: false
-      failed_when: "'/home/dev/.local/bin' not in common_verify_path.stdout"
+      failed_when: common_verify_path.stdout != 'installed'
+
+    # common_ssh_path_dirs: what sshd gives dev's sessions, ssh commands
+    # included, is dev's two directories, then /etc/environment's PATH; root's
+    # sessions get no SetEnv at all.
+    - name: Read the PATH /etc/environment sets
+      ansible.builtin.slurp:
+        src: /etc/environment
+      register: common_verify_environment
+
+    - name: Read what sshd gives dev's and root's sessions
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -T, -C, "user={{ item }},host=127.0.0.1,addr=127.0.0.1"]
+      loop: [dev, root]
+      register: common_verify_sshd_users
+      changed_when: false
+
+    - name: Assert only dev's sessions get the directories
+      vars:
+        common_verify_system_path: >-
+          {{ common_verify_environment.content | b64decode
+             | regex_findall('^PATH="?([^"\n]*)"?', multiline=True) | first }}
+        common_verify_home: "{{ ansible_facts.getent_passwd.dev[4] }}"
+      ansible.builtin.assert:
+        that:
+          - common_verify_sshd_users.results[0].stdout_lines | select('match', '^setenv ') | list
+            == ['setenv PATH=' ~ common_verify_home ~ '/.local/bin:' ~ common_verify_home ~ '/.cargo/bin:' ~ common_verify_system_path]
+          - common_verify_sshd_users.results[1].stdout_lines | select('match', '^setenv ') | list == []
+        fail_msg: >-
+          dev: {{ common_verify_sshd_users.results[0].stdout_lines | select('match', '^setenv ') | list }},
+          root: {{ common_verify_sshd_users.results[1].stdout_lines | select('match', '^setenv ') | list }}
 
     - name: Check sshd accepts the hardening drop-in
       ansible.builtin.command:

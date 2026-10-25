@@ -4,3 +4,18 @@
 # enabled=1), and the VM's udev links it here at boot. qemu-guest-agent's unit
 # is bound to that device, so it can run only where this path exists.
 common_guest_agent_port: /dev/virtio-ports/org.qemu.guest_agent.0
+
+# The rest of the PATH sshd gives common_user's sessions, after
+# common_ssh_path_dirs: the one /etc/environment sets, as it is now, which PAM
+# gives every other session. Ubuntu's own value where that file sets none.
+common_ssh_path_system: >-
+  {{ common_environment.content | default('') | b64decode
+     | regex_findall('^PATH="?([^"\n]*)"?[ \t]*$', multiline=True)
+     | first | default('', true)
+     or '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin' }}
+# SetEnv takes no variables, so the drop-in holds the whole PATH.
+common_ssh_path: >-
+  {{ (common_ssh_path_dirs
+      | map('regex_replace', '^', ansible_facts.getent_passwd[common_user][4] ~ '/')
+      | list + [common_ssh_path_system]) | join(':') }}
+common_ssh_path_dropin: /etc/ssh/sshd_config.d/15-claude-on-proxmox-path.conf

@@ -18,3 +18,6 @@ provisioner:
   env:
     # Resolve roles from this repository's roles/ directory (not Galaxy).
     ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/..
+    # The ssh PATH checks quote what the VM's files hold through the
+    # repository's plain_text filter.
+    ANSIBLE_FILTER_PLUGINS: ${MOLECULE_PROJECT_DIRECTORY}/../../filter_plugins

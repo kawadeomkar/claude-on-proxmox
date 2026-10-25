@@ -105,3 +105,62 @@
         tasks_from: services
       vars:
         common_guest_agent_port: /run/claude-on-proxmox-guest-agent-port
+
+# common_ssh_path_dirs: sshd keeps the first SetEnv that applies, so a drop-in
+# sorted before the role's that gives dev a PATH of its own wins. The role
+# fails naming it, rather than leaving ssh commands without the directories.
+# Then [] removes the role's drop-in and the default writes it back, for
+# verify.yml to find as converge left it.
+- name: Check the PATH sshd gives dev's sessions both ways
+  hosts: all
+  become: true
+  tasks:
+    - name: Give dev a PATH of its own in a drop-in sorted first
+      ansible.builtin.copy:
+        content: "Match User dev\n    SetEnv PATH=/usr/bin:/bin\n"
+        dest: /etc/ssh/sshd_config.d/05-molecule-setenv.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Run the role's ssh PATH tasks over it
+      block:
+        - name: Include the ssh PATH tasks
+          ansible.builtin.include_role:
+            name: common
+            tasks_from: ssh_path
+
+        - name: Fail, since the check should have
+          ansible.builtin.fail:
+            msg: the role accepted a drop-in that gives dev another PATH first
+      rescue:
+        - name: Check the role failed naming the drop-in that won
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name is search('Fail when sshd does not give')
+              - ansible_failed_result.msg is search('/etc/ssh/sshd_config.d/05-molecule-setenv.conf')
+              - ansible_failed_result.msg is search('setenv PATH=/usr/bin:/bin')
+            quiet: true
+      always:
+        - name: Remove that drop-in
+          ansible.builtin.file:
+            path: /etc/ssh/sshd_config.d/05-molecule-setenv.conf
+            state: absent
+
+    - name: Run the role's ssh PATH tasks with no directories
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: ssh_path
+      vars:
+        common_ssh_path_dirs: []
+
+    - name: Look for the role's drop-in
+      ansible.builtin.stat:
+        path: /etc/ssh/sshd_config.d/15-claude-on-proxmox-path.conf
+      register: common_side_effect_path_dropin
+      failed_when: common_side_effect_path_dropin.stat.exists
+
+    - name: Run the role's ssh PATH tasks as converge did
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: ssh_path

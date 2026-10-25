@@ -116,6 +116,12 @@ claude_vm_discovery: true
 
 # Login user created by cloud-init and used for everything afterwards.
 vm_user: dev
+# The Python Ansible runs its modules with on each VM: the system's, which has
+# python3-apt for the apt module. Never discovered: the PATH of the VM user's
+# ssh sessions starts with ~/.local/bin (common_ssh_path_dirs), where
+# `uv python install` puts a python3.13 that discovery would take - under
+# become too, as root.
+claude_vm_python: /usr/bin/python3
 # configure.yml waits for cloud-init before configuring. Disable for hosts
 # that were not built from a cloud image (Vagrant, containers).
 configure_wait_for_cloud_init: true

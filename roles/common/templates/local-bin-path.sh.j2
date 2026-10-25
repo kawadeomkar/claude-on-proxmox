@@ -1,7 +1,9 @@
 # {{ ansible_managed }}
-# Put per-user binaries (Claude Code, pipx, uv tools) on PATH for login shells.
+# Put per-user binaries (Claude Code, pipx, uv tools) on PATH for login shells,
+# whether or not the directory exists yet: a tool installed into it after login
+# runs at once, in that shell and in a Claude Code session already started.
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
-  *) [ -d "$HOME/.local/bin" ] && PATH="$HOME/.local/bin:$PATH" ;;
+  *) PATH="$HOME/.local/bin:$PATH" ;;
 esac
 export PATH

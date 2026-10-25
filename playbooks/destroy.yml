@@ -260,6 +260,8 @@
             ansible_connection: "{{ 'ssh' if claude_vm_release_here | length > 0 else 'local' }}"
             ansible_host: "{{ claude_vm_release_here or claude_vm_name_item }}"
             ansible_user: "{{ vm_user }}"
+            # The VM's own Python over SSH; this machine's for a local one.
+            ansible_python_interpreter: "{{ claude_vm_python if claude_vm_release_here | length > 0 else ansible_playbook_python }}"
             claude_vm_release_address: "{{ claude_vm_release_here }}"
           changed_when: false
           loop: "{{ claude_vm_names }}"

@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+# The PATH of every session sshd starts for {{ common_user }}, ssh commands
+# included, which read no profile. SetEnv takes no variables, so this is the
+# whole PATH: the directories in {{ common_user }}'s home, then the PATH
+# /etc/environment set when this was written.
+Match User {{ common_user }}
+    SetEnv PATH={{ common_ssh_path }}
