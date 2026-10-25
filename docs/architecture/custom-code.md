@@ -220,7 +220,7 @@ checkout of it is the one whose GitHub origin names it, of two the one named aft
 alike, the host not compared: this machine's side, where a clone may reach GitHub by an SSH alias.
 **`github_repository(url)`** is the same of a GitHub origin only, and `""` of any other: the VM's side,
 whose checkouts just deploy cloned from GitHub, so that a local path or another host's repository there
-claims nothing. **`make_code_dir(projects, given)`** is just code's own directory on a VM -
+claims nothing. **`just_code_dir(projects, given)`** is just code's own directory on a VM -
 `vscode_workspaces_dir`, else `.claude-on-proxmox` in the projects directory - for code.yml and for
 destroy's save, which reads the manifest there. **`claude_project_folder(path)`** is Claude Code's folder name for a path - every character
 but an ASCII letter or digit as `-` - refusing one over 200 characters, which Claude Code shortens with

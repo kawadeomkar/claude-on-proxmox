@@ -1456,7 +1456,7 @@
           - verify_task.label == 'Claude'
           - verify_task.type == 'process'
           - verify_task.command == '/bin/bash'
-          - verify_task.args == ['-lc', verify_code_script, 'make-code', verify_task.args[3], verify_task.args[4],
+          - verify_task.args == ['-lc', verify_code_script, 'just-code', verify_task.args[3], verify_task.args[4],
                                  verify_task.args[5], '/etc/systemd/system/claude-remote-control.path', verify_task.args[7],
                                  'https', 'workflow', 'alpha', verify_notes_script, verify_notes, 'claude-remote-control',
                                  'Asia/Kolkata', '']

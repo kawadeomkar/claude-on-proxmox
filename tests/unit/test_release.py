@@ -551,7 +551,7 @@ def test_a_link_the_vm_holds_never_reaches_or_changes_anything_here(released):
     assert not any(ODD in str(path) for path in saved.rglob("*"))
 
 
-def test_the_manifest_is_read_where_vscode_workspaces_dir_puts_make_code_s_directory(released):
+def test_the_manifest_is_read_where_vscode_workspaces_dir_puts_just_code_s_directory(released):
     # Read from the projects directory instead, every copy just code made would be saved as continued.
     root, report, _, _ = released
     saved = _saved(root, "workspaces")

@@ -234,7 +234,7 @@ Control, which writes the transcript of the session it serves as it works, where
 sessions exists only there: Claude Code keeps a session on the disk of the machine it runs on, the only
 copy it can resume, and auto memory is machine-local too, so the deletion would end them.
 `claude_sessions_info` reads the VM's `~/.claude` with every session whatever its age and just code's
-manifest, from just code's own directory as code.yml names it (the `make_code_dir` filter, which follows
+manifest, from just code's own directory as code.yml names it (the `just_code_dir` filter, which follows
 `vscode_workspaces_dir`), and `claude_sessions_saved` keeps each session that holds a message and is not
 a copy still as just code wrote it - this machine has that one - with the folder beside it (subagents,
 tool results, MCP tasks), and every auto memory folder. What the VM reports is the VM's to make up, so
@@ -369,7 +369,7 @@ will stop for them.
 
 `just deploy --only ...` runs one stage's playbook on its own - `template.yml`, `provision.yml`,
 `configure.yml` (`--check --diff` for `--check`, `--tags` for `--tags`) or `ssh_config.yml` - with the
-arguments the old stage targets passed, so each stays the playbook deploy imports and nothing else. The
+arguments the whole deploy gives it and nothing of its own, so each stays the playbook deploy imports. The
 recipe chooses the playbook from an `--only` its pattern has checked.
 
 ---
@@ -483,7 +483,7 @@ outranks a play var, and no task var shares a fact's name.
 from the explorer of the window that shows it, and holds a `Shell` task - `/bin/bash -l` in the folder,
 `folderOpen` too, in the same presentation group as Claude's so the two share a terminal as split panes,
 the shell on the left because it is listed, and so started, first - and the `Claude` task: a `process` task,
-`/bin/bash -lc <script> make-code` and eight arguments (the line without `claude`, the two lines a
+`/bin/bash -lc <script> just-code` and eight arguments (the line without `claude`, the two lines a
 sign-in ends with, the path unit's file, GitHub's line, the git protocol, the scopes, the VM's name),
 the session notes' four (below) and `--session`, read as the last word by a `for` loop,
 `cwd` the folder, `runOptions.runOn:
@@ -671,7 +671,7 @@ Claude Code's own Agent SDK documents. The rules:
 With `--session`, `session_read.yml` refuses, before anything is written: a session not found or in two
 folders, without a message, open here or on the VM; a directory here that is gone, not a checkout, or
 holds uncommitted or untracked changes; a branch that is detached, gone, untracked, tracking another
-remote than `origin`, or not where `origin`'s is; no VM checkout of the repository (`PROJECT` must name
+remote than `origin`, or not where `origin`'s is; no VM checkout of the repository (`--project` must name
 it when given); a VM checkout with changes, on a detached `HEAD` that no branch, remote-tracking branch
 or tag holds (a switch away would leave its commits to garbage collection, and `--quiet` would not say
 so), or with a `claude` of the VM user working in it (from `/proc`). `session_write.yml` then copies,

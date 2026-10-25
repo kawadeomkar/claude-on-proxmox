@@ -59,7 +59,7 @@ environment where `python3` is not it.
 | &emsp;`--check` | Dry-run configuration: ansible-playbook --check --diff (every tagged VM, unless named) |
 | &emsp;`-t, --tags ROLES` | Configure only these roles, comma-separated: beside VM names it means --only configure (just deploy alpha --tags claude_code) |
 | &emsp;`--start` | Start a VM this run would leave stopped (proxmox_vm_start_existing) |
-| &emsp;`<name>` | The VMs; none means claude-on-proxmox-default, or every VM this project created for configure, --check and ssh-config |
+| &emsp;`<name>` | The VMs; none means claude-on-proxmox-default, or every VM this project created for --only configure, --check and --only ssh-config |
 | `just code <name>` | Open a VM in VS Code with a Claude terminal, this machine's recent Claude sessions copied there |
 | &emsp;`--project PROJECT` | Open one project folder on the VM rather than the whole projects directory |
 | &emsp;`--session SESSION` | Continue one of this machine's Claude Code sessions there, by its ID as /resume lists it: its checkout brought to the session's pushed commit, then claude --resume |

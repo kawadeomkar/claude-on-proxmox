@@ -124,6 +124,9 @@ def _usage(name: str, recipe: dict) -> str:
             words.append("<name>")
         elif parameter["kind"] == "singular":
             words.append(f"[<{word}>]" if parameter["default"] is not None else f"<{word}>")
+        elif not parameter["name"].endswith("S"):
+            # A * parameter named in the singular takes one word, and its recipe refuses a second.
+            words.append(f"[<{word}>]")
         else:
             words.append(f"[<{word}>...]" if parameter["kind"] == "star" else f"<{word}>...")
     return " ".join(["just", name, *words])

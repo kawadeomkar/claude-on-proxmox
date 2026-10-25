@@ -13,8 +13,9 @@ them is checked against `just --json`:
 A command split by Jinja (`'just deploy ' ~ name ~ ' --tags x'`), an f-string or a shell variable is read
 with a placeholder for what it splices in.
 
-And no `make <recipe>` is left anywhere but in the pages that tell the history, no `just <target>` of a
-target only the Makefile had, and no misspelt recipe.
+And no `make <recipe>` is left anywhere but in the pages that tell the history - nor a make run, nor a name
+after a make command (`make-code`) - no variable the Makefile read (`TAGS=`) but on a line that says it
+was make's, no `just <target>` of a target only the Makefile had, and no misspelt recipe.
 """
 
 from __future__ import annotations
@@ -163,12 +164,18 @@ def _refused(parameter: dict, value: str) -> str | None:
     return None
 
 
+def _one_word(parameter: dict) -> bool:
+    """A * parameter named in the singular takes one word, and its recipe refuses a second (justfile, header)."""
+    return parameter["kind"] == "star" and not parameter["name"].endswith("S")
+
+
 def _problem(recipe: dict, recipes: dict, words: list[str]) -> str | None:
     longs = {p["long"]: p for p in recipe["parameters"] if p["long"]}
     shorts = {p["short"]: p for p in recipe["parameters"] if p["short"]}
     positional = [p for p in recipe["parameters"] if not p["long"] and not p["short"] and p["name"] != "EXTRA"]
     # init's EXTRA takes every other word, to refuse it: none is taken here.
     takes_extra = any(p["name"] == "EXTRA" for p in recipe["parameters"])
+    took_its_one_word = False
     i = 0
     while i < len(words):
         raw = words[i]
@@ -195,7 +202,7 @@ def _problem(recipe: dict, recipes: dict, words: list[str]) -> str | None:
                 value = raw.rstrip(".,:;")
         elif re.fullmatch(r"[A-Z][A-Z_]*=\S*", word):
             return f"{word} after the recipe: a setting goes before it"
-        elif positional and positional[0]["name"] == "NAMES":
+        elif positional and positional[0]["name"] in ("NAMES", "NAME"):
             # Names are any words, prose's too: deploy refuses a stage's as it runs.
             pass
         elif positional and positional[0]["pattern"]:
@@ -204,12 +211,15 @@ def _problem(recipe: dict, recipes: dict, words: list[str]) -> str | None:
             if refused:
                 return refused
             if re.fullmatch(positional[0]["pattern"][0], word) or _placeholder(word):
-                if positional[0]["kind"] == "singular":
+                if positional[0]["kind"] == "singular" or _one_word(positional[0]):
+                    took_its_one_word = _one_word(positional[0])
                     positional = positional[1:]
             elif word in recipes:
                 return f"{word} is none of {recipe['name']}'s parts, and just refuses it: run one recipe at a time"
             else:
                 return None
+        elif word in recipes and took_its_one_word:
+            return f"{word} is a second word, which {recipe['name']} refuses: run one recipe at a time"
         elif word in recipes and not takes_extra:
             # A recipe that takes no more words takes the next for a recipe to run after it.
             return f"{word} is a second recipe, which just runs after {recipe['name']}: run one recipe at a time"
@@ -285,7 +295,8 @@ def test_the_check_catches_what_it_is_for() -> None:
     ]
     # Chained: a second recipe after one that takes no more words, or among parts.
     assert "second recipe" in _problem(recipes["logs"], recipes, ["clean"])
-    assert "second recipe" in _problem(recipes["docs"], recipes, ["serve", "lint"])
+    assert "second word" in _problem(recipes["docs"], recipes, ["serve", "lint"])
+    assert "second word" in _problem(recipes["help"], recipes, ["deploy", "test"])
     assert "just refuses it" in _problem(recipes["lint"], recipes, ["docs"])
     assert _problem(recipes["logs"], recipes, ["lists", "them"]) is None
     assert _problem(recipes["help"], recipes, ["deploy"]) is None
@@ -297,9 +308,19 @@ def test_the_check_catches_what_it_is_for() -> None:
     assert {"ANSIBLE_ARGS", "LOG_DIR", "PYTHON", "BIN"} <= _settings() and "TYPE" not in _settings()
 
 
+RECIPES = "init|install|vault|deploy|code|login|list|destroy|logs|lint|test|docs|vagrant|clean|help"
 MAKE = re.compile(
-    r"\bmake (init|install|vault|deploy|code|login|list|destroy|logs|lint|test|docs|vagrant|clean|help)\b(?![-\w])"
+    rf"\bmake ({RECIPES})\b(?![-\w])"
+    # A run of make, make's name in a sentence, and a name after a make command: make-code, make_code_dir.
+    rf"|\bmake runs?\b|\bruns? `?make\b|(?<![A-Za-z])make[-_]({RECIPES})(?![a-z])"
 )
+# The variables the Makefile read, which are options now (--tags, --session) or a word (just test unit).
+MAKE_VARIABLE = re.compile(
+    r"(?<![\w$-])(TYPE|VM_NAME|TAGS|ROLE|PROJECT|SESSION|MOLECULE_ROLES|SCENARIO|HOST|TOKEN_USER|TOKEN_NAME"
+    r"|TOKEN_SECRET|TOKEN_SECRET_FILE|GITHUB_USER|STORAGE|BRIDGE|TAILSCALE|PROMPT)="
+)
+# A justfile line that declares a recipe, whose parameters may share make's names.
+SIGNATURE = re.compile(r"^[a-z][a-z-]* .*:$")
 
 
 def test_no_make_command_is_left() -> None:
@@ -314,6 +335,34 @@ def test_no_make_command_is_left() -> None:
             continue
         left += [f"{name}:{number}: {line.strip()}" for number, line in enumerate(lines, 1) if MAKE.search(line)]
     assert left == [], "\n".join(left)
+    assert MAKE.search("the one you run `make` on") and MAKE.search("one log per make run")
+    assert MAKE.search("bash -lc <script> make-code") and MAKE.search("def test_make_deploy_goes_on():")
+    assert not MAKE.search("a make-era worktree") and not MAKE.search("roles_make_it_before_their_roles")
+
+
+def test_no_make_variable_is_left() -> None:
+    # `TAGS=dev_tools` outlived the Makefile on a role's page, and SESSION in --session's refusals: a line
+    # that tells the history says whose spelling it was.
+    left = []
+    for path in _files():
+        name = str(path.relative_to(REPO))
+        if name in HISTORY or name in REFUSED_ON_PURPOSE:
+            continue
+        try:
+            lines = path.read_text().splitlines()
+        except UnicodeDecodeError:
+            continue
+        left += [
+            f"{name}:{number}: {line.strip()}"
+            for number, line in enumerate(lines, 1)
+            if MAKE_VARIABLE.search(line)
+            and not re.search(r"\bmake\b", line)
+            and not (name == "justfile" and SIGNATURE.match(line))
+        ]
+    assert left == [], "\n".join(left)
+    assert MAKE_VARIABLE.search("`TAGS=dev_tools` runs it alone") and MAKE_VARIABLE.search('VM_NAME="a b"')
+    assert not MAKE_VARIABLE.search("just ANSIBLE_ARGS=-vvv deploy") and not MAKE_VARIABLE.search("--host=pve")
+    assert not MAKE_VARIABLE.search("CLAUDE_ON_PROXMOX_TOKEN_SECRET=x")
 
 
 # The targets only an earlier Makefile had, whose names no sentence would put after "just".

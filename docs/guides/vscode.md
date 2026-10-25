@@ -239,7 +239,7 @@ differently.
 ## This machine's Claude sessions on the VM
 
 Every `just code` also copies the Claude Code sessions of the last 30 days on this machine - the one
-you run `make` on - to the VM, the ones of the repositories the VM has checked out, so a conversation
+you run `just` on - to the VM, the ones of the repositories the VM has checked out, so a conversation
 started here can go on there. In `claude` on the VM, `/resume` lists the folder's own conversations;
 press **Ctrl+A** for every project's, and the copies are among them, with their branch and when they
 were last written here - all but those Claude Code leaves out of the picker everywhere: sessions started

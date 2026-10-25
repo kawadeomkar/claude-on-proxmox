@@ -174,7 +174,7 @@ pytest over `tests/unit/`: 1777 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The justfile** (`test_justfile.py` 436): the real `just`, at least the pinned version, run against
+- **The justfile** (`test_justfile.py` 448): the real `just`, at least the pinned version, run against
   stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
   --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
   nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its
@@ -193,7 +193,8 @@ pytest over `tests/unit/`: 1777 tests. By file:
   playbooks, an option before or after the names, and anything a recipe does not take - an unknown option,
   a stage, a setting, make's `TAGS=` - refused; `--tags` beside names and refused without them, with the
   stages that have none, and outside the six roles; `just` and `just help` listing every recipe and
-  option; each run logged to its own file, never named after a VM, `LOG_DIR=` off, an `ANSIBLE_LOG_PATH`
+  option, every word a `*` parameter (never `NAME=''` in the listing) and a second word after a recipe
+  that takes one refused, never run as a recipe; each run logged to its own file, never named after a VM, `LOG_DIR=` off, an `ANSIBLE_LOG_PATH`
   of your own kept, old logs pruned and nothing else; a run with no terminal turning the desktop steps
   off, and Ctrl-C that the playbook survives ending the run well, `init`'s first playbook included, on
   the five recipes whose playbooks prompt, which carry `[continue]` (and the control: without it, just exits
@@ -206,13 +207,14 @@ pytest over `tests/unit/`: 1777 tests. By file:
   parts, each linter's failure failing it, and the hooks skipping what lint runs itself), `test` (lint
   through `self` only without parts, each part, every role scenario, `--role`, and a failing part ending
   the run) and `docs`.
-- **The commands named** (`test_commands.py` 5): every `just` command the playbooks, roles, wiki,
+- **The commands named** (`test_commands.py` 6): every `just` command the playbooks, roles, wiki,
   README, CLAUDE.md, CI and the justfile's own messages tell a person to type, read with a placeholder
   where Jinja, an f-string or a shell variable splices a value in, is one the justfile takes, over `just
   --json` - the settings before it the justfile's, its options the recipe's own and their values ones they
   take, no `NAME=value` after the recipe, no misspelt part, no second recipe chained to it - and no `make`
-  command, no target only the Makefile had and no misspelt recipe is left outside the pages that tell the
-  history.
+  command, nor a name after one of its commands, no target only the Makefile had and no misspelt recipe
+  is left outside the pages that tell the history, nor make's spelling of an option (`TAGS=`) on a line
+  that does not say whose it is.
 - **The wiki** (`test_docs.py` 20): the generated reference sections are up to date, and every setting
   and role default is documented; the site builds strictly from the pages git knows, every heading
   reaches its built page, and every page renders the same on GitHub as on the site, its diagrams

@@ -1,4 +1,4 @@
-"""The stdout callback make runs use: the default's output, with the waits set apart and NEXT STEPS at the end.
+"""The stdout callback just runs use: the default's output, with the waits set apart and NEXT STEPS at the end.
 
 callback_plugins/claude_on_proxmox.py subclasses the default callback. Run for
 real here, against small playbooks on this machine's localhost, with the

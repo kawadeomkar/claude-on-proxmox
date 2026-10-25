@@ -163,7 +163,7 @@ def test_claude_login_prints_a_login_command_that_finds_claude(login, host):
 
 
 @pytest.mark.parametrize("host", sorted(set(LOGINS) | set(OFF_ON_PURPOSE)))
-def test_make_configure_is_named_only_where_it_is_what_starts_remote_control(login, host):
+def test_just_deploy_only_configure_is_named_only_where_it_is_what_starts_remote_control(login, host):
     # After a login fixed by hand no path unit waits, so just deploy --only configure starts
     # Remote Control; anywhere else - signed in already, a sign-in that starts
     # it itself, or Remote Control off on purpose - naming it costs the user a

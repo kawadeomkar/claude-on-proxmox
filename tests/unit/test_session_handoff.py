@@ -184,12 +184,12 @@ def test_a_vm_checkout_names_its_repository_only_by_a_github_origin():
     assert [item["checkout"] for item in _plan([_session()], here)["sessions"]] == [CHECKOUT]
 
 
-def test_make_code_s_own_directory_on_the_vm_is_one_definition_for_code_and_destroy():
-    assert filters.make_code_dir("/home/dev/projects/") == "/home/dev/projects/.claude-on-proxmox"
-    assert filters.make_code_dir("/home/dev/projects", "/home/dev/workspaces/") == "/home/dev/workspaces"
+def test_just_code_s_own_directory_on_the_vm_is_one_definition_for_code_and_destroy():
+    assert filters.just_code_dir("/home/dev/projects/") == "/home/dev/projects/.claude-on-proxmox"
+    assert filters.just_code_dir("/home/dev/projects", "/home/dev/workspaces/") == "/home/dev/workspaces"
     # code.yml and session_save.yml both read it through the filter.
     for path in ("playbooks/code.yml", "playbooks/tasks/session_save.yml"):
-        assert "| make_code_dir(vscode_workspaces_dir | default('', true))" in (REPO / path).read_text(), path
+        assert "| just_code_dir(vscode_workspaces_dir | default('', true))" in (REPO / path).read_text(), path
 
 
 def test_the_sessions_left_out_are_said_list_by_list_by_their_first_eight_characters():
@@ -428,7 +428,7 @@ def test_all_lists_every_session_whatever_its_age(tmp_path):
     assert [item["id"] for item in info.list_sessions(str(root), 0, [], every=True)] == [ID, OTHER]
 
 
-def test_the_manifest_tells_make_code_s_copies_still_as_written_from_the_rest(tmp_path):
+def test_the_manifest_tells_just_code_s_copies_still_as_written_from_the_rest(tmp_path):
     # Copied and untouched; copied and continued; copied, then moved to another folder by /cd; the VM's own.
     third = "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
     own = "d4e5f6a7-8b9c-4d0e-9f1a-2b3c4d5e6f70"
@@ -913,7 +913,7 @@ def test_a_snapshot_without_a_memory_folder_is_copied_as_it_is():
     assert why == "" and edited.startswith(data)
 
 
-def test_a_memory_folder_named_in_a_form_make_code_does_not_know_is_not_copied():
+def test_a_memory_folder_named_in_a_form_just_code_does_not_know_is_not_copied():
     # A Claude Code that words the prompt otherwise: the folder of this machine's would be sent as it is.
     data = transcript().replace(b"persistent file-based memory at", b"memory, kept at")
     edited, why = copy.edit_transcript(data, ID, CHECKOUT, VM_MEMORY, HERE)
