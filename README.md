@@ -16,6 +16,13 @@ One command, `just deploy alpha`:
 Every step is idempotent, so the same command is how you apply a change later. Everything specific to
 your environment - the Proxmox address, tokens - lives in git-ignored files.
 
+Then `just status` shows the whole fleet on one screen: each VM's size and the last day of its CPU, the
+storage, each VM's addresses on the LAN and the tailnet, its sign-ins and Remote Control, its system and
+updates, and the work in its checkouts that is not pushed yet. What needs you comes last, ranked, each with
+the command that fixes it. It only reads, and changes nothing.
+
+![just status: the whole report drawn at once, each value filling in as it is read](.github/assets/just-status.svg)
+
 **Documentation:** [`docs/`](docs/README.md) covers every feature, setting and design decision, and
 reads as a site with search at <https://kawadeomkar.github.io/claude-on-proxmox/>. This page gets you to
 a first deploy.
