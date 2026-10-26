@@ -39,9 +39,10 @@ def _load_text():
 one_line = _load_text().one_line
 
 # The report's sections, in the order they are drawn: vms and storage read only the API, the rest the VMs over SSH
-# too - access for the tailnet column, sign-ins for the roles' reads, system for vm_status_info.
-SECTIONS = ("vms", "storage", "access", "sign-ins", "system")
-SSH_SECTIONS = frozenset({"access", "sign-ins", "system"})
+# too - access for the tailnet column, sign-ins for the roles' reads, system for vm_status_info, work for the
+# checkouts (git_checkouts_info's work).
+SECTIONS = ("vms", "storage", "access", "sign-ins", "system", "work")
+SSH_SECTIONS = frozenset({"access", "sign-ins", "system", "work"})
 # The widest line the report draws, a tested limit.
 WIDTH = 100
 # A field a VM supplies is cut to this; a role's whole line, which carries a command, to the longer.
@@ -606,6 +607,59 @@ def _short_kernel(release):
     return re.sub(r"-(generic|virtual|kvm|lowlatency)$", "", str(release or ""))
 
 
+def status_work_read(result, directory):
+    """What git_checkouts_info's work read of a VM's checkouts, as the "work" part: the directory read, how many
+    checkouts and extra worktrees it holds, and per checkout what is on no remote or not committed. None when it was
+    not read."""
+    if not isinstance(result, dict) or result.get("failed") or result.get("unreachable") or result.get("skipped"):
+        return None
+    checkouts = [c for c in result.get("checkouts") or [] if isinstance(c, dict) and isinstance(c.get("work"), dict)]
+    repositories = []
+    for checkout in checkouts:
+        work = checkout["work"]
+        trees = [t for t in work.get("worktrees") or [] if isinstance(t, dict)]
+        unpushed = [u for u in work.get("unpushed") or [] if isinstance(u, dict)]
+        repositories.append(
+            {
+                "name": checkout.get("name"),
+                "worktrees": len(trees),
+                "commits_on_no_remote": sum(int(u.get("commits") or 0) for u in unpushed),
+                "branches_on_no_remote": len(unpushed),
+                "detached_commits": sum(int(t.get("own_commits") or 0) for t in trees),
+                "dirty_worktrees": sum(1 for t in trees if t.get("dirty")),
+                "stashes": int(work.get("stashes") or 0),
+            }
+        )
+    return {
+        "dir": directory,
+        "checkouts": len(checkouts),
+        "worktrees": sum(max(0, r["worktrees"] - 1) for r in repositories),
+        "repositories": repositories,
+    }
+
+
+def _work_said(repository):
+    """What of one checkout is on no remote or not committed, in words; "" for nothing."""
+    parts = []
+    if repository.get("commits_on_no_remote"):
+        parts.append(
+            f"{_plural(repository['commits_on_no_remote'], 'commit')} on"
+            f" {_plural(repository['branches_on_no_remote'], 'branch', 'branches')}"
+        )
+    if repository.get("detached_commits"):
+        parts.append(f"{_plural(repository['detached_commits'], 'commit')} on a detached HEAD")
+    if repository.get("stashes"):
+        parts.append(_plural(repository["stashes"], "stash", "stashes"))
+    if repository.get("dirty_worktrees"):
+        dirty = repository["dirty_worktrees"]
+        parts.append(
+            "changes not committed"
+            if dirty == 1 and repository.get("worktrees", 1) == 1
+            else f"changes in {_plural(dirty, 'worktree')}"
+        )
+    return f"{repository.get('name')}: {', '.join(parts)}" if parts else ""
+
+
 def status_refusal(said):
     """What kind of refusal ssh's message is, read from the whole of it before anything is cut: "changed" (a host
     key other than the one this machine holds), "unknown" (none held), "timeout", "refused", "denied", or ""."""
@@ -714,6 +768,7 @@ def _ssh_items(vm, settings, live, now):
         ("claude", "Claude Code"),
         ("github", "gh"),
         ("tailscale", "Tailscale"),
+        ("work", "its checkouts"),
     ):
         if unread.get(part):
             items.append(_item("unread", name, name, f"{said} was not read: {unread[part]}"))
@@ -1424,6 +1479,53 @@ def _attention_lines(model):
     return lines
 
 
+def _work_lines(model):
+    vms = _ssh_vms(model)
+    if not vms:
+        return []
+    nw = _name_width(vms)
+    first = max(nw + 3, 10)
+    widths = (24, 48, 9)
+    directory = next(
+        (((vm.get("ssh") or {}).get("work") or {}).get("dir") for vm in vms if (vm.get("ssh") or {}).get("work")),
+        "~/projects",
+    )
+    lines = [
+        [_seg("WORK", "h"), _seg(f"  in {directory}, as of each checkout's last fetch", "d")],
+        [
+            _seg(
+                " " * first
+                + "CHECKED".ljust(widths[0])
+                + "NOT ON ANY REMOTE, OR NOT COMMITTED".ljust(widths[1])
+                + "CLAUDE".ljust(widths[2])
+                + "VS CODE",
+                "d",
+            )
+        ],
+    ]
+    for vm in vms:
+        ssh = vm.get("ssh") or {}
+        work, system = ssh.get("work"), ssh.get("system")
+        row = [_seg(f" {vm['name'][:nw]:<{first - 1}}")]
+        if not work:
+            text, style = _not_read_cell(vm)
+            lines.append(row + [_seg(text, style)])
+            continue
+        checked = _plural(work.get("checkouts") or 0, "checkout")
+        if work.get("worktrees"):
+            checked += f", {_plural(work['worktrees'], 'tree')}"
+        said = " · ".join(s for s in (_work_said(r) for r in work.get("repositories") or []) if s) or "nothing"
+        wrapped = textwrap.wrap(said, widths[1] - 2, break_on_hyphens=False) or [""]
+        claude = system.get("claude") if system else None
+        windows = system.get("vscode_windows") if system else None
+        row += _cell(checked, widths[0]) + _cell(wrapped[0], widths[1], "y" if said != "nothing" else "")
+        row += _cell(str(claude) if claude else "—", widths[2])
+        row.append(_seg(_plural(windows, "window") if windows else "—"))
+        lines.append(row)
+        lines += [[_seg(" " * (first + widths[0]) + rest, "y")] for rest in wrapped[1:]]
+    return lines
+
+
 def _footer(model, reading):
     counts = model["counts"]
     code = model["exit"]
@@ -1455,6 +1557,7 @@ SECTION_LINES = {
     "access": _access_lines,
     "sign-ins": _signins_lines,
     "system": _system_lines,
+    "work": _work_lines,
 }
 
 
@@ -1501,6 +1604,7 @@ class FilterModule:
             "status_vm_api": status_vm_api,
             "status_system_read": status_system_read,
             "status_refusal": status_refusal,
+            "status_work_read": status_work_read,
             "status_report": status_report,
             "status_text": status_text,
         }

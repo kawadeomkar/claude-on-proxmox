@@ -473,7 +473,7 @@ login SIGN_IN='' *NAMES:
 # just list is the same recipe, by the name it had before.
 [arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output, with the same exit code')]
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='Only these VMs; none reads every VM this project created')]
-[arg('ONLY', long='only', pattern='((vms|storage|access|sign-ins|system)(,(vms|storage|access|sign-ins|system))*)?', help='Only these sections, comma-separated: vms storage access sign-ins system; vms,storage reads only the Proxmox API, never a VM')]
+[arg('ONLY', long='only', pattern='((vms|storage|access|sign-ins|system|work)(,(vms|storage|access|sign-ins|system|work))*)?', help='Only these sections, comma-separated: vms storage access sign-ins system work; vms,storage reads only the Proxmox API, never a VM')]
 [doc('What every VM this project created is doing, and what needs doing next, read without changing anything')]
 [group('use')]
 [no-exit-message]

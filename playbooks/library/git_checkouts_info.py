@@ -14,7 +14,9 @@ description:
   - Reports, for each directory asked about, whether it is in a git checkout, the checkout's top level and its
     C(origin) URL as configured; with O(status), whether its tree is clean, what HEAD is and whether a ref
     holds its commit; with O(branch), that branch's commit and its upstream's; with O(target), what in the
-    tree a move to that commit would overwrite; with O(busy), the claude processes working inside it.
+    tree a move to that commit would overwrite; with O(busy), the claude processes working inside it; with
+    O(work), what of its work is on no remote or not committed - its worktrees, each dirty or not and the commits
+    only a detached HEAD holds, its branches' commits on no remote, and its stashes - as of its last fetch.
   - Every git command runs as C(git --no-optional-locks), so none refreshes the index under C(index.lock), which
     could collide with a git, an editor or a Claude working in the same checkout. Nothing is changed.
   - Paths and the branch are taken as written: no C(~) or C($VAR) in them is expanded, since a directory a
@@ -45,6 +47,14 @@ options:
     type: str
   busy:
     description: Also report the pids of this user's claude processes whose directory is inside each checkout (Linux).
+    type: bool
+    default: false
+  work:
+    description:
+      - Also report, for each checkout, its worktrees (C(git worktree list), wherever they are), whether each holds
+        changes not committed, untracked files included, and the commits only a detached HEAD holds; each local
+        branch's commits on no remote; and how many stashes it keeps. Nothing is fetched first, so "no remote" is
+        as of the checkout's last fetch.
     type: bool
     default: false
 author:
@@ -120,6 +130,12 @@ checkouts:
       description: With O(busy), the pids of this user's claude processes working inside it.
       type: list
       elements: int
+    work:
+      description:
+        - With O(work), C(worktrees) - each C(path), C(branch) ("" when detached), C(dirty) (null when it could not be
+          read) and C(own_commits), the commits only its detached HEAD holds - C(unpushed), each local branch with
+          commits on no remote and how many, and C(stashes).
+      type: dict
 """
 
 import os
@@ -249,11 +265,58 @@ def _untracked_under(path, name, removed):
     return False
 
 
+def worktrees(module, toplevel):
+    """The checkout's worktrees as git lists them, its main one first: path, branch and whether HEAD is detached."""
+    out = _git(module, toplevel, "worktree", "list", "--porcelain")
+    trees = []
+    for block in (out or "").split("\n\n"):
+        lines = block.splitlines()
+        if not lines or not lines[0].startswith("worktree ") or "bare" in lines:
+            continue
+        branch = next(
+            (line[len("branch refs/heads/") :] for line in lines if line.startswith("branch refs/heads/")), ""
+        )
+        trees.append({"path": lines[0][len("worktree ") :], "branch": branch, "detached": "detached" in lines})
+    return trees
+
+
+def work(module, toplevel):
+    """What of a checkout's work is on no remote or not committed, as of its last fetch: nothing here fetches."""
+    trees = []
+    for tree in worktrees(module, toplevel):
+        status = _git(
+            module, tree["path"], "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none"
+        )
+        own = 0
+        if tree["detached"]:
+            # Commits HEAD holds that no branch and no remote-tracking branch does: a switch would leave them.
+            own = int(
+                _git(module, tree["path"], "rev-list", "--count", "HEAD", "--not", "--remotes", "--branches") or 0
+            )
+        trees.append(
+            {
+                "path": tree["path"],
+                "branch": tree["branch"],
+                "dirty": None if status is None else status != "",
+                "own_commits": own,
+            }
+        )
+    unpushed = []
+    for branch in (
+        _git(module, toplevel, "for-each-ref", "--format=%(refname:short)", "refs/heads") or ""
+    ).splitlines():
+        count = _git(module, toplevel, "rev-list", "--count", f"refs/heads/{branch}", "--not", "--remotes")
+        if count and int(count) > 0:
+            unpushed.append({"branch": branch, "commits": int(count)})
+    stashes = len((_git(module, toplevel, "stash", "list") or "").splitlines())
+    return {"worktrees": trees, "unpushed": unpushed, "stashes": stashes}
+
+
 def _inside(path, top):
     return path == top or path.startswith(top.rstrip("/") + "/")
 
 
-def read(module, path, status, branch, processes, target=""):
+def read(module, path, status, branch, processes, target="", with_work=False):
     item = {"path": path, "name": os.path.basename(path.rstrip("/")), "exists": os.path.isdir(path)}
     toplevel = _git(module, path, "rev-parse", "--show-toplevel") if item["exists"] else None
     item.update(git=toplevel is not None, toplevel=toplevel or "")
@@ -294,6 +357,8 @@ def read(module, path, status, branch, processes, target=""):
         if found is None:
             module.fail_json(msg=f"git could not compare HEAD with {target} in {path}.")
         item["overwrites"] = found
+    if with_work and toplevel:
+        item["work"] = work(module, toplevel)
     if processes is not None:
         top = os.path.realpath(toplevel) if toplevel else ""
         item["busy"] = sorted(pid for pid, cwd in processes if top and _inside(cwd, top))
@@ -310,6 +375,7 @@ def main():
             "branch": {"type": "str"},
             "target": {"type": "str"},
             "busy": {"type": "bool", "default": False},
+            "work": {"type": "bool", "default": False},
         },
         mutually_exclusive=[["paths", "under"]],
         supports_check_mode=True,
@@ -333,7 +399,7 @@ def main():
         except OSError:
             names = []
         paths = [os.path.join(params["under"], name) for name in names]
-    found = [read(module, path, params["status"], branch, processes, target) for path in paths]
+    found = [read(module, path, params["status"], branch, processes, target, params["work"]) for path in paths]
     if params["under"]:
         # A checkout's own top level, compared resolved: git names it by its real path.
         found = [

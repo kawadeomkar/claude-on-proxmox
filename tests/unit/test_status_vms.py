@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -179,6 +180,7 @@ CASES = {
         "gh": {},
         "ts": {},
         "tree": {},
+        "projects": True,
     },
     "down": {
         "claude": "2.1.309",
@@ -247,6 +249,17 @@ def _vms(root: Path, cases: dict) -> dict:
         for file_name, content in case["ts"].items():
             (home / ".tailscale-fake" / file_name).write_text(content)
         _tree(home / "system", **case["tree"])
+        if case.get("projects"):
+            # A checkout of the VM user's with a commit on no remote: WORK's to say, never to change.
+            from test_status_work import GIT_ENV
+
+            checkout = home / "projects" / "proj"
+            checkout.mkdir(parents=True)
+            env = {**os.environ, **GIT_ENV}
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=checkout, check=True, env=env)
+            (checkout / "README").write_text("proj\n")
+            subprocess.run(["git", "add", "README"], cwd=checkout, check=True, env=env)
+            subprocess.run(["git", "commit", "-q", "-m", "start"], cwd=checkout, check=True, env=env)
         hosts[name] = {
             "ansible_connection": "local",
             "ansible_python_interpreter": str(home / "python"),
@@ -320,8 +333,14 @@ def test_a_vm_signed_in_to_everything_has_nothing_to_do(read) -> None:
     assert ssh["tailscale"]["case"] == "Running"
     assert ssh["system"]["os"] == "Ubuntu 24.04.3 LTS" and ssh["system"]["load"] == [0.42, 0.31, 0.2]
     assert _items(model, "ready") == []
-    # And no token, no login link, no key reached the report.
-    assert "ghp_" not in json.dumps(model) and "never-read" not in json.dumps(model)
+    # And no token, no login link, no key reached the report, nor anything the run said: every module's arguments
+    # are in its result (ansible_inject_invocation), so a token rendered outside no_log would be here.
+    report = read[0]
+    for case in CASES.values():
+        token = case["gh"].get("fake-token")
+        if token:
+            assert token not in json.dumps(model) and token not in json.dumps(report), token
+    assert "never-read" not in json.dumps(model) and "never-read" not in json.dumps(report)
 
 
 def test_a_vm_just_made_is_told_its_three_sign_ins(read) -> None:
@@ -337,6 +356,12 @@ def test_a_vm_just_made_is_told_its_three_sign_ins(read) -> None:
     text = S.status_text(model)
     row = next(line for line in text.splitlines() if line.startswith(" fresh") and "not signed in" in line)
     assert "waits for the login" in row and "needs a login" in row
+    # Its checkout's commit is on no remote: shown in WORK, and never counted.
+    work = _by(model, "fresh")["ssh"]["work"]
+    assert work["checkouts"] == 1 and work["repositories"][0]["commits_on_no_remote"] == 1
+    row = next(line for line in text.splitlines() if line.startswith(" fresh") and "1 checkout" in line)
+    assert "proj: 1 commit on 1 branch" in row
+    assert all("proj" not in it["text"] for it in model["attention"])
 
 
 def test_what_is_down_and_what_was_not_checked_are_said_for_what_they_are(read) -> None:

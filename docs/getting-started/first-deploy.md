@@ -207,8 +207,14 @@ SYSTEM    OS              KERNEL                     LOAD 1 / 15 MIN   UPDATES
  alpha    Ubuntu 24.04.3  6.8.0-87                   0.42 / 0.20       none
  beta     Ubuntu 24.04.3  6.8.0-87                   0.02 / 0.00       none
 
+WORK  in ~/projects, as of each checkout's last fetch
+          CHECKED                 NOT ON ANY REMOTE, OR NOT COMMITTED             CLAUDE   VS CODE
+ alpha    2 checkouts, 1 tree     claude-on-proxmox: 2 commits on 1 branch,       1        1 window
+                                  changes in 1 worktree
+ beta     1 checkout              nothing                                         —        —
+
 read in 7.9 s · proxmox 0.9 s · vms 3 of 3 6.1 s
-exit 0 · nothing is wrong · sections: vms storage access sign-ins system · --only · --json
+exit 0 · nothing is wrong · sections: vms storage access sign-ins system work · --only · --json
 ```
 
 It exits 0 when nothing is wrong, 1 for a problem, 2 when something could not be read, so a script can

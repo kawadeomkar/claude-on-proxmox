@@ -194,8 +194,13 @@ commit and the remote, branch and commit it tracks, after `git check-ref-format 
 of a leading `-`, since the name comes from a transcript; with `target`, a full commit ID, the paths git
 does not track that a move of the tree to it would replace (`overwrites`: what it adds where something
 is, or a file where it has a folder, unless `HEAD` tracks that and the move removes it); with `busy`,
-the pids from `/proc` of this user's `claude` processes working inside. Every command is
-`git --no-optional-locks`, which takes no index lock.
+the pids from `/proc` of this user's `claude` processes working inside; with `work`, for `just status`, what
+of the checkout's work is on no remote or not committed: its worktrees (`git worktree list --porcelain`,
+wherever they are, the Claude worktrees under `.claude/worktrees/` among them), each dirty or not,
+untracked files included, and the commits only a detached `HEAD` holds (`rev-list --count HEAD --not
+--remotes --branches`); each local branch's commits on no remote (`rev-list --count <branch> --not
+--remotes`), which covers a branch with no upstream; and its stashes. Nothing is fetched, so "no remote" is
+as of the checkout's last fetch. Every command is `git --no-optional-locks`, which takes no index lock.
 
 **`claude_sessions_copy`** — each session's copy on the VM, from the mirror rsync left: its complete
 lines with the four edits and nothing else (the memory folder in `prompt_snapshot` attachments, the
@@ -269,7 +274,10 @@ needs. **`status_vm_api(results, now)`** — one VM's own GETs as the report kee
 of CPU in twelve buckets (Proxmox VE 9 keeps a point a minute, 8 one every twenty), the last hour's CPU
 pressure (9 only), the root filesystem from the agent, the OS, and the settings waiting for a restart.
 **`status_system_read(result)`** — what `vm_status_info` read of a VM, its fields alone, or none when it
-was not read. **`status_refusal(message)`** — which refusal ssh's message is, `changed` (a host key other
+was not read. **`status_work_read(result, directory)`** — what `git_checkouts_info`'s `work` read of a VM's
+projects directory, per checkout: its worktrees, its commits and branches on no remote, the commits on a
+detached `HEAD`, the worktrees with changes not committed and its stashes; WORK says them per checkout and
+never "clean", since a checkout outside the directory, and not a worktree of one in it, is not seen. **`status_refusal(message)`** — which refusal ssh's message is, `changed` (a host key other
 than the one held here), `unknown` (none held), `timeout`, `refused` or `denied`, read from the whole
 message before it is cut: ssh's banner for a changed key runs past the 120 characters a value keeps.
 **`status_clean(value)`** — every string in a value `one_line` (§7.4), the roles' lines to 400
@@ -311,4 +319,5 @@ driven in process with a stand-in terminal, and the playbook against the fake Pr
 `tests/unit/test_status_live.py` (the real playbook at a pseudo-terminal: a window it fits, a short one, a
 narrow one, a resize each way, Ctrl-C, a dumb terminal, a pipe, and a warning between frames), and
 `tests/unit/test_status_vms.py` (the module on fixture trees, the reads inside stand-in VMs and that they
-change nothing there, and the host key's options and refusals).
+change nothing there, and the host key's options and refusals), and `tests/unit/test_status_work.py`
+(`git_checkouts_info`'s `work` over real throwaway repositories, which it leaves as they were).

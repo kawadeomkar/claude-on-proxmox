@@ -6,16 +6,18 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 1872 tests. By file:
+pytest over `tests/unit/`: 1877 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
   sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
-- **`just status`** (`test_status.py` 45, `test_status_live.py` 9, `test_status_vms.py` 13): the report's filters on canned
+- **`just status`** (`test_status.py` 47, `test_status_live.py` 9, `test_status_vms.py` 13,
+  `test_status_work.py` 3): the report's filters on canned
   reads - every value one line of plain text over a corpus of hostile ones, the drift between a VM and
   `local.yml`, the twelve buckets of a day at Proxmox VE 9's resolution and 8's, the ranking and exit code,
-  every line within 100 columns; `status.yml` against the fake Proxmox, on VE 9 and 8, with a refused
+  every line within 100 columns, of a report holding every state at once, whose every `just` command the
+  justfile accepts (`test_commands.py`'s own check); `status.yml` against the fake Proxmox, on VE 9 and 8, with a refused
   token, an API that does not answer, a name that matches nothing, and settings that differ, with every
   request it made a GET; statically, every task it runs and every file and entry point it reaches a read
   or the report's own write. Its callback, driven in process at a stand-in terminal, and the real playbook
@@ -28,7 +30,10 @@ pytest over `tests/unit/`: 1872 tests. By file:
   fakes' logs holding only reads; the host key, `status_ssh_args` held to `ansible.cfg`'s, the options as
   they reach a stand-in `ssh` and as `ssh -G` resolves them, and ssh's two host-key refusals each said for
   what it is. Every status run in a test gets that refusing stand-in `ssh` (`status_root`), so none reaches
-  a VM or this machine's ssh.
+  a VM or this machine's ssh. WORK (`test_status_work.py`): `git_checkouts_info`'s `work` over real throwaway
+  repositories - a worktree under `.claude/worktrees/` and one outside the projects directory, a branch with
+  no upstream, a detached HEAD with commits of its own, a stash, untracked files - every file of them, `.git`
+  included, as it was after.
 - **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in

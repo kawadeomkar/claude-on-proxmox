@@ -75,6 +75,11 @@ in as each value is read; piped, or in `just logs`, only the finished report app
   and Tailscale.
 - **SYSTEM** - the OS, the kernel running and a newer one waiting for a reboot, the load, and the
   upgrades waiting, security ones counted.
+- **WORK** - in the projects directory (`vm_projects_dir`, else `~/projects`), how many checkouts and
+  extra worktrees, and what of each is on no remote or not committed - commits on branches no remote has,
+  commits on a detached HEAD, stashes, changes in a worktree - as of each checkout's last fetch, with the
+  claude processes and VS Code windows open. It is shown, never counted: a branch kept local is often on
+  purpose.
 - **ATTENTION** - what needs you, most pressing first, each with the command that deals with it: what
   could not be read (Proxmox did not answer or refused the token, a name that matches no VM, a node that
   is down, a running VM whose agent gives no address, a VM that did not answer SSH or whose host key this
@@ -88,8 +93,8 @@ renamed since is "not read", and status never takes its new key - `just deploy <
 does. It never runs `claude` there, so a stored login shows as signed in, without its plan.
 
 It exits 0 when nothing is wrong (things to do included), 1 for a problem, 2 when something could not be
-read, and 3 when the run itself failed. `--only` takes `vms`, `storage`, `access`, `sign-ins` and `system`,
-comma-separated; `--only vms,storage` asks Proxmox alone and never connects to a VM, the quick form for a
+read, and 3 when the run itself failed. `--only` takes `vms`, `storage`, `access`, `sign-ins`, `system` and
+`work`, comma-separated; `--only vms,storage` asks Proxmox alone and never connects to a VM, the quick form for a
 scheduled check. `--json` prints the report as JSON, with the same values the text shows, for a script.
 `just list` is the same command by its old name.
 

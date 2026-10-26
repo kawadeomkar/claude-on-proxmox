@@ -307,8 +307,9 @@ file and role entry point it reaches, to a fixed set:
   they include followed;
 - `command` with one of a fixed list of argvs, the roles' reads (`gh auth status`, `tailscale status
   --json`, ...), and `systemd_service` with no state, which only reads a unit;
-- `vm_status_info`, `ping`, `getent`, `stat`, `slurp`, `set_fact`, `assert`, `add_host`, and the roles'
-  `debug` and `set_stats`, which status's callback does not show;
+- `vm_status_info`, `git_checkouts_info` with `under` and `work` alone, `ping`, `getent`, `stat`, `slurp`,
+  `set_fact`, `assert`, `add_host`, and the roles' `debug` and `set_stats`, which status's callback does not
+  show;
 - the report's `file` and `copy`, into `status_report_file`.
 
 The recipe runs it as a dry run, which guards Ansible's other modules; `uri` never runs in check mode,
@@ -334,11 +335,14 @@ delegated to this machine, so the VMs are read at once: `status/current`, a day 
 and from a running VM's agent `get-osinfo` and `get-fsinfo`. `proxmox_vm`'s `settings_drift` compares
 the VM's config with what `just deploy` would send (`proxmox_vm_drift`,
 [§7.1](custom-code.md#71-filter_pluginsproxmoxpy)); it needs no connection. Then, where a section asked
-for needs it (`access`, `sign-ins`, `system`) and the VM runs and has an address, over SSH: one `ping`
+for needs it (`access`, `sign-ins`, `system`, `work`) and the VM runs and has an address, over SSH: one `ping`
 with `ignore_unreachable` first, whose refusal is said for what it is - no host key held here, a host key
 changed, a timeout, a refusal - and leaves the VM there; then each read in a block of its own whose rescue
 records it as not read: `vm_status_info` (the OS, the kernels, a reboot waiting, the load, apt's
-simulation, the user's claude processes and VS Code windows), and the `status` entry points of
+simulation, the user's claude processes and VS Code windows), `git_checkouts_info` with `work` over the
+projects directory `just code` resolves, as the VM user (what of each checkout is on no remote or not
+committed, as of its last fetch, [§7.6](custom-code.md#76-filter_pluginssessionspy-and-playbookslibrary--the-session-handoff)),
+and the `status` entry points of
 `claude_code`, `github_projects` and `tailscale` ([§5.5](roles.md#55-claude_code--install-claude-code),
 [§5.6](roles.md#56-github_projects--sign-in-to-github-clone-an-accounts-repositories),
 [§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)), the roles' own reads and reports, so a line
@@ -374,7 +378,8 @@ code is the highest found:
 | to do | The VM's settings differ from `local.yml`'s, with the `proxmox_vm_force_update` run that sends them and what else it does. A change waiting for a restart. A first deploy that did not finish (the unfinished tag). A VM with no SSH alias. A root disk or a storage 80% full. A reboot waiting, with the claude processes and VS Code windows open. Security upgrades waiting. Claude Code not signed in or not installed. Remote Control stopped or not set up. The GitHub and Tailscale roles' own lines, wherever NEXT STEPS would give them |
 
 Stopped VMs, CPU pressure over a tenth of the last hour, other VMs, a thin pool provisioned beyond its
-size, the template's age, Remote Control off on purpose and a gh left alone are shown and not counted. A run that failed or wrote no report exits 3.
+size, the template's age, Remote Control off on purpose, a gh left alone and work on no remote or not
+committed are shown and not counted: a branch kept local is often on purpose, and WORK never says "clean". A run that failed or wrote no report exits 3.
 
 **Live at a terminal.** The recipe chooses its own stdout callback,
 `callback_plugins/claude_on_proxmox_status.py`
@@ -392,8 +397,8 @@ its own and reads the bytes back through a small terminal (`tests/unit/vt.py`).
 `tools/run-logged` with a report path of its own run in `STATUS_DIR` (`.cache/status/`, git-ignored and
 refused by `tests/check_no_local_files.sh`, since the report holds addresses), then `tools/status-exit`,
 which prints the report under `--json`, removes it and exits with its code. `--only` takes `vms`,
-`storage`, `access`, `sign-ins` and `system`; `--only vms,storage` reads the API alone and never opens
-SSH. `just list` is the same recipe by the name it had before.
+`storage`, `access`, `sign-ins`, `system` and `work`; `--only vms,storage` reads the API alone and never
+opens SSH. `just list` is the same recipe by the name it had before.
 
 ## 4.7 `deploy.yml`
 

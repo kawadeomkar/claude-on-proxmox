@@ -42,7 +42,7 @@ just deploy alpha --only configure   # one stage of it: template, provision, con
 just deploy alpha --tags claude_code # re-run one role, e.g. to push an API key (--tags beside names means --only configure)
 just destroy alpha                   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
 just login alpha                     # Claude, GitHub, Tailscale in deploy's order, one VM after another (--only claude, github or tailscale: one)
-just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system; --json; exit 0/1/2, 3 failed); just list too
+just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed); just list too
 just code alpha [--project repo] [--session <id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
 just logs                            # the run logs, newest first: read these instead of asking for terminal output
 just docs                            # regenerate the wiki's reference pages; serve previews the site, build builds it strictly

@@ -262,7 +262,7 @@
           register: status_system
           when:
             - status_reachable | bool
-            - "'system' in status_sections_read"
+            - "'system' in status_sections_read or 'work' in status_sections_read"
       rescue:
         - name: Record that the VM's system was not read
           ansible.builtin.set_fact:
@@ -298,6 +298,38 @@
           ansible.builtin.set_fact:
             status_unread_github: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default('it failed') }}"
 
+    # The projects directory just code resolves - vm_projects_dir, else the VM user's ~/projects - as the VM user,
+    # whose checkouts they are: git refuses another user's. Nothing is fetched; "on no remote" is as of the last fetch.
+    - name: Read the work in the VM's checkouts
+      ignore_unreachable: true
+      block:
+        - name: Look up the VM user's home
+          ansible.builtin.getent:
+            database: passwd
+            key: "{{ vm_user }}"
+          when:
+            - status_reachable | bool
+            - "'work' in status_sections_read"
+
+        - name: Read every checkout in the projects directory, and what of its work is on no remote
+          git_checkouts_info:
+            under: "{{ status_projects_dir }}"
+            work: true
+          vars:
+            status_projects_dir: >-
+              {{ (vm_projects_dir | default('', true) or ansible_facts.getent_passwd[vm_user][4] ~ '/projects')
+                 | regex_replace('(.)/+$', '\\1') }}
+          become: true
+          become_user: "{{ vm_user }}"
+          register: status_work
+          when:
+            - status_reachable | bool
+            - "'work' in status_sections_read"
+      rescue:
+        - name: Record that the work was not read
+          ansible.builtin.set_fact:
+            status_unread_work: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default('it failed') }}"
+
     # As root, as configure reads it: the role's markers are root's.
     - name: Read Tailscale's state
       ignore_unreachable: true
@@ -326,9 +358,12 @@
                'claude': claude_code_status_found | default(none),
                'github': github_projects_status_found | default(none),
                'tailscale': tailscale_status_found | default(none),
+               'work': status_work | status_work_read(vm_projects_dir | default('', true) or '~/projects')
+                 if status_work is defined and status_work is not skipped else none,
                'unread': {'system': status_unread_system | default(''), 'claude': status_unread_claude | default(''),
                           'github': status_unread_github | default(''),
-                          'tailscale': status_unread_tailscale | default('')}}}) | status_clean }}
+                          'tailscale': status_unread_tailscale | default(''),
+                          'work': status_unread_work | default('')}}}) | status_clean }}
       when: status_over_ssh | bool
 
 - name: Report

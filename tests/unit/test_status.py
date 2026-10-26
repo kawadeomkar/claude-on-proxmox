@@ -637,6 +637,9 @@ def test_every_task_status_runs_is_a_read_or_the_reports_one_write() -> None:
         elif action == "ansible.builtin.command":
             assert tuple(task[action]["argv"]) in COMMANDS, (task["name"], task[action])
             assert set(task[action]) == {"argv"} and task.get("changed_when") is False, task["name"]
+        elif action == "git_checkouts_info":
+            # The checkouts' work and nothing else of the module's: no target, no branch, no busy.
+            assert set(task[action]) == {"under", "work"} and task[action]["work"] is True, task["name"]
         elif action == "ansible.builtin.systemd_service":
             # With no state, enabled or daemon_reload asked for, it only reads the unit.
             assert set(task[action]) == {"name"}, (task["name"], task[action])
@@ -825,3 +828,245 @@ def test_under_json_nothing_is_drawn(callback) -> None:
     cb.v2_runner_on_ok(_ok("localhost", {"status_report": S.status_report({"localhost": {"fleet": fleet}}, "now")}))
     cb.v2_playbook_on_stats(None)
     assert terminal.getvalue() == ""
+
+
+# ------------------------------------------------------------------------------------- every state at once ----
+
+G = 1024**3
+RUNNING_RC = {"LoadState": "loaded", "ActiveState": "active", "SubState": "running", "NRestarts": "0"}
+DOWN_RC = {
+    "LoadState": "loaded",
+    "ActiveState": "failed",
+    "SubState": "failed",
+    "NRestarts": "5",
+    "StateChangeTimestamp": "Sat 2027-01-15 05:00:00 UTC",
+}
+
+
+def _claude(**kw):
+    return {
+        "installed": True,
+        "version": "2.1.310",
+        "login_stored": True,
+        "api_key": False,
+        "remote_control_wanted": True,
+        "service": RUNNING_RC,
+        "path_unit": {},
+        "login_command": "just login x --only claude",
+        "unit": "claude-remote-control",
+        **kw,
+    }
+
+
+SYSTEM = {
+    "os": "Ubuntu 24.04.3 LTS",
+    "kernel": "6.8.0-85-generic",
+    "kernel_newest": "6.8.0-87-generic",
+    "reboot_required": True,
+    "reboot_packages": ["linux-image-6.8.0-87-generic"],
+    "load": [12.42, 9.31, 8.2],
+    "upgrades": 123,
+    "security": 45,
+    "claude": 12,
+    "vscode_windows": 3,
+    "unread": {"upgrades": "it took longer than 20 s"},
+}
+TAILSCALE = {
+    "enabled": True,
+    "installed": True,
+    "ours": True,
+    "daemon_up": True,
+    "backend": "Running",
+    "case": "Running",
+    "dns_name": "a-machine-name-that-is-rather-long.tailnet-example-with-a-long-name.ts.net",
+    "ipv4": "100.100.100.100",
+    "line": "",
+    "left": False,
+}
+GITHUB = {
+    "installed": True,
+    "readable": True,
+    "signed_in": False,
+    "unchecked": False,
+    "account": "",
+    "managed": True,
+    "line": "not signed in to GitHub, so only public repositories are cloned and git push fails there. Run just login"
+    " x --only github to sign in by the device flow; that run clones the private repositories too.",
+    "left": True,
+}
+WORK = {
+    "dir": "/srv/a/projects/directory/with/a/long/path",
+    "checkouts": 123,
+    "worktrees": 45,
+    "repositories": [
+        {
+            "name": "a-repository-with-a-long-name",
+            "worktrees": 3,
+            "commits_on_no_remote": 1234,
+            "branches_on_no_remote": 56,
+            "detached_commits": 7,
+            "dirty_worktrees": 3,
+            "stashes": 9,
+        },
+        {
+            "name": "another",
+            "worktrees": 1,
+            "commits_on_no_remote": 0,
+            "branches_on_no_remote": 0,
+            "detached_commits": 0,
+            "dirty_worktrees": 1,
+            "stashes": 0,
+        },
+    ],
+}
+# One VM per way a VM can be over SSH: each, with every other at its widest, in one report.
+SSH_STATES = {
+    "fine": {"claude": _claude(), "github": dict(GITHUB, signed_in=True, account="octocat", left=False)},
+    "rc-down": {"claude": _claude(service=DOWN_RC)},
+    "rc-waits": {
+        "claude": _claude(
+            login_stored=False,
+            service={"LoadState": "loaded", "ActiveState": "inactive"},
+            path_unit={"ActiveState": "active"},
+        )
+    },
+    "rc-off": {"claude": _claude(api_key=True, remote_control_wanted=False)},
+    "rc-unset": {"claude": _claude(service={"LoadState": "not-found"})},
+    "rc-stopped": {"claude": _claude(service={"LoadState": "loaded", "ActiveState": "inactive"})},
+    "no-claude": {"claude": _claude(installed=False, version="")},
+    "gh-unchecked": {"github": dict(GITHUB, unchecked=True, error='Get "https://api.github.com/": no such host')},
+    "gh-old": {"github": dict(GITHUB, readable=False)},
+    "gh-alone": {"github": dict(GITHUB, managed=False, left=False)},
+    "ts-down": {"tailscale": dict(TAILSCALE, case="check-daemon-down", backend="", dns_name="")},
+    "ts-none": {"tailscale": dict(TAILSCALE, case="check-no-package", backend="", dns_name="")},
+    "ts-join": {"tailscale": dict(TAILSCALE, case="would-join", backend="NeedsLogin", dns_name="")},
+    "ts-page": {
+        "tailscale": dict(
+            TAILSCALE,
+            case="page-pending",
+            backend="NeedsLogin",
+            dns_name="",
+            left=True,
+            line="not signed in to Tailscale yet - the page stays valid for 7 days and x joins by itself"
+            " once you approve it; just login x --only tailscale gives a fresh page.",
+        )
+    },
+    "unread": {"unread": {"system": "x", "claude": "y", "github": "z", "tailscale": "w", "work": "v"}},
+}
+REFUSED = {
+    "key-changed": "@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @ Host key verification failed.",
+    "key-unknown": "No ED25519 host key is known for x and you have requested strict checking.",
+    "timed-out": "ssh: connect to host x port 22: Operation timed out",
+    "refused": "ssh: connect to host x port 22: Connection refused",
+    "denied": "dev@x: Permission denied (publickey).",
+    "other": "kex_exchange_identification: read: Connection reset by peer",
+}
+
+
+def _every_state():
+    """A report holding every state status can say, each VM's name as long as a recipe takes."""
+    listing, found = [], {}
+    names = list(SSH_STATES) + [f"no-ssh-{k}" for k in REFUSED]
+    for i, name in enumerate(names):
+        vmname = f"{name}-with-a-name-long-enough-to-cut"
+        listing.append(
+            {
+                "vmid": 1000 + i,
+                "name": vmname,
+                "node": "pve",
+                "type": "qemu",
+                "status": "running",
+                "tags": "claude-on-proxmox",
+                "maxcpu": 128,
+                "maxmem": 1024 * G,
+                "mem": 999 * G,
+                "cpu": 1.0,
+                "uptime": 9_999_999,
+                "maxdisk": 4096 * G,
+            }
+        )
+        if name.startswith("no-ssh-"):
+            said = REFUSED[name[len("no-ssh-") :]]
+            ssh = {"reached": False, "unreachable": said, "refusal": S.status_refusal(said), "unread": {}}
+        else:
+            parts = SSH_STATES[name]
+            ssh = {
+                "reached": True,
+                "unreachable": "",
+                "refusal": "",
+                "system": SYSTEM,
+                "claude": parts.get("claude", _claude()),
+                "github": parts.get("github", GITHUB),
+                "tailscale": parts.get("tailscale", TAILSCALE),
+                "work": WORK,
+                "unread": parts.get("unread", {}),
+            }
+        found[vmname] = {
+            "api": {
+                "read": True,
+                "state": "running",
+                "cpu_24h": [1.0] * 12,
+                "pressure_1h": 0.5,
+                "pending": ["memory"],
+                "root": {"used": 950 * G, "total": 1000 * G},
+            },
+            "drift": {"hardware": [{"setting": "cores", "wanted": 64, "has": 128}], "cloud_init": ["SSH keys", "DNS"]},
+            "ssh": ssh,
+        }
+    tagged = listing
+    fleet = S.status_fleet(
+        listing,
+        tagged=tagged,
+        requested=tagged,
+        addressed=[dict(e, address=f"192.0.2.{100 + i}") for i, e in enumerate(listing)],
+        settings={**SETTINGS, "vm_user": "a-long-user-name", "names": []},
+        aliases=[],
+    )
+    found["localhost"] = {"fleet": fleet}
+    return S.status_report(found, "2026-10-25 14:32 PDT", 1_800_000_000)
+
+
+def test_every_line_of_a_report_of_every_state_fits_100_columns() -> None:
+    model = _every_state()
+    text = S.status_text(model, reading="read in 8.2 s · proxmox 0.9 s · vms 20 of 20 6.4 s")
+    widest = max(text.splitlines(), key=len)
+    assert len(widest) <= S.WIDTH, widest
+    # And every kind of item is there: a test of the states, not only of the width.
+    said = " ".join(it["text"] for it in model["attention"])
+    for words in (
+        "Remote Control is not running",
+        "not set up",
+        "is stopped",
+        "is not installed",
+        "could not check its login",
+        "tailscaled is not running",
+        "Tailscale is not installed",
+        "waits for a reboot",
+        "security upgrades",
+        "is not the one this machine holds",
+        "holds no SSH host key",
+        "did not answer SSH",
+        "refused SSH",
+        "refused this machine's SSH key",
+        "SSH to 192.0.2",
+        "was not read",
+        "local.yml asks for",
+    ):
+        assert words in said, words
+
+
+def test_every_just_command_status_gives_is_one_the_justfile_accepts() -> None:
+    from test_commands import _commands_in, _problem, _recipes
+
+    recipes = _recipes()
+    model = _every_state()
+    commands = []
+    for item in model["attention"]:
+        for text in (item["text"], item["command"]):
+            commands += [
+                (recipe, words) for *_, recipe, words in _commands_in(text.replace("x --only", "alpha --only"))
+            ]
+    assert len(commands) > 10
+    for recipe, words in commands:
+        assert recipe in recipes, recipe
+        assert _problem(recipes[recipe], recipes, words) is None, (recipe, words)
