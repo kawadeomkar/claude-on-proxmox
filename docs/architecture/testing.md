@@ -180,7 +180,7 @@ pytest over `tests/unit/`: 2064 tests. By file:
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
-- **`just init`'s questions** (`test_init_settings.py` 77, `test_settings_filter.py` 73):
+- **`just init`'s questions** (`test_init_settings.py` 57, `test_settings_filter.py` 73):
   `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
   which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
   a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
@@ -194,9 +194,12 @@ pytest over `tests/unit/`: 2064 tests. By file:
   Tailscale notice, naming the auth key or the sign-in page, gone once `tailscale_enabled` is set, and
   `--tailscale` writing it; the vault decrypted to the example with the answered lines replaced,
   `0600`, and the secret in neither the output nor the log, typed or given, with module arguments injected
-  and the log at `-vvv`; a vault read and written as it is with `ANSIBLE_VERBOSITY` or `ANSIBLE_DEBUG` in the
+  and the log at `-vvv`; a vault read and written as it is with `ANSIBLE_VERBOSITY` and `ANSIBLE_DEBUG` both in the
   environment, every `ansible-vault` run quiet; statically, every write under `init_ask` and every task that renders the secret
-  or the vault's text `no_log`. The offer to make the token, against a stand-in Proxmox host (the local
+  or the vault's text `no_log`. Cases one run can show share it: two wrong answers to a run, every value given
+  in one, and the values that break their rules, or differ from what is set, each refused together; the tests
+  read and write the vault themselves in process (`VaultLib`), and only the playbook starts `ansible-vault`.
+  The offer to make the token, against a stand-in Proxmox host (the local
   connection, `fake_pve_cli.py` first on its `PATH`): `y` running `tools/proxmox-access.sh` and the vault
   taking the secret it made, never asked for, said or logged at `-vvv`; `n` changing nothing and saying how
   to run it by hand; root SSH that fails said, with `ssh-copy-id`; a storage the host has asked for by
@@ -219,7 +222,7 @@ pytest over `tests/unit/`: 2064 tests. By file:
   `pveum` required; a value that is not one plain word refused before anything runs; a refused write stopping
   it before the token. Statically: its privileges the ones `init_check.yml` checks, the commands
   `docs/getting-started/proxmox-access.md` shows the ones its dry run prints, and stdout carrying data alone.
-- **`just init`'s checks** (`test_init_check.py` 50): `init_check.yml` against the fake Proxmox on a
+- **`just init`'s checks** (`test_init_check.py` 47): `init_check.yml` against the fake Proxmox on a
   loopback port, in an inventory of the test's own with the project's `defaults.yml`: nothing asked of
   Proxmox while a value is the example's; every check `ok` on a host with its template, on 8.x and on 9.x,
   and no SSH then; a wrong secret, a closed port (an IPv6 address said bracketed), a missing privilege on
