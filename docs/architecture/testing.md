@@ -15,7 +15,9 @@ marks into groups and, run first, would see none and rebuild the fixtures test b
 test at a time, for one test or one file. Every child a test signals or types Ctrl-C at starts with SIGINT,
 SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite started with `&` or under
 nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
-(`harness._drain`), since on a loaded machine its last bytes arrive late.
+(`harness._drain`), since on a loaded machine its last bytes arrive late. A fake API starts with
+`socket.getfqdn` answering at once (`harness.FAKE_START`): for the fake Proxmox's `0.0.0.0`, macOS spent five
+seconds on it.
 
 pytest over `tests/unit/`: 2064 tests. By file:
 

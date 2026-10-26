@@ -564,12 +564,27 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
+# How every fake starts: as `python script args`, but with socket.getfqdn answering at once. http.server's bind asks
+# for the full name of the address it binds, and for fake_pve_api.py's 0.0.0.0 macOS looks this machine's name up
+# over mDNS and gives up after five seconds: every fake Proxmox a test started waited them out before it listened.
+# The fakes use that name for nothing.
+FAKE_START = (
+    "import os, runpy, socket, sys\n"
+    "socket.getfqdn = lambda name='': name\n"
+    "sys.argv = sys.argv[1:]\n"
+    "sys.path[0] = os.path.dirname(sys.argv[0])\n"
+    "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+)
+
+
 def _start(script: Path, *args: str) -> tuple[subprocess.Popen, int]:
     """A fake API on a free port, once it answers. A port can still be taken between the probe and the fake's bind
     - the runs' own connections take local ports too - so a fake that lost it is started again on another."""
     for _ in range(5):
         port = _free_port()
-        server = subprocess.Popen([sys.executable, str(script), str(port), *args], stderr=subprocess.PIPE, text=True)
+        server = subprocess.Popen(
+            [sys.executable, "-c", FAKE_START, str(script), str(port), *args], stderr=subprocess.PIPE, text=True
+        )
         for _ in range(100):
             if server.poll() is not None:
                 said = server.stderr.read()
