@@ -975,9 +975,9 @@ def test_with_no_terminal_destroy_takes_no_for_an_answer_whatever_names_it_is_gi
 
 
 def test_destroy_asks_under_a_block_that_names_the_vms_and_never_logs_it(tmp_path):
-    rc, output, log = _run_at_a_terminal(
-        tmp_path, DESTROY, {}, {"vm_name": "alpha,beta"}, "no", prompt=b"Type yes to continue"
-    )
+    # A vars_prompt never puts the terminal in raw mode: its answer is typed as soon as it asks.
+    steps = [(b"Type yes to continue", b"no\n", 0, "canonical")]
+    rc, output, log = _run_at_a_terminal(tmp_path, DESTROY, {}, {"vm_name": "alpha,beta"}, steps=steps)
     assert rc != 0
     block = "##  CONFIRM DELETION\r\n" + "#" * 80 + "\r\nThis deletes alpha, beta and their disks.\r\n"
     assert block in output, output

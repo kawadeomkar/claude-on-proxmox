@@ -50,7 +50,7 @@ import termios
 import time
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
@@ -381,7 +381,7 @@ def _at_a_pseudo_terminal(
     size: tuple[int, int] | None = None,
     act=None,
     timeout: float = 180,
-    poll: float = 0.2,
+    poll: float | Callable[[], float] = 0.2,
 ) -> tuple[int, bytes]:
     """Run argv at a pseudo-terminal of its own, and read what it writes until it ends. Its rc and every byte.
 
@@ -390,7 +390,9 @@ def _at_a_pseudo_terminal(
     the run's alone; never pytest's terminal. size, (cols, rows), sets the
     window. act(chunk, output, master, process), called after each read with
     the bytes read and after each idle tick with b"", may type, resize or
-    signal. A run that outlives timeout fails the test, its group killed.
+    signal. An idle tick comes after poll seconds without output, or after
+    what poll returns, when it is a function, asked before each wait. A run
+    that outlives timeout fails the test, its group killed.
     Every test that runs something at a terminal goes through here: the
     sign-ins' and init's prompts (_run_at_a_terminal), and the live outputs
     (test_status_live.py, test_deploy_live.py).
@@ -413,7 +415,7 @@ def _at_a_pseudo_terminal(
         while True:
             if time.monotonic() > deadline:
                 pytest.fail(f"the run did not finish within {timeout} seconds:\n" + output.decode(errors="replace"))
-            ready, _, _ = select.select([master], [], [], poll)
+            ready, _, _ = select.select([master], [], [], poll() if callable(poll) else poll)
             chunk = b""
             if ready:
                 try:
@@ -439,6 +441,14 @@ def _at_a_pseudo_terminal(
     return process.returncode, output
 
 
+# How often a run at a terminal is looked at while keys wait for their prompt, and how long the prompt's raw mode
+# must have held before they go in. pause sets raw mode, flushes the terminal's input within microseconds, and then
+# reads in silence, so no output wakes the reader: looked at every 0.2 seconds, as the rest of a run is, each
+# prompt waited up to that long for its keys. A key the flush takes all the same is typed again two seconds on.
+PENDING_POLL = 0.02
+RAW_HELD = 0.01
+
+
 def _run_at_a_terminal(
     root: Path,
     playbook: Path,
@@ -456,47 +466,71 @@ def _run_at_a_terminal(
     """Run a playbook whose stdin is a pseudo-terminal it controls, and answer its prompts. rc, output, run log.
 
     Either `answer` and a line end are typed at `prompt`, or each of steps,
-    (prompt, keys) or (prompt, keys, seconds), types its keys as they are at
-    its prompt's next appearance, that many seconds later. Keys go in once the
-    prompt has the terminal in raw mode, and again if it has not taken them
-    within two seconds. args go on the command line, before the playbook; env
-    sets variables on top of the harness's, as _run's does.
+    (prompt, keys), (prompt, keys, seconds) or (prompt, keys, seconds,
+    "canonical"), types its keys as they are at its prompt's next appearance,
+    that many seconds later. Keys go in once the prompt has held the terminal
+    in raw mode for RAW_HELD seconds - the terminal is looked at every
+    PENDING_POLL seconds while they wait - and again if it has not taken them
+    within two seconds. A "canonical" step is a vars_prompt's, which reads a
+    line with input() and never leaves canonical mode: its keys go in once,
+    as soon as its prompt shows. args go on the command line, before the
+    playbook; env sets variables on top of the harness's, as _run's does.
     """
     plan = [(prompt, answer.encode() + b"\n")] if steps is None else list(steps)
-    plan = [(step[0], step[1], step[2] if len(step) > 2 else 0) for step in plan]
+    for step in plan:
+        assert len(step) < 4 or step[3] == "canonical", step
+    plan = [(step[0], step[1], step[2] if len(step) > 2 else 0, len(step) > 3) for step in plan]
     inventory = _inventory(root, hosts, ordered)
     log = root / "run.log"
     env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM="dumb", **(env or {}))
     state = {"searched": 0, "typing": None}
 
     def type_at_each_prompt(chunk, output, master, process):
-        typing = state["typing"]
-        if typing is None and plan:
-            wanted, keys, delay = plan[0]
-            found = output.find(wanted, state["searched"])
-            if found >= 0:
-                plan.pop(0)
-                state["searched"] = found + len(wanted)
-                typing = state["typing"] = {"keys": keys, "from": time.monotonic() + delay, "mark": None, "at": 0.0}
-                typing["tries"] = 0
-        if typing is not None:
-            now = time.monotonic()
-            if typing["mark"] is None:
-                # Only once pause has the terminal in raw mode: before, a
-                # Ctrl-C would be a signal to the whole run, not a key.
-                if now >= typing["from"] and (_in_raw_mode(master) or now > typing["from"] + 5):
-                    typing.update(mark=len(output), at=now)
-                    os.write(master, typing["keys"])
-            elif b"\x1b" in output[typing["mark"] :]:
+        typing, now = state["typing"], time.monotonic()
+        if typing is not None and typing["mark"] is not None:
+            if b"\x1b" in output[typing["mark"] :]:
                 # pause clears its line, an escape sequence, once it has
                 # taken an answer or an interrupt.
-                state["typing"] = None
+                typing = state["typing"] = None
             elif now - typing["at"] > 2 and typing["tries"] < 5:
                 # Keys typed in the moment before pause flushed the
                 # terminal's input are lost, and echoed all the same, so
                 # the echo proves nothing: typed again.
                 typing.update(at=now, tries=typing["tries"] + 1)
                 os.write(master, typing["keys"])
+        if typing is None and plan:
+            wanted, keys, delay, canonical = plan[0]
+            found = output.find(wanted, state["searched"])
+            if found >= 0:
+                plan.pop(0)
+                state["searched"] = found + len(wanted)
+                typing = state["typing"] = {"keys": keys, "from": now + delay, "mark": None, "at": 0.0, "tries": 0}
+                typing.update(canonical=canonical, raw_since=None)
+        if typing is not None and typing["mark"] is None and now >= typing["from"]:
+            if typing["canonical"]:
+                # input() reads the line whenever it comes: nothing flushes
+                # the keys, and nothing clears the line to say they were taken.
+                state["typing"] = None
+                os.write(master, typing["keys"])
+                return
+            # Only once pause has the terminal in raw mode: before, a Ctrl-C
+            # would be a signal to the whole run, not a key. And only once
+            # raw mode has held a moment: pause sets it, then flushes the
+            # input the terminal holds, which takes keys typed in between.
+            raw = _in_raw_mode(master)
+            if not raw:
+                typing["raw_since"] = None
+            elif typing["raw_since"] is None:
+                typing["raw_since"] = now
+            if (raw and now - typing["raw_since"] >= RAW_HELD) or now > typing["from"] + 5:
+                typing.update(mark=len(output), at=now)
+                os.write(master, typing["keys"])
+
+    def poll() -> float:
+        # Often while keys wait for their prompt's raw mode, which pause sets
+        # and then reads in silence: no output wakes the reader then.
+        typing = state["typing"]
+        return PENDING_POLL if typing is not None and typing["mark"] is None else 0.2
 
     rc, output = _at_a_pseudo_terminal(
         [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, "-e", json.dumps(extra), str(playbook)],
@@ -504,6 +538,7 @@ def _run_at_a_terminal(
         env,
         act=type_at_each_prompt,
         timeout=timeout,
+        poll=poll,
     )
     _fail_if_the_desktop_was_reached(root)
     assert not plan, f"no {plan[0][0]!r} prompt appeared:\n" + output.decode(errors="replace")
