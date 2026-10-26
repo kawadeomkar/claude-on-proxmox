@@ -13,11 +13,9 @@ report says what each failure meant, and an unreachable VM is the report's too. 
 ansible-core 2.19 travel on the task result, are printed in every hook, or a stdout callback of one's own drops them
 without a word.
 
-The live region (proven in the prototype docs/plan-status-2026-10-25-live-proto/ records): one write per redraw,
-inside synchronized-output marks, the cursor moved up exactly the lines drawn, each line cut to the width so none
-wraps, the region cut to the height. A resize can reach the terminal while a frame worked out for the old size is
-on its way, and wrap it, after which no count of what is on screen holds: on SIGWINCH the screen is pushed up into
-the scrollback, where nothing is lost, and the region drawn again from the top. The cursor is never hidden.
+The live region is every live output's (filter_plugins/live_region.py, docs/architecture/custom-code.md §7.8): one
+write per redraw in synchronized-output marks, nothing wrapped, a resize pushing the screen into the scrollback,
+every other message erasing it first and drawing it after, the echo off while it is up, the cursor never hidden.
 """
 
 from __future__ import annotations
@@ -35,12 +33,9 @@ DOCUMENTATION = """
       - Chosen with ANSIBLE_STDOUT_CALLBACK=claude_on_proxmox_status, as just status does.
 """
 
-import atexit
 import importlib.util
 import os
-import signal
 import sys
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -48,31 +43,20 @@ from pathlib import Path
 from ansible import constants as C
 from ansible.plugins.callback import CallbackBase
 
-FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-SYNC_ON, SYNC_OFF = "\x1b[?2026h", "\x1b[?2026l"
-FRAME_SECONDS = 0.1
 
-
-def _load_status():
-    name = "claude_on_proxmox_status_filters"
+def _sibling(stem):
+    # filter_plugins/<stem>.py, loaded by path once as claude_on_proxmox_<stem>, since a callback cannot ask for a
+    # filter module by name (docs/architecture/custom-code.md §7.8).
+    name = f"claude_on_proxmox_{stem}"
     if name not in sys.modules:
-        path = Path(__file__).resolve().parents[1] / "filter_plugins" / "status.py"
+        path = Path(__file__).resolve().parents[1] / "filter_plugins" / f"{stem}.py"
         spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        sys.modules[name] = module
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
     return sys.modules[name]
 
 
-def _can_draw():
-    """Whether stdout is a terminal that can take the live region: one, not dumb, and UTF-8 for the spinner."""
-    stream = sys.stdout
-    try:
-        tty = stream.isatty()
-    except (AttributeError, ValueError):
-        tty = False
-    encoding = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
-    return tty and os.environ.get("TERM", "") not in ("", "dumb") and encoding.startswith("utf8")
+live = _sibling("live_region")
 
 
 class CallbackModule(CallbackBase):
@@ -82,10 +66,9 @@ class CallbackModule(CallbackBase):
 
     def __init__(self):
         super().__init__()
-        self._status = _load_status()
-        self._pid = os.getpid()
+        self._status = _sibling("status")
         self._quiet = bool(os.environ.get("STATUS_QUIET"))
-        self._live = _can_draw() and not self._quiet
+        self._live = live.can_draw() and not self._quiet
         # Ansible's own colour setting: ANSIBLE_NOCOLOR, or NO_COLOR.
         self._color = self._live and not C.ANSIBLE_NOCOLOR
         self._found = {}
@@ -94,27 +77,13 @@ class CallbackModule(CallbackBase):
         self._done_at = {}
         self._reported = False
         self._failures = []
-        self._drawn = 0
-        self._size = None
-        self._resized = False
-        self._frame = 0
-        self._stop = threading.Event()
-        self._thread = None
+        # Taken now, from the main thread, so a warning before the first frame is drawn above it; spun from the
+        # playbook's start.
+        self._region = None
         if self._live:
-            original = self._display.display
-
-            def display(msg, *args, **kwargs):
-                # Forked workers inherit this instance: only this process owns the terminal.
-                if os.getpid() != self._pid:
-                    return original(msg, *args, **kwargs)
-                with self._display._lock:
-                    self._erase()
-                    original(msg, *args, **kwargs)
-                    self._redraw()
-
-            self._display.display = display
-            signal.signal(signal.SIGWINCH, lambda *_: setattr(self, "_resized", True))
-            atexit.register(self._finish)
+            more = "⋮ {} more lines, shown when the run ends"
+            self._region = live.LiveRegion(self._display, frame=self._frame_lines, more=more)
+            self._region.start()
 
     # --- the report, from what has been found so far ------------------------------------------------------------
     def _now_said(self):
@@ -146,18 +115,8 @@ class CallbackModule(CallbackBase):
             parts.append(f"vms {len(done)} of {len(read)} {last:.1f} s")
         return " · ".join(parts)
 
-    # --- the live region -------------------------------------------------------------------------------------
-    def _write(self, text):
-        sys.stdout.write(text)
-        sys.stdout.flush()
-
-    def _erase(self):
-        if self._drawn:
-            self._write((f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else "") + "\r\x1b[J")
-            self._drawn = 0
-
-    def _frame_lines(self, cols):
-        glyph = FRAMES[self._frame % len(FRAMES)]
+    # --- the live frame --------------------------------------------------------------------------------------
+    def _frame_lines(self, cols, rows, glyph):
         elapsed = f"{time.monotonic() - self._started:.1f} s"
         if "localhost" not in self._found:
             return [f"{glyph} listing the VMs · {elapsed}"]
@@ -172,50 +131,18 @@ class CallbackModule(CallbackBase):
             doing = "ranking what needs attention"
         return text.split("\n") + [self._status.one_line(f"{glyph} {doing} · {elapsed}", cols - 1)]
 
-    def _terminal_size(self):
-        return os.get_terminal_size(sys.stdout.fileno())
-
     def _redraw(self):
-        if not self._live or self._stop.is_set():
-            return
-        try:
-            cols, rows = self._terminal_size()
-        except (OSError, ValueError, AttributeError):
-            return
-        if self._resized or (self._size and self._size != (cols, rows)):
-            # Push everything on screen up into the scrollback, where nothing is lost, and draw again from the
-            # top of an empty screen: no count of what was drawn before the resize holds.
-            self._resized = False
-            self._write("\n" * rows + f"\x1b[{rows - 1}A\r")
-            self._drawn = 0
-        self._size = (cols, rows)
-        lines = self._frame_lines(cols)
-        limit = max(3, rows - 1)
-        if len(lines) > limit:
-            hidden = len(lines) - limit + 1
-            more = self._status.one_line(f"⋮ {hidden} more lines, shown when the run ends", cols - 1)
-            lines = lines[: limit - 2] + [more, lines[-1]]
-        up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
-        self._write(SYNC_ON + up + "\r" + "\x1b[K\n".join(lines) + "\x1b[K\x1b[J" + SYNC_OFF)
-        self._drawn = len(lines)
-
-    def _spin(self):
-        while not self._stop.wait(FRAME_SECONDS):
-            with self._display._lock:
-                self._frame += 1
-                self._redraw()
+        if self._region is not None:
+            self._region.redraw()
 
     def _finish(self):
-        if self._live and not self._stop.is_set():
-            with self._display._lock:
-                self._erase()
-                self._stop.set()
+        if self._region is not None:
+            self._region.finish()
 
     # --- Ansible's events --------------------------------------------------------------------------------------
     def v2_playbook_on_start(self, playbook):
-        if self._live and not self._thread:
-            self._thread = threading.Thread(target=self._spin, daemon=True)
-            self._thread.start()
+        if self._region is not None:
+            self._region.spin()
 
     def v2_runner_on_ok(self, result):
         self._handle_warnings_and_exception(result)

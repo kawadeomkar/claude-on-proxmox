@@ -1,13 +1,16 @@
-"""Enough of a VT100 to read back what `just status` drew at a terminal: test_status_live.py's screen.
+"""Enough of a VT100 to read back what a live region drew at a terminal: test_status_live.py's and
+test_deploy_live.py's screen.
 
 Text wraps at the right edge with the pending-wrap rule terminals use; a line feed at the bottom row scrolls the
 screen into the history (the scrollback); cursor up (CSI n A), carriage return, erase to the end of the line
 (CSI K, CSI 2K) and erase below (CSI J) move and clear; colours are taken and ignored, and synchronized output
 (CSI ?2026 h/l) marks what is drawn as a frame, where a line that wraps is counted (`frame_wraps`): the callback's
-live region, which must never wrap. Any other sequence is recorded, so a test can say the callback wrote none. A
-resize keeps lines as they are, as xterm does (no reflow), and a shorter window keeps its bottom rows, the rest going
-to the history. Bytes arrive as a pseudo-terminal's reads cut them: a character or an escape sequence cut at the end
-of one feed is kept until the next completes it, as a terminal does (on Linux a read once split a "→" in two).
+live region, which must never wrap. A title (OSC 0, ended by BEL or ST) is recorded in `titles`, a bell on its own is
+counted in `bells`; an ESC [ before a control is the control (Ansible's pause writes them). Any other sequence is
+recorded, so a test can say the callback wrote none. A resize keeps lines as they are, as xterm does (no reflow),
+and a shorter window keeps its bottom rows, the rest going to the history. Bytes arrive as a pseudo-terminal's reads
+cut them: a character or an escape sequence cut at the end of one feed is kept until the next completes it, as a
+terminal does (on Linux a read once split a "→" in two).
 """
 
 from __future__ import annotations
@@ -15,8 +18,9 @@ from __future__ import annotations
 import re
 
 CSI = re.compile(rb"\x1b\[([?0-9;]*)([A-Za-z])")
-# An escape sequence not finished yet: what a read can end in.
-CSI_PART = re.compile(rb"\x1b(\[[?0-9;]*)?\Z")
+OSC = re.compile(rb"\x1b\]([0-9]*);([^\x07\x1b]*)(?:\x07|\x1b\\)")
+# What a feed may end inside of: an escape sequence not yet ended, an OSC by BEL or by ST (ESC \).
+OPEN = re.compile(rb"\x1b(\[[?0-9;]*|\][^\x07\x1b]*\x1b?)?\Z")
 
 
 class VT:
@@ -30,6 +34,8 @@ class VT:
         self.unknown: set[str] = set()
         self.in_frame = False
         self.frame_wraps = 0
+        self.titles: list[str] = []
+        self.bells = 0
         self.pending = b""
 
     def resize(self, cols: int, rows: int) -> None:
@@ -62,13 +68,31 @@ class VT:
         else:
             self.c += 1
 
+    @staticmethod
+    def _complete(data: bytes) -> int:
+        """How much of data ends whole: not inside an escape sequence or a UTF-8 character."""
+        open_seq = OPEN.search(data)
+        if open_seq:
+            start = open_seq.start()
+            # An ESC [ just before it is pause's, before a control: it waits to be read with what follows.
+            while start >= 2 and data[start - 2 : start] == b"\x1b[":
+                start -= 2
+            return start
+        tail = len(data)
+        while tail > 0 and (data[tail - 1] & 0xC0) == 0x80:
+            tail -= 1
+        if tail > 0 and data[tail - 1] >= 0xC0:
+            lead = data[tail - 1]
+            if len(data) - (tail - 1) < (2 if lead < 0xE0 else 3 if lead < 0xF0 else 4):
+                return tail - 1
+        return len(data)
+
     def feed(self, data: bytes) -> None:
         data, self.pending = self.pending + data, b""
+        whole = self._complete(data)
+        data, self.pending = data[:whole], data[whole:]
         i = 0
         while i < len(data):
-            if CSI_PART.match(data, i):
-                self.pending = data[i:]
-                return
             match = CSI.match(data, i)
             if match:
                 arg, op = match.group(1).decode(), match.group(2).decode()
@@ -92,6 +116,19 @@ class VT:
                     self.unknown.add(match.group().decode())
                 i = match.end()
                 continue
+            if data[i : i + 2] == b"\x1b[" and i + 2 < len(data) and data[i + 2] < 0x20:
+                # Ansible's pause writes ESC [ before its carriage return and its erase: a terminal runs a control
+                # inside a sequence and drops a sequence another ESC starts over, so the two are what is left.
+                i += 2
+                continue
+            match = OSC.match(data, i)
+            if match:
+                if match.group(1) == b"0":
+                    self.titles.append(match.group(2).decode("utf-8", "replace"))
+                else:
+                    self.unknown.add(f"OSC {match.group(1).decode()}")
+                i = match.end()
+                continue
             byte = data[i : i + 1]
             if byte == b"\r":
                 self.c, self.wrap = 0, False
@@ -100,17 +137,18 @@ class VT:
                 self.wrap = False
                 self._line_feed()
                 i += 1
+            elif byte == b"\x07":
+                self.bells += 1
+                i += 1
             elif byte == b"\x1b":
                 self.unknown.add("ESC")
                 i += 1
             else:
-                lead = data[i]
-                size = 4 if lead >= 0xF0 else 3 if lead >= 0xE0 else 2 if lead >= 0xC0 else 1
-                if i + size > len(data):
-                    self.pending = data[i:]
-                    return
-                self._put(data[i : i + size].decode("utf-8", "replace"))
-                i += size
+                j = i + 1
+                while j < len(data) and (data[j] & 0xC0) == 0x80:
+                    j += 1
+                self._put(data[i:j].decode("utf-8", "replace"))
+                i = j
 
     def transcript(self) -> list[str]:
         """The scrollback and the screen, as lines, without the blank ones at the bottom."""

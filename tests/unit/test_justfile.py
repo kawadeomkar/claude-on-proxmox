@@ -633,6 +633,28 @@ def test_deploy_without_options_runs_deploy_yml_with_the_no_terminal_switch(tmp_
     assert '{"login_desktop":false,"deploy_sign_in":false}' in run
 
 
+@pytest.mark.parametrize(
+    ("args", "title"),
+    [
+        (["deploy"], "deploy"),
+        (["deploy", "alpha", "beta"], "deploy alpha beta"),
+        (["deploy", "alpha", "--check"], "deploy --check alpha"),
+        (["deploy", "--only", "configure"], "deploy --only configure"),
+        (["deploy", "alpha", "--tags", "claude_code,tailscale"], "deploy --tags claude_code,tailscale alpha"),
+        (["deploy", "alpha", "--start"], "deploy --start alpha"),
+        (["login", "alpha"], "unset"),
+        (["list"], "unset"),
+    ],
+)
+def test_deploy_and_only_deploy_is_drawn_live_under_what_was_run(tmp_path: Path, args: list[str], title: str) -> None:
+    # The live output's switch and its title (callback_plugins/claude_on_proxmox.py), as the playbook sees it.
+    seen = tmp_path / "live"
+    body = f'printf "%s\\n" "${{CLAUDE_ON_PROXMOX_LIVE-unset}}" > "{seen}"'
+    result = _just(*args, settings=_recording(tmp_path, body))
+    assert result.returncode == 0, _output(result)
+    assert seen.read_text() == f"{title}\n"
+
+
 def test_an_option_may_come_before_or_after_the_names(tmp_path: Path) -> None:
     after = _playbook(tmp_path / "after", "deploy", "alpha", "--tags", "claude_code")
     before = _playbook(tmp_path / "before", "deploy", "--tags=claude_code", "alpha")

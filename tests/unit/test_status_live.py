@@ -10,20 +10,17 @@ from __future__ import annotations
 
 import fcntl
 import os
-import pty
 import re
-import select
 import signal
 import struct
 import subprocess
 import sys
 import termios
-import time
 from pathlib import Path
 
 import pytest
 import yaml
-from harness import ANSIBLE_PLAYBOOK, REPO, _end, _env, _fail_if_the_desktop_was_reached, _take_the_terminal
+from harness import ANSIBLE_PLAYBOOK, REPO, _at_a_pseudo_terminal, _env, _fail_if_the_desktop_was_reached
 from test_status import fake_fleet, status_root
 from vt import VT
 
@@ -79,66 +76,57 @@ def _at_a_terminal(
 ):
     """Run status.yml at a pseudo-terminal of cols x rows: its rc, the VT the bytes went through, the raw bytes and
     the run log. resize, (cols, rows), changes the size once the first frame with the VMs is drawn; interrupt sends
-    Ctrl-C's SIGINT to the run's process group then."""
+    Ctrl-C's SIGINT to the run's process group once both running VMs (test_status.fake_fleet) wait in ssh.
+
+    Either holds every VM's ssh (test_status.SSH) until it is done: a Linux pty takes the rest of the run's output
+    without blocking it, so the run could end before the test reads that frame. A resize lets the run go on once
+    the region has pushed the screen up at the new size; an interrupt never does. The interrupt waits for the held
+    ssh because a SIGINT that lands while Ansible forks a worker is lost: its handler then runs inside logging's
+    after-fork hook, which prints the KeyboardInterrupt as "Exception ignored" and the run goes on. Once each VM's
+    worker waits in ssh, nothing forks."""
     root, status = status_root(tmp_path, base)
     playbook = playbook or status
     log = root / "run.log"
+    hold = root / "ssh-holds"
+    if resize or interrupt:
+        hold.touch()
     # The test's own module beside the project's, which the harness names alone.
     library = f"{tmp_path / 'library'}{os.pathsep}{REPO / 'playbooks' / 'library'}"
     env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM=term, ANSIBLE_LIBRARY=library, **LIVE)
     if colour:
         # The harness turns colour off for every run; this one is at a colour terminal, as a person's is.
         env["ANSIBLE_NOCOLOR"] = "0"
-    master, slave = pty.openpty()
-    _size(slave, cols, rows)
-    process = subprocess.Popen(
-        [str(ANSIBLE_PLAYBOOK), "-i", str(_inventory(root)), "--check", str(playbook)],
-        cwd=root,
-        env=env,
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
-        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - nothing else runs threads here
-    )
-    os.close(slave)
-    events, output, acted, deadline = [], b"", False, time.monotonic() + 120
-    try:
-        while True:
-            if time.monotonic() > deadline:
-                pytest.fail("status did not finish within 120 seconds:\n" + output.decode(errors="replace"))
-            ready, _, _ = select.select([master], [], [], 0.05)
-            if ready:
-                try:
-                    chunk = os.read(master, 65536)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                events.append(chunk)
-                output += chunk
-            elif process.poll() is not None:
-                break
-            if not acted and (resize or interrupt) and b"VMID" in output:
-                acted = True
-                if resize:
-                    _size(master, *resize)
-                    os.killpg(process.pid, signal.SIGWINCH)
-                    events.append(resize)
-                if interrupt:
-                    os.killpg(process.pid, signal.SIGINT)
-        process.wait(timeout=30)
-    finally:
-        if process.poll() is None:
-            _end(process)
-        os.close(master)
-    _fail_if_the_desktop_was_reached(root)
     vt = VT(cols, rows)
-    for event in events:
-        if isinstance(event, tuple):
-            vt.resize(*event)
-        else:
-            vt.feed(event)
-    return process.returncode, vt, output, log.read_text() if log.exists() else ""
+    acted = []
+    # The screen pushed up at the new size: a newline (the terminal's \r\n) for each of its rows, then up all but one.
+    pushed = re.compile(rb"(\r?\n){%d}\x1b\[%dA" % (resize[1], resize[1] - 1)) if resize else None
+
+    held = root / "ssh.log"
+
+    def resize_or_interrupt(chunk, output, master, process):
+        vt.feed(chunk)
+        if not acted and resize and b"VMID" in output:
+            acted.append(len(output))
+            _size(master, *resize)
+            os.killpg(process.pid, signal.SIGWINCH)
+            vt.resize(*resize)
+        if not acted and interrupt and held.exists() and len(held.read_text().splitlines()) >= 2:
+            acted.append(len(output))
+            os.killpg(process.pid, signal.SIGINT)
+        if pushed and acted and hold.exists() and pushed.search(output, acted[0]):
+            hold.unlink()
+
+    rc, output = _at_a_pseudo_terminal(
+        [str(ANSIBLE_PLAYBOOK), "-i", str(_inventory(root)), "--check", str(playbook)],
+        root,
+        env,
+        size=(cols, rows),
+        act=resize_or_interrupt,
+        timeout=120,
+        poll=0.05,
+    )
+    _fail_if_the_desktop_was_reached(root)
+    return rc, vt, output, log.read_text() if log.exists() else ""
 
 
 def _report(log: str) -> list[str]:
@@ -160,27 +148,6 @@ def _wrapped(lines: list[str], cols: int) -> list[str]:
 
 def _shown(vt: VT) -> list[str]:
     return [line.rstrip() for line in vt.transcript()]
-
-
-def test_the_terminal_reads_a_stream_cut_anywhere_as_it_reads_it_whole() -> None:
-    # A pseudo-terminal's reads can end inside a character or an escape sequence: on Linux CI one split a "→" in
-    # two, and the screen read "��" where the log had the arrow.
-    stream = (
-        b"\x1b[?2026h\x1b[1;36mVMS\x1b[0m \xe2\x97\x8f alpha\r\n"
-        b"\x1b[36m               \xe2\x86\x92 just deploy alpha\x1b[0m\x1b[K\r\n\x1b[2A\r\x1b[J"
-        b"\xe2\xa0\x8b reading \xf0\x9f\x99\x82\x1b[?2026l"
-    )
-    whole = VT(60, 10)
-    whole.feed(stream)
-    for cut in range(1, len(stream)):
-        parts = VT(60, 10)
-        parts.feed(stream[:cut])
-        parts.feed(stream[cut:])
-        assert parts.transcript() == whole.transcript() and parts.unknown == whole.unknown == set(), cut
-    one = VT(60, 10)
-    for byte in stream:
-        one.feed(bytes([byte]))
-    assert one.transcript() == whole.transcript() == ["⠋ reading 🙂"]
 
 
 def test_a_report_that_fits_is_redrawn_in_place_and_leaves_only_the_finished_one(tmp_path, fleet) -> None:
@@ -231,7 +198,8 @@ def test_a_resize_keeps_every_frame_in_the_scrollback_and_the_finished_report_wh
 
 def test_ctrl_c_erases_the_live_region_and_ends_the_run(tmp_path, fleet) -> None:
     rc, vt, output, log = _at_a_terminal(tmp_path, fleet, 100, 60, interrupt=True)
-    assert rc != 0
+    # 99 is ansible-core's for a run interrupted; any other is a run that ended on its own.
+    assert rc == 99, output.decode(errors="replace")
     shown = "\n".join(_shown(vt))
     assert not any(glyph in shown for glyph in FRAMES), shown
     assert "interrupted" in shown.lower(), shown

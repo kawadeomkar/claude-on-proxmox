@@ -165,6 +165,8 @@
       become: true
       become_user: "{{ github_projects_user }}"
       failed_when: false
+      # A wait for you: just deploy's live output says so, and rings, once it has run a moment.
+      tags: [attention_browser]
 
   # Whatever happened above - an approval, an expiry, or a failure - gh is
   # ended if it still runs, its job is collected and removed, and its files

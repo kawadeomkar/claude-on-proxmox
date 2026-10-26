@@ -126,7 +126,8 @@ default's `DOCUMENTATION` fragments (`default_callback`, `result_format_callback
 subclass has no options: every hook fails on its first `get_option`, Ansible only warns, and every task's
 result disappears from the screen and the log in a run that still exits 0. `--syntax-check` loads no
 callback, so `just lint syntax` would not notice; `tests/unit/test_attention_callback.py` runs real playbooks
-through it and compares its untagged output with the default's, byte for byte.
+through it and compares its untagged output with the default's, byte for byte. It also draws `just deploy`
+live (below).
 
 A run waits for the person in three ways, and each is set apart:
 
@@ -139,8 +140,9 @@ A run waits for the person in three ways, and each is set apart:
   REQUIRED IN YOUR BROWSER`, with the VM and the sign-in (from the task's role), instead of `ok: [host]
   =>` and a YAML dump. A retried task with the tag - Claude's and Tailscale's browser waits - says once
   per VM that it is waiting, with the time left, instead of a `FAILED - RETRYING` line every few seconds
-  that pushed the page off the screen. Five tasks carry the tag, none looped; the device flow's
-  `wait_for` has no retries to fold.
+  that pushed the page off the screen. Six tasks carry the tag, none looped; the device flow's
+  `wait_for` has no retries to fold, and carries it for `just deploy`'s live output (below), which tells a
+  wait that never retries by how long it runs.
 - **What is left after the run**: NEXT STEPS, after PLAY RECAP, from what the report tasks recorded.
   Each of the 18 reports that can say what to do later registers its message and records it straight
   after with `ansible.builtin.set_stats` under its owner's stat - `claude_code_next`,
@@ -160,6 +162,66 @@ The blocks are bright yellow through `Display`, plain under `ANSIBLE_NOCOLOR` or
 log gets them plain, but never destroy's question, which `vars_prompt` reads with `input()`. The harness
 shows custom stats (`ANSIBLE_SHOW_CUSTOM_STATS=1`), so each role's own tests read what it recorded from the
 JSON report (`_left_to_do`), in every state they already run.
+
+### `just deploy`, drawn live
+
+`CLAUDE_ON_PROXMOX_LIVE`, which the justfile's `deploy` recipe alone exports, set to what was run (`deploy
+--check alpha`, the run's title), turns the callback's live mode on at verbosity 0, with a run log to send the
+stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above. The callback takes the variable out of
+its environment when the playbook starts, so nothing the run starts - the VS Code whose terminals a later
+`just destroy` may run in - inherits it. It is `live` when stdout can take the region every live output shares
+(§7.8, `can_draw`), and `lines` otherwise. The model is `filter_plugins/run_view.py`, which any playbook run can
+be drawn with: `just deploy` is the first, and §7.8 says how another recipe joins it.
+
+- **Stages and steps.** A play's stage comes from its playbook's file (`play.get_path()`, `STAGE_FILES`):
+  template, provision, configure, `SSH aliases`, the three sign-in playbooks as one stage `sign in`, VS Code.
+  A play from a file the table does not name - `discover.yml`, which configure and each sign-in import, and
+  `deploy.yml`'s own - takes the stage of the play after it, else of the one before, and a test holds the
+  table to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is its role; in the sign-in stage,
+  the sign-in, for every play of its file.
+- **How far a step is.** When the playbook starts, `play.compile()` of each play gives its static tasks with
+  the very `_uuid`s they start with, blocks' rescues and always included, and only those `--tags` and
+  `--skip-tags` leave (`evaluate_tags`, as the play's iterator filters them); each include adds its file's
+  count when it announces itself (`v2_playbook_on_include`, `count_tasks`: a block's children, a static
+  import's file, an include as one); a task beyond them counts as reached. A step that has ended is whole, in
+  its row and in its stage's: a rescue that never ran was never left to do. A step's time is its own tasks'
+  time added up, never its first task to its last: a role's handler runs at the end of the play, after every
+  other role.
+- **Where output goes.** The region wraps `Display.display`: each call erases the region, prints, and draws
+  it again, every call under `Display`'s lock, so every write to the log takes the locks in one order. A
+  route keeps the run's own words and anything on stderr - warnings, deprecations, errors - on the screen and
+  sends the rest, every line the default callback and `profile_tasks` print, to the log alone (`log_only`).
+  The run's own words print in colour to the screen and plain to the log, so the log is every line the stream
+  would have logged, in order, with those added (`test_deploy_live.py` runs a stand-in deploy both ways and
+  compares). They are the plan - the first play's report - and every report after it, whole: wrapped to the
+  width and never cut, its VM first unless a play on this machine names it; the browser blocks and
+  `--check`'s diffs; and each failure: the task, the VM, its message, the last 20 lines of its output - a
+  crashed module's own - and for a loop, what each item that failed said. A failure among a block's own tasks,
+  where the block has a `rescue`, is the block's to handle: dim in the window, nothing printed. One in a
+  `rescue` or an `always` is the run's, unless a block further out has it among its own.
+- **What a VM may set.** Only `proxmox_vm`'s tasks give the summary a VM's ID and address: a task on the VM
+  could set any fact. The ID is a number or nothing, and the address goes through `plain_text`, as everything
+  else a VM said does.
+- **The screen.** The region (§7.8) draws the frame, which `run_view` folds to the height before the region
+  cuts it, and steps aside for every prompt. The tab's title says where the run is, and the bell rings once
+  per wait and at the end. A wait is a task tagged `attention_browser` that is not a block's `debug`: from its
+  first retry, or once it has run two seconds (`WAIT_AFTER`) - a wait that never retries, GitHub's device
+  flow, is known by that, and a skipped one is over first. Its time is counted as yours.
+- **The end.** At the stats event the region is erased for good, PLAY RECAP goes to the log, and the summary
+  (`Run.summary`) and NEXT STEPS print, the title `done`, or `failed` when a VM failed. The summary gives each
+  VM a line per report, cut to the width, the report being whole above: a report run again in a later play -
+  the repositories, configure's and then the sign-in's - by its last run; none on a matter a later report
+  recorded again (each report's NEXT STEPS record, the `set_stats` task straight after it, names its matters:
+  configure's "not signed in", which records nothing left under `just deploy` since the sign-in follows, goes
+  once the sign-in's report on that matter comes), nor one whose line a later record replaced; and a play on
+  this machine's under the one VM it names. Ctrl-C has no stats event: the region's `atexit` erases it and the
+  title says `stopped`. Without a terminal there is no region: a line as each step ends
+  (`Run.ended_lines`), the reports, and the summary.
+
+No test or scenario sets the variable - the harness passes on only `PASSED_ON`, and `test_deploy_live.py`
+fails if a tracked file other than the callback, the justfile's `deploy` recipe and `test_justfile.py`, whose
+`ansible-playbook` only records, names it - so nothing a test pins is drawn. A known limit: `deploy.yml`'s last
+play, which raises what failed after the sign-ins, takes VS Code's stage.
 
 ## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
 
@@ -298,13 +360,11 @@ cols)`** — the report as text, every line within 100 columns, or within `cols`
 
 **The callback** is the stdout callback `just status` chooses (`ANSIBLE_STDOUT_CALLBACK`, and
 `ANSIBLE_CALLBACKS_ENABLED` naming it alone, so `ansible.cfg`'s `profile_tasks` prints nothing into the
-report). It loads `status.py` by path, keeps each `status_found` fact as it lands, and at a terminal that
-is one, not `dumb`, and UTF-8, redraws the live region in one write inside synchronized-output marks:
-up exactly the lines it drew, each line cut to the width, the region cut to the height with a "⋮" line
-for the rest. It wraps `Display.display`, so every other message - a warning, an error - erases the
-region first and redraws it after. A resize (`SIGWINCH`) pushes the screen into the scrollback and draws
-afresh, since no count of what was drawn holds once a frame meant for the old size has wrapped. The
-cursor is never hidden. When the report fact arrives, the region is erased and the finished report
+report). It loads `status.py` by path, keeps each `status_found` fact as it lands, and draws the report
+live in the region every live output shares (§7.8), redrawn as each fact lands, the lines its frame leaves
+out said to be "shown when the run ends"; `status.py` draws its lines with `screen.py`, as the live runs do.
+The region is taken when the callback is made, so a warning before the first frame is drawn above it, and
+spins from the playbook's start. When the report fact arrives, the region is erased and the finished report
 printed through `Display`, so the log has it and nothing else - in colour on the screen, plain in the log,
 since `Display` logs the text it is given; under `--json` (`STATUS_QUIET`) nothing is
 printed. It shows each task's warnings, which since ansible-core 2.19 travel on the result and which a
@@ -327,3 +387,60 @@ narrow one, a resize each way, Ctrl-C, a dumb terminal, a pipe, and a warning be
 `tests/unit/test_status_vms.py` (the module on fixture trees, the reads inside stand-in VMs and that they
 change nothing there, and the host key's options and refusals), and `tests/unit/test_status_work.py`
 (`git_checkouts_info`'s `work` over real throwaway repositories, which it leaves as they were).
+
+## 7.8 `filter_plugins/live_region.py` and `filter_plugins/screen.py` — every live output
+
+`just status`'s report (§7.7) and every live run (§7.5) are drawn the same way, with the same code, so each
+new live output adds only what it shows. Two modules hold what they share, and `filter_plugins/text.py`'s
+`plain_text` and `one_line` (§7.4) clean everything a VM said before any of it is kept.
+
+**`live_region.py`** — `LiveRegion(display, frame, route, more)`, the region at the bottom of a terminal
+that a stdout callback hands a frame function, `frame(cols, rows, glyph)`, returning its lines already cut to
+the width. `can_draw()` says whether stdout can take one: a terminal, `TERM` not `dumb`, UTF-8 for the
+glyphs. `start()` takes the terminal, from the main thread, which alone may set a signal handler; `redraw()`
+draws; `spin()` redraws ten times a second for the spinner, under `Display`'s lock; `finish()` erases it for
+good, and runs at exit, Ctrl-C included.
+
+- **Drawing.** One write per redraw, inside synchronized-output marks (`CSI ?2026`), the cursor moved up
+  exactly the lines drawn and nothing else, so no line may wrap: a frame taller than the screen keeps its
+  top and its last line, with `more` saying how many it leaves out. A screen under 4 rows or 20 columns
+  gets no region, since one as tall as the screen would scroll each redraw. The cursor is never hidden.
+- **Everything else above it.** It wraps `Display.display`: each call erases the region, prints, and draws
+  it again, under `Display`'s lock, so every write to the log takes the locks in one order. A route, given
+  the call's keyword arguments, may send it to the log alone (`log_only`), which a live run does with the
+  stream. A forked worker's display goes over the queue to the process that started the region, which alone
+  draws.
+- **Prompts.** `Display.prompt_until` (a `pause`) prints its prompt through `display` and only then takes
+  `Display`'s lock to read the keys (ansible-core 2.21), and a `vars_prompt` reads with `input()`
+  (`Display.do_var_prompt`). Both are wrapped: the region erases and pauses itself before the prompt and draws
+  again once it returns, and the spinner draws nothing meanwhile.
+- **The terminal.** Its echo is off while the region is up, and on for a prompt and at the end: an Enter
+  typed during a run would move the cursor under the region, and the next redraw would leave a copy of it
+  behind. A resize (`SIGWINCH`) pushes the screen into the scrollback and draws afresh, since no count of
+  what was drawn holds once a frame meant for the old size has wrapped. `title()` sets the tab's title (OSC
+  0) when it changes, and `bell()` rings.
+
+**`screen.py`** — a line is a list of `(text, style)` segments, the style one of `PALETTE`'s: headings,
+bold, dim, and the colours of done, to do, failed, running and waiting. `cut` (to a width, ending in a dim
+"…"), `pad`, `right` (a tail aligned to the edge, dropped before it would crowd the line), `render` (in the
+palette or plain, `PENDING` drawn as the spinner's glyph), `bar`, `spark`, `fill` (wrapped, never cut),
+`duration` and `clock`, and `plural`. A line is measured in characters, one each: a terminal set to draw
+East Asian ambiguous-width characters double-wide (`█`, `●`, `·`) wraps a frame drawn with them.
+
+**Loading.** A filter plugin is no module another can import, and a callback cannot ask for one by name, so
+each module that needs another loads it by path, once, as `claude_on_proxmox_<stem>` (`_sibling`): the
+callbacks, `status.py` and `run_view.py` share one copy of each.
+
+**Another recipe, drawn live.** A recipe whose playbook is a run - `just login`, `just destroy`, `just code`,
+`just init` - joins `just deploy` without code of its own: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its
+title, as `deploy`'s does; `run_view.STAGE_FILES` names its playbooks' stages (the sign-in playbooks already
+are), and `PLAN_FILES` one whose first play reports what the run will do; its reports, waits and NEXT STEPS
+records follow §7.5's conventions, which the callback already reads. A command that is a report rather than a
+run, as `just status` is, keeps a model and a frame function of its own and hands the frame to `LiveRegion`,
+drawing its lines with `screen.py`. Either way its test runs it at a pseudo-terminal through
+`harness._at_a_pseudo_terminal` and reads the screen back through `vt.py`, and `test_deploy_live.py`'s guard
+names each tracked file that may name the variable.
+
+Covered by `tests/unit/test_live_region.py` (the region against a stand-in `Display`, whose `display`,
+`prompt_until`, `do_var_prompt` and lock it holds to ansible-core's), `tests/unit/test_screen.py`,
+`tests/unit/test_vt.py` (the small terminal, a stream cut anywhere), and each output's own live tests.

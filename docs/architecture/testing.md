@@ -6,13 +6,13 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 1881 tests. By file:
+pytest over `tests/unit/`: 2064 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
   sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
-- **`just status`** (`test_status.py` 50, `test_status_live.py` 9, `test_status_vms.py` 13,
+- **`just status`** (`test_status.py` 50, `test_status_live.py` 10, `test_status_vms.py` 13,
   `test_status_work.py` 3): the report's filters on canned
   reads - every value one line of plain text over a corpus of hostile ones, the drift between a VM and
   `local.yml`, the twelve buckets of a day at Proxmox VE 9's resolution and 8's, the ranking and exit code,
@@ -24,7 +24,10 @@ pytest over `tests/unit/`: 1881 tests. By file:
   at a pseudo-terminal of the test's own, read back through `tests/unit/vt.py`, a small terminal: a window
   the report fits, a short one, a narrow one, a resize each way, Ctrl-C, a dumb terminal, a pipe, and a
   warning between frames, the screen and its scrollback ending in exactly the finished report the log
-  holds. Inside the VMs (`test_status_vms.py`): `vm_status_info` on fixture trees, in this process; status
+  holds; the resize and Ctrl-C runs hold the VMs' stand-in `ssh` until the test has acted, since a Linux
+  pty takes the rest of a run's output without blocking it, and the run could end before the frame it acts
+  on is read. The Ctrl-C is sent only once each running VM waits in that `ssh`: a SIGINT that lands while
+  Ansible forks a worker is lost (`CLAUDE.md`, things that have bitten this repo). Inside the VMs (`test_status_vms.py`): `vm_status_info` on fixture trees, in this process; status
   over stand-in VMs with discovery off, each running the three roles' `status` entry points with the gh and
   tailscale fakes, a stand-in `systemctl` and a fixture tree, every file of each VM unchanged after and the
   fakes' logs holding only reads; the host key, `status_ssh_args` held to `ansible.cfg`'s, the options as
@@ -37,9 +40,29 @@ pytest over `tests/unit/`: 1881 tests. By file:
 - **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
-  the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
+  the log - and statically, the six tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
+- **What every live output draws with** (`test_live_region.py` 10, `test_screen.py` 17, `test_vt.py` 4): the
+  region against a stand-in `Display` - what is printed above it, a frame cut to the screen, a pause and a
+  vars prompt each with the screen to themselves, the route, a screen too small, the echo off on a
+  pseudo-terminal of the test's own - whose `display`, `prompt_until`, `do_var_prompt` and lock it holds to
+  ansible-core's; the lines' cut, alignment, palette, bars and durations; and `vt.py`, the small terminal
+  the live tests read back through, reading status's and deploy's streams the same cut anywhere. Every test
+  that runs something at a terminal opens it through `harness._at_a_pseudo_terminal`.
+- **`just deploy`'s live output** (`test_run_view.py` 80, `test_deploy_live.py` 13): the model, fed
+  events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
+  by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
+  report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
+  terminal at any of ten widths, a frame folded to its height, the line per step, the summary - and the stage
+  table against `deploy.yml`'s imports and `--only`'s playbooks. Then the callback for real: a stand-in
+  deploy, its playbooks named as the real ones, at a pseudo-terminal of the test's own, read back through
+  `vt.py` (which counts a frame's wrapped lines, the titles and the bells): the region drawn and
+  nothing of it left, with Enter pressed mid-run, the plan and a long report whole, a fact a VM forged unused,
+  the switch not inherited, the prompt whole and answered, the diffs of `--check`, 50 by 12, 200 by 60 and a
+  resize, Ctrl-C; a failure in a rescue, a loop's failed item, a crashed module and a long output's end said;
+  the log every line the stream logs, in order; a line per step through a pipe; `-v`, no variable and no log
+  streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
@@ -219,7 +242,7 @@ pytest over `tests/unit/`: 1881 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The justfile** (`test_justfile.py` 448): the real `just`, at least the pinned version, run against
+- **The justfile** (`test_justfile.py` 456): the real `just`, at least the pinned version, run against
   stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
   --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
   nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its
@@ -235,7 +258,7 @@ pytest over `tests/unit/`: 1881 tests. By file:
   `--project` after `tools/check project` and its `--session` after `tools/check session`, each as its own
   JSON extra-var, refused outside its characters and never run as code, and taken by `code` alone; each
   stage, `--check`, the sign-ins and `--start` running their
-  playbooks, an option before or after the names, and anything a recipe does not take - an unknown option,
+  playbooks, `deploy` alone exporting the live output's title, an option before or after the names, and anything a recipe does not take - an unknown option,
   a stage, a setting, make's `TAGS=` - refused; `--tags` beside names and refused without them, with the
   stages that have none, and outside the six roles; `just` and `just help` listing every recipe and
   option, every word a `*` parameter (never `NAME=''` in the listing) and a second word after a recipe

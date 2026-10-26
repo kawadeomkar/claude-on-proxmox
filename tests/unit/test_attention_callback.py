@@ -38,6 +38,7 @@ WAITS = {
     "browser_login | Say the page and what happens next",
     "browser_login | Wait for your browser to come back",
     "device_flow | Say the code and the page",
+    "device_flow | Wait for the approval",
     "web_login | Say where to sign in",
     "web_login | Wait for the page to be approved",
 }

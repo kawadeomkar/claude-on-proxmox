@@ -378,6 +378,31 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the `Include` off, the Vagrantfile sets `claude_ssh_config: false`, and
   `tests/unit/test_ssh_config.py` fails if any of them stops.
 
+- **Every live output draws through one region and one way of drawing.** `filter_plugins/live_region.py`'s
+  `LiveRegion` puts a frame at the bottom of the terminal and `filter_plugins/screen.py` builds its lines
+  (segments cut to the width, one palette): `just status`'s callback and every live run's, and each recipe
+  drawn live after them - a playbook run joins through `CLAUDE_ON_PROXMOX_LIVE` and `run_view.STAGE_FILES`,
+  a report hands `LiveRegion` a frame of its own; never a second region, palette or cut. The region draws one
+  write per redraw in synchronized output, up exactly the lines drawn, so no line may wrap (`tests/unit/vt.py`
+  counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`); keeps
+  the echo off while it is up; and never hides the cursor. Modules load each other by path, once, as
+  `claude_on_proxmox_<stem>`, and every test that runs something at a terminal opens it through
+  `harness._at_a_pseudo_terminal`. See docs/architecture/custom-code.md §7.8.
+
+- **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
+  which only the deploy recipe exports (the run's title) and the callback takes out of its environment at once,
+  so nothing the run starts inherits it, turns the stdout callback's live mode on at verbosity 0 with a run
+  log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
+  Every line the stream would print still reaches the run log, in order, through `Display`'s `log_only` - so
+  without a log (`LOG_DIR=`) the run is the stream; the reports, browser blocks, diffs, warnings and failures
+  print above the region for good, whole - a report is wrapped, never cut, a failure says its output's end and
+  each failed loop item, and only a failure among a rescued block's own tasks is the block's. What a VM said
+  reaches the screen through `plain_text`, and only `proxmox_vm` gives the summary a VM's address. Any `-v` or
+  another stdout callback is the stream. No test or scenario sets the variable: `test_deploy_live.py` runs the
+  callback at a pseudo-terminal of its own against a stand-in deploy, holds the log to the stream's, and fails
+  if a tracked file other than the callback, `run_view.py`, the deploy recipe and `test_justfile.py`'s
+  recording stand-in names it. See docs/architecture/custom-code.md §7.5.
+
 - **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`
   (the controller alone, pipelining on, no `group_vars`; never in `playbooks/` itself, where the syntax
@@ -433,11 +458,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   VM or Proxmox supplies is made one line of plain text (`one_line`, `status_clean`) before the model
   keeps it, so none starts a line of its own in the report or in `--json`; every line of the report fits
   100 columns. Its stdout callback (`callback_plugins/claude_on_proxmox_status.py`, chosen by the recipe,
-  the run's only callback) draws the report live at a terminal: one write per redraw in synchronized-output
-  marks, up exactly the lines drawn, each cut to the width and the region to the height, a resize pushing
-  the screen into the scrollback; it never hides the cursor, shows task warnings (ansible-core 2.19+
-  carries them on the result), and prints only the finished report piped, in the log, or under `--json`
-  (`STATUS_QUIET`). Every status run in a test pins `status_report_file` and `claude_ssh_config_file`
+  the run's only callback) draws the report live at a terminal in the shared region (above), shows task
+  warnings (ansible-core 2.19+ carries them on the result), and prints only the finished report piped, in the
+  log, or under `--json` (`STATUS_QUIET`). Every status run in a test pins `status_report_file` and `claude_ssh_config_file`
   into its own directory and gets a refusing stand-in `ssh` (`status_root`); the reads inside a VM run
   against stand-in VMs (`tests/unit/test_status_vms.py`), which hold that every file there is unchanged.
   See docs/architecture/lifecycle.md §4.6.
@@ -555,7 +578,7 @@ the workspace is the VM user's real home rather than a guess from the controller
 `user_dir` fact is the *connecting* user's home, which under Molecule is root's).
 
 **NEXT STEPS is recorded by each report, never read off the output.** `callback_plugins/claude_on_proxmox.py`,
-the stdout callback `ansible.cfg` names, prints NEXT STEPS after the recap from `set_stats` records only -
+the stdout callback `ansible.cfg` names, prints NEXT STEPS after the recap (after the summary, under `just deploy`) from `set_stats` records only -
 `{vm: {matter: line}}` under five `*_next` stats - each made straight after its report from the facts the
 message is built from: the line while something is left, `''` once nothing is, the last record of a VM and
 matter winning across plays. Do not decide from a message's text: a stopped Tailscale names no `just`
@@ -632,6 +655,13 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   2026-10-12). Never decide from the listing's status what a run itself just changed;
   `test_release.py` runs destroy's first play against the fake with its lag on
   (`PUT /api2/json/fake/listing-lag`).
+- **A Ctrl-C that lands while Ansible forks a worker is lost.** Python runs ansible-core's SIGINT handler
+  inside logging's after-fork hook (`_releaseLock`), which prints its KeyboardInterrupt as "Exception
+  ignored" and goes on; the handler has already killed the workers and set SIGINT back to the default, so
+  the run carries on or hangs, and a second Ctrl-C kills it outright. CI lost `test_status_live.py`'s
+  Ctrl-C this way, sent the moment the VMs were drawn, just as the next task's workers were forked. A test
+  that interrupts a run sends it while the run waits on something held and nothing forks; a Linux pty also
+  buffers about 64 KB without blocking the run, so a run can end before its test reads the frame it acts on.
 - **A skipped task still overwrites its register.** A `when` on destroy's second cluster listing left
   `claude_vm_all` without its listing whenever no VM had been started, and destroy failed before it
   began; register only in a task that always runs, or read it with a `default`.
