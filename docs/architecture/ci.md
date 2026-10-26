@@ -5,7 +5,8 @@
 
 | Job | Contents |
 |---|---|
-| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → `just test unit`, four workers (`PYTEST_XDIST_AUTO_NUM_WORKERS`, so it never depends on psutil) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
+| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
+| `unit` | `Unit tests (1/3)` … `(3/3)`: `just test unit --shard N/3`, four workers each (`PYTEST_XDIST_AUTO_NUM_WORKERS`, so it never depends on psutil). Each module that shares a fixture stays whole in one shard; the shards are balanced by `tests/unit/durations.json` (`tools/unit_durations.py` writes it from a run's JUnit report), a test it lacks counting as the mean. 7.9–8.4 minutes for the slowest shard on hosted runners, against 44 for the whole suite one test at a time |
 | `dependency-review` | PRs only, fails on moderate severity |
 | `molecule` | matrix over all eight roles, `just test --role <role>`, from the start of the run: behind `lint` a run took the unit suite's time plus the slowest scenario's |
 | `playbooks` | matrix over the `configure` and `provision` scenarios, `just test integration` and `provision`, from the start of the run too |

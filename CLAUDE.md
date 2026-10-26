@@ -35,6 +35,7 @@ just lint                            # uv lock --check, yamllint --strict, ansib
 just lint syntax                     # some of them: lock, yaml, ansible, python, just, syntax, hooks
 just test                            # lint, then every test: unit and every Molecule scenario — the CI gate
 just test unit                       # pytest over tests/unit/, a worker per CPU (pytest-xdist loadgroup)
+just test unit --shard 2/3           # one of the three shards CI runs (tests/unit/durations.json balances them)
 just test --role proxmox_vm          # one role scenario (role: every role; molecule: every scenario)
 just test provision                  # one playbook scenario (integration is the configure scenario)
 just deploy                          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (just deploy alpha: that VM)
