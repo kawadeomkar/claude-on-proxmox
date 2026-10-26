@@ -384,6 +384,10 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
       {{ no_tty_args }}
     fi
     [ -z "$roles" ] || set -- "$@" --tags "$roles"
+    # The live output (callback_plugins/claude_on_proxmox.py): set, the run is drawn rather than streamed, under
+    # this title. Any -v in ANSIBLE_ARGS streams it as before.
+    CLAUDE_ON_PROXMOX_LIVE="deploy${check:+ --check}${stage:+ --only $stage}${roles:+ --tags $roles}${start:+ --start}${names:+ $(printf %s "$names" | tr , ' ')}"
+    export CLAUDE_ON_PROXMOX_LIVE
     if [ -n "$check" ]; then
       exec {{ run_logged }} "$name" "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} --check --diff "$playbook"
     fi

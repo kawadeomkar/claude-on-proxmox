@@ -378,6 +378,18 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the `Include` off, the Vagrantfile sets `claude_ssh_config: false`, and
   `tests/unit/test_ssh_config.py` fails if any of them stops.
 
+- **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
+  which only the deploy recipe exports (the run's title), turns the stdout callback's live mode on at
+  verbosity 0: at a terminal, a region at the bottom of the screen (`filter_plugins/live_region.py`) drawn from
+  `filter_plugins/deploy_view.py`'s model; otherwise a line per step. Every line the stream would print still
+  reaches the run log, in order, through `Display`'s `log_only`; the reports, browser blocks, diffs, warnings
+  and failures print above the region for good; and a prompt erases the region before it prints and gets it
+  back only once answered, since `prompt_until` prints through `display` and then locks. Any `-v` or another
+  stdout callback is the stream. No line of a frame may wrap (`tests/unit/vt.py` counts them). No test or
+  scenario sets the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against
+  a stand-in deploy, holds the log to the stream's, and fails if another file names it (`test_justfile.py`'s
+  recording stand-in aside). See docs/architecture/custom-code.md §7.5.
+
 - **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`
   (the controller alone, pipelining on, no `group_vars`; never in `playbooks/` itself, where the syntax
@@ -526,7 +538,7 @@ the workspace is the VM user's real home rather than a guess from the controller
 `user_dir` fact is the *connecting* user's home, which under Molecule is root's).
 
 **NEXT STEPS is recorded by each report, never read off the output.** `callback_plugins/claude_on_proxmox.py`,
-the stdout callback `ansible.cfg` names, prints NEXT STEPS after the recap from `set_stats` records only -
+the stdout callback `ansible.cfg` names, prints NEXT STEPS after the recap (after the summary, under `just deploy`) from `set_stats` records only -
 `{vm: {matter: line}}` under five `*_next` stats - each made straight after its report from the facts the
 message is built from: the line while something is left, `''` once nothing is, the last record of a VM and
 matter winning across plays. Do not decide from a message's text: a stopped Tailscale names no `just`

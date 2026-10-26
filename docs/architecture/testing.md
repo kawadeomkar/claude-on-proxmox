@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 1777 tests. By file:
+pytest over `tests/unit/`: 1936 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -18,6 +18,16 @@ pytest over `tests/unit/`: 1777 tests. By file:
   the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
+- **`just deploy`'s live output** (`test_deploy_view.py` 78, `test_deploy_live.py` 10): the model, fed
+  events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, no line wider
+  than the terminal at any of ten widths, a frame folded to its height, the line per step, the summary -
+  the stage table against `deploy.yml`'s imports and `--only`'s playbooks, and the region against a stand-in
+  `Display`, whose `display`, `prompt_until` and lock it holds to ansible-core's. Then the callback for real:
+  a stand-in deploy, its playbooks named as the real ones, at a pseudo-terminal of the test's own, read back
+  through `vt.py` (a VT100 that counts a frame's wrapped lines, the titles and the bells): the region erased
+  at the end, the prompt whole and answered, the diffs of `--check`, 50 by 12 and 200 by 60, Ctrl-C; the log
+  every line the stream logs, in order; a line per step through a pipe; `-v` and no variable streamed; and no
+  other file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
@@ -196,7 +206,7 @@ pytest over `tests/unit/`: 1777 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The justfile** (`test_justfile.py` 448): the real `just`, at least the pinned version, run against
+- **The justfile** (`test_justfile.py` 456): the real `just`, at least the pinned version, run against
   stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
   --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
   nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its
@@ -212,7 +222,7 @@ pytest over `tests/unit/`: 1777 tests. By file:
   `--project` after `tools/check project` and its `--session` after `tools/check session`, each as its own
   JSON extra-var, refused outside its characters and never run as code, and taken by `code` alone; each
   stage, `--check`, the sign-ins and `--start` running their
-  playbooks, an option before or after the names, and anything a recipe does not take - an unknown option,
+  playbooks, `deploy` alone exporting the live output's title, an option before or after the names, and anything a recipe does not take - an unknown option,
   a stage, a setting, make's `TAGS=` - refused; `--tags` beside names and refused without them, with the
   stages that have none, and outside the six roles; `just` and `just help` listing every recipe and
   option, every word a `*` parameter (never `NAME=''` in the listing) and a second word after a recipe

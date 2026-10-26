@@ -2,7 +2,8 @@
 
 ```
 ansible.cfg                       inventory dir, accept-new host keys, forks, the stdout callback, YAML results
-callback_plugins/claude_on_proxmox.py   the default output, the waits set apart, NEXT STEPS after the recap (§7.5)
+callback_plugins/claude_on_proxmox.py   the default output, the waits set apart, NEXT STEPS after the recap, just deploy
+                                  drawn live (§7.5)
 .logs/                            one log per just run that used Ansible (git-ignored, 0700, pruned after 14 days)
 .sessions/                        the Claude sessions just destroy saved from each VM (git-ignored, 0700, kept until deleted)
 deploy.yml                        template (when missing) + provision + configure + the three sign-ins + VS Code
@@ -83,6 +84,8 @@ filter_plugins/desktop.py         page_opener, the sign-ins' browser command
 filter_plugins/text.py            plain_text, what a VM printed made safe to quote; banner, the block a prompt is set in
 filter_plugins/settings.py        init_answer, the rule each just init answer follows; with_setting, one written into YAML text;
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
+filter_plugins/deploy_view.py     just deploy's run as stages, steps and tasks: the live frame, a line per step, the summary
+filter_plugins/live_region.py     the live region: drawn in place at the bottom of a terminal, all else printed above it
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
                                   and github_repository, owner/repo of a remote URL here and of a GitHub one on the VM;
                                   claude_project_folder, Claude Code's folder for a path; claude_session_dirs; just_code_dir,
@@ -98,7 +101,8 @@ tests/
   check_no_local_files.sh         tracked-file guard (also runs in CI)
   unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the three
                                   sign-ins and deploy's sign-in steps, Tailscale, destroy's release, the managed SSH
-                                  config, the Claude terminal's script, the justfile, the wiki (test_docs.py)
+                                  config, the Claude terminal's script, the justfile, the wiki (test_docs.py), just
+                                  deploy's live output (vt.py, the screen it is read back from)
   molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh, claude, tailscale,
                                   Tailscale API, the Anthropic Messages API (for the real claude in configure)
 molecule/
