@@ -17,7 +17,9 @@ import importlib.util
 import inspect
 import io
 import json
+import os
 import re
+import signal
 import sys
 import time
 from pathlib import Path
@@ -763,6 +765,25 @@ def _ok(host, facts):
         host=SimpleNamespace(get_name=lambda: host),
         task=SimpleNamespace(get_name=lambda: "t"),
     )
+
+
+def test_a_ctrl_c_as_a_frame_reaches_the_terminal_leaves_its_count_of_lines_right(callback) -> None:
+    # A Ctrl-C after a frame was written and before its lines were counted left the count stale: the erase that
+    # followed missed the region, which stayed on the screen above the run's last words. Hosted runners showed
+    # it, where the live test sends its Ctrl-C the moment the first frame does; here the signal comes at that
+    # very moment, from the write itself.
+    cb, terminal = callback()
+    written = cb._write
+
+    def write_then_interrupt(text):
+        written(text)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    cb._write = write_then_interrupt
+    with pytest.raises(KeyboardInterrupt):
+        cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": _fleet()}}))
+    cb._write = written
+    assert cb._drawn == terminal.getvalue().count("\n") + 1
 
 
 def test_the_live_region_is_redrawn_in_place_and_erased_for_the_finished_report(callback) -> None:

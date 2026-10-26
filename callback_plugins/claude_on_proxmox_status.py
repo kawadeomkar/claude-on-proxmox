@@ -42,6 +42,7 @@ import signal
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -151,10 +152,28 @@ class CallbackModule(CallbackBase):
         sys.stdout.write(text)
         sys.stdout.flush()
 
+    @staticmethod
+    @contextmanager
+    def _uninterrupted():
+        """Ctrl-C held off in the main thread for one write to the terminal and the count of the lines it drew.
+
+        A KeyboardInterrupt between the two left the count stale: the erase then missed the region, which stayed
+        on the screen above the run's last words. The signal is delivered as soon as the count is right again.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            yield
+            return
+        held = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+        try:
+            yield
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, held)
+
     def _erase(self):
         if self._drawn:
-            self._write((f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else "") + "\r\x1b[J")
-            self._drawn = 0
+            with self._uninterrupted():
+                self._write((f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else "") + "\r\x1b[J")
+                self._drawn = 0
 
     def _frame_lines(self, cols):
         glyph = FRAMES[self._frame % len(FRAMES)]
@@ -195,9 +214,10 @@ class CallbackModule(CallbackBase):
             hidden = len(lines) - limit + 1
             more = self._status.one_line(f"⋮ {hidden} more lines, shown when the run ends", cols - 1)
             lines = lines[: limit - 2] + [more, lines[-1]]
-        up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
-        self._write(SYNC_ON + up + "\r" + "\x1b[K\n".join(lines) + "\x1b[K\x1b[J" + SYNC_OFF)
-        self._drawn = len(lines)
+        with self._uninterrupted():
+            up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
+            self._write(SYNC_ON + up + "\r" + "\x1b[K\n".join(lines) + "\x1b[K\x1b[J" + SYNC_OFF)
+            self._drawn = len(lines)
 
     def _spin(self):
         while not self._stop.wait(FRAME_SECONDS):
