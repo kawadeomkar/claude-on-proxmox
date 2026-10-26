@@ -537,6 +537,10 @@ destroy *NAMES:
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
+    # Drawn live (callback_plugins/claude_on_proxmox.py, its declaration in filter_plugins/live_recipes.py), under
+    # this title. Any -v in ANSIBLE_ARGS streams it as before.
+    CLAUDE_ON_PROXMOX_LIVE="destroy${names:+ $(printf %s "$names" | tr , ' ')}"
+    export CLAUDE_ON_PROXMOX_LIVE
     exec {{ run_logged }} destroy "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/destroy.yml
 
 # Only files named the way tools/run-logged names its logs, and only in

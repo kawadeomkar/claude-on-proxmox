@@ -95,16 +95,17 @@ def resize(master: int, screen: VT, cols: int, rows: int) -> None:
 
 
 def at_a_terminal(
-    argv, root, env, *, cols=100, rows=30, prompts=None, interrupt=None, at=None, act=None, timeout=120
+    argv, root, env, *, cols=100, rows=30, prompts=None, answers=None, interrupt=None, at=None, act=None, timeout=120
 ) -> Ran:
     """argv at a pseudo-terminal of cols and rows, read back by a VT.
 
-    prompts maps a prompt's text to the keys typed once it has the terminal (typed again after two seconds if pause
-    had not yet taken them); interrupt sends Ctrl-C once the title says it; at, (words of the title, bytes typed or
+    prompts maps a pause's text to the keys typed once it has the terminal (typed again after two seconds if pause
+    had not yet taken them); answers maps a vars_prompt's text, which reads a line, to the keys typed once it shows;
+    interrupt sends Ctrl-C once the title says it; at, (words of the title, bytes typed or
     a new (cols, rows)), is done once the title says them; act(chunk, output, master, process, screen) does anything
     else after each read."""
     screen = VT(cols, rows)
-    state = {"typed": {}, "interrupt": interrupt, "at": at}
+    state = {"typed": {}, "answered": set(), "interrupt": interrupt, "at": at}
 
     def drive(chunk, output, master, process):
         screen.feed(chunk)
@@ -115,6 +116,10 @@ def at_a_terminal(
                 if typed is None or (time.monotonic() - typed[0] > 2 and output.count(prompt.encode()) == typed[1]):
                     os.write(master, keys)
                     state["typed"][prompt] = (time.monotonic(), output.count(prompt.encode()))
+        for text, keys in (answers or {}).items():
+            if text not in state["answered"] and text.encode() in output:
+                state["answered"].add(text)
+                os.write(master, keys)
         title = screen.titles[-1] if screen.titles else ""
         if state["interrupt"] and state["interrupt"] in title:
             state["interrupt"] = None

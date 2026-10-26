@@ -6,13 +6,13 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 2106 tests. By file:
+pytest over `tests/unit/`: 2122 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
   sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
-- **`just status`** (`test_status.py` 50, `test_status_live.py` 10, `test_status_vms.py` 13,
+- **`just status`** (`test_status.py` 50, `test_status_live.py` 10, `test_status_vms.py` 14,
   `test_status_work.py` 3): the report's filters on canned
   reads - every value one line of plain text over a corpus of hostile ones, the drift between a VM and
   `local.yml`, the twelve buckets of a day at Proxmox VE 9's resolution and 8's, the ranking and exit code,
@@ -52,14 +52,18 @@ pytest over `tests/unit/`: 2106 tests. By file:
   reading status's and deploy's streams the same cut anywhere. Every test that runs something at a terminal opens
   it through `harness._at_a_pseudo_terminal`, and every live test through `tests/unit/live_kit.py`, which gives
   each run a `HOME` of its own.
-- **`just deploy`'s live output** (`test_run_view.py` 98, `test_deploy_live.py` 17, `test_login_live.py` 3): the model, fed
+- **The live output** (`test_run_view.py` 103, `test_deploy_live.py` 17, `test_login_live.py` 3,
+  `test_destroy_live.py` 4): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
   report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
   terminal at any of ten widths, a frame folded to its height, the line per step, the summary; a stage by its
   play, a quiet one, an include counted once, a serial play's batches, a percentage that never falls, a run of
   one stage drawn as its steps, a prompt as the person's time, a machine's wait with its try, a fleet's marks,
-  the three heads, a long report by its first sentence, a task never shown - and the stage table against
+  the three heads, a long report by its first sentence, a task never shown, a step by the blocks around its
+  tasks and an include counted there, a `meta` task started for each host as one and the VMs an `end_host` left,
+  every VM still in a play at its running step, a stage's row naming the VMs a fact names, a raise on this
+  machine naming the VMs it repeats, an answer said as one - and the stage table against
   `deploy.yml`'s imports and `--only`'s playbooks. Then the callback for real: a stand-in
   deploy, its playbooks named as the real ones, at a pseudo-terminal of the test's own, read back through
   `vt.py` (which counts a frame's wrapped lines, the titles and the bells): the region drawn and
@@ -72,9 +76,12 @@ pytest over `tests/unit/`: 2106 tests. By file:
   streamed; and no other tracked file naming the variable. `test_login_live.py` runs the real `login.yml` the same
   way against `test_sign_in_plays.py`'s stand-in VMs and fake GitHub: each failure under the sign-in it happened
   in, the raise naming none, the `SIGN-INS` table's marks, the head naming the VMs that failed, and the region
-  gone.
+  gone. `test_destroy_live.py` runs the real `destroy.yml` against `test_release.py`'s fakes and stand-in VMs,
+  every path it writes pinned: the question answered, the four stages, each VM's release by service and no step
+  of a role's own, the VM it started, each VM's outcome; a VM Proxmox would not delete the one that failed, under
+  its step, and the raise naming none; and a deletion not confirmed said as the answer, the title `declined`.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
-  96), both ways.
+  97), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
@@ -118,7 +125,7 @@ pytest over `tests/unit/`: 2106 tests. By file:
   read; `tailscale_auth_method` `key` and `web`; deploy's step VM by VM, starting by itself and asking
   first with `tailscale_login_auto_start: false`; `configure.yml`'s rescue and last play; and the guards
   that keep every scenario, the Vagrantfile and this harness off Tailscale, and the role in the justfile's `scenario_roles` and CI.
-- **Destroy's release** (`test_release.py` 44): `destroy.yml`'s release play and report against the
+- **Destroy's release** (`test_release.py` 49): `destroy.yml`'s release play and report against the
   stand-in `claude`, `gh` and `tailscale`, the fake GitHub API's credential revocation and the fake
   Tailscale API: a VM released from everything, with no token revoked at GitHub; the vault token and one
   pasted by hand signed out and told apart, the vault token even under a marker claiming it, and a logout
@@ -253,7 +260,7 @@ pytest over `tests/unit/`: 2106 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The justfile** (`test_justfile.py` 456): the real `just`, at least the pinned version, run against
+- **The justfile** (`test_justfile.py` 474): the real `just`, at least the pinned version, run against
   stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
   --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
   nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its

@@ -58,6 +58,7 @@ INCLUDE_TASKS = frozenset({"include_tasks", "ansible.builtin.include_tasks", "an
 INCLUDE_ROLE = frozenset({"include_role", "ansible.builtin.include_role", "ansible.legacy.include_role"})
 ARGUMENT_CHECKS = frozenset({"validate_argument_spec", "ansible.builtin.validate_argument_spec"})
 ADD_HOST = frozenset({"add_host", "ansible.builtin.add_host", "ansible.legacy.add_host"})
+META = frozenset({"meta", "ansible.builtin.meta", "ansible.legacy.meta"})
 # The facts the provision stage says a VM by.
 VM_FACTS = ("proxmox_vm_resolved_id", "proxmox_vm_address", "proxmox_vm_exists")
 FAILURE_LINES = 20
@@ -111,7 +112,7 @@ def tasks_of(blocks, out, play=None, search=()):
                 if hasattr(item, "block"):
                     tasks_of([item], out, play, search)
                 elif not getattr(item, "implicit", False) and tagged_in(item, play):
-                    out.append((item._uuid, role_of(item), _include_meta(item, search)))
+                    out.append((item._uuid, role_of(item), {**_include_meta(item, search), "blocks": blocks_of(item)}))
     return out
 
 
@@ -230,6 +231,7 @@ class Engine:
         self._rescued = {}  # host: what each failure a rescue took said, for a later raise of it
         self._attended = self._now()  # when the person last had something to answer: the start, a bell, a prompt
         self._facts = set()  # the facts the declaration reads each VM's outcome from
+        self._infos = {}  # stage key: the fact its row's info names VMs from
 
     # --- what the run says, and where it goes ------------------------------------------------------------------
     # The run's own words and anything on stderr - warnings, deprecations, errors - stay on the screen; the rest,
@@ -335,7 +337,9 @@ class Engine:
                 tasks = []
             plays.append((play._uuid, play.get_path(), tasks, play.get_name()))
         self.run.plays(plays)
-        self._facts = {o.fact for stage in self.run.recipe.stages for step in stage.steps for o in step.outcomes}
+        stages = self.run.recipe.stages
+        self._facts = {o.fact for stage in stages for step in (*stage.steps, stage) for o in step.outcomes}
+        self._infos = {stage.key: stage.info.fact for stage in stages if isinstance(stage.info, view.recipes.Info)}
         first = playbook.get_plays()[:1]
         if first and Path(str(first[0].get_path()).split(":", 1)[0]).name in self.run.recipe.plan:
             self.plan_play = first[0]._uuid
@@ -354,13 +358,24 @@ class Engine:
     def play_start(self, play):
         batches = play_batches(play) if play._uuid not in self.run.play_batches else 1
         with self.display._lock:
-            self.run.play_start(play._uuid, play.get_name(), play.get_path(), batches=batches)
+            self.run.play_start(play._uuid, play.get_name(), play.get_path(), batches=batches, now=self._now())
 
     def task_start(self, task):
         with self.display._lock:
             waits = WAITING_TAG in task.tags and task.action not in DEBUG_ACTIONS
             hidden = bool(getattr(task, "implicit", False)) or task.action in ARGUMENT_CHECKS
-            self.run.task(task._uuid, self._name(task), role_of(task), self._now(), waits=waits, hidden=hidden)
+            # A meta: end_host leaves each host it ends as it is, which Ansible says nothing of.
+            ends = task.action in META and str((task.args or {}).get("_raw_params", "")).strip() == "end_host"
+            self.run.task(
+                task._uuid,
+                self._name(task),
+                role_of(task),
+                self._now(),
+                waits=waits,
+                hidden=hidden,
+                blocks=blocks_of(task),
+                ends=ends,
+            )
             self._after()
 
     def include(self, included_file):
@@ -373,7 +388,7 @@ class Engine:
                 path = view.role_tasks_file(role, tasks_from, search)
             else:
                 role, path = role_of(task), str(included_file._filename)
-            self.run.include(role, view.count_tasks(path) if path else 0, key=task._uuid)
+            self.run.include(role, view.count_tasks(path) if path else 0, key=task._uuid, blocks=blocks_of(task))
 
     def prompt(self, up):
         """A prompt took the screen (up) or was answered: the person's time; and the bell, when they have had nothing
@@ -412,6 +427,10 @@ class Engine:
             # The declared outcomes' facts: only whether each holds is kept.
             for name in self._facts & set(result.result.get("ansible_facts") or {}):
                 self.run.outcome(host, name, result.result["ansible_facts"][name])
+            # A stage's info: the VMs a fact names, each held to a VM name's pattern.
+            for stage, fact in self._infos.items():
+                if fact in (result.result.get("ansible_facts") or {}):
+                    self.run.info(stage, self._names(result.result["ansible_facts"][fact]))
             self._discovered(result)
         if result.task.action in STATS_ACTIONS:
             self._records(result)
@@ -428,6 +447,16 @@ class Engine:
     def item_ok(self, result):
         if result.task.action in DEBUG_ACTIONS:
             self._report(result)
+
+    @staticmethod
+    def _names(value):
+        """The VM names a fact holds: a list of names, or of mappings with one; each a plain name, or left out."""
+        names = []
+        for item in value if isinstance(value, list) else []:
+            name = plain_text(str(item.get("name", "") if isinstance(item, dict) else item)).strip()
+            if NAME.match(name) and name not in names:
+                names.append(name)
+        return names
 
     def _discovered(self, result):
         """A VM's address and ID as discovery read them from Proxmox and its guest agent, from the add_host of a
@@ -496,6 +525,14 @@ class Engine:
 
     def failed(self, result, ignore_errors=False):
         outcome = "ignored" if ignore_errors else "rescued" if rescued(result.task, self.cb._play) else "failed"
+        declined = self.run.recipe.declines.get(self._name(result.task)) if outcome == "failed" else None
+        if declined is not None:
+            # A person's answer, not a failure: said as itself, once.
+            self._result(result, "declined")
+            with self.display._lock:
+                self.run.decline(declined)
+            self.print([("", ""), (declined, declined)])
+            return
         causes = self._causes(result) if outcome == "failed" else []
         before = self.run.first_failure
         # A failure that only raises again what rescues took is the causes' steps', not its own task's.
@@ -522,6 +559,7 @@ class Engine:
                 "blocks": set(blocks_of(result.task)),
                 "said": self._said(result.result),
                 "unreachable": unreachable,
+                "host": result.host.get_name(),
             }
         )
 
@@ -531,9 +569,11 @@ class Engine:
         declared = self.run.recipe.raises.get(self._name(result.task))
         if declared is None:
             return []
+        hosts = list(self._rescued) if declared.hosts == "any" else [result.host.get_name()]
         return [
             kept
-            for kept in self._rescued.get(result.host.get_name(), [])
+            for host in hosts
+            for kept in self._rescued.get(host, [])
             if kept["blocks"] & declared.blocks or (declared.unreachable and kept.get("unreachable"))
         ]
 
@@ -580,14 +620,14 @@ class Engine:
     def _raised(self, result, causes, first):
         """A failure that raises again what rescues took earlier: drawn under each cause, then its own words, but
         those that only repeat a cause's."""
-        who = self._who(result.host.get_name())
         out = []
         repeated = set()
         for cause in causes:
-            out += self._block(cause["where"], who, cause["name"], "", "", cause["said"])
+            out += self._block(cause["where"], self._who(cause["host"]), cause["name"], "", "", cause["said"])
             repeated |= {line.strip() for line in cause["said"]}
             with self.display._lock:
-                self.run.raised(cause["stage"], cause["step"], result.host.get_name())
+                self.run.raised(cause["stage"], cause["step"], cause["host"])
+                self.run.blame(cause["host"])
         own = [line for line in self._said(result.result) if line.strip() and line.strip() not in repeated]
         if own:
             out += self._wrapped([("    ", "")], own)

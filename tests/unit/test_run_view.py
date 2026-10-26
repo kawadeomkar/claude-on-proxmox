@@ -65,10 +65,10 @@ class Script:
         self.run.plays(plays)
         self.now = 0.0
 
-    def task(self, play, key, name, role=None, took=1.0, outcome="ok", hosts=("alpha",)):
+    def task(self, play, key, name, role=None, took=1.0, outcome="ok", hosts=("alpha",), blocks=()):
         """A task that started, ran on hosts and ended: outcome None leaves it running."""
         self.run.play_start(play)
-        self.run.task(key, name, role, self.now)
+        self.run.task(key, name, role, self.now, blocks=blocks)
         for host in hosts:
             self.run.host_start(key, host, self.now)
         self.now += took
@@ -773,3 +773,105 @@ def test_a_failure_raised_again_marks_its_vm_in_the_step_of_its_cause():
     script.run.end(script.now)
     claude = next(line for line in script.run.summary(script.now, 100, color=False) if " Claude " in line)
     assert claude.startswith(" ✗ Claude") and "alpha ✓ · beta ✗" in claude, claude
+
+
+SAVE = "Save what of the VM's Claude Code sessions is only there"
+SIGN_OUT = "Sign Claude Code out, and stop Remote Control"
+
+
+def _destroy(names=("alpha", "beta")):
+    check = "Confirm and check what to destroy"
+    release = "Release each VM from what it signed in to"
+    plays = [
+        ("check", "/r/playbooks/destroy.yml:18", [("k1", None), ("k2", None)], check),
+        (
+            "release",
+            "/r/playbooks/destroy.yml:288",
+            [
+                ("m1", None),
+                ("s1", None, {"blocks": [SAVE]}),
+                # An include_role in the save block's rescue, which a save that works never reaches.
+                ("s2", None, {"blocks": [SAVE], "include": 4, "include_role": "claude_code"}),
+                ("c1", None, {"blocks": [SIGN_OUT], "include": 2, "include_role": "claude_code"}),
+            ],
+            release,
+        ),
+        ("delete", "/r/playbooks/destroy.yml:435", [("x1", "proxmox_vm")], "Delete the VMs on Proxmox"),
+        ("aliases", "/r/playbooks/destroy.yml:490", [("a1", None)], "Forget the SSH alias of each deleted VM"),
+    ]
+    script = Script(plays=plays, title="destroy " + " ".join(names))
+    script.run.names = list(names)
+    return script
+
+
+def test_a_task_inside_a_declared_block_is_that_steps_whatever_role_its_include_is():
+    script = _destroy()
+    release = script.run.stages["release"]
+    assert list(release.steps) == [None, "sessions", "Claude"], "no step of the role an include runs"
+    assert release.steps["Claude"].expected == 1 + 2
+    script.run.play_start("release")
+    script.run.task("c1", "Run claude_code's release", None, 0.0, blocks=[SIGN_OUT])
+    script.run.include("claude_code", 2, key="c1", blocks=[SIGN_OUT])
+    for n in range(2):
+        script.run.task(f"r{n}", f"Release {n}", "claude_code", 0.1 * n, blocks=[SIGN_OUT])
+    assert "claude_code" not in release.steps
+    assert release.steps["Claude"].reached == release.steps["Claude"].expected == 3
+
+
+def test_a_meta_task_started_for_each_host_is_one_task_and_leaves_only_the_hosts_it_ends():
+    script = _destroy()
+    script.task("release", "p1", "Reach the VM", hosts=("alpha", "beta"))
+    # Ansible starts a meta task once per host, each just before its result; an end_host that ends a host sends none.
+    script.run.task("m1", "Leave a VM that did not answer as it is", None, script.now, ends=True)
+    script.run.result("m1", "alpha", "skipped", script.now)
+    task = script.run.task("m1", "Leave a VM that did not answer as it is", None, script.now, ends=True)
+    script.run.task("s1", "Read the sessions", None, script.now + 1, blocks=[SAVE])
+    assert task.hosts["alpha"][2] == "skipped" and task.hosts["beta"][2] == "left"
+    assert sum(t.key == "m1" for t in script.run.order) == 1
+    states = script.run.stages["release"].vm_states(script.now, ["alpha", "beta"])
+    assert states == {"alpha": "done", "beta": "left"}
+
+
+def test_while_a_step_of_a_play_that_is_not_serial_runs_every_vm_still_in_it_is_at_it():
+    script = _destroy(("alpha", "beta", "gamma", "delta"))
+    script.task("release", "p1", "Reach the VM", hosts=("alpha", "beta", "gamma", "delta"))
+    script.run.result("p1", "delta", "failed", script.now)
+    script.run.task("m1", "Leave a VM that did not answer as it is", None, script.now, ends=True)
+    for vm in ("alpha", "beta"):
+        script.run.result("m1", vm, "skipped", script.now)
+    script.task("release", "s1", "Read the sessions", hosts=("alpha", "beta"), blocks=[SAVE])
+    # alpha's result is in and beta's runner has not started: both are still at the step, which goes on.
+    script.run.task("s9", "Fetch the sessions", None, script.now, blocks=[SAVE])
+    script.run.host_start("s9", "alpha", script.now)
+    script.run.result("s9", "alpha", "ok", script.now + 1)
+    row = next(line for line in script.run.frame(script.now + 1, 120, 40, "⠋", color=False) if " sessions " in line)
+    # gamma, which the end_host left, and delta, which failed, are out of the play.
+    assert "alpha ⠋ · beta ⠋ · gamma – · delta ✗" in row, row
+    script.task("release", "s10", "Say the sessions", hosts=("alpha", "beta"), blocks=[SAVE])
+    script.task("release", "r9", "Record that the VM was released", hosts=("alpha",), outcome=None, took=0)
+    row = next(line for line in script.run.frame(script.now, 120, 40, "⠋", color=False) if " sessions " in line)
+    assert "alpha ✓ · beta ✓" in row and "gamma" not in row, "an ended step names only the VMs it reached"
+
+
+def test_a_stage_row_says_the_vms_a_fact_named_and_a_raise_on_this_machine_blames_their_vms():
+    script = _destroy()
+    script.task("check", "k1", "Start each stopped VM", hosts=("localhost",), outcome="changed")
+    script.run.info("check", ["beta"])
+    script.task("aliases", "a1", "Fail for each VM that was not deleted", hosts=("localhost",), outcome="raised")
+    script.run.raised("delete", None, "beta")
+    script.run.blame("beta")
+    script.run.end(script.now, failed=True)
+    summary = script.run.summary(script.now, 100, color=False, failed_hosts=["localhost"])
+    assert re.search(r"^ ✓ check .* started beta$", "\n".join(summary), re.M), summary
+    assert summary[0].endswith("· 1 VM failed: beta"), summary[0]
+    assert script.run.failed_vms(["localhost"]) == ["beta"]
+
+
+def test_an_answer_that_ends_the_run_is_said_as_itself_never_as_a_failure():
+    script = _destroy()
+    script.task("check", "k1", "Abort unless confirmed", hosts=("localhost",), outcome="declined")
+    script.run.decline("Nothing was deleted: the deletion was not confirmed.")
+    script.run.end(script.now, failed=True)
+    summary = script.run.summary(script.now, 100, color=False, failed_hosts=["localhost"])
+    assert len(summary) == 1 and re.match(r"claude-on-proxmox  destroy alpha beta · declined · 1 s · ", summary[0])
+    assert script.run.title_text(script.now) == "destroy alpha beta · declined"

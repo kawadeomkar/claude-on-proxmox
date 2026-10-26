@@ -393,8 +393,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `harness._at_a_pseudo_terminal`. See docs/architecture/custom-code.md §7.8.
 
 - **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
-  which only the recipes drawn live export - `deploy`, `login` - (the run's title) and the engine takes out of its
-  environment at once,
+  which only the recipes drawn live export - `deploy`, `login`, `destroy` - (the run's title) and the engine takes
+  out of its environment at once,
   so nothing the run starts inherits it, hands the stdout callback's every event to the engine at verbosity 0 with
   a run log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
   Every line the stream would print still reaches the run log, in order, through `Display`'s `log_only` - so
@@ -407,9 +407,11 @@ token; `github_auth_method: token` still fails. The status JSON carries
   stdout callback is the stream. No test or scenario sets
   the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against a stand-in deploy,
   holds the log to the stream's, and fails if a tracked file other than the callback, the engine
-  (`filter_plugins/live_ansible.py`), the declarations (`filter_plugins/live_recipes.py`), the deploy recipe, the
-  live tests' kit (`tests/unit/live_kit.py`) and `test_justfile.py`'s recording stand-in names it. A failure is
-  headed by its step and its VM, and one a declared task raises again is drawn under the failure a rescue took. See docs/architecture/custom-code.md §7.5.
+  (`filter_plugins/live_ansible.py`), the declarations (`filter_plugins/live_recipes.py`), the recipes drawn live,
+  the live tests' kit (`tests/unit/live_kit.py`), the live tests and `test_justfile.py`'s recording stand-in names
+  it. A failure is headed by its step and its VM, and one a declared task raises again is drawn under the failure a
+  rescue took; a declared refusal (destroy's unconfirmed deletion) is said as the person's answer, never as a
+  failure. See docs/architecture/custom-code.md §7.5.
 
 - **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`
