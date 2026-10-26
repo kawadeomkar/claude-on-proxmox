@@ -415,6 +415,9 @@ def fake_pve(tmp_path):
 SSH = """#!/bin/sh
 here=$(dirname "$0")
 "$here/python" -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "$@" >> "$here/ssh.log"
+# Held while ssh-holds exists, for a minute at most: a live test acts on a frame while the run waits here.
+n=0
+while [ -f "$here/ssh-holds" ] && [ "$n" -lt 1200 ]; do sleep 0.05; n=$((n + 1)); done
 if [ -f "$here/ssh-says" ]; then
   cat "$here/ssh-says" >&2
 else

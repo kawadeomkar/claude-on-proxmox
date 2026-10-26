@@ -24,7 +24,9 @@ pytest over `tests/unit/`: 2064 tests. By file:
   at a pseudo-terminal of the test's own, read back through `tests/unit/vt.py`, a small terminal: a window
   the report fits, a short one, a narrow one, a resize each way, Ctrl-C, a dumb terminal, a pipe, and a
   warning between frames, the screen and its scrollback ending in exactly the finished report the log
-  holds. Inside the VMs (`test_status_vms.py`): `vm_status_info` on fixture trees, in this process; status
+  holds; the resize and Ctrl-C runs hold the VMs' stand-in `ssh` until the test has acted, since a Linux
+  pty takes the rest of a run's output without blocking it, and the run could end before the frame it acts
+  on is read. Inside the VMs (`test_status_vms.py`): `vm_status_info` on fixture trees, in this process; status
   over stand-in VMs with discovery off, each running the three roles' `status` entry points with the gh and
   tailscale fakes, a stand-in `systemctl` and a fixture tree, every file of each VM unchanged after and the
   fakes' logs holding only reads; the host key, `status_ssh_args` held to `ansible.cfg`'s, the options as
