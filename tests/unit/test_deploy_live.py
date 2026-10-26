@@ -623,11 +623,13 @@ def test_no_other_test_or_scenario_draws_a_run():
         and (REPO / name).is_file()
         and "CLAUDE_ON_PROXMOX_LIVE" in (REPO / name).read_text(errors="replace")
     )
-    # The callback that reads it and the model it feeds, the recipe that sets it, and the tests: test_justfile.py
-    # reads the title the recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or
-    # config.
+    # The callback that hands the run to the engine, the engine that reads it, the model it feeds and the
+    # declarations its title names, the recipe that sets it, and the tests: test_justfile.py reads the title the
+    # recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or config.
     assert mentions == [
         "callback_plugins/claude_on_proxmox.py",
+        "filter_plugins/live_ansible.py",
+        "filter_plugins/live_recipes.py",
         "filter_plugins/run_view.py",
         "justfile",
         "tests/unit/test_deploy_live.py",

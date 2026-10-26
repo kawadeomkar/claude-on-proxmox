@@ -166,18 +166,20 @@ JSON report (`_left_to_do`), in every state they already run.
 ### `just deploy`, drawn live
 
 `CLAUDE_ON_PROXMOX_LIVE`, which the justfile's `deploy` recipe alone exports, set to what was run (`deploy
---check alpha`, the run's title), turns the callback's live mode on at verbosity 0, with a run log to send the
-stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above. The callback takes the variable out of
-its environment when the playbook starts, so nothing the run starts - the VS Code whose terminals a later
-`just destroy` may run in - inherits it. It is `live` when stdout can take the region every live output shares
-(§7.8, `can_draw`), and `lines` otherwise. The model is `filter_plugins/run_view.py`, which any playbook run can
-be drawn with: `just deploy` is the first, and §7.8 says how another recipe joins it.
+--check alpha`, the run's title), hands every event of the run to an engine, `filter_plugins/live_ansible.py`, at
+verbosity 0 and with a run log to send the stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above.
+The callback then keeps only its classic output, which the engine prints through it too. The engine takes the
+variable out of the environment when the playbook starts, so nothing the run starts - the VS Code whose terminals a
+later `just destroy` may run in - inherits it. It is `live` when stdout can take the region every live output
+shares (§7.8, `can_draw`), and `lines` otherwise. The model is `filter_plugins/run_view.py`, which any playbook run
+can be drawn with, and what a run is made of is its recipe's declaration in `filter_plugins/live_recipes.py`, named
+by the title's first word: `just deploy` is the first, and §7.8 says how another recipe joins it.
 
-- **Stages and steps.** A play's stage comes from its playbook's file (`play.get_path()`, `STAGE_FILES`):
+- **Stages and steps.** A play's stage comes from its playbook's file (`play.get_path()`, the declaration's stages):
   template, provision, configure, `SSH aliases`, the three sign-in playbooks as one stage `sign in`, VS Code.
-  A play from a file the table does not name - `discover.yml`, which configure and each sign-in import, and
+  A play from a file the declaration does not name - `discover.yml`, which configure and each sign-in import, and
   `deploy.yml`'s own - takes the stage of the play after it, else of the one before, and a test holds the
-  table to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is its role; in the sign-in stage,
+  declaration to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is its role; in the sign-in stage,
   the sign-in, for every play of its file.
 - **How far a step is.** When the playbook starts, `play.compile()` of each play gives its static tasks with
   the very `_uuid`s they start with, blocks' rescues and always included, and only those `--tags` and
@@ -432,13 +434,14 @@ East Asian ambiguous-width characters double-wide (`█`, `●`, `·`) wraps a f
 
 **Loading.** A filter plugin is no module another can import, and a callback cannot ask for one by name, so
 each module that needs another loads it by path, once, as `claude_on_proxmox_<stem>` (`_sibling`): the
-callbacks, `status.py` and `run_view.py` share one copy of each.
+callbacks, `status.py`, `run_view.py` and `live_ansible.py` share one copy of each.
 
 **Another recipe, drawn live.** A recipe whose playbook is a run - `just login`, `just destroy`, `just code`,
 `just init` - joins `just deploy` without code of its own: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its
-title, as `deploy`'s does; `run_view.STAGE_FILES` names its playbooks' stages (the sign-in playbooks already
-are), and `PLAN_FILES` one whose first play reports what the run will do; its reports, waits and NEXT STEPS
-records follow §7.5's conventions, which the callback already reads. A command that is a report rather than a
+title, as `deploy`'s does; its declaration in `filter_plugins/live_recipes.py`, named by the title's first word,
+names its playbooks' stages (the sign-in playbooks already are deploy's) and the playbook whose first play reports
+what the run will do; its reports, waits and NEXT STEPS records follow §7.5's conventions, which the engine already
+reads. A command that is a report rather than a
 run, as `just status` is, keeps a model and a frame function of its own and hands the frame to `LiveRegion`,
 drawing its lines with `screen.py`. Either way its test runs it at a pseudo-terminal through
 `harness._at_a_pseudo_terminal` and reads the screen back through `vt.py`, and `test_deploy_live.py`'s guard
