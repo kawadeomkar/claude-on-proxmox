@@ -1,14 +1,17 @@
-"""`just deploy`'s live output: the run as stages, steps and tasks, and what is drawn from it.
+"""A playbook run drawn live: its stages, steps and tasks, and what is drawn from them - `just deploy`'s first.
 
 Loaded by path by callback_plugins/claude_on_proxmox.py, which feeds a Run the playbook's plays and Ansible's
-events; everything else here is pure, with the time passed in, so every frame is a unit test
-(tests/unit/test_deploy_view.py). docs/guides/runs.md shows what a person sees, and docs/architecture/custom-code.md
-§7.5 how it works.
+events when a recipe exports CLAUDE_ON_PROXMOX_LIVE; everything else here is pure, with the time passed in, so every
+frame is a unit test (tests/unit/test_run_view.py). Lines are drawn with filter_plugins/screen.py and put on the
+screen by filter_plugins/live_region.py, as `just status`'s report is (docs/architecture/custom-code.md §7.8);
+docs/guides/runs.md shows what a person sees, and §7.5 how this works.
 
-A run is stages - template, provision, configure, sign in, VS Code - each a playbook deploy imports, named by a
-table of playbook files (STAGE_FILES). A play from a file the table does not name - discover.yml, which configure
-and each sign-in import, or deploy.yml's own - takes the stage of the play after it, else of the one before. Within
-a stage, a task's step is its role, or for the sign-ins the sign-in; tasks outside any role are the stage's own.
+A run is stages, each a playbook, named by a table of playbook files (STAGE_FILES): `just deploy`'s template,
+provision, configure, sign in and VS Code. A recipe drawn live names its playbooks there. A play from a file the
+table does not name - discover.yml, which configure and each sign-in import, or deploy.yml's own - takes the stage
+of the play after it, else of the one before. Within a stage, a task's step is its role, or for the sign-ins the
+sign-in; tasks outside any role are the stage's own. A playbook in PLAN_FILES says what the run will do in its
+first play's report: printed first, and kept out of the summary.
 
 How far a step is: the tasks it has reached, skipped ones included, of the tasks it will reach - those the plays
 compile to (counted when the playbook starts, by task ID), those each include announces (counted from its file when
@@ -22,15 +25,31 @@ the end. Nothing here prints; the callback does.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
-import textwrap
+import sys
 import time
 from collections import OrderedDict
+from pathlib import Path
 
 import yaml
 
-# Each playbook deploy imports, as (stage, step): a step named here is the sign-in's, for all its plays' tasks.
+
+def _sibling(stem):
+    # filter_plugins/<stem>.py, loaded by path once as claude_on_proxmox_<stem> (docs/architecture/custom-code.md §7.8).
+    name = f"claude_on_proxmox_{stem}"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().with_name(f"{stem}.py"))
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+screen = _sibling("screen")
+_one_line = _sibling("text").one_line
+
+# Each playbook a live run imports, as (stage, step): a step named here is the sign-in's, for all its plays' tasks.
 STAGE_FILES = {
     "template.yml": ("template", None),
     "provision.yml": ("provision", None),
@@ -41,10 +60,13 @@ STAGE_FILES = {
     "tailscale_login.yml": ("sign in", "Tailscale"),
     "code.yml": ("VS Code", None),
 }
+# The playbooks whose first play reports what the run will do.
+PLAN_FILES = frozenset({"deploy.yml"})
 # How bad an outcome is, for a task several VMs ran: the worst of them is the task's.
 RANK = {"skipped": 0, "included": 1, "ok": 2, "changed": 3, "ignored": 4, "rescued": 4, "failed": 5, "unreachable": 5}
-SGR = {"b": "1", "d": "90", "h": "1", "g": "32", "y": "33", "r": "31", "c": "36", "m": "35", "w": "1;93"}
 WINDOW = 5
+# A bar's cells, in a stage's or a step's row.
+BAR = 20
 # A task tagged as a wait for a person (attention_browser) is one once it has run this long: a skipped one ends first.
 WAIT_AFTER = 2.0
 
@@ -101,74 +123,12 @@ def role_tasks_file(name, tasks_from, search):
     return ""
 
 
-# --- text ------------------------------------------------------------------------------------------------------
-def width(runs):
-    return sum(len(text) for text, _ in runs)
-
-
-def cut(runs, limit):
-    """runs cut to limit characters, the last kept one an ellipsis when anything was cut."""
-    out, used = [], 0
-    for text, style in runs:
-        if used + len(text) <= limit:
-            out.append((text, style))
-            used += len(text)
-            continue
-        room = limit - used
-        if room > 0:
-            out.append((text[: room - 1] + "…", style))
-        return out
-    return out
-
-
-def right(left, tail, limit):
-    """left, then tail aligned to the right edge at limit; without room for both, tail is dropped and left cut."""
-    gap = limit - width(left) - width(tail)
-    if tail and gap >= 1:
-        return [*left, (" " * gap, ""), *tail]
-    return cut(left, limit)
-
-
-def ansi(runs, color):
-    if not color:
-        return "".join(text for text, _ in runs)
-    return "".join(f"\x1b[{SGR[style]}m{text}\x1b[0m" if style in SGR and text else text for text, style in runs)
-
-
-def fmt(seconds):
-    """A duration as the report says it: 0.6 s, 33 s, 3:58."""
-    if seconds < 10:
-        return f"{seconds:.1f} s"
-    if seconds < 60:
-        return f"{round(seconds)} s"
-    minutes, rest = divmod(round(seconds), 60)
-    return f"{minutes}:{rest:02d}"
-
-
-def clock(seconds):
-    minutes, rest = divmod(int(max(0, seconds)), 60)
-    return f"{minutes}:{rest:02d}"
-
-
-def bar(fraction, style, cells=20):
-    filled = max(0, min(cells, round(fraction * cells)))
-    return [("█" * filled, style), ("░" * (cells - filled), "d")]
-
-
-def one_line(text):
-    return " ".join(str(text).split())
-
-
-def fill(text, limit):
-    """text wrapped to limit, nothing cut: a word longer than a line, a URL, has a line of its own."""
-    return textwrap.wrap(str(text), max(1, limit), break_long_words=False, break_on_hyphens=False) or [""]
-
-
-def tasks_said(count):
-    return f"{count} task" if count == 1 else f"{count} tasks"
-
-
 # --- the run ---------------------------------------------------------------------------------------------------
+def one_line(text):
+    """text as one line of plain text, whole: a note is cut where it is drawn, not where it is kept."""
+    return _one_line(text, sys.maxsize)
+
+
 class Task:
     def __init__(self, key, name, stage, step, start, role=None, waits=False):
         self.key, self.name, self.stage, self.step, self.start = key, name, stage, step, start
@@ -498,7 +458,7 @@ class Run:
                 break
             body = self._stages(now, limit, glyph, tiers, fold=fold)
         lines = [*head, *body, [], self._footer(now, limit, glyph)]
-        return [ansi(cut(line, limit), color) for line in lines]
+        return [screen.render(screen.cut(line, limit), color) for line in lines]
 
     def _header(self, now, limit):
         # The plan is printed whole above the region, as every report is: here it could only be cut.
@@ -525,15 +485,15 @@ class Run:
         if step.failed() and state != "to come":
             glyph, style = "✗", "r"
         if state == "to come":
-            count = tasks_said(step.expected) if step.expected else ""
-            return cut([(" " * indent, ""), ("○ ", "d"), (label.ljust(label_width), "d"), (count, "d")], limit)
+            count = screen.plural(step.expected, "task") if step.expected else ""
+            return screen.cut([(" " * indent, ""), ("○ ", "d"), (label.ljust(label_width), "d"), (count, "d")], limit)
         glyph = {"done": "✓", "waiting": "⏸"}.get(state, glyph) if style != "r" else glyph
         left = [(" " * indent, ""), (glyph + " ", style), (label.ljust(label_width), "" if state == "done" else "b")]
         # A step that ended is whole, whatever it would have reached: a rescue that never ran is no task left.
         if total is None:
             total = step.reached if state == "done" else max(step.expected, step.reached)
         if tiers["bars"]:
-            left += bar(step.reached / total if total else 1, "g" if state == "done" else style)
+            left += screen.bar(step.reached / total if total else 1, BAR, "g" if state == "done" else style)
         if tiers["counts"]:
             left.append((f"  {step.reached:>3}/{total:<4}", ""))
         if tiers["changed"]:
@@ -541,8 +501,8 @@ class Run:
         if info:
             left.append((f" {info}", "d"))
         seconds = step.seconds(now)
-        tail = [(fmt(seconds), "")] if state == "done" else [(clock(seconds), "")]
-        return right(left, tail, limit)
+        tail = [(screen.duration(seconds), "")] if state == "done" else [(screen.clock(seconds), "")]
+        return screen.right(left, tail, limit)
 
     def _window(self, tasks, now, glyph, limit):
         """The step's last five tasks, newest at the bottom: the running one with a timer, a skipped one dim."""
@@ -553,7 +513,7 @@ class Run:
             running = task.end is None and self.finished is None and task is self.current
             if running:
                 mark, style = ("⏸", "y") if task.wait else (glyph, "c")
-                tail = self._hosts_said(task, now, glyph, width_ // 2) or [(clock(task.seconds(now)), style)]
+                tail = self._hosts_said(task, now, glyph, width_ // 2) or [(screen.clock(task.seconds(now)), style)]
                 name = [(task.name, "b")]
             elif task.outcome == "skipped":
                 mark, style, name, tail = "–", "d", [(task.name, "d")], [("skipped", "d")]
@@ -567,9 +527,9 @@ class Run:
                     "included": ("↳", "d"),
                 }.get(task.outcome, ("✓", "g"))
                 name = [(task.name, "d" if task.outcome in ("rescued", "ignored", "included") else "")]
-                tail = [(fmt(task.seconds(now)), "d")]
-            room = width_ - 2 - width(tail) - 2
-            lines.append(right([(" " * 9, ""), (mark + " ", style), *cut(name, room)], tail, 9 + width_))
+                tail = [(screen.duration(task.seconds(now)), "d")]
+            room = width_ - 2 - screen.width(tail) - 2
+            lines.append(screen.right([(" " * 9, ""), (mark + " ", style), *screen.cut(name, room)], tail, 9 + width_))
         return lines
 
     def _hosts_said(self, task, now, glyph, room):
@@ -580,13 +540,17 @@ class Run:
         parts = []
         for host, (start, end, outcome) in task.hosts.items():
             if end is None:
-                parts += [(f"{host} ", ""), (glyph, "c"), (f" {clock(now - start)}", "c")]
+                parts += [(f"{host} ", ""), (glyph, "c"), (f" {screen.clock(now - start)}", "c")]
             else:
                 mark = "✗" if outcome in ("failed", "unreachable") else "✓"
-                parts += [(f"{host} ", ""), (mark, "r" if mark == "✗" else "g"), (f" {fmt(end - start)}", "d")]
+                parts += [
+                    (f"{host} ", ""),
+                    (mark, "r" if mark == "✗" else "g"),
+                    (f" {screen.duration(end - start)}", "d"),
+                ]
             parts.append((" · ", "d"))
         parts = parts[:-1]
-        if width(parts) <= room:
+        if screen.width(parts) <= room:
             return parts
         ended = [entry for entry in task.hosts.values() if entry[1] is not None]
         failed = sum(outcome in ("failed", "unreachable") for _, _, outcome in ended)
@@ -595,7 +559,7 @@ class Run:
         if failed:
             said.append((f"{failed} failed ", "r"))
         if running:
-            said += [(glyph, "c"), (f" {clock(now - min(running))}", "c")]
+            said += [(glyph, "c"), (f" {screen.clock(now - min(running))}", "c")]
         return said
 
     def _stages(self, now, limit, glyph, tiers, fold):
@@ -610,12 +574,11 @@ class Run:
                 task = self.current
                 since, seconds = task.wait
                 step = f"{task.step}: " if task.step and stage.key == "sign in" else ""
-                said = (
-                    f"{step}waiting for you in the browser · {', '.join(task.hosts) or ''} · {clock(now - task.start)}"
-                )
+                waited = screen.clock(now - task.start)
+                said = f"{step}waiting for you in the browser · {', '.join(task.hosts) or ''} · {waited}"
                 if seconds:
-                    said += f" of up to {clock(seconds + (since - task.start))}"
-                lines.append(cut([(" ", ""), ("⏸ ", "y"), (stage.key.ljust(13), "b"), (said, "y")], limit))
+                    said += f" of up to {screen.clock(seconds + (since - task.start))}"
+                lines.append(screen.cut([(" ", ""), ("⏸ ", "y"), (stage.key.ljust(13), "b"), (said, "y")], limit))
             else:
                 info = self._vm_info() if stage.key == "provision" and state != "to come" else ""
                 if state == "done" and not info and not stage.changed() and not stage.failed():
@@ -640,9 +603,9 @@ class Run:
                 if step_state in ("running", "waiting"):
                     lines += self._window(step.tasks, now, glyph, limit)[-(1 if fold >= 3 else WINDOW) :]
             if later:
-                lines.append(cut([(" " * 5, ""), ("○ ", "d"), (f"then {', '.join(later)}", "d")], limit))
+                lines.append(screen.cut([(" " * 5, ""), ("○ ", "d"), (f"then {', '.join(later)}", "d")], limit))
         if pending:
-            lines.append(cut([(" ", ""), ("○ ", "d"), (f"then {', '.join(pending)}", "d")], limit))
+            lines.append(screen.cut([(" ", ""), ("○ ", "d"), (f"then {', '.join(pending)}", "d")], limit))
         return lines
 
     def _footer(self, now, limit, glyph):
@@ -650,14 +613,14 @@ class Run:
         keys = list(self.stages)
         running = self.running_stage()
         where = f"stage {keys.index(running) + 1} of {len(keys)}" if running in keys else ""
-        runs = [("⏸ " if waiting else glyph + " ", "y" if waiting else "c"), (clock(now - self.begun), "b")]
+        runs = [("⏸ " if waiting else glyph + " ", "y" if waiting else "c"), (screen.clock(now - self.begun), "b")]
         if where:
             runs.append((f" · {where}", "d"))
         if waiting:
             runs.append((" · waiting for you", "y"))
         if self.log:
             runs.append((f" · {self.log}", "d"))
-        return cut(runs, limit)
+        return screen.cut(runs, limit)
 
     def title_text(self, now):
         """The terminal's title: the run, and where it is."""
@@ -694,12 +657,12 @@ class Run:
 
     def _ended(self, label, step, now):
         mark = "✗" if step.failed() else "✓"
-        said = [tasks_said(step.reached)]
+        said = [screen.plural(step.reached, "task")]
         if step.changed():
             said.append(self._changed_said(step.changed()))
         if step.failed():
             said.append(f"{step.failed()} failed")
-        return f"{mark} {label.ljust(28)} {' · '.join(said):<36} {fmt(step.seconds(now))}"
+        return f"{mark} {label.ljust(28)} {' · '.join(said):<36} {screen.duration(step.seconds(now))}"
 
     # --- the summary ------------------------------------------------------------------------------------------
     def summary(self, now, cols, color=True, failed_hosts=()):
@@ -722,14 +685,16 @@ class Run:
                 continue
             mark, style = ("✗", "r") if stage.failed() else ("✓", "g")
             head = [(" ", ""), (mark + " ", style), (stage.key[:11].ljust(11), "b")]
-            head.append((f"{fmt(stage.seconds(now)):>6}{stage.reached:>9}{(stage.changed() or '—'):>9}   ", ""))
+            head.append(
+                (f"{screen.duration(stage.seconds(now)):>6}{stage.reached:>9}{(stage.changed() or '—'):>9}   ", "")
+            )
             parts = []
             for key, step in stage.steps.items():
                 if key is None or not step.tasks:
                     continue
-                part = f"{key} {fmt(step.seconds(now))}"
+                part = f"{key} {screen.duration(step.seconds(now))}"
                 if step.waited(now):
-                    part += f" ({fmt(step.waited(now))} yours)"
+                    part += f" ({screen.duration(step.waited(now))} yours)"
                 parts.append(part)
             if stage.key == "provision" and self._vm_info():
                 parts.insert(0, self._vm_info())
@@ -770,25 +735,29 @@ class Run:
             heading = "THIS MACHINE" if host == "localhost" else host.upper()
             new = " · new" if facts.get("new") else ""
             lines.append([(heading, "h"), (f"  {said}{new}" if said else "", "")])
-            lines += [cut([(" ", ""), (text, "")], limit) for text in texts[-10:]]
+            lines += [screen.cut([(" ", ""), (text, "")], limit) for text in texts[-10:]]
         slowest = sorted(
             (task for task in self.order if not task.wait), key=lambda task: task.seconds(now), reverse=True
         )
         if slowest:
             lines.append([])
-            parts = [f"{task.name} {fmt(task.seconds(now))}" for task in slowest[:5]]
+            parts = [f"{task.name} {screen.duration(task.seconds(now))}" for task in slowest[:5]]
             lines += self._flow([("SLOWEST", "h"), ("  ", "")], parts, limit)
         lines.append([])
         changed = sum(task.outcome == "changed" for task in self.order)
         failed = sum(task.outcome in ("failed", "unreachable") for task in self.order)
         yours = sum(task.waited(now) for task in self.order)
-        totals = [tasks_said(len(self.order)), self._changed_said(changed) or "nothing changed", f"{failed} failed"]
+        totals = [
+            screen.plural(len(self.order), "task"),
+            self._changed_said(changed) or "nothing changed",
+            f"{failed} failed",
+        ]
         if yours:
-            totals.append(f"{fmt(yours)} of it yours")
+            totals.append(f"{screen.duration(yours)} of it yours")
         if self.log:
             totals.append(f"log {self.log}")
         lines += self._flow([], totals, limit, style="d")
-        return [ansi(cut(line, limit), color) for line in lines]
+        return [screen.render(screen.cut(line, limit), color) for line in lines]
 
     @staticmethod
     def _unnamed(host, text):
@@ -807,10 +776,10 @@ class Run:
     def _flow(head, parts, limit, style=""):
         """head, then parts joined by " · ", wrapped under the column head ends at."""
         lines, line = [], list(head)
-        column = width(head)
+        column = screen.width(head)
         for index, part in enumerate(parts):
-            piece = part if index == 0 or width(line) == column else " · " + part
-            if width(line) + len(piece) > limit and width(line) > column:
+            piece = part if index == 0 or screen.width(line) == column else " · " + part
+            if screen.width(line) + len(piece) > limit and screen.width(line) > column:
                 lines.append(line)
                 line = [(" " * column, ""), (part, style)]
             else:

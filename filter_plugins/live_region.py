@@ -1,9 +1,9 @@
 """A live region at the bottom of a terminal, for a stdout callback: drawn in place, with Display's output above it.
 
-Loaded by path by callback_plugins/claude_on_proxmox.py (`just deploy`'s live output, docs/architecture/
-custom-code.md §7.5), as a callback loads a filter; it has no filters of its own, since a module in
-callback_plugins/ that is no callback is warned about on every run. Nothing in it is deploy's: `just status`'s
-live report is to draw with it too.
+Every live output draws with it (docs/architecture/custom-code.md §7.8): `just status`'s report
+(callback_plugins/claude_on_proxmox_status.py) and every live run (callback_plugins/claude_on_proxmox.py, `just
+deploy` first). Loaded by path as claude_on_proxmox_live_region, as a callback loads a filter; it has no filters of
+its own, since a module in callback_plugins/ that is no callback is warned about on every run.
 
 What it does, once started:
 
@@ -57,12 +57,14 @@ def can_draw(stream=None, environ=None) -> bool:
 
 
 class LiveRegion:
-    """The region. frame(cols, rows, glyph) returns its lines; route(kwargs) returns display()'s keyword arguments."""
+    """The region. frame(cols, rows, glyph) returns its lines; route(kwargs) returns display()'s keyword arguments;
+    more says the lines a frame taller than the screen leaves out, {} their number."""
 
-    def __init__(self, display, frame=None, route=None, stream=None):
+    def __init__(self, display, frame=None, route=None, stream=None, more="⋮ {} more lines"):
         self._display = display
         self._frame = frame
         self._route = route
+        self._more = more
         self._stream = stream or sys.stdout
         self._pid = os.getpid()
         self._drawn = 0
@@ -111,7 +113,7 @@ class LiveRegion:
                 lines = []
             limit = rows - 1
             if len(lines) > limit:
-                lines = lines[: limit - 2] + [f"⋮ {len(lines) - limit + 1} more lines"[: cols - 1], lines[-1]]
+                lines = lines[: limit - 2] + [self._more.format(len(lines) - limit + 1)[: cols - 1], lines[-1]]
             up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
             self._write(SYNC_ON + up + "\r" + "\x1b[K\n".join(lines) + "\x1b[K\x1b[J" + SYNC_OFF)
             self._drawn = len(lines)
@@ -202,7 +204,8 @@ class LiveRegion:
 
     # --- the life of it ---------------------------------------------------------------------------------------
     def start(self):
-        """Wrap Display, and, with a frame, draw: from the main thread, which alone may set a signal handler."""
+        """Wrap Display, and with a frame, take the terminal - SIGWINCH, the echo, an erase at exit - from the main
+        thread, which alone may set a signal handler. The region is drawn by redraw(), and by spin()'s ticks."""
         if self._started:
             return
         self._started = True
@@ -211,9 +214,12 @@ class LiveRegion:
             signal.signal(signal.SIGWINCH, lambda *_: setattr(self, "_resized", True))
             atexit.register(self.finish)
             self._quiet(True)
+
+    def spin(self):
+        """Redraw ten times a second, for the spinner, until finish()."""
+        if self._frame and self._started and self._thread is None:
             self._thread = threading.Thread(target=self._spin, daemon=True)
             self._thread.start()
-            self.redraw()
 
     def finish(self):
         """Erase the region and draw no more; Display's output goes on as it would without the region."""

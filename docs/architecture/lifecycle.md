@@ -388,10 +388,11 @@ committed are shown and not counted: a branch kept local is often on purpose, an
 the only callback of the run. At a terminal it draws the whole report at the bottom of the screen
 within a second, a spinner wherever a value is still being read, and redraws it as each piece lands;
 when the run ends the live region is erased and the finished report printed once. Piped, in the log,
-under `--json` or at a terminal that cannot take it, only the finished report appears, or nothing. Every
-live line is cut to the window's width and the region to its height, so nothing wraps and the cursor
-moves only within the region; a resize pushes the screen into the scrollback and starts afresh; the
-cursor is never hidden. `tests/unit/test_status_live.py` runs the real playbook at a pseudo-terminal of
+under `--json` or at a terminal that cannot take it, only the finished report appears, or nothing. It is
+drawn in the region every live output shares
+([§7.8](custom-code.md#78-filter_pluginslive_regionpy-and-filter_pluginsscreenpy--every-live-output)), as
+`just deploy`'s run is: nothing wraps, a resize pushes the screen into the scrollback and starts afresh,
+the cursor is never hidden. `tests/unit/test_status_live.py` runs the real playbook at a pseudo-terminal of
 its own and reads the bytes back through a small terminal (`tests/unit/vt.py`).
 
 **The recipe.** `just status [names] [--only sections] [--json]` runs the playbook through

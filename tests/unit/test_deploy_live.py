@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import fcntl
 import os
-import pty
 import re
-import select
 import struct
 import subprocess
 import sys
@@ -25,7 +23,7 @@ import time
 from pathlib import Path
 
 import pytest
-from harness import _end, _env, _fail_if_the_desktop_was_reached, _in_raw_mode, _take_the_terminal
+from harness import _at_a_pseudo_terminal, _end, _env, _fail_if_the_desktop_was_reached, _in_raw_mode
 from vt import VT
 
 REPO = Path(__file__).resolve().parents[2]
@@ -282,59 +280,40 @@ def _deploy(
     title says interrupt, and at: (words of the title, bytes typed or a new (cols, rows)) done once the title says
     them."""
     _fresh(root)
-    master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-    process = subprocess.Popen(
+    screen, state = VT(cols, rows), {"typed": None, "interrupt": interrupt, "at": at}
+
+    def act(chunk, output, master, process):
+        screen.feed(chunk)
+        if keys is not None and PROMPT.encode() in output and _in_raw_mode(master):
+            # Typed again while pause has not taken them: keys in the moment before it flushed are lost.
+            if state["typed"] is None or (time.monotonic() - state["typed"] > 2 and b"the code was" not in output):
+                os.write(master, keys)
+                state["typed"] = time.monotonic()
+        title = screen.titles[-1] if screen.titles else ""
+        if state["interrupt"] and state["interrupt"] in title:
+            state["interrupt"] = None
+            os.write(master, b"\x03")
+        if state["at"] and state["at"][0] in title:
+            then, state["at"] = state["at"][1], None
+            if isinstance(then, bytes):
+                os.write(master, then)
+            else:
+                # The terminal's new size, which sends the run SIGWINCH; the screen keeps its lines, as xterm does.
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", then[1], then[0], 0, 0))
+                screen.resize(*then)
+
+    rc, raw = _at_a_pseudo_terminal(
         [str(ANSIBLE_PLAYBOOK), "-i", str(root / "hosts"), *args, str(root / "deploy.yml")],
-        cwd=root,
-        env=_environment(root, title, env),
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
-        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - nothing else runs threads here
+        root,
+        _environment(root, title, env),
+        size=(cols, rows),
+        act=act,
+        timeout=timeout,
+        poll=0.1,
     )
-    os.close(slave)
-    screen, raw, deadline, typed = VT(cols, rows), b"", time.monotonic() + timeout, None
-    try:
-        while True:
-            if time.monotonic() > deadline:
-                pytest.fail(f"the run did not finish within {timeout} seconds:\n" + raw.decode(errors="replace"))
-            ready, _, _ = select.select([master], [], [], 0.1)
-            if ready:
-                try:
-                    chunk = os.read(master, 65536)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                raw += chunk
-                screen.feed(chunk)
-            elif process.poll() is not None:
-                break
-            if keys is not None and PROMPT.encode() in raw and _in_raw_mode(master):
-                # Typed again while pause has not taken them: keys in the moment before it flushed are lost.
-                if typed is None or (time.monotonic() - typed > 2 and b"the code was" not in raw):
-                    os.write(master, keys)
-                    typed = time.monotonic()
-            if interrupt and screen.titles and interrupt in screen.titles[-1]:
-                interrupt = None
-                os.write(master, b"\x03")
-            if at and screen.titles and at[0] in screen.titles[-1]:
-                if isinstance(at[1], bytes):
-                    os.write(master, at[1])
-                else:
-                    # The terminal's new size, which sends the run SIGWINCH; the screen keeps its lines, as xterm does.
-                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", at[1][1], at[1][0], 0, 0))
-                    screen.resize(*at[1])
-                at = None
-        process.wait(timeout=30)
-    finally:
-        if process.poll() is None:
-            _end(process)
-        os.close(master)
     _fail_if_the_desktop_was_reached(root)
     log = root / "run.log"
-    return Ran(process.returncode, raw, log.read_text() if log.exists() else "", screen)
+    return Ran(rc, raw, log.read_text() if log.exists() else "", screen)
 
 
 def _piped(root, *args, title="deploy alpha", env=None, playbook="deploy.yml", timeout=120):
@@ -555,33 +534,6 @@ def test_verbose_without_the_variable_or_without_a_log_the_run_is_streamed(stand
     assert "STAGES" not in ran.text
 
 
-def test_the_screen_reads_the_same_however_the_terminals_reads_split():
-    # vt.py, which every test here reads the screen with: a title by BEL and by ST, a frame, pause's ESC [ before
-    # its carriage return and its erase, a character of three bytes, and a bell, split at any two places.
-    stream = (
-        b"\x1b]0;deploy alpha\x07\x1b[?2026h\rone\x1b[K\ntwo\x1b[K\x1b[J\x1b[?2026l\x1b[1A\r\x1b[J"
-        b"alpha: paste the code:\r\nabc123^M\x1b[\r\x1b[\x1b[K\x1b]0;t\x1b\\"
-        b"\x1b[?2026h\rr\xe2\x9c\x93gion\x1b[K\x1b[J\x1b[?2026l\x07"
-    )
-    whole = VT(40, 10)
-    whole.feed(stream)
-    assert whole.titles == ["deploy alpha", "t"] and whole.bells == 1 and whole.unknown == set()
-    assert whole.transcript() == ["alpha: paste the code:", "r✓gion"] and whole.pending == b""
-    for first in range(len(stream) + 1):
-        for second in range(first, len(stream) + 1):
-            split = VT(40, 10)
-            for part in (stream[:first], stream[first:second], stream[second:]):
-                split.feed(part)
-            assert (split.history, split.lines, split.titles, split.bells, split.unknown, split.pending) == (
-                whole.history,
-                whole.lines,
-                whole.titles,
-                whole.bells,
-                whole.unknown,
-                whole.pending,
-            ), (first, second)
-
-
 def test_no_other_test_or_scenario_draws_a_run():
     tracked = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True).stdout
     mentions = sorted(
@@ -591,10 +543,12 @@ def test_no_other_test_or_scenario_draws_a_run():
         and (REPO / name).is_file()
         and "CLAUDE_ON_PROXMOX_LIVE" in (REPO / name).read_text(errors="replace")
     )
-    # The callback that reads it, the recipe that sets it, and the tests: test_justfile.py reads the title the
-    # recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or config.
+    # The callback that reads it and the model it feeds, the recipe that sets it, and the tests: test_justfile.py
+    # reads the title the recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or
+    # config.
     assert mentions == [
         "callback_plugins/claude_on_proxmox.py",
+        "filter_plugins/run_view.py",
         "justfile",
         "tests/unit/test_deploy_live.py",
         "tests/unit/test_justfile.py",

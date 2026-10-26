@@ -60,28 +60,25 @@ from ansible import context
 from ansible.plugins.callback.default import CallbackModule as DefaultCallback
 from ansible.utils import display as ansible_display
 
-FILTERS = Path(__file__).resolve().parents[1] / "filter_plugins"
 
-
-def _load(module, name):
-    # A filter module, loaded by path, since a callback cannot ask for one by name.
+def _sibling(stem):
+    # filter_plugins/<stem>.py, loaded by path once as claude_on_proxmox_<stem>, since a callback cannot ask for a
+    # filter module by name (docs/architecture/custom-code.md §7.8).
+    name = f"claude_on_proxmox_{stem}"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, FILTERS / f"{module}.py")
-        loaded = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(loaded)
-        sys.modules[name] = loaded
+        path = Path(__file__).resolve().parents[1] / "filter_plugins" / f"{stem}.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
     return sys.modules[name]
 
 
-def _load_banner():
-    # The filter the prompts use, so a prompt's block and a message's look the same.
-    return _load("text", "claude_on_proxmox_text_filters").banner
-
-
-banner = _load_banner()
-plain_text = _load("text", "claude_on_proxmox_text_filters").plain_text
-view = _load("deploy_view", "claude_on_proxmox_deploy_view")
-live = _load("live_region", "claude_on_proxmox_live_region")
+# The filter the prompts use, so a prompt's block and a message's look the same.
+text = _sibling("text")
+banner, plain_text = text.banner, text.plain_text
+screen = _sibling("screen")
+view = _sibling("run_view")
+live = _sibling("live_region")
 
 WAITING_TAG = "attention_browser"
 DEBUG_ACTIONS = frozenset({"debug", "ansible.builtin.debug", "ansible.legacy.debug"})
@@ -260,13 +257,13 @@ class CallbackModule(DefaultCallback):
 
     def _wrapped(self, head, lines, style=""):
         """head, then lines wrapped under where head ends, whole - never cut: (coloured, plain) pairs for _print."""
-        column = view.width(head)
+        column = screen.width(head)
         room = max(20, self._width() - 1 - column)
         out = []
-        pieces = [piece for line in lines for piece in view.fill(line, room)]
+        pieces = [piece for line in lines for piece in screen.fill(line, room)]
         for index, piece in enumerate(pieces):
             runs = [*(head if index == 0 else [(" " * column, "")]), (piece, style)]
-            out.append((view.ansi(runs, self._color), view.ansi(runs, False)))
+            out.append((screen.render(runs, self._color), screen.render(runs, False)))
         return out
 
     def _frame(self, cols, rows, glyph):
@@ -321,12 +318,14 @@ class CallbackModule(DefaultCallback):
                 plays.append((play._uuid, play.get_path(), tasks))
             self._run.plays(plays)
             first = playbook.get_plays()[:1]
-            if first and Path(str(first[0].get_path()).split(":", 1)[0]).name == "deploy.yml":
+            if first and Path(str(first[0].get_path()).split(":", 1)[0]).name in view.PLAN_FILES:
                 self._plan_play = first[0]._uuid
             self._region = live.LiveRegion(
                 self._display, frame=self._frame if self._mode == "live" else None, route=self._route
             )
             self._region.start()
+            self._region.redraw()
+            self._region.spin()
             if self._mode == "live":
                 # Registered after the region's own, so it runs first: a run that ends without its stats, at Ctrl-C,
                 # does not leave the tab saying it is still at work.
@@ -438,7 +437,7 @@ class CallbackModule(DefaultCallback):
             return
         host = result.host.get_name()
         parts = msg if isinstance(msg, list) else str(msg).splitlines()
-        lines = [said for said in (view.one_line(plain_text(str(part))) for part in parts) if said]
+        lines = [said for said in (view.one_line(str(part)) for part in parts) if said]
         if not lines:
             return
         plan = self._plan_play is not None and self._run.play == self._plan_play
@@ -486,12 +485,12 @@ class CallbackModule(DefaultCallback):
         with self._display._lock:
             task = self._run.find(result.task._uuid)
             where = (task.step or task.stage) if task is not None else ""
-            took = f" ({view.fmt(task.seconds(self._now()))})" if task is not None else ""
+            took = f" ({screen.duration(task.seconds(self._now()))})" if task is not None else ""
             name = task.name if task is not None else result.task.get_name()
         said = self._said(result.result)
         # A loop's own msg is "One or more items failed": what each failed item said is the failure.
         for item in self._failed_items.pop((result.task._uuid, result.host.get_name()), []):
-            said.append(f"{view.one_line(plain_text(str(self._get_item_label(item))))}:")
+            said.append(f"{view.one_line(self._get_item_label(item))}:")
             said += [f"  {line}" for line in self._said(item)]
         said_how = "" if how == "failed" else f" · {how}"
         out = [("", "")]

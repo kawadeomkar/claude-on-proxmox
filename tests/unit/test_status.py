@@ -18,6 +18,7 @@ import inspect
 import io
 import json
 import re
+import signal
 import sys
 import time
 from pathlib import Path
@@ -730,6 +731,9 @@ def callback(monkeypatch):
     """Makes the callback at a stand-in terminal. Called from the test itself: pytest puts its own sys.stdout back
     between a fixture's setup and the test, and the callback writes where sys.stdout is."""
     made = []
+    # The region turns the echo off on stdin when it is a terminal: under pytest -s it would be the developer's.
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    handler = signal.getsignal(signal.SIGWINCH)
 
     def make(quiet=False):
         monkeypatch.setenv("TERM", "xterm-256color")
@@ -744,7 +748,8 @@ def callback(monkeypatch):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         cb = module.CallbackModule()
-        cb._terminal_size = lambda: (100, 60)
+        if cb._region is not None:
+            cb._region._terminal_size = lambda: (100, 60)
         # Plain, to read back: Ansible reads its colour setting once, when its constants are first imported.
         cb._color = False
         made.append(cb)
@@ -752,9 +757,12 @@ def callback(monkeypatch):
 
     yield make
     for cb in made:
-        cb._stop.set()
-        # The wrap of Display's display lives on the singleton: put it back for the next test.
-        vars(cb._display).pop("display", None)
+        if cb._region is not None:
+            cb._region._stop.set()
+        # The region's wraps of Display live on the singleton: put them back for the next test.
+        for name in ("display", "prompt_until", "do_var_prompt"):
+            vars(cb._display).pop(name, None)
+    signal.signal(signal.SIGWINCH, handler)
 
 
 def _ok(host, facts):
@@ -789,7 +797,7 @@ def test_the_live_region_is_redrawn_in_place_and_erased_for_the_finished_report(
 
 def test_a_live_line_is_cut_to_the_width_and_the_region_to_the_height(callback) -> None:
     cb, terminal = callback()
-    cb._terminal_size = lambda: (40, 8)
+    cb._region._terminal_size = lambda: (40, 8)
     fleet = _fleet()
     cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": fleet}}))
     frame = terminal.getvalue().replace("\x1b[?2026h", "").replace("\x1b[?2026l", "")
@@ -804,9 +812,9 @@ def test_a_resize_pushes_the_screen_into_the_scrollback_and_starts_afresh(callba
     cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": _fleet()}}))
     terminal.seek(0)
     terminal.truncate()
-    cb._resized = True
-    cb._terminal_size = lambda: (80, 30)
-    cb._redraw()
+    cb._region._resized = True
+    cb._region._terminal_size = lambda: (80, 30)
+    cb._region.redraw()
     assert terminal.getvalue().startswith("\n" * 30 + "\x1b[29A\r")
 
 
@@ -815,8 +823,8 @@ def test_the_callback_writes_no_other_escape_than_its_own(callback) -> None:
     cb._color = True
     fleet = _fleet()
     cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": fleet}}))
-    cb._resized = True
-    cb._redraw()
+    cb._region._resized = True
+    cb._region.redraw()
     cb.v2_runner_on_ok(_ok("localhost", {"status_report": S.status_report({"localhost": {"fleet": fleet}}, "now")}))
     assert "\x1b[1;36mVMS" in terminal.getvalue()
     escapes = set(re.findall(r"\x1b\[[0-9;?]*[A-Za-z]", terminal.getvalue())) - set(
@@ -1077,7 +1085,7 @@ def test_the_longest_footer_and_kernel_fit_100_columns() -> None:
     footer = S.status_text(model).splitlines()[-1]
     assert footer == "exit 0 · nothing is wrong; 12 things wait for you · --only, --json: just help status"
     system = S._system_lines({**model, "vms": [{"name": "alpha", "needs_ssh": True, "ssh": {"system": SYSTEM}}]})
-    kernel = S._plain(system[1])
+    kernel = S.plain(system[1])
     assert "6.8.0-142 · 6.8.0-147 waits" in kernel and len(kernel) <= S.WIDTH, kernel
 
 

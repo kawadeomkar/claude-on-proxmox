@@ -43,6 +43,7 @@ import select
 import signal
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import termios
@@ -337,6 +338,68 @@ def _in_raw_mode(master: int) -> bool:
         return False
 
 
+def _at_a_pseudo_terminal(
+    argv: list[str],
+    cwd: Path,
+    env: dict,
+    *,
+    size: tuple[int, int] | None = None,
+    act=None,
+    timeout: float = 180,
+    poll: float = 0.2,
+) -> tuple[int, bytes]:
+    """Run argv at a pseudo-terminal of its own, and read what it writes until it ends. Its rc and every byte.
+
+    The run leads a session of its own whose controlling terminal it is
+    (_take_the_terminal), so pause can read keys from it and a Ctrl-C there is
+    the run's alone; never pytest's terminal. size, (cols, rows), sets the
+    window. act(chunk, output, master, process), called after each read with
+    the bytes read and after each idle tick with b"", may type, resize or
+    signal. A run that outlives timeout fails the test, its group killed.
+    Every test that runs something at a terminal goes through here: the
+    sign-ins' and init's prompts (_run_at_a_terminal), and the live outputs
+    (test_status_live.py, test_deploy_live.py).
+    """
+    master, slave = pty.openpty()
+    if size:
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", size[1], size[0], 0, 0))
+    process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - nothing else runs threads here
+    )
+    os.close(slave)
+    output, deadline = b"", time.monotonic() + timeout
+    try:
+        while True:
+            if time.monotonic() > deadline:
+                pytest.fail(f"the run did not finish within {timeout} seconds:\n" + output.decode(errors="replace"))
+            ready, _, _ = select.select([master], [], [], poll)
+            chunk = b""
+            if ready:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                output += chunk
+            elif process.poll() is not None:
+                break
+            if act is not None:
+                act(chunk, output, master, process)
+        process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            _end(process)
+        os.close(master)
+    return process.returncode, output
+
+
 def _run_at_a_terminal(
     root: Path,
     playbook: Path,
@@ -365,68 +428,47 @@ def _run_at_a_terminal(
     inventory = _inventory(root, hosts, ordered)
     log = root / "run.log"
     env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM="dumb", **(env or {}))
-    master, slave = pty.openpty()
-    process = subprocess.Popen(
-        [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, "-e", json.dumps(extra), str(playbook)],
-        cwd=root,
-        env=env,
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
-        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - nothing else runs threads here
-    )
-    os.close(slave)
-    output, searched, typing, deadline = b"", 0, None, time.monotonic() + timeout
-    try:
-        while True:
-            if time.monotonic() > deadline:
-                pytest.fail(
-                    f"the playbook did not finish within {timeout} seconds:\n" + output.decode(errors="replace")
-                )
-            ready, _, _ = select.select([master], [], [], 0.2)
-            if ready:
-                try:
-                    chunk = os.read(master, 4096)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                output += chunk
-            elif process.poll() is not None:
-                break
-            if typing is None and plan:
-                wanted, keys, delay = plan[0]
-                found = output.find(wanted, searched)
-                if found >= 0:
-                    plan.pop(0)
-                    searched = found + len(wanted)
-                    typing = {"keys": keys, "from": time.monotonic() + delay, "mark": None, "at": 0.0, "tries": 0}
-            if typing is not None:
-                now = time.monotonic()
-                if typing["mark"] is None:
-                    # Only once pause has the terminal in raw mode: before, a
-                    # Ctrl-C would be a signal to the whole run, not a key.
-                    if now >= typing["from"] and (_in_raw_mode(master) or now > typing["from"] + 5):
-                        typing.update(mark=len(output), at=now)
-                        os.write(master, typing["keys"])
-                elif b"\x1b" in output[typing["mark"] :]:
-                    # pause clears its line, an escape sequence, once it has
-                    # taken an answer or an interrupt.
-                    typing = None
-                elif now - typing["at"] > 2 and typing["tries"] < 5:
-                    # Keys typed in the moment before pause flushed the
-                    # terminal's input are lost, and echoed all the same, so
-                    # the echo proves nothing: typed again.
-                    typing.update(at=now, tries=typing["tries"] + 1)
+    state = {"searched": 0, "typing": None}
+
+    def type_at_each_prompt(chunk, output, master, process):
+        typing = state["typing"]
+        if typing is None and plan:
+            wanted, keys, delay = plan[0]
+            found = output.find(wanted, state["searched"])
+            if found >= 0:
+                plan.pop(0)
+                state["searched"] = found + len(wanted)
+                typing = state["typing"] = {"keys": keys, "from": time.monotonic() + delay, "mark": None, "at": 0.0}
+                typing["tries"] = 0
+        if typing is not None:
+            now = time.monotonic()
+            if typing["mark"] is None:
+                # Only once pause has the terminal in raw mode: before, a
+                # Ctrl-C would be a signal to the whole run, not a key.
+                if now >= typing["from"] and (_in_raw_mode(master) or now > typing["from"] + 5):
+                    typing.update(mark=len(output), at=now)
                     os.write(master, typing["keys"])
-        process.wait(timeout=30)
-    finally:
-        if process.poll() is None:
-            _end(process)
-        os.close(master)
+            elif b"\x1b" in output[typing["mark"] :]:
+                # pause clears its line, an escape sequence, once it has
+                # taken an answer or an interrupt.
+                state["typing"] = None
+            elif now - typing["at"] > 2 and typing["tries"] < 5:
+                # Keys typed in the moment before pause flushed the
+                # terminal's input are lost, and echoed all the same, so
+                # the echo proves nothing: typed again.
+                typing.update(at=now, tries=typing["tries"] + 1)
+                os.write(master, typing["keys"])
+
+    rc, output = _at_a_pseudo_terminal(
+        [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), *args, "-e", json.dumps(extra), str(playbook)],
+        root,
+        env,
+        act=type_at_each_prompt,
+        timeout=timeout,
+    )
     _fail_if_the_desktop_was_reached(root)
     assert not plan, f"no {plan[0][0]!r} prompt appeared:\n" + output.decode(errors="replace")
-    return process.returncode, output.decode(errors="replace"), log.read_text() if log.exists() else ""
+    return rc, output.decode(errors="replace"), log.read_text() if log.exists() else ""
 
 
 def _results(report: dict):

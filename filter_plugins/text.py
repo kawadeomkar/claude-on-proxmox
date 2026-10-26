@@ -12,9 +12,9 @@ ansible-core prints as written, and in the stdout callback
 (callback_plugins/claude_on_proxmox.py), so both look the same.
 
 one_line keeps a value a VM chose to one line of a report: `just status`
-(filter_plugins/status.py) draws its report from them, and a newline in a
-directory's name would otherwise start a line of its own - a forged item with a
-command to run, here.
+(filter_plugins/status.py) draws its report from them, and every live run
+(filter_plugins/run_view.py) its reports, and a newline in a directory's name
+would otherwise start a line of its own - a forged item with a command to run.
 """
 
 from __future__ import annotations

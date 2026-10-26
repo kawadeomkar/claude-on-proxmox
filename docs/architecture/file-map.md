@@ -90,8 +90,10 @@ filter_plugins/text.py            plain_text, what a VM printed made safe to quo
 filter_plugins/status.py          just status's model and text: status_fleet, status_vm_api, status_report, status_text (§7.7)
 filter_plugins/settings.py        init_answer, the rule each just init answer follows; with_setting, one written into YAML text;
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
-filter_plugins/deploy_view.py     just deploy's run as stages, steps and tasks: the live frame, a line per step, the summary
-filter_plugins/live_region.py     the live region: drawn in place at the bottom of a terminal, all else printed above it
+filter_plugins/run_view.py        a live run as stages, steps and tasks (just deploy's first): its frame, a line per step,
+                                  the summary (§7.5)
+filter_plugins/live_region.py     every live output's region: drawn in place at the bottom of a terminal, all else above (§7.8)
+filter_plugins/screen.py          every live output's lines: styled segments, cut, aligned, coloured in one palette (§7.8)
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
                                   and github_repository, owner/repo of a remote URL here and of a GitHub one on the VM;
                                   claude_project_folder, Claude Code's folder for a path; claude_session_dirs; just_code_dir,
