@@ -399,6 +399,20 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the token can use (`tasks/init_choose.yml`). Every other task is a read, its one command `hostname -s` over
   root SSH, and its tests give the Proxmox host a local stand-in or a refusing `ssh`, never a real one
   (`tests/unit/test_init_check.py` holds all three).
+- **`just init`'s offer to make the API token is the one change the project makes on Proxmox outside its
+  template and VMs, and only on a `y`.** `tasks/init_access.yml` (from `init_settings.yml`, at a terminal,
+  while the vault has no secret and none was given) runs `tools/proxmox-access.sh` on the first `proxmox`
+  host over root SSH - the `command` module, `/bin/sh -s` with the script on stdin, never a copy left there:
+  `--list` and `--dry-run` change nothing, and the question shows the dry run's `pveum` commands before the
+  script runs. It creates only what is missing - the role `AnsibleVM`, the user, a grant where the user
+  lacks the role's privileges (so a grant the host's owner made, the homeserver's storage, stands), the
+  token last - and changes nothing that exists. Its stdout is the token's secret alone, read `no_log` into
+  the hidden answers; its talk is stderr. The offer and the secret are the last tasks before the vault's
+  block, with nothing between, and the block's rescue deletes the token the run made while the vault is
+  unwritten - never once `ansible-vault` wrote it, when it holds the secret. `n` is the same script by hand, and
+  its privileges are `init_check.yml`'s (`tests/unit/test_proxmox_access.py`, against `fake_pve_cli.py`).
+  Every `init_settings.yml` test run has a refusing `ssh` first on PATH, and the offer's a local stand-in
+  host (`test_init_settings.py` holds both).
 
 ## Architecture, and why it looks like this
 
@@ -540,6 +554,12 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
 ## Things that have bitten this repo
 
 - **ansible-core 2.21**: a non-boolean conditional is a fatal error, not a warning.
+- **An Ansible tool's stdout is more than its output once verbosity or debugging is on.** With
+  `ANSIBLE_VERBOSITY` or `ANSIBLE_DEBUG` exported (or set in `ansible.cfg`), `ansible-vault decrypt --output -`
+  prints `Using ... as config file` and more after the vault's text, which `just init` read as the vault's:
+  an encrypted vault was "not a YAML mapping", and every read-back differed. Each `ansible-vault` init runs
+  has `environment: "{{ init_ansible_vault_env }}"` (both 0); `test_init_settings.py` runs it verbose and
+  debugging, and holds every call to it.
 - **A gathered fact is `ansible_facts['architecture']`, never `ansible_architecture`.** ansible-core 2.24
   stops injecting facts as top-level variables, and `ansible.cfg`, Molecule's shared config and every
   `ansible.cfg` a unit test writes (`harness.ansible_config`) already set `inject_facts_as_vars = false`, so

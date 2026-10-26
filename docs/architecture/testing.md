@@ -119,7 +119,7 @@ pytest over `tests/unit/`: 1777 tests. By file:
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
-- **`just init`'s questions** (`test_init_settings.py` 60, `test_settings_filter.py` 73):
+- **`just init`'s questions** (`test_init_settings.py` 77, `test_settings_filter.py` 73):
   `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
   which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
   a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
@@ -133,10 +133,32 @@ pytest over `tests/unit/`: 1777 tests. By file:
   Tailscale notice, naming the auth key or the sign-in page, gone once `tailscale_enabled` is set, and
   `--tailscale` writing it; the vault decrypted to the example with the answered lines replaced,
   `0600`, and the secret in neither the output nor the log, typed or given, with module arguments injected
-  and the log at `-vvv`; statically, every write under `init_ask` and every task that renders the secret
-  or the vault's text `no_log`. The filter: each kind's accepted answers in their normal form, and what
-  each refuses.
-- **`just init`'s checks** (`test_init_check.py` 51): `init_check.yml` against the fake Proxmox on a
+  and the log at `-vvv`; a vault read and written as it is with `ANSIBLE_VERBOSITY` or `ANSIBLE_DEBUG` in the
+  environment, every `ansible-vault` run quiet; statically, every write under `init_ask` and every task that renders the secret
+  or the vault's text `no_log`. The offer to make the token, against a stand-in Proxmox host (the local
+  connection, `fake_pve_cli.py` first on its `PATH`): `y` running `tools/proxmox-access.sh` and the vault
+  taking the secret it made, never asked for, said or logged at `-vvv`; `n` changing nothing and saying how
+  to run it by hand; root SSH that fails said, with `ssh-copy-id`; a storage the host has asked for by
+  number and written, one left undecided, and a host set up already asking only for the secret; the
+  `proxmox` group's connection settings used; a vault that cannot be written deleting the token just made,
+  and one written but not read back keeping it; and no terminal reaching no host. Statically, nothing
+  between the offer and the vault's block. Every run has a refusing
+  `ssh` first on `PATH`; statically, no run without it, the offer only under `init_ask`, the script the only
+  thing run on the host - `--list` and `--dry-run` changing nothing, the run itself on a `y` and `no_log` -
+  and the token's delete the one other command there. The filter: each kind's accepted answers in their
+  normal form, and what each refuses.
+- **The Proxmox access script** (`test_proxmox_access.py` 34): `tools/proxmox-access.sh` under `/bin/sh` - dash
+  on a Linux runner, as on the host - against `fake_pve_cli.py`: a fresh host given the role, the user, its
+  three grants and the token, made last, with the secret alone on stdout; the dry run printing the commands
+  and changing nothing; a second run changing nothing and naming the token; the guest agent's privilege by
+  version; `--list`; a storage or bridge the node lacks refused, naming its own, then given; a role without a
+  privilege named and left, and never said to give it; a user that holds the privileges another way given no
+  grant, one whose grant from above does not propagate given one, and one whose grant on `/vms` does not
+  propagate named and left; a user that holds privileges on `/` warned of before its token; a token with privilege separation named; another user and token; root and
+  `pveum` required; a value that is not one plain word refused before anything runs; a refused write stopping
+  it before the token. Statically: its privileges the ones `init_check.yml` checks, the commands
+  `docs/getting-started/proxmox-access.md` shows the ones its dry run prints, and stdout carrying data alone.
+- **`just init`'s checks** (`test_init_check.py` 50): `init_check.yml` against the fake Proxmox on a
   loopback port, in an inventory of the test's own with the project's `defaults.yml`: nothing asked of
   Proxmox while a value is the example's; every check `ok` on a host with its template, on 8.x and on 9.x,
   and no SSH then; a wrong secret, a closed port (an IPv6 address said bracketed), a missing privilege on
@@ -156,7 +178,7 @@ pytest over `tests/unit/`: 1777 tests. By file:
   is unknown, a token that sees no storage told what lists one, an inactive storage, a template without a
   bridge, no host in the `proxmox` group, and the playbook loading with duplicate keys made fatal. Statically: every task a read (a `uri` a GET that saves nothing), every `uri` with the CA
   path and `no_log`, the settings written only through `tasks/init_local_setting.yml` at a terminal or as
-  given, the privileges checked the role's in the docs, and no run reaching a real `ssh`. Running
+  given, and no run reaching a real `ssh`. Running
   a fake on a loopback port, the fake Proxmox's certificate and `_pve` live in `tests/unit/harness.py`, shared
   with `test_release.py`; each file keeps its own `fake_pve` fixture.
 - **The managed SSH config** (`test_ssh_config.py` 29): `tasks/ssh_config.yml` for real against a
@@ -368,6 +390,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 |---|---|---|
 | `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does |
 | `fake_qm.sh` | `qm` on the PVE node | stateful, one config file per VMID, logs every invocation |
+| `fake_pve_cli.py` | `pveum`, `pvesh`, `pveversion`, `hostname` and `id` on the PVE node | for `tools/proxmox-access.sh`: the roles, users, ACLs and tokens in one file, answering the calls the script makes as a Proxmox VE 9.2 host was seen to - compact JSON, a refusal for what exists, the version's own guest-agent privilege - with every call logged and a write refused on cue |
 | `fake_virt_customize.sh` | `virt-customize` | so `proxmox_template` runs in a container |
 | `fake_github_api.py` | the GitHub REST API | serves local bare repositories, in paginated responses; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took, so a test can hold that nothing reaches it |
 | `fake_tailscale_api.py` | Tailscale's API | the OAuth client exchange, and a device looked up and deleted by node ID, each device with the name it was started with; 403 and 404 on cue, and `/fake/deleted` lists what went |
@@ -406,7 +429,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   template included, to `pve2` once it is up; per-VM requests are served on the node the VM is on.
 - `GET /access/permissions` answers each token's privileges by path, the privilege's name as the key and
   its propagate flag as the value, as Proxmox does: what `PUT /api2/json/fake/privileges?token=&path=&privs=`
-  set (`VM.Clone:0` granted without Propagate), else the whole role `docs/getting-started/proxmox-access.md`
+  set (`VM.Clone:0` granted without Propagate), else the whole role `tools/proxmox-access.sh`
   makes, with the guest-agent privilege of the version `/version` reports - 8.2.4 until
   `PUT /api2/json/fake/version?version=` changes it - and for the `noagent` token, without it.
 

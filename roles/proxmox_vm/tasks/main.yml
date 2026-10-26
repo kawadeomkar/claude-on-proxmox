@@ -8,8 +8,8 @@
       - proxmox_vm_api_token_secret | length > 0
     fail_msg: >-
       Set proxmox_api_host in inventory/hosts.yml and vault_proxmox_api_token_secret
-      in inventory/group_vars/all/vault.yml. See "Creating the Proxmox API token"
-      in docs/getting-started/proxmox-access.md.
+      in inventory/group_vars/all/vault.yml: just init asks for both, and offers to make
+      the token (docs/getting-started/proxmox-access.md, "The API token").
     quiet: true
 
 - name: Validate the VM name

@@ -41,7 +41,7 @@ ISO images; they are safe to delete from there once the template is built.
 
 Existing VMs keep working; they are configured over SSH and are not re-cloned.
 Your API token also needs the guest-agent privilege added - see
-[Creating the Proxmox API token](../getting-started/proxmox-access.md#creating-the-proxmox-api-token).
+[The guest agent's privilege](../getting-started/proxmox-access.md#the-guest-agents-privilege).
 
 ## A vault GitHub token from an earlier version
 

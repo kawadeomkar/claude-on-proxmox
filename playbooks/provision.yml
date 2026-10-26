@@ -66,7 +66,7 @@
     # read raw rather than through proxmox_vm_info, which also asks every node
     # that holds a guest and fails outright if one is offline; the listing is
     # the same shared task discovery, just list and destroy use. The token
-    # docs/getting-started/proxmox-access.md creates can see every guest. Something that takes one of these IDs before
+    # tools/proxmox-access.sh creates can see every guest. Something that takes one of these IDs before
     # its clone runs still fails that clone rather than being cloned over:
     # proxmox_kvm checks, and the role asserts the clone changed something.
     #

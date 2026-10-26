@@ -15,7 +15,7 @@ else is here. It reads the same in the repository and as a site with search, at
 - [Requirements](getting-started/requirements.md) - your machine, and what the project assumes of the
   Proxmox host: storage, DHCP, more than one node.
 - [Proxmox access](getting-started/proxmox-access.md) - root SSH for the template, and the API token
-  for everything else.
+  for everything else, which `just init` offers to make (or `tools/proxmox-access.sh`, by hand).
 - [Your first deploy](getting-started/first-deploy.md) - `just init`'s questions (or its command line),
   the three files, what `just deploy` asks of you, and what to do when a run fails.
 
