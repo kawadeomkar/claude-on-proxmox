@@ -46,7 +46,8 @@ Without a name, `just login --only github` only reports each VM's state; given s
 after another, since the browser takes one sign-in at a time. A code left unapproved expires after
 fifteen minutes and that VM's sign-in fails saying so, after the others have had their turn; run it
 again for a fresh code. `just deploy` starts it for every VM but one whose Claude sign-in nobody
-answered, and a run with no terminal skips it, as nobody is there to approve it. Once the code is shown
+answered, which it says, with `just login alpha --only github` to start it later, and a run with no
+terminal skips it, as nobody is there to approve it. Once the code is shown
 the run waits until it is approved or expires, and Ctrl-C there ends the whole run; with
 `github_login_auto_start: false` it asks first, and `n` leaves a VM for later. `just deploy --only configure` never
 runs it. On a controller with no browser or clipboard the run prints the page and the

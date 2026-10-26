@@ -133,10 +133,11 @@ With `github_login_auto_start: false` or `tailscale_login_auto_start: false` the
 so a VM can be left for later: Enter signs in a VM whose Claude sign-in you just answered, `y` one that
 needed none (signed in already, or on an API key), and `n` leaves it. A VM whose Claude sign-in nobody
 answered - Enter at its `Code:` prompt, or a browser that never came back - is left out of the other two,
-and a run with no terminal skips all three; either way the deploy finishes, `just login alpha` does
-them later (`--only claude`, `github` or `tailscale` for one of them), and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the command
-that retries it, and the rest of the deploy goes on. [During a run](../guides/runs.md) shows how
-each of these waits looks.
+each saying so with the command that starts it, and a run with no terminal skips all three; either way the
+deploy finishes, `just login alpha` does them later (`--only claude`, `github` or `tailscale` for one of
+them), and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the
+command that retries it, and the rest of the deploy goes on; NEXT STEPS at the end lists it again, with
+every sign-in left. [During a run](../guides/runs.md) shows how each of these waits looks.
 
 ## Running it again, and the stages one by one
 

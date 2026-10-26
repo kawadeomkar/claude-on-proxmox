@@ -31,16 +31,31 @@
       ignore_unreachable: true
       register: claude_vm_reach
 
+    # The command that retries it ends the line, with no full stop after it:
+    # one would be pasted along with it.
     - name: Remember that the VM could not be reached
+      vars:
+        claude_vm_failed_why: "{{ claude_vm_reach.msg | default('no answer', true) | regex_replace('\\s+', ' ') | trim }}"
       ansible.builtin.set_fact:
         claude_vm_tailscale_login_failure: >-
           {{ inventory_hostname }} could not be reached, so it was not signed in to Tailscale:
-          {{ claude_vm_reach.msg | default('no answer') | trim }}
+          {{ claude_vm_failed_why ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.') }}
+          Retry it with: just login {{ inventory_hostname }} --only tailscale
       when: claude_vm_reach is unreachable
 
     - name: Say which VM could not be reached
       ansible.builtin.debug:
         msg: "{{ claude_vm_tailscale_login_failure }}"
+      when: claude_vm_reach is unreachable
+
+    # NEXT STEPS (callback_plugins/claude_on_proxmox.py): the line above, under
+    # the sign-in's own matter, which a later record of the VM would replace.
+    - name: Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          tailscale_next: "{{ {inventory_hostname: {'tailscale': claude_vm_tailscale_login_failure}} }}"
+        aggregate: true
+        per_host: false
       when: claude_vm_reach is unreachable
 
 # One VM at a time where a sign-in can prompt - names given, or just deploy -
@@ -54,6 +69,15 @@
   vars:
     claude_vm_login_named: >-
       {{ (vm_name | default('', true) | split(',') | map('trim') | select | list | length) > 0 }}
+    # A VM just deploy, or just login with names, leaves out of this sign-in
+    # because nobody answered its Claude sign-in (claude_vm_login_interactive
+    # and claude_vm_login_ask, as deploy.yml and login.yml decide them): told
+    # so below. Never in a report, which starts nothing for any VM.
+    claude_vm_login_held: >-
+      {{ (claude_vm_login_in_deploy | default(false) | bool or claude_vm_login_named | bool)
+         and claude_code_login_skipped | default(false) | bool
+         and not (claude_vm_login_interactive | default(claude_vm_login_named) | bool)
+         and not (claude_vm_login_ask | default(false) | bool) }}
   serial: "{{ 1 if (claude_vm_login_in_deploy | default(false) | bool or claude_vm_login_named | bool) else '100%' }}"
 
   tasks:
@@ -74,19 +98,65 @@
           # On the task, not the block: a block's condition is its rescue's
           # too, read again for each task, and the rescue sets this fact.
           when: claude_vm_tailscale_login_failure is not defined
+
+        # The role's report says the VM is not signed in; this says why
+        # nothing signed it in - only where the web login would have run
+        # (tailscale_login_due, which the role's question and login go on
+        # too), so a VM on Tailscale already, joined by the key, or with a
+        # Tailscale of its own hears nothing of it.
+        - name: Say why Tailscale's sign-in was not started
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }}: Tailscale's sign-in was not started, since its Claude sign-in was skipped:
+              just login {{ inventory_hostname }} --only tailscale starts it.
+          register: claude_vm_tailscale_held_reported
+          when:
+            - claude_vm_tailscale_login_failure is not defined
+            - claude_vm_login_held | bool
+            - tailscale_login_due | default(false) | bool
+
+        # NEXT STEPS: the line above, in place of the role's own report of the
+        # same sign-out, just before it - one line, and the one that says why.
+        - name: Keep what is left to do for the end of the run
+          ansible.builtin.set_stats:
+            data:
+              tailscale_next: "{{ {inventory_hostname: {'tailscale': claude_vm_tailscale_held_reported.msg}} }}"
+            aggregate: true
+            per_host: false
+          when:
+            - claude_vm_tailscale_login_failure is not defined
+            - claude_vm_login_held | bool
+            - tailscale_login_due | default(false) | bool
       rescue:
         - name: Stop the run when the person aborted at the prompt
           ansible.builtin.fail:
             msg: "{{ ansible_failed_result.msg }}"
           when: ansible_failed_result.msg | default('') is search('user requested abort')
 
+        # The role's own failures name the command that retries them; any
+        # other gets it added, so the line NEXT STEPS keeps names it too.
         - name: Remember why this VM's sign-in failed
+          vars:
+            claude_vm_failed_why: "{{ ansible_failed_result.msg | default('the sign-in failed', true) | string | trim }}"
+            claude_vm_retry: just login {{ inventory_hostname }} --only tailscale
           ansible.builtin.set_fact:
-            claude_vm_tailscale_login_failure: "{{ ansible_failed_result.msg | default('the sign-in failed', true) }}"
+            claude_vm_tailscale_login_failure: >-
+              {{ claude_vm_failed_why if claude_vm_retry in claude_vm_failed_why
+                 else claude_vm_failed_why ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.')
+                      ~ ' Retry it with: ' ~ claude_vm_retry }}
 
         - name: Say why, and go on with the next VM
           ansible.builtin.debug:
             msg: "{{ claude_vm_tailscale_login_failure }}"
+
+        # NEXT STEPS: the line above, which replaces whatever an earlier report
+        # of the run left for this VM's sign-in.
+        - name: Keep what is left to do for the end of the run
+          ansible.builtin.set_stats:
+            data:
+              tailscale_next: "{{ {inventory_hostname: {'tailscale': claude_vm_tailscale_login_failure}} }}"
+            aggregate: true
+            per_host: false
 
 # just deploy carries on past a sign-in that failed - the person's to finish
 # later with just login --only tailscale; this command exists to sign in, so here the

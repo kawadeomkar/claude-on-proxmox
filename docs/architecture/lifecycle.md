@@ -439,13 +439,16 @@ it. `claude_login.yml` and `github_login.yml` are imported with discovery off,
 GitHub one decides VM by VM, from what the Claude step left on each VM
 ([§5.5](roles.md#55-claude_code--install-claude-code)): a VM whose Claude sign-in
 nobody answered (`claude_code_login_skipped` - Enter at the prompt, or a browser that never came back) is
-left. With `github_login_auto_start` (the default) every other VM starts at once; off, each is asked
+left, and told so where the flow would have run (`github_projects_login_due`), with `just login <vm>
+--only github`, the line NEXT STEPS keeps. With `github_login_auto_start` (the default) every other VM starts at once; off, each is asked
 first (`claude_vm_login_ask`, the role's `github_projects_login_ask`): Enter signs in one whose Claude
 sign-in was answered, `y` one that showed none (signed in already, or an API key). `tailscale_login.yml`
 follows the same way with `tailscale_login_auto_start`, and `when: deploy_sign_in | bool and
 tailscale_enabled | default(true) | bool` (§4.10): a VM an auth key joined during configuration is only
 reported. A run with no terminal gets `deploy_sign_in: false` from the justfile's `no_tty_args`: sign-ins
-that start by themselves would otherwise each wait for a browser nobody watches.
+that start by themselves would otherwise each wait for a browser nobody watches. A sign-in that failed,
+or found its VM unreachable, is said with the `just login <vm> --only ...` that retries it and recorded
+for NEXT STEPS under its own matter, since deploy raises it nowhere else.
 
 Last, `code.yml` with `code_in_deploy`, when `deploy_code`. For several VMs its first task prints
 each VM's `just code` line and ends the play. For one - the default VM of a bare deploy counts, so the
@@ -810,7 +813,8 @@ had their turn, with every message. Between them it passes what deploy passes (�
 (`claude_vm_login_named`, the play var both later sign-in plays keep): GitHub and Tailscale start by
 themselves for a VM whose Claude sign-in was answered, are asked about first with
 `github_login_auto_start` or `tailscale_login_auto_start` off, and are left for one whose Claude sign-in
-nobody answered. Without names every step reports, and nothing starts. `claude_vm_login_in_deploy` is
+nobody answered, which each says, with the command that starts it. Without names every step reports,
+nothing starts, and nothing is said of a sign-in left. `claude_vm_login_in_deploy` is
 not set, so GitHub's follow-on play runs the whole `github_projects` role for each VM named, as
 `just login --only github` does, since no configuration ran just before it. `--only claude`, `github` or
 `tailscale` runs that playbook alone.

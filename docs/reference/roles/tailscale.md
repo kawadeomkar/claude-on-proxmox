@@ -375,8 +375,9 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Read Tailscale's state | `ansible.builtin.include_tasks` | <code>tailscale_enabled &#124; bool and tailscale_installed &#124; bool</code> |
 | Say why there is nothing to sign in | `ansible.builtin.debug` | <code>not (tailscale_enabled &#124; bool) or not (tailscale_installed &#124; bool)</code> |
 | Keep what is left to do for the end of the run | `ansible.builtin.set_stats` | <code>not (tailscale_enabled &#124; bool) or not (tailscale_installed &#124; bool)</code> |
-| Ask whether to sign this VM in to Tailscale now | `ansible.builtin.pause` | <code>tailscale_login_ask &#124; bool and tailscale_login_possible &#124; bool</code> |
-| Sign in by Tailscale's web login | `ansible.builtin.include_tasks` | <code>tailscale_login_go &#124; bool and tailscale_login_possible &#124; bool</code> |
+| Record whether the web login would sign this VM in | `ansible.builtin.set_fact` |  |
+| Ask whether to sign this VM in to Tailscale now | `ansible.builtin.pause` | <code>tailscale_login_ask &#124; bool and tailscale_login_due &#124; bool</code> |
+| Sign in by Tailscale's web login | `ansible.builtin.include_tasks` | <code>tailscale_login_go &#124; bool and tailscale_login_due &#124; bool</code> |
 | Report how the VM is on Tailscale | `ansible.builtin.include_tasks` | <code>tailscale_enabled &#124; bool and tailscale_installed &#124; bool</code> |
 
 ```mermaid
@@ -395,10 +396,11 @@ classDef rescue stroke:#665352,stroke-width:2px;
   login___Read_what_is_installed__and_who_installed_it_ownership_yml_0-->|Include task| login___Read_Tailscale_s_state_state_yml_1[login   read tailscale s state<br>When: **tailscale enabled   bool and tailscale installed  <br>bool**<br>include_task: state yml]:::includeTasks
   login___Read_Tailscale_s_state_state_yml_1-->|Task| login___Say_why_there_is_nothing_to_sign_in2[login   say why there is nothing to sign in<br>When: **not  tailscale enabled   bool  or not  tailscale<br>installed   bool**]:::task
   login___Say_why_there_is_nothing_to_sign_in2-->|Task| login___Keep_what_is_left_to_do_for_the_end_of_the_run3[login   keep what is left to do for the end of the<br>run<br>When: **not  tailscale enabled   bool  or not  tailscale<br>installed   bool**]:::task
-  login___Keep_what_is_left_to_do_for_the_end_of_the_run3-->|Task| login___Ask_whether_to_sign_this_VM_in_to_Tailscale_now4[login   ask whether to sign this vm in to<br>tailscale now<br>When: **tailscale login ask   bool and tailscale login<br>possible   bool**]:::task
-  login___Ask_whether_to_sign_this_VM_in_to_Tailscale_now4-->|Include task| login___Sign_in_by_Tailscale_s_web_login_web_login_yml_5[login   sign in by tailscale s web login<br>When: **tailscale login go   bool and tailscale login<br>possible   bool**<br>include_task: web login yml]:::includeTasks
-  login___Sign_in_by_Tailscale_s_web_login_web_login_yml_5-->|Include task| login___Report_how_the_VM_is_on_Tailscale_report_yml_6[login   report how the vm is on tailscale<br>When: **tailscale enabled   bool and tailscale installed  <br>bool**<br>include_task: report yml]:::includeTasks
-  login___Report_how_the_VM_is_on_Tailscale_report_yml_6-->End
+  login___Keep_what_is_left_to_do_for_the_end_of_the_run3-->|Task| login___Record_whether_the_web_login_would_sign_this_VM_in4[login   record whether the web login would sign<br>this vm in]:::task
+  login___Record_whether_the_web_login_would_sign_this_VM_in4-->|Task| login___Ask_whether_to_sign_this_VM_in_to_Tailscale_now5[login   ask whether to sign this vm in to<br>tailscale now<br>When: **tailscale login ask   bool and tailscale login due<br>  bool**]:::task
+  login___Ask_whether_to_sign_this_VM_in_to_Tailscale_now5-->|Include task| login___Sign_in_by_Tailscale_s_web_login_web_login_yml_6[login   sign in by tailscale s web login<br>When: **tailscale login go   bool and tailscale login due <br> bool**<br>include_task: web login yml]:::includeTasks
+  login___Sign_in_by_Tailscale_s_web_login_web_login_yml_6-->|Include task| login___Report_how_the_VM_is_on_Tailscale_report_yml_7[login   report how the vm is on tailscale<br>When: **tailscale enabled   bool and tailscale installed  <br>bool**<br>include_task: report yml]:::includeTasks
+  login___Report_how_the_VM_is_on_Tailscale_report_yml_7-->End
 ```
 
 ### `ownership.yml`

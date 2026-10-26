@@ -57,7 +57,7 @@ machine and the page would send it to that machine's own localhost - claude's ot
 which shows a code once you authorise: paste it at the `Code:` prompt and the run hands it to claude
 through a pipe. The code is read with the run log's no_log, so it never lands in `.logs/`. Enter alone
 at the prompt skips a VM, and a code claude refuses fails that VM by name once the others have had their
-turn; a code copied only up to its `#` (a double-click stops there) is asked for again, and Ctrl-C then
+turn (under `just deploy`, which goes on, NEXT STEPS keeps it, with the command that retries it); a code copied only up to its `#` (a double-click stops there) is asked for again, and Ctrl-C then
 `A` at the prompt ends the run. A sign-in page lasts `claude_login_timeout` plus half an hour: a code
 pasted later is said to be too late at once, with the command for a fresh page.
 

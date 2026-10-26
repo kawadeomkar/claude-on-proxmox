@@ -39,6 +39,12 @@ What these guard:
   at once.
 - github_login.yml refuses the two switches it no longer reads, and names the
   one that replaced them.
+- NEXT STEPS keeps what each sign-in missed, as every report records it: a
+  failed sign-in, a VM that could not be reached and a failure after a sign-in
+  each record their line, with the command that retries it, under the
+  sign-in's own matter; a sign-in left out for a VM whose Claude sign-in
+  nobody answered is said once, with the command that starts it, and never in
+  a report; a VM signed in has nothing left.
 - just login (playbooks/login.yml) runs the three in deploy's order and by its
   rules: GitHub's device flow is not started for a VM whose Claude sign-in
   nobody answered, a VM whose Claude sign-in failed sits out the sign-ins after
@@ -59,7 +65,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from harness import LOGINS, REPO, STAND_INS, _results, _run, _stand_in_hosts
+from harness import LOGINS, REPO, STAND_INS, _left_to_do, _results, _run, _stand_in_hosts
 
 CLAUDE_LOGIN = REPO / "playbooks" / "claude_login.yml"
 GITHUB_LOGIN = REPO / "playbooks" / "github_login.yml"
@@ -434,6 +440,27 @@ def test_a_failed_sign_in_is_said_in_its_turn_and_raised_once_every_vm_had_its_o
     assert _failed(report)["alpha"] == "Fail where the sign-in failed: " + message
 
 
+@pytest.mark.parametrize(("fixture", "matter"), [("claude_named", "claude"), ("github_named", "github")])
+def test_next_steps_keep_a_failed_sign_in_and_a_vm_not_reached_with_the_command_that_retries_each(
+    request, fixture, matter
+):
+    # Said, and raised at the end, but recorded nowhere: NEXT STEPS forgot both.
+    _, report = request.getfixturevalue(fixture)
+    left = _left_to_do(report)
+    (failed,) = _said(report, "Say why, and go on with the next VM", "alpha")
+    assert left["alpha"][matter] == failed
+    assert f"just login alpha --only {matter}" in failed, failed
+    (unreached,) = _said(report, "Say which VM could not be reached", "beta")
+    assert left["beta"][matter] == unreached
+    assert "beta could not be reached" in unreached and "Connection refused." in unreached, unreached
+    assert unreached.endswith(f"Retry it with: just login beta --only {matter}"), unreached
+
+
+def test_next_steps_keep_nothing_of_a_claude_sign_in_that_went_through(claude_named):
+    _, report = claude_named
+    assert _left_to_do(report)["gamma"]["claude"] == ""
+
+
 @pytest.fixture(scope="module")
 def deployed(tmp_path_factory):
     """just deploy's sign-ins for a-rejected (a code claude refuses), b-down (unreachable) and c-accepted."""
@@ -454,6 +481,19 @@ def test_just_deploy_names_a_vm_it_cannot_reach_in_every_sign_in_and_goes_on(dep
     # The VM after it still had its turn.
     assert "accepted" in _claude_calls(root, "c-accepted")
     assert _signed_in(root, "c-accepted")
+
+
+def test_just_deploy_keeps_each_sign_in_a_vm_missed_for_next_steps(deployed):
+    # deploy raises no failed sign-in at its end: NEXT STEPS is where it stays.
+    _, report = deployed
+    left = _left_to_do(report)
+    said = _said(report, "Say which VM could not be reached", "b-down")
+    assert [left["b-down"][matter] for matter in ("claude", "github", "tailscale")] == said, (left["b-down"], said)
+    for matter, line in zip(("claude", "github", "tailscale"), said, strict=True):
+        assert line.endswith(f"Retry it with: just login b-down --only {matter}"), line
+    assert left["a-rejected"]["claude"] == _said(report, "Say why, and go on with the next VM", "a-rejected")[0]
+    assert "just login a-rejected --only claude" in left["a-rejected"]["claude"]
+    assert left["c-accepted"]["claude"] == ""
 
 
 # ------------------------------------------- the work after a sign-in fails
@@ -549,6 +589,21 @@ def test_the_reason_ends_its_sentence_and_the_message_ends_with_the_command_that
     _, report = request.getfixturevalue(fixture)
     (message,) = _failed(report).values()
     assert re.search(r"[.!?] Retry it with: just deploy \S+ --tags \w+$", message), message
+
+
+@pytest.mark.parametrize(
+    ("fixture", "host", "matter"),
+    [
+        ("after_claude", "epsilon", "remote_control"),
+        ("after_github", "delta", "github"),
+        ("deployed_after", "b-after", "remote_control"),
+    ],
+)
+def test_next_steps_keep_a_failure_after_a_sign_in_with_the_command_that_retries_it(request, fixture, host, matter):
+    _, report = request.getfixturevalue(fixture)
+    (said,) = _said(report, "Say why", host)
+    assert _left_to_do(report)[host][matter] == said
+    assert re.search(rf"Retry it with: just deploy {host} --tags \w+$", said), said
 
 
 # ------------------------------------------------ just deploy's switches
@@ -654,6 +709,30 @@ def test_just_login_starts_no_device_flow_for_a_vm_whose_claude_sign_in_nobody_a
     assert _ran(report, "Report the login state, and sign the VM in when asked to", "a-unanswered")
 
 
+def test_just_login_says_once_why_github_s_sign_in_was_not_started_and_only_for_that_vm(logged_in):
+    # The role's report says only "not signed in"; this says why nothing
+    # signed it in, and what does.
+    _, report = logged_in
+    said = {host: _said(report, "Say why GitHub's sign-in was not started", host) for host in report["stats"]}
+    assert {host: lines for host, lines in said.items() if lines} == {
+        "a-unanswered": [
+            "a-unanswered: GitHub's sign-in was not started, since its Claude sign-in was skipped:"
+            " just login a-unanswered --only github starts it."
+        ]
+    }, said
+    # NEXT STEPS holds one GitHub line for it, naming that command; the whole
+    # role, which just login with names runs after, may say it last.
+    assert "just login a-unanswered --only github" in _left_to_do(report)["a-unanswered"]["github"]
+
+
+def test_just_login_keeps_what_failed_for_next_steps(logged_in):
+    _, report = logged_in
+    left = _left_to_do(report)
+    assert "just login c-rejected --only claude" in left["c-rejected"]["claude"]
+    assert left["d-after"]["remote_control"].endswith("Retry it with: just deploy d-after --tags claude_code")
+    assert left["b-accepted"]["claude"] == "" and left["d-after"]["claude"] == ""
+
+
 def test_just_login_goes_on_past_a_failure_as_deploy_does_and_fails_at_the_end(logged_in):
     # A refused code, or Remote Control failing to start after a sign-in, is no
     # reason to leave the VM signed out of GitHub and Tailscale: under just
@@ -681,6 +760,8 @@ def test_just_login_without_names_reports_every_vm_and_starts_nothing(tmp_path, 
     cases = {"alpha": {"code": CODE}, "beta": {}}
     for case in cases.values():
         case["vars"] = {"github_projects_exclude": ["gone"]}
+    # As if nobody had answered its Claude sign-in: a report still says nothing of it.
+    cases["beta"]["vars"]["claude_code_login_skipped"] = True
     report = _run(tmp_path, LOGIN, _hosts(tmp_path, cases, github), "-e", _extra())
     assert report["rc"] == 0, _failed(report)
     for play in (CLAUDE_SIGN_IN, GITHUB_SIGN_IN, TAILSCALE_SIGN_IN):
@@ -691,6 +772,7 @@ def test_just_login_without_names_reports_every_vm_and_starts_nothing(tmp_path, 
         assert not any(call.startswith("auth login") for call in _gh_calls(tmp_path, host))
         # The role's work after a sign-in follows only a sign-in, or names.
         assert not _ran(report, "Run the role now that gh is signed in", host)
+        assert not _ran(report, "Say why GitHub's sign-in was not started", host)
 
 
 def test_just_login_imports_the_three_sign_ins_as_they_are():

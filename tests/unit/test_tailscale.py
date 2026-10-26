@@ -911,6 +911,31 @@ def test_just_deploy_starts_the_web_login_by_itself_for_every_vm_but_one_whose_c
     assert report["rc"] == 0, _failures(report)
 
 
+def _not_started(report: dict) -> list:
+    return [
+        (host, result["msg"])
+        for name, host, result in _results(report)
+        if name == "Say why Tailscale's sign-in was not started" and not result.get("skipped")
+    ]
+
+
+NOT_STARTED = (
+    "skipped: Tailscale's sign-in was not started, since its Claude sign-in was skipped:"
+    " just login skipped --only tailscale starts it."
+)
+
+
+def test_just_deploy_says_once_why_the_web_login_was_not_started_where_the_claude_sign_in_was_skipped(deployed):
+    # The role's report says only that the VM is not signed in.
+    _, report = deployed
+    assert _not_started(report) == [("skipped", NOT_STARTED)]
+    assert _said(report)["skipped"].startswith("skipped: Tailscale is installed but not signed in."), _said(report)
+    # One NEXT STEPS line for it, this one, in place of the role's own report.
+    left = _left_to_do(report)
+    assert left["skipped"]["tailscale"] == NOT_STARTED
+    assert left["typed"]["tailscale"] == "" and left["quiet"]["tailscale"] == ""
+
+
 def test_tailscale_login_auto_start_defaults_to_on():
     defaults = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults.yml").read_text())
     assert defaults["tailscale_login_auto_start"] is True
@@ -923,6 +948,8 @@ def test_asking_first_signs_in_only_where_someone_is(tmp_path):
     assert len(_ups(_calls(tmp_path, "typed"))) == 1
     assert _ups(_calls(tmp_path, "quiet")) == [] and _ups(_calls(tmp_path, "skipped")) == []
     assert report["rc"] == 0, _failures(report)
+    # quiet was asked, and its answer is the reason: only skipped is told why.
+    assert _not_started(report) == [("skipped", NOT_STARTED)]
 
 
 def test_asking_first_at_a_terminal_asks_under_a_block(tmp_path):
