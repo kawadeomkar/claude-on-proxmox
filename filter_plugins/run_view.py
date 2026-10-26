@@ -752,6 +752,11 @@ class Run:
         self.failed = failed or stopped
         self.stopped = stopped
 
+    def planned(self, stage, steps):
+        """The steps of stage a run in parts will run, in order: each listed to come until a part reaches it."""
+        for step in steps:
+            self._stage(stage).step(step)
+
     def command(self, stage, step, name, now):
         """A command a run runs as a part of its own - one of just lint's checks, just test's pytest - as one task in
         stage's step, on this machine."""
@@ -1019,7 +1024,8 @@ class Run:
     def frame(self, now, cols, rows, glyph, color=True):
         """The region's lines: each cut to cols - 1, and few enough for rows - 1 where folding can make them so."""
         limit = cols - 1
-        tiers = {"changed": cols >= 80, "counts": cols >= 64, "bars": cols >= 52}
+        counts = self.recipe.counts
+        tiers = {"changed": cols >= 80, "counts": counts and cols >= 64, "bars": counts and cols >= 52}
         head = self._header(now, limit)
         body = self._stages(now, limit, glyph, tiers, fold=0)
         for fold in (1, 2, 3):
@@ -1059,7 +1065,8 @@ class Run:
             glyph, style = "✗", "r"
         if state == "to come":
             count = screen.plural(step.expected, "task") if step.expected else ""
-            return screen.cut([(" " * indent, ""), ("○ ", "d"), (label.ljust(label_width), "d"), (count, "d")], limit)
+            said = label.ljust(label_width) + count if count else label
+            return screen.cut([(" " * indent, ""), ("○ ", "d"), (said, "d")], limit)
         glyph = {"done": "✓", "waiting": "⏸", "skipped": "–"}.get(state, glyph) if style != "r" else glyph
         bold = "" if state in ("done", "skipped") else "b"
         weight = "d" if state == "skipped" else bold
@@ -1396,6 +1403,14 @@ class Run:
             if not flat and key in self.said_info:
                 parts.insert(0, self.said_info[key])
             lines += self._flow(head, parts, limit)
+        # A run that failed or stopped part way says what it never reached: the steps, or the stages, still to come.
+        if self.failed or failed_hosts:
+            if flat:
+                never = [key for key, step in stage.steps.items() if key is not None and not step.tasks]
+            else:
+                never = [stage_.key for stage_ in self._shown() if not stage_.tasks]
+            if never:
+                lines += self._flow([(" not run  ", "d")], never, limit, style="d")
         # What a play on this machine said about a VM - its address, its alias, its window - is that VM's.
         said = [(self._about(note, vms), note) for note in self.notes]
         # A report on a matter a later report recorded again is over: configure's "not signed in" once the sign-in
@@ -1463,8 +1478,9 @@ class Run:
         if failed_vms and len(vms) >= 2:
             failed_said += f" ({screen.plural(len(failed_vms), 'VM')})"
         totals = [
-            screen.plural(len(self.order), "task"),
-            self._changed_said(changed) or "nothing changed",
+            # A run whose steps are commands counts them as its checks, and says nothing of changes it never makes.
+            screen.plural(len(self.order), "task" if self.recipe.counts else self.recipe.noun),
+            *([self._changed_said(changed) or "nothing changed"] if "changed" in self.recipe.columns else []),
             failed_said,
         ]
         if yours:

@@ -11,9 +11,10 @@
 # no dependencies. Its first lines refuse a run started in another checkout
 # (tools/check checkout), then check its own arguments, then what it needs -
 # the environment (tools/env-run --bin), the vault, the collections - and only
-# then does it work, its last command exec'd. Nothing is a dependency, which
-# JUST_NO_DEPS or --no-deps would skip, and no assignment here starts a
-# program, which just would do before any line ran. A value a person typed
+# then does it work, its last command exec'd - but in a recipe drawn in parts
+# (lint), whose trap must still run to say the run's end (tools/live). Nothing
+# is a dependency, which JUST_NO_DEPS or --no-deps would skip, and no
+# assignment here starts a program, which just would do before any line ran. A value a person typed
 # reaches a script as an argument ("$1"), never as its text: just holds it to
 # its [arg] pattern first, and what goes into JSON is checked again there.
 # A recipe's words are a * parameter even where it takes one: a parameter with
@@ -594,31 +595,48 @@ lint ALL_HOOKS='' *PARTS:
     parts=" $* "
     runs() { [ "$parts" = "  " ] || case "$parts" in *" $1 "*) ;; *) return 1 ;; esac; }
     {{ find_bin }}
-    if runs lock; then UV_PYTHON_DOWNLOADS=never {{ quote(UV) }} lock --check; fi
-    if runs yaml; then "$bin/yamllint" --strict .; fi
-    if runs ansible; then "$bin/ansible-lint"; fi
+    # Drawn live, as a run in parts (tools/live), unless it is a stage of another recipe's run (live_run): its title,
+    # the state its checks share, and a trap that says the run's end however it ends, so no check is exec'd. Each
+    # check is a command through tools/live, which passes it through unchanged where nothing is drawn.
+    if [ -z {{ quote(live_run) }} ]; then
+      CLAUDE_ON_PROXMOX_LIVE="lint${all_hooks:+ --all-hooks}${*:+ $*}"
+      CLAUDE_ON_PROXMOX_LIVE_STATE={{ quote(if live_state == '' { '' } else { live_state + '-lint.json' }) }}
+      export CLAUDE_ON_PROXMOX_LIVE CLAUDE_ON_PROXMOX_LIVE_STATE
+      live_end() { {{ live }} end "$1"; }
+      trap 'live_end $?' EXIT
+    fi
+    plan=
+    for part in lock yaml ansible python just syntax hooks; do
+      if runs "$part"; then plan="$plan $part"; fi
+    done
+    check() {
+      step=$1
+      shift
+      {{ live }} run lint --step "$step" --plan "$plan" -- "$@"
+    }
+    if runs lock; then check lock env UV_PYTHON_DOWNLOADS=never {{ quote(UV) }} lock --check; fi
+    if runs yaml; then check yaml "$bin/yamllint" --strict .; fi
+    if runs ansible; then check ansible "$bin/ansible-lint"; fi
     if runs python; then
-      "$bin/ruff" check .
-      "$bin/ruff" format --check .
+      check python "$bin/ruff" check .
+      check python "$bin/ruff" format --check .
     fi
     if runs just; then
       if [ {{ quote(just_version()) }} = {{ quote(just_pin) }} ]; then
-        {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --fmt --check
+        check just {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --fmt --check
       else
         echo "just: not checked: the justfile's format is checked only by just {{ just_pin }}, the one CI runs, and this is {{ just_version() }}"
       fi
     fi
     if runs syntax; then
-      for pb in deploy.yml playbooks/*.yml; do
-        echo "== $pb"
-        "$bin/ansible-playbook" --syntax-check "$pb"
-      done
+      # One check over every playbook, each said as it starts: the first that fails ends it.
+      check syntax bash -c 'for pb in deploy.yml playbooks/*.yml; do echo "== $pb"; "$1/ansible-playbook" --syntax-check "$pb" || exit; done' syntax "$bin"
     fi
     if runs hooks; then
       absbin=$(cd "$bin" && pwd -P)
       SKIP={{ quote(pre_commit_skip) }}
       [ -z "$all_hooks" ] || SKIP=
-      SKIP=$SKIP PATH="$absbin:$PATH" "$bin/pre-commit" run --all-files
+      check hooks env SKIP="$SKIP" PATH="$absbin:$PATH" "$bin/pre-commit" run --all-files
     fi
 
 # Molecule resolves ansible-playbook from PATH (and only appends the

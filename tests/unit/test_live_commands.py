@@ -100,7 +100,7 @@ def test_parts_are_drawn_as_one_run_and_its_end_says_it_whatever_ended_it(two_pa
     assert re.search(r"^✗ fails: python\S* \(.*\) · exit 3$", screen, re.M), screen
     assert "line-11\n" in screen + "\n" and "line-10\n" not in screen + "\n", screen
     assert re.search(r"^claude-on-proxmox  lint · failed after \d+ s at fails · \d\d:\d\d$", screen, re.M), screen
-    table = screen.split("STEPS", 1)[1].split("\n\n", 1)[0]
+    table = screen.split("CHECKS", 1)[1].split("\n\n", 1)[0]
     assert re.search(r"^ ✓ says ", table, re.M) and re.search(r"^ ✗ fails ", table, re.M), table
     assert ran.screen.titles[-1] == "lint · failed"
     assert not ran.state.exists(), "the end removes the state"
@@ -126,7 +126,7 @@ def test_the_state_is_the_run_s_alone(tmp_path):
     state.parent.mkdir(exist_ok=True)
     state.write_text(json.dumps({"version": 1, "title": "test", "tasks": []}))
     ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
-    assert ran.rc == 0 and "STEPS" in ran.transcript and "test ·" not in ran.transcript, ran.transcript
+    assert ran.rc == 0 and "CHECKS" in ran.transcript and "test ·" not in ran.transcript, ran.transcript
 
 
 def test_ctrl_c_ends_the_part_with_the_child_s_last_words_logged_and_the_run_said_stopped(tmp_path):

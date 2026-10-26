@@ -17,6 +17,11 @@ just deploy --check           # dry run of configure.yml against your real VM (-
 just vagrant                  # configure.yml on a real VirtualBox VM (just vagrant destroy removes it)
 ```
 
+At a terminal, `just lint` is drawn live, a row for each check, the running one's last line beside it and the
+ones to come listed; a check that fails prints its last lines above, and the summary names the checks it left
+unrun. Every line the checks print goes to `.logs/<stamp>-lint.log`. Piped or in CI, or with a `-v` in
+`ANSIBLE_ARGS`, each check runs as before ([During a run](../guides/runs.md)).
+
 Run Molecule through `just test` (or with the virtualenv activated): Molecule picks `ansible-playbook` from
 `PATH`, and a system-wide Ansible would silently be used instead of the pinned one.
 

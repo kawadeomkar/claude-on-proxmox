@@ -155,8 +155,9 @@ class Part:
     """One command of a run, drawn: its step's task, the child's lines to the log and the last of them on the
     screen, and the state saved for the next part, or the summary when the run is this one command."""
 
-    def __init__(self, title, stage, step, argv, state_path=""):
+    def __init__(self, title, stage, step, argv, state_path="", plan=()):
         self.title, self.stage, self.step, self.argv, self.state_path = title, stage, step, list(argv), state_path
+        self.plan = list(plan)
         self.display = Display()
         self.mode = "live" if live.can_draw() else "lines"
         self.out = live.Output(
@@ -212,6 +213,7 @@ class Part:
         self.out.start()
         name = os.path.basename(self.argv[0])
         with self.display._lock:
+            self.run.planned(self.stage, self.plan)
             self.task = self.run.command(self.stage, self.step, name, now)
         self.out.redraw()
         self.out.spin()
@@ -276,8 +278,8 @@ class Part:
         self.out.print([*lines, ("", "")])
 
 
-def run(title, stage, step, argv, state_path=""):
-    part = Part(title, stage, step, argv, state_path)
+def run(title, stage, step, argv, state_path="", plan=()):
+    part = Part(title, stage, step, argv, state_path, plan)
     # Ctrl-C from the first moment: a handler, never SIG_IGN, which the child would inherit.
     previous = signal.signal(signal.SIGINT, part._interrupt)
     try:

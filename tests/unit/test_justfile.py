@@ -166,6 +166,7 @@ def _safe(tmp_path: Path, galaxy_rc: int = 0) -> list[str]:
         f"VAULT_FILE={_vault(tmp_path)}",
         f"LOG_DIR={tmp_path / 'logs'}",
         f"STATUS_DIR={tmp_path / 'status'}",
+        f"LIVE_DIR={tmp_path / 'live'}",
     ]
 
 
@@ -1794,7 +1795,15 @@ def _linters(tmp_path: Path) -> list[str]:
     for tool in ("yamllint", "ansible-lint", "ruff", "ansible-playbook", "pre-commit"):
         _stand_in(tmp_path / "bin", tool, f'[ "{tool}" != pre-commit ] || printf "%s" "$SKIP" > "{tmp_path / "skip"}"')
     _stand_in(tmp_path / "uv-bin", "uv")
-    return [f"BIN={tmp_path / 'bin'}", f"UV={tmp_path / 'uv-bin' / 'uv'}"]
+    # The environment's Python, which runs tools/live in front of every check.
+    if not (tmp_path / "bin" / "python").exists():
+        (tmp_path / "bin" / "python").symlink_to(sys.executable)
+    return [
+        f"BIN={tmp_path / 'bin'}",
+        f"UV={tmp_path / 'uv-bin' / 'uv'}",
+        f"LOG_DIR={tmp_path / 'logs'}",
+        f"LIVE_DIR={tmp_path / 'live'}",
+    ]
 
 
 @pytest.mark.parametrize("part", ["", *LINTERS])
@@ -2048,3 +2057,33 @@ def test_list_is_status_by_the_name_it_had_before(tmp_path: Path) -> None:
     run = _playbook(tmp_path, "list", "alpha")
     assert run[-1] == "playbooks/status.yml", run
     assert run[run.index('{"vm_name": "alpha"}') - 1] == "-e", run
+
+
+def _live_recorded(tmp_path: Path, *args: str) -> tuple[list[list[str]], list[str]]:
+    """just lint with a python that records what tools/live is asked and what it is handed in its environment: the
+    title and the state's path."""
+    settings = _linters(tmp_path)
+    (tmp_path / "bin" / "python").unlink()
+    seen = tmp_path / "live-env"
+    said = "${CLAUDE_ON_PROXMOX_LIVE-unset}|${CLAUDE_ON_PROXMOX_LIVE_STATE-unset}"
+    _stand_in(tmp_path / "bin", "python", f'echo "{said}" >> "{seen}"')
+    result = _just(*args, settings=settings)
+    assert result.returncode == 0, _output(result)
+    return [run[1:] for run in _runs(tmp_path, "python")], seen.read_text().splitlines()
+
+
+def test_lint_on_its_own_is_a_run_in_parts_whose_trap_says_its_end(tmp_path: Path) -> None:
+    runs, env = _live_recorded(tmp_path, "lint", "yaml", "python")
+    # Each check behind tools/live, its step and the steps the run will run; the trap's end last, with the status.
+    asked = [run[run.index("run") :][:4] for run in runs[:-1]]
+    assert asked == [["run", "lint", "--step", "yaml"]] + [["run", "lint", "--step", "python"]] * 2, runs
+    assert all(run[run.index("--plan") + 1] == " yaml python" for run in runs[:-1]), runs
+    assert runs[-1][-2:] == ["end", "0"], runs
+    state = re.fullmatch(rf"lint yaml python\|{re.escape(str(tmp_path / 'live'))}/\d{{8}}-\d{{6}}-lint\.json", env[0])
+    assert state and len(set(env)) == 1, env
+
+
+def test_lint_as_a_stage_of_another_run_draws_into_it_and_says_no_end_of_its_own(tmp_path: Path) -> None:
+    runs, env = _live_recorded(tmp_path, "live_run=test", "lint", "yaml")
+    assert [run[-1] for run in runs if "end" in run] == [], runs
+    assert env == ["unset|unset"], "the parent's title and state, here none, never lint's own"

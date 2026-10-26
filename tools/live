@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A part of a recipe's run that is a command, drawn live, or passed through as it ran before.
 
-    tools/live [--log-dir D] [--retention N] [--stamp S] [--ansible-args A] run <stage> [--step <label>] -- <command>...
+    tools/live [--log-dir D] [--retention N] [--stamp S] [--ansible-args A] \
+        run <stage> [--step <label>] [--plan "<label>..."] -- <command>...
     tools/live [...] end <exit status>
 
 The justfile's `live` runs it with the environment's Python and the run's logging settings: `run` in front of each
@@ -50,6 +51,7 @@ def _arguments(argv):
     run.add_argument("stage")
     run.add_argument("--step", default="")
     run.add_argument("--read", choices=["plain"], default="plain")
+    run.add_argument("--plan", default="", help="the stage's steps the run will run, in order, each to come till then")
     end = commands.add_parser("end")
     end.add_argument("status", type=int)
     args = parser.parse_args(argv)
@@ -57,7 +59,7 @@ def _arguments(argv):
     if args.command == "run":
         if not args.argv:
             parser.error("run needs a command after --")
-        for label in (args.stage, args.step):
+        for label in (args.stage, args.step, *args.plan.split()):
             if label and not LABEL.match(label):
                 parser.error(f"not a stage or step: {label!r}")
     return args
@@ -120,9 +122,10 @@ def main(argv):
     if not args.logged:
         if not _drawn(args):
             return _passed_through(args.argv)
-        rest = ["run", args.stage, *(["--step", args.step] if args.step else []), "--read", args.read, "--"]
+        rest = ["run", args.stage, *(["--step", args.step] if args.step else []), "--read", args.read]
+        rest += ["--plan", args.plan, "--"]
         return _logged(args, [*rest, *args.argv])
-    return _engine().run(_title(), args.stage, args.step or None, args.argv, state)
+    return _engine().run(_title(), args.stage, args.step or None, args.argv, state, args.plan.split())
 
 
 if __name__ == "__main__":

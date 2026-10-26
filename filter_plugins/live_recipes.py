@@ -86,8 +86,9 @@ class Recipe:
     many of the running step's last tasks are shown; the tasks that raise again failures a rescue took earlier, by
     name, each with where its causes are; the word for a step of a run of one stage (noun, its footer's and its
     summary's); the summary's columns; the playbook and task files whose add_host, or whose claude_vm_addressed,
-    gives the summary a VM's address and ID, read from Proxmox and its guest agent; and the tasks whose failure is a
-    person's answer, not a failure - each with the line said instead."""
+    gives the summary a VM's address and ID, read from Proxmox and its guest agent; the tasks whose failure is a
+    person's answer, not a failure - each with the line said instead; and whether a row draws a bar and counts its
+    tasks, which a step that is one command has no use for."""
 
     def __init__(
         self,
@@ -99,6 +100,7 @@ class Recipe:
         columns=("time", "tasks", "changed"),
         addresses_from=(),
         declines=None,
+        counts=True,
     ):
         self.stages = tuple(stages)
         self.plan = frozenset(plan)
@@ -108,6 +110,7 @@ class Recipe:
         self.columns = tuple(columns)
         self.addresses_from = frozenset(addresses_from)
         self.declines = dict(declines or {})
+        self.counts = counts
 
 
 # Each sign-in, as both just deploy and just login run it: its playbook, and each VM's outcome in it from the facts
@@ -172,6 +175,8 @@ VS_CODE = (
     Step("workspace", starts=["Read the session notes already on the VM"]),
     Step("window", starts=["Open the folder in VS Code"]),
 )
+# just lint's checks, as its parts name them.
+LINT = ("lock", "yaml", "ansible", "python", "just", "syntax", "hooks")
 # What code.yml's rescue raises again outside just deploy: whatever stopped the window, which the block's rescue took.
 WINDOW_FAILURES = Causes(blocks=["Open the VM in VS Code"])
 
@@ -264,6 +269,14 @@ RECIPES = {
         raises={"Fail as just code does, outside just deploy": WINDOW_FAILURES},
         columns=("time", "tasks"),
         addresses_from=["vm_addresses.yml"],
+    ),
+    # just lint: its checks, each a command through tools/live, one after another, in the order of their speed.
+    "lint": Recipe(
+        stages=[Stage("lint", steps=[Step(check) for check in LINT])],
+        window=1,
+        noun="check",
+        columns=("time",),
+        counts=False,
     ),
 }
 
