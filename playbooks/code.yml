@@ -726,7 +726,7 @@
             fail_msg: >-
               {{ 'No VM named ' ~ claude_vm_names[0] ~ ' is tagged "' ~ claude_vm_tag ~ '".'
                  ~ (" A VM of that name exists but is not tagged, so it is not this project's to open."
-                    if code_same_name | length > 0 else ' `just list` shows what this project created.')
+                    if code_same_name | length > 0 else ' `just status` shows what this project created.')
                  if code_vm_tagged | length == 0
                  else 'More than one VM tagged "' ~ claude_vm_tag ~ '" is named ' ~ claude_vm_names[0]
                       ~ '; rename or remove the duplicates first.' }}
@@ -758,7 +758,7 @@
               - code_reach | length > 0
             fail_msg: >-
               {{ claude_vm_names[0] }} is {{ code_status }}{{ ' and reported no address' if code_status == 'running' else '' }},
-              so there is nothing to connect to. `just list` shows the fleet; start the VM, or wait for its agent, and run this again.
+              so there is nothing to connect to. `just status` shows the fleet; start the VM, or wait for its agent, and run this again.
             quiet: true
 
         # The connection Ansible makes to configure the VM: its own ssh settings

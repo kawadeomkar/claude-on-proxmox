@@ -24,6 +24,12 @@ github_projects_auth_account: >-
      | selectattr('active', 'defined') | selectattr('active') | list | first | default({}) }}
 
 github_projects_signed_in: "{{ (github_projects_auth_account.state | default('')) == 'success' }}"
+# gh could not check its login with GitHub - no network, GitHub down - rather than GitHub refusing the token:
+# `gh auth status --json` says both as state "error", and only a refusal carries GitHub's own "HTTP 401" or
+# "HTTP 403". just status says it was not checked, never "not signed in".
+github_projects_auth_unchecked: >-
+  {{ (github_projects_auth_account.state | default('')) == 'error'
+     and not ((github_projects_auth_account.error | default('')) is match('HTTP 40[13]')) }}
 
 # What gh wrote to stderr - when it could not report its state, and when it
 # would not sign in with the vault token - for the messages that quote it,
@@ -306,3 +312,15 @@ github_projects_release_summary: >-
            ~ ' hand, or one before this version), and stays valid until revoked - at https://github.com/settings/tokens'
            ~ ' if it is a personal access token, or under GitHub CLI at https://github.com/settings/applications,'
            ~ ' which signs out every gh you have') }}
+
+# Whether login_report.yml's line is something left to do, which NEXT STEPS records and just status says: a gh
+# too old to say where gh is the role's business, a device-flow login without the workflow scope, a sign-out that
+# nothing in this run ends. Never signed in, gh left alone (github_auth: false) or gh not installed by choice.
+github_projects_login_left: >-
+  {{ github_projects_gh_found | bool
+     and ((github_projects_auth_status.rc | default(0) != 0 and github_projects_auth | bool)
+          or (github_projects_signed_in | bool and github_projects_login_kind == 'oauth'
+              and 'workflow' not in (github_projects_auth_account.scopes | default('')))
+          or (not github_projects_signed_in | bool and github_projects_auth | bool
+              and not (github_projects_token_wanted | bool and github_projects_token_set | bool
+                       and github_projects_login_role_follows | bool))) }}

@@ -86,6 +86,19 @@ Starts the service, then the path unit, that release_pause stopped in the same r
 
 Also takes, as described under `main`: `claude_code_remote_control_service`.
 
+## Entry point `status`
+
+**Say what Claude Code is on the VM and how Remote Control is, changing nothing**
+
+Reads the version the native installer's link points to, whether a login is stored (the file's being there, never what it holds) and the state of Remote Control's service and of the path unit that starts it, keeping what just status shows in claude_code_status_found. Never runs claude, starts or stops anything.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `claude_code_anthropic_api_key` | str | `""` | Only whether one is set is read, since it outranks the login Remote Control needs. A secret: never logged. |
+| `claude_code_remote_control` | bool | `true` | Whether Remote Control is wanted, which says what its service being absent means. See the main entry point. |
+
+Also takes, as described under `main`: `claude_code_user`, `claude_code_install_method`, `claude_code_remote_control_service`.
+
 ## Internal values
 
 Set in `roles/claude_code/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. 43 of the 49 are computed during a run, from earlier tasks' results.
@@ -655,6 +668,38 @@ classDef rescue stroke:#665352,stroke-width:2px;
   settings___Merge_managed_settings_over_existing_ones0-->|Task| settings___Write_settings_json1[settings   write settings json]:::task
   settings___Write_settings_json1-.->|End of Block| settings___Manage____claude_settings_json4_block_start_0
   settings___Write_settings_json1-->End
+```
+
+### `status.yml` - entry point `status`
+
+| Task | Module | When |
+|---|---|---|
+| Look up home directory of {{ claude_code_user }} | `ansible.builtin.getent` | <code>claude_code_home is not defined</code> |
+| Record where the user's files are | `ansible.builtin.set_fact` | <code>claude_code_home is not defined</code> |
+| Read where the installed claude points | `ansible.builtin.stat` |  |
+| Look for the stored login | `ansible.builtin.stat` |  |
+| Read Remote Control's service and the unit that waits for a login | `ansible.builtin.systemd_service` |  |
+| Keep what Claude Code is on this VM | `ansible.builtin.set_fact` |  |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| status___Look_up_home_directory_of_claude_code_user0[status   look up home directory of claude code<br>user<br>When: **claude code home is not defined**]:::task
+  status___Look_up_home_directory_of_claude_code_user0-->|Task| status___Record_where_the_user_s_files_are1[status   record where the user s files are<br>When: **claude code home is not defined**]:::task
+  status___Record_where_the_user_s_files_are1-->|Task| status___Read_where_the_installed_claude_points2[status   read where the installed claude points]:::task
+  status___Read_where_the_installed_claude_points2-->|Task| status___Look_for_the_stored_login3[status   look for the stored login]:::task
+  status___Look_for_the_stored_login3-->|Task| status___Read_Remote_Control_s_service_and_the_unit_that_waits_for_a_login4[status   read remote control s service and the<br>unit that waits for a login]:::task
+  status___Read_Remote_Control_s_service_and_the_unit_that_waits_for_a_login4-->|Task| status___Keep_what_Claude_Code_is_on_this_VM5[status   keep what claude code is on this vm]:::task
+  status___Keep_what_Claude_Code_is_on_this_VM5-->End
 ```
 
 <!-- END_GENERATED: role -->

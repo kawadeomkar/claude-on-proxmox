@@ -59,7 +59,7 @@ REPORTS = {
         "auth | Say that the token only lists beside a login of your own",
         "auth | Say how to sign gh in",
     ],
-    "roles/github_projects/tasks/login.yml": ["login | Report the login state and what to do about it"],
+    "roles/github_projects/tasks/login_report.yml": ["login_report | Report the login state and what to do about it"],
     "roles/github_projects/tasks/clone.yml": ["clone | Say that an organisation gives no git identity"],
     "roles/tailscale/tasks/login.yml": ["login | Say why there is nothing to sign in"],
     "roles/tailscale/tasks/report.yml": ["report | Say how this VM is on Tailscale"],

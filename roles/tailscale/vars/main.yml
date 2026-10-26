@@ -1,5 +1,5 @@
 ---
-# Internals, read lazily from the registers ownership.yml and status.yml leave.
+# Internals, read lazily from the registers ownership.yml and state.yml leave.
 # Vars rather than facts, as in the other roles: a skipped register is
 # overwritten, a skipped set_fact is not, so nothing here can go stale between
 # two runs of the role in one play.
@@ -13,7 +13,7 @@ tailscale_unit_path: /lib/systemd/system/tailscaled.service
 # How long a join with the key may take: Tailscale took up to 14 s to refuse
 # a key while probing, and artis3n's collection settled on 120.
 tailscale_join_timeout: 90
-# How long a read waits for the state to settle after a start (status.yml).
+# How long a read waits for the state to settle after a start (state.yml).
 tailscale_settle_seconds: 30
 
 # --- What is there, and who made it (ownership.yml) ---
@@ -39,7 +39,7 @@ tailscale_check_without_package: "{{ ansible_check_mode and not (tailscale_packa
 tailscale_joined_marker_text: >-
   {{ (tailscale_joined_marker.content | b64decode | trim) if tailscale_joined_marker.content is defined else '' }}
 
-# --- The state (status.yml) ---
+# --- The state (state.yml) ---
 tailscale_daemon_up: "{{ (tailscale_status_raw.rc | default(1)) == 0 }}"
 tailscale_state: "{{ (tailscale_status_raw.stdout | from_json) if tailscale_daemon_up | bool else {} }}"
 tailscale_backend: "{{ tailscale_state.BackendState | default('NoState') }}"
@@ -309,6 +309,41 @@ tailscale_absent_logout_failed: >-
   {{ (tailscale_logout | default({'skipped': true})) is not skipped and (tailscale_logout.rc | default(0)) != 0 }}
 # A login may be left on the node, in the state the package's removal keeps.
 tailscale_absent_login_left: "{{ tailscale_absent_unasked | bool or tailscale_absent_logout_failed | bool }}"
+
+# --- The report (report.yml), which just status reads too (status.yml) ---
+# Which of the report's lines applies: a case of its own, else the backend's state.
+tailscale_report_case: >-
+  {{ 'not-ours' if not (tailscale_ours | bool)
+     else 'check-no-package' if tailscale_check_without_package | bool
+     else 'check-daemon-down' if ansible_check_mode and not (tailscale_daemon_up | bool)
+     else 'connecting' if not (tailscale_settled | bool)
+     else 'would-join' if ansible_check_mode and tailscale_first_join | bool and tailscale_key_wanted | bool
+                          and not (tailscale_key_refused_locally | bool)
+     else 'page-pending' if tailscale_backend == 'NeedsLogin' and tailscale_auth_url | length > 0
+     else 'expired' if tailscale_backend == 'NeedsLogin' and tailscale_joined | bool
+     else 'refused' if tailscale_backend == 'NeedsLogin' and tailscale_key_wanted | bool
+                       and (tailscale_join_ran | bool or tailscale_key_refused_locally | bool)
+     else tailscale_backend }}
+# The cases that leave something to do whatever else holds (NEXT STEPS).
+tailscale_report_open:
+  - check-no-package
+  - check-daemon-down
+  - connecting
+  - would-join
+  - page-pending
+  - expired
+  - refused
+  - NeedsMachineAuth
+  - Stopped
+# Whether the report's line is something left to do: NEXT STEPS records it, and just status says it. A page
+# waiting, a login expired, a key refused, a node stopped or still connecting, an approval or a sign-in to come,
+# a name taken or tags missing; never a node that runs as it should, or a Tailscale this role leaves alone.
+tailscale_report_left: >-
+  {{ tailscale_report_case in tailscale_report_open
+     or (tailscale_report_case == 'NeedsLogin'
+         and not (tailscale_sign_in_follows | bool and tailscale_auth_method != 'key'))
+     or (tailscale_report_case == 'Running'
+         and (tailscale_name_taken | bool or tailscale_tags_missing | length > 0)) }}
 
 # --- Where to fix what the report names ---
 tailscale_admin_page: >-

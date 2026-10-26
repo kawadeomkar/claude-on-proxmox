@@ -36,6 +36,8 @@ vault*.json
 *.log
 # Claude Code sessions just destroy saved from a VM: they hold whatever their tools printed.
 .sessions/
+# just status's report of a run: it names every VM by address.
+.cache/status/
 # A committed template carries no real values.
 !*.example
 

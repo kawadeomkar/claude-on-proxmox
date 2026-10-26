@@ -17,7 +17,7 @@ could read the address from `inventory/hosts.yml` and the token from the vault r
 declared a second time. It is not used, because:
 
 - **Little would go.** `tasks/cluster_vms.yml` and `tasks/vm_addresses.yml` stay whatever discovery
-  does: `provision.yml`, `list.yml`, `ssh_config.yml`, `destroy.yml` and `code.yml` read the cluster at
+  does: `provision.yml`, `status.yml`, `ssh_config.yml`, `destroy.yml` and `code.yml` read the cluster at
   moments an inventory parsed as a run starts cannot see, such as a VM provisioning has just cloned or
   one `destroy` has just started. The plugin would replace `discover.yml` alone, and its checks would
   come back as a play after it: a VM named on the command line that was not found, two VMs with one name, a

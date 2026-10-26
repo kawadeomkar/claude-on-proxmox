@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from urllib.parse import unquote
 
 from ansible.errors import AnsibleFilterError
 
@@ -238,9 +239,76 @@ def ssh_config_prune(blocks, resources, tag_pattern):
     return result
 
 
+_SIZE_RE = re.compile(r"^\s*([0-9.]+)\s*([KMGT])?B?\s*$", re.I)
+
+
+def _size_bytes(text):
+    """A Proxmox size ("32G", "1T", "3584M") in bytes; None when it is none."""
+    match = _SIZE_RE.match(str(text or ""))
+    if not match:
+        return None
+    unit = (match.group(2) or "G").upper()
+    return int(float(match.group(1)) * 1024 ** ("KMGT".index(unit) + 1))
+
+
+def _disk_size(scsi0):
+    match = re.search(r"(?:^|,)size=([0-9.]+[KMGT])", str(scsi0 or ""))
+    return _size_bytes(match.group(1)) if match else None
+
+
+def proxmox_vm_drift(config, wanted):
+    """How a VM's settings differ from what roles/proxmox_vm would send it: ``{hardware: [...], cloud_init: [...]}``.
+
+    ``config`` is the VM's config as /nodes/<node>/qemu/<vmid>/config gives it; ``wanted`` what the role sends, from
+    its own variables (tasks/settings_drift.yml). Deploy applies these only to a new VM or under
+    proxmox_vm_force_update, so an edited vm_cores never reaches an existing VM by itself: this is how `just status`
+    sees it. Hardware differences are ``{setting, wanted, has}``, the disk's size in bytes and only when it is
+    smaller than asked, since the role grows a disk and never shrinks one; the cloud-init settings that differ are
+    named. A config not read gives no difference at all.
+    """
+    if not isinstance(config, dict) or not config or not isinstance(wanted, dict):
+        return {"hardware": [], "cloud_init": []}
+    hardware = []
+
+    def number(value):
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    for setting in ("cores", "memory", "balloon"):
+        has = number(config.get(setting))
+        if setting == "balloon" and has is None:
+            has = number(config.get("memory"))
+        want = number(wanted.get(setting))
+        if want is not None and has is not None and has != want:
+            hardware.append({"setting": setting, "wanted": want, "has": has})
+    onboot = str(config.get("onboot", "0")) in ("1", "true", "True")
+    if "onboot" in wanted and bool(wanted["onboot"]) != onboot:
+        hardware.append({"setting": "onboot", "wanted": bool(wanted["onboot"]), "has": onboot})
+    has_disk, want_disk = _disk_size(config.get("scsi0")), _size_bytes(wanted.get("disk"))
+    if has_disk and want_disk and has_disk < want_disk:
+        hardware.append({"setting": "disk", "wanted": want_disk, "has": has_disk})
+    cloud_init = []
+    if "ciuser" in wanted and str(config.get("ciuser", "")) != str(wanted.get("ciuser") or ""):
+        cloud_init.append("user")
+    has_keys = {k.strip() for k in unquote(str(config.get("sshkeys", ""))).splitlines() if k.strip()}
+    want_keys = {str(k).strip() for k in wanted.get("sshkeys") or [] if str(k).strip()}
+    if "sshkeys" in wanted and has_keys != want_keys:
+        cloud_init.append("SSH keys")
+    if "ipconfig0" in wanted and str(config.get("ipconfig0", "")) != str(wanted.get("ipconfig0") or ""):
+        cloud_init.append("network")
+    has_dns = (str(config.get("nameserver", "")).split(), str(config.get("searchdomain", "")))
+    want_dns = (list(wanted.get("nameserver") or []), str(wanted.get("searchdomain") or ""))
+    if ("nameserver" in wanted or "searchdomain" in wanted) and has_dns != want_dns:
+        cloud_init.append("DNS")
+    return {"hardware": hardware, "cloud_init": cloud_init}
+
+
 class FilterModule:
     def filters(self):
         return {
+            "proxmox_vm_drift": proxmox_vm_drift,
             "ssh_config_blocks": ssh_config_blocks,
             "ssh_config_prune": ssh_config_prune,
             "net_mac": net_mac,

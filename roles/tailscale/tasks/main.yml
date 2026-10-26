@@ -43,7 +43,7 @@
 # the value of an earlier run of the role in the same play, where a skipped
 # task overwrites it.
 - name: Read Tailscale's state
-  ansible.builtin.include_tasks: status.yml
+  ansible.builtin.include_tasks: state.yml
   when: tailscale_enabled | bool
 
 - name: Join the tailnet with the vault key, the first time

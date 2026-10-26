@@ -6,12 +6,34 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 1959 tests. By file:
+pytest over `tests/unit/`: 2052 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
   sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
+- **`just status`** (`test_status.py` 50, `test_status_live.py` 9, `test_status_vms.py` 13,
+  `test_status_work.py` 3): the report's filters on canned
+  reads - every value one line of plain text over a corpus of hostile ones, the drift between a VM and
+  `local.yml`, the twelve buckets of a day at Proxmox VE 9's resolution and 8's, the ranking and exit code,
+  every line within 100 columns, of a report holding every state at once, whose every `just` command the
+  justfile accepts (`test_commands.py`'s own check); `status.yml` against the fake Proxmox, on VE 9 and 8, with a refused
+  token, an API that does not answer, a name that matches nothing, and settings that differ, with every
+  request it made a GET; statically, every task it runs and every file and entry point it reaches a read
+  or the report's own write. Its callback, driven in process at a stand-in terminal, and the real playbook
+  at a pseudo-terminal of the test's own, read back through `tests/unit/vt.py`, a small terminal: a window
+  the report fits, a short one, a narrow one, a resize each way, Ctrl-C, a dumb terminal, a pipe, and a
+  warning between frames, the screen and its scrollback ending in exactly the finished report the log
+  holds. Inside the VMs (`test_status_vms.py`): `vm_status_info` on fixture trees, in this process; status
+  over stand-in VMs with discovery off, each running the three roles' `status` entry points with the gh and
+  tailscale fakes, a stand-in `systemctl` and a fixture tree, every file of each VM unchanged after and the
+  fakes' logs holding only reads; the host key, `status_ssh_args` held to `ansible.cfg`'s, the options as
+  they reach a stand-in `ssh` and as `ssh -G` resolves them, and ssh's two host-key refusals each said for
+  what it is. Every status run in a test gets that refusing stand-in `ssh` (`status_root`), so none reaches
+  a VM or this machine's ssh. WORK (`test_status_work.py`): `git_checkouts_info`'s `work` over real throwaway
+  repositories - a worktree under `.claude/worktrees/` and one outside the projects directory, a branch with
+  no upstream, a detached HEAD with commits of its own, a stash, untracked files - every file of them, `.git`
+  included, as it was after.
 - **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
@@ -37,7 +59,8 @@ pytest over `tests/unit/`: 1959 tests. By file:
   96), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
-  allowlisted environment, desktop stand-ins that fail a run that reaches for them, no terminal).
+  allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
+  that reaches for them, no terminal).
 - **The Claude sign-in** (`test_claude_login.py` 42): `browser_login.yml` against the stand-in `claude`,
   five runs at a pseudo-terminal of the test's own - the page before the prompt, a partly copied code,
   an expired attempt, Ctrl-C then A, and keys typed before the prompt is ready - with the code searched
@@ -317,7 +340,7 @@ that no build started.
 
 | Scenario | What it proves |
 |---|---|
-| `provision` | `provision.yml`, `discover.yml` and `list.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `just deploy --only configure` needs nothing stored locally |
+| `provision` | `provision.yml`, `discover.yml` and `status.yml` end to end against the fake API, for a two-VM fleet, plus `destroy.yml` and `deploy.yml`'s template check as child runs; discovery runs in a stage of its own, finding the VMs by their tag, so a later `just deploy --only configure` needs nothing stored locally |
 | `configure` | `configure.yml` end to end against a container standing in for a provisioned VM; then the sign-ins, `just code`'s session handoff with the real `claude` against a stand-in Messages API - copies resumed as the VM's own, `--continue` never picking one up, the records of requests sent left unsent, a saved copy resumed by its path - and `just destroy`'s pause of Remote Control around its save, with the real systemd |
 
 Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scenario inventory, so the
@@ -334,7 +357,7 @@ that must not be claimed, or that are this project's but once broke a fleet-wide
 | `nonic`, correctly tagged but with its `net0` removed (`delete=net0`) | `net_mac` used to raise and take discovery down for the fleet |
 | `commas`, tagged `ansible,claude-on-proxmox` and kept comma-joined | exercises the `,` separator of `claude_vm_tag_pattern`; every other VM has the `;` form |
 | `netone`, tagged, LAN NIC on `net1` and no `net0` | skipped with `proxmox_nic: net0`, found at `192.0.2.59` with `net1` — discovery and the listing used to hard-code `net0` |
-| `parked`, tagged, **stopped**, VMID **4013** | its agent answers `VM 4013 is not running`, which the unanchored `40[13]` took for a 401 and failed discovery and `just list` |
+| `parked`, tagged, **stopped**, VMID **4013** | its agent answers `VM 4013 is not running`, which the unanchored `40[13]` took for a 401 and failed discovery and the fleet listing |
 | `legacy`, tagged `claude;ansible` as `main` tagged VMs, stopped | `destroy.yml` must refuse it, and delete it with `proxmox_vm_allow_untagged_delete` |
 
 Every running fixture's agent is waited on, and a check before discovery confirms the fake really
@@ -347,12 +370,13 @@ That unrelated VM on a node that is down is always there (§11.4), so every flee
 Proxmox scenarios runs against a cluster with one unreachable node.
 
 `vm_name` is passed only to converge's import of `provision.yml`, not set in `group_vars`, so
-discovery and the listing each run three times: once without it, as a bare `just deploy --only configure` or
-`just list` does, where the ownership filter is all that stands between them and every running VM;
+discovery and `status.yml` each run three times: once without it, as a bare `just deploy --only configure` or
+`just status` does, where the ownership filter is all that stands between them and every running VM;
 once with it, to prove the narrowing; and once for `netone` with `proxmox_nic: net1`. The fleet-wide
 passes assert that discovery considered exactly `alpha`, `beta`, `commas`, `netone`, `nonic` and
-`parked`, published only `alpha`, `beta` and `commas`, and that the listing shows all six, with a
-blank address for `netone`, `nonic` and `parked`. The request log is checked for one clone per VM,
+`parked`, published only `alpha`, `beta` and `commas`, and that the report shows all six, with a
+blank address for `netone`, `nonic` and `parked`, and says that `netone` and `nonic`, running with no
+address on `net0`, and the VM on the node that is down were not read. The request log is checked for one clone per VM,
 by name, with VMIDs from `/cluster/nextid`.
 
 Several outcomes are failures or partial results, which an imported playbook cannot express, so the
@@ -403,13 +427,13 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 
 | Fake | Stands in for | Notes |
 |---|---|---|
-| `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does |
+| `fake_pve_api.py` | the Proxmox REST API | TLS, token auth, stateful VMs, a guest agent, a request log; on request, a cluster listing that lags a start or stop, as a real one does; for `just status`, each VM's live figures, a day of `rrddata`, `pending`, the agent's `get-osinfo` and `get-fsinfo`, and the storages' fill and disks |
 | `fake_qm.sh` | `qm` on the PVE node | stateful, one config file per VMID, logs every invocation |
 | `fake_pve_cli.py` | `pveum`, `pvesh`, `pveversion`, `hostname` and `id` on the PVE node | for `tools/proxmox-access.sh`: the roles, users, ACLs and tokens in one file, answering the calls the script makes as a Proxmox VE 9.2 host was seen to - compact JSON, a refusal for what exists, the version's own guest-agent privilege - with every call logged and a write refused on cue |
 | `fake_virt_customize.sh` | `virt-customize` | so `proxmox_template` runs in a container |
 | `fake_github_api.py` | the GitHub REST API | serves local bare repositories, in paginated responses; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took, so a test can hold that nothing reaches it |
 | `fake_tailscale_api.py` | Tailscale's API | the OAuth client exchange, and a device looked up and deleted by node ID, each device with the name it was started with; 403 and 404 on cue, and `/fake/deleted` lists what went |
-| `fake_gh.sh` | `gh` | the auth commands only, installed ahead of the real one on PATH; one login per user, in a file under HOME, with every call logged |
+| `fake_gh.sh` | `gh` | the auth commands only, installed ahead of the real one on PATH; one login per user, in a file under HOME, with every call logged; a login whose check never reached GitHub, and one GitHub refused, as gh 2.103.0 reports them |
 | `fake_tailscale.sh` | `tailscale` | output that is Tailscale's own, as the research and a Headscale run recorded it, for the commands the role runs, against a node whose state is files under HOME: `status --json` and `debug prefs` shaped as a Running and a signed-out node really print, a join with a canned key on stdin, a refused or slow key, the web login's page and an approval that lands after `up` has exited, `NeedsMachineAuth`, a taken name, `NoState` reads after a start, logout resetting the prefs, a node ID (`node-id`), and with `real-daemon` an answer only while the real daemon's socket exists; a key is never written, and `calls.log` shows `KEY` in its place |
 | `fake_anthropic_api.py` | the Anthropic Messages API | for the real `claude` in the `configure` scenario: one short answer to every request, streamed or not, on 127.0.0.1 only, with each request's body logged, so a test reads the system prompt and the history a resume sent |
 | `fake_claude.sh` | `claude` | `auth status` and `auth login` as probed against Claude Code: the page, the `Paste code here if prompted >` prompt, then `Login successful.`, `Login failed: ...` or `Invalid code` for the line read from stdin, writing `~/.claude/.credentials.json` on success; given `BROWSER`, it hands it the page that redirects to its own callback on `127.0.0.1` and takes a code from there as from stdin; `auth logout`; `fake-refusal`, `fake-no-page`, `fake-gone` and `fake-foreign-page` in its state directory make it refuse in other words, print an error in place of the page, exit before reading a code, or hand its browser a page that is not Claude's |
@@ -447,6 +471,12 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   set (`VM.Clone:0` granted without Propagate), else the whole role `tools/proxmox-access.sh`
   makes, with the guest-agent privilege of the version `/version` reports - 8.2.4 until
   `PUT /api2/json/fake/version?version=` changes it - and for the `noagent` token, without it.
+- What `just status` reads is shaped by that version, as Proxmox VE's own: from 9 the listing carries
+  `memhost` and `rrddata` the `pressure*` fields, and a day is 1440 points; on 8 it is 70. A clone's config
+  carries the template's meta `ctime`, as a real one does; its disk's `ctime` in the storage's content is when it
+  was made, which `PUT /api2/json/fake/disk-ctime?vmid=&ctime=` backdates. `PUT /api2/json/fake/pending?vmid=&key=&value=`
+  makes a change wait for a restart, and `PUT /api2/json/fake/root?vmid=&used=` sets how full a VM's root
+  disk is.
 
 Beside these, the `proxmox_template` scenario serves a "cloud image" locally, with a real `SHA256SUMS`
 file, and a fake `/etc/pve/.vmlist` that places a VMID on a second node. The `tailscale` role scenario

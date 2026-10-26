@@ -65,7 +65,7 @@
     - not (tailscale_key_refused_locally | bool)
 
 - name: connect | Read the state after the join
-  ansible.builtin.include_tasks: status.yml
+  ansible.builtin.include_tasks: state.yml
   when: tailscale_join is not skipped
 
 # The node key this join produced marks the login as this role's: settings.yml

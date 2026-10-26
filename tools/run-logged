@@ -41,6 +41,7 @@ if [ -n "${ANSIBLE_LOG_PATH:-}" ]; then
     esac
   fi
   # Said once a run: the second command of a run finds the file the first made.
-  test -e "$ANSIBLE_LOG_PATH" || echo "Logging this run to $ANSIBLE_LOG_PATH"
+  # On stderr: stdout is the run's own, which just status --json prints JSON on.
+  test -e "$ANSIBLE_LOG_PATH" || echo "Logging this run to $ANSIBLE_LOG_PATH" >&2
 fi
 exec "$@"

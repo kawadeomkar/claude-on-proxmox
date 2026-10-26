@@ -101,7 +101,7 @@ A VM where you installed Tailscale yourself is left exactly as it is either way.
 
 From PR #6 as well, which recognises this project's VMs by their tag. This project now recognises its VMs by one Proxmox tag, `claude-on-proxmox`, and
 nothing else. VMs created by an earlier version carry `claude;ansible` instead,
-so `just list`, `just deploy --only configure` and `just destroy` do not see them, and
+so `just status`, `just deploy --only configure` and `just destroy` do not see them, and
 `just deploy --only provision` refuses to touch a VM of that name rather than take it over.
 
 To adopt one, add the tag - in the Proxmox UI (the pencil beside the tags in the
@@ -166,7 +166,7 @@ its name, and settings (`ANSIBLE_ARGS`, `LOG_DIR`, `PYTHON`) are exported or go 
 | `make code alpha PROJECT=repo` | `just code alpha --project repo` |
 | `make code alpha SESSION=<id>` | `just code alpha --session <id>` |
 | `make login alpha TYPE=github` | `just login alpha --only github` |
-| `make list`, `make destroy alpha`, `make logs`, `make vault` | `just list`, `just destroy alpha`, `just logs`, `just vault` |
+| `make list`, `make destroy alpha`, `make logs`, `make vault` | `just status` (`just list` still works), `just destroy alpha`, `just logs`, `just vault` |
 | `make init HOST=pve.lan GITHUB_USER=octocat PROMPT=no` | `just init --host pve.lan --github-user octocat --no-prompt` (each `NAME=` is a `--name`) |
 | `make install TYPE=lock` | `just install --lock` |
 | `make lint TYPE=yaml`, `make test TYPE=unit`, `make docs TYPE=serve` | `just lint yaml`, `just test unit`, `just docs serve` |

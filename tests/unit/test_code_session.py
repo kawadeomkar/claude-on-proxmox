@@ -824,7 +824,7 @@ def test_a_deploy_that_left_its_vm_stopped_names_the_deploy_that_starts_it(windo
 def test_just_code_refuses_a_stopped_vm(windows):
     run = windows["just code, stopped"]
     assert run["rc"] != 0 and not run["reached"]
-    assert "beta is stopped, so there is nothing to connect to. `just list` shows the fleet;" in run["output"]
+    assert "beta is stopped, so there is nothing to connect to. `just status` shows the fleet;" in run["output"]
 
 
 @pytest.mark.parametrize(
@@ -833,7 +833,8 @@ def test_just_code_refuses_a_stopped_vm(windows):
         ("deploy, no alias", "claude_ssh_config is false, so this project keeps no SSH alias for the VM"),
         (
             "deploy, no address",
-            "alpha is running and reported no address, so there is nothing to connect to. `just list` shows the fleet;",
+            "alpha is running and reported no address, so there is nothing to connect to."
+            " `just status` shows the fleet;",
         ),
         (
             "deploy, ssh refused",

@@ -1,0 +1,20 @@
+---
+# tasks_from: settings_drift, for `just status` (playbooks/status.yml). How the VM's settings differ from what this
+# role would send it, read from the config the caller passes in, proxmox_vm_drift_config: Proxmox is asked nothing,
+# and nothing is changed. Deploy applies these settings only to a new VM, or under proxmox_vm_force_update
+# (proxmox_vm_needs_configuration), so an edited vm_cores never reaches an existing VM by itself. What it would send
+# is this role's own variables, the one definition both the settings call in present.yml and this read.
+- name: settings_drift | Compare the VM's settings with what this role would send it
+  ansible.builtin.set_fact:
+    proxmox_vm_settings_drift: >-
+      {{ proxmox_vm_drift_config | proxmox_vm_drift({
+           'cores': proxmox_vm_cores | int,
+           'memory': proxmox_vm_memory_mb | int,
+           'balloon': proxmox_vm_memory_min_mb | int,
+           'onboot': proxmox_vm_onboot | bool,
+           'disk': proxmox_vm_disk_size,
+           'ciuser': proxmox_vm_user,
+           'sshkeys': proxmox_vm_ssh_public_keys,
+           'ipconfig0': proxmox_vm_ipconfig,
+           'nameserver': proxmox_vm_nameservers,
+           'searchdomain': proxmox_vm_searchdomain}) }}

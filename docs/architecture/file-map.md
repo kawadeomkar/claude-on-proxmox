@@ -4,6 +4,7 @@
 ansible.cfg                       inventory dir, accept-new host keys, forks, the stdout callback, YAML results
 callback_plugins/claude_on_proxmox.py   the default output, the waits set apart, NEXT STEPS after the recap, just deploy
                                   drawn live (§7.5)
+callback_plugins/claude_on_proxmox_status.py   just status's own: the report drawn live at a terminal (§7.7)
 .logs/                            one log per just run that used Ansible (git-ignored, 0700, pruned after 14 days)
 .sessions/                        the Claude sessions just destroy saved from each VM (git-ignored, 0700, kept until deleted)
 deploy.yml                        template (when missing) + provision + configure + the three sign-ins + VS Code
@@ -17,6 +18,7 @@ tools/docs.py                     just docs: the generated reference sections; t
 tools/env-run                     run a tool from the project's virtualenv (the git hooks), or --bin: its bin (the justfile)
 tools/check                       the justfile's checks: the checkout, the vault, the collections, names, a project
 tools/run-logged                  run a command with its Ansible output logged to .logs/ (every recipe that runs Ansible)
+tools/status-exit                 just status's last step: the report's exit code, the report under --json, then no report
 tools/stale_scripts.py            just install: the locked packages whose commands start another Python, to reinstall
 tools/proxmox-access.sh           on the Proxmox host, as root: the API role, user, grants and token, what is missing of them
 pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
@@ -25,7 +27,7 @@ playbooks/
   template.yml                    one-time: build the cloud-init template (SSH to PVE)
   provision.yml                   three plays: register → create in parallel → publish
   discover.yml                    find VMs by tag, resolve addresses via the guest agent
-  list.yml                        read-only: what exists, and where it is
+  status.yml                      just status: read-only, what every VM is doing and what needs doing next
   claude_login.yml                sign Claude in by the browser, VM by VM, then start Remote Control; bare, report
   github_login.yml                sign gh in by the device flow, VM by VM, then run github_projects; bare, report
   tailscale_login.yml             sign the VM in to Tailscale by its web login, VM by VM; bare, report
@@ -45,7 +47,8 @@ playbooks/
   library/                        just code's session handoff and destroy's save: claude_sessions_info, git_checkouts_info
                                   (reads, here and on the VM), claude_sessions_copy (the VM's copies, their four
                                   edits, the manifest) and claude_sessions_fetch (destroy's tar from the VM, unpacked
-                                  here as plain files and folders only)
+                                  here as plain files and folders only); vm_status_info (just status: the OS, kernel,
+                                  load, upgrades and the user's processes, read only)
   templates/vm_session.md.j2      the session notes: a page about one VM, opened beside the Claude terminal
   tasks/cluster_vms.yml           one /cluster/resources listing, shared by the playbooks above
   tasks/vm_addresses.yml          each VM's config and agent reply, two requests to its own node
@@ -69,11 +72,12 @@ roles/                            one role per concern, each with defaults/, met
   claude_code/                    native or npm install, settings.json, Remote Control and the path unit that
                                   starts it when a login lands; tasks/login.yml, browser_login.yml (the sign-in),
                                   after_login.yml, path_unit_absent.yml; release.yml, and release_pause.yml and
-                                  release_resume.yml around destroy's save of the VM's sessions
-  github_projects/                tasks/auth.yml (gh sign-in, credential helper), clone.yml, login.yml,
-                                  device_flow.yml (the sign-in); library/github_repos.py, the custom module
-  tailscale/                      tasks/ownership.yml, install.yml, status.yml, connect.yml (the key), settings.yml,
-                                  report.yml, absent.yml, login.yml and web_login.yml (the sign-in);
+                                  release_resume.yml around destroy's save of the VM's sessions; status.yml (just status)
+  github_projects/                tasks/auth.yml (gh sign-in, credential helper), clone.yml, login.yml (login_read.yml,
+                                  login_report.yml), device_flow.yml (the sign-in), status.yml (just status);
+                                  library/github_repos.py, the custom module
+  tailscale/                      tasks/ownership.yml, install.yml, state.yml, connect.yml (the key), settings.yml,
+                                  report.yml, absent.yml, login.yml and web_login.yml (the sign-in), status.yml (just status);
                                   files/tailscale.asc (the vendored signing key)
 
 filter_plugins/proxmox.py         reading guest agent output: net_mac, guest_ipv4, guest_address, guest_addresses;
@@ -81,7 +85,9 @@ filter_plugins/proxmox.py         reading guest agent output: net_mac, guest_ipv
                                   proxmox_access_denied; the managed SSH config: ssh_config_blocks, ssh_config_prune
 filter_plugins/vscode.py          vscode_setting (JSONC, read-only): VS Code's settings, never written
 filter_plugins/desktop.py         page_opener, the sign-ins' browser command
-filter_plugins/text.py            plain_text, what a VM printed made safe to quote; banner, the block a prompt is set in
+filter_plugins/text.py            plain_text, what a VM printed made safe to quote; one_line, one line of it; banner, the
+                                  block a prompt is set in
+filter_plugins/status.py          just status's model and text: status_fleet, status_vm_api, status_report, status_text (§7.7)
 filter_plugins/settings.py        init_answer, the rule each just init answer follows; with_setting, one written into YAML text;
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
 filter_plugins/deploy_view.py     just deploy's run as stages, steps and tasks: the live frame, a line per step, the summary
@@ -101,8 +107,9 @@ tests/
   check_no_local_files.sh         tracked-file guard (also runs in CI)
   unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the three
                                   sign-ins and deploy's sign-in steps, Tailscale, destroy's release, the managed SSH
-                                  config, the Claude terminal's script, the justfile, the wiki (test_docs.py), just
-                                  deploy's live output (vt.py, the screen it is read back from)
+                                  config, the Claude terminal's script, the justfile, just status and just deploy's
+                                  live output (vt.py, a small terminal their live tests read back through), the wiki
+                                  (test_docs.py)
   molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh, claude, tailscale,
                                   Tailscale API, the Anthropic Messages API (for the real claude in configure)
 molecule/

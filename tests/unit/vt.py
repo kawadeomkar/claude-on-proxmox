@@ -1,4 +1,5 @@
-"""Enough of a VT100 to read back what a live region drew at a terminal: test_deploy_live.py's screen.
+"""Enough of a VT100 to read back what a live region drew at a terminal: test_status_live.py's and
+test_deploy_live.py's screen.
 
 Text wraps at the right edge with the pending-wrap rule terminals use; a line feed at the bottom row scrolls the
 screen into the history (the scrollback); cursor up (CSI n A), carriage return, erase to the end of the line
@@ -6,10 +7,10 @@ screen into the history (the scrollback); cursor up (CSI n A), carriage return, 
 (CSI ?2026 h/l) marks what is drawn as a frame, where a line that wraps is counted (`frame_wraps`): the callback's
 live region, which must never wrap. A title (OSC 0, ended by BEL or ST) is recorded in `titles`, a bell on its own is
 counted in `bells`; an ESC [ before a control is the control (Ansible's pause writes them). Any other sequence is
-recorded, so a test can say the callback wrote none. A resize keeps lines
-as they are, as xterm does (no reflow), and a shorter window keeps its bottom rows, the rest going to the history.
-
-A read from a pseudo-terminal can end inside a character or a sequence: what is incomplete waits for the next feed.
+recorded, so a test can say the callback wrote none. A resize keeps lines as they are, as xterm does (no reflow),
+and a shorter window keeps its bottom rows, the rest going to the history. Bytes arrive as a pseudo-terminal's reads
+cut them: a character or an escape sequence cut at the end of one feed is kept until the next completes it, as a
+terminal does (on Linux a read once split a "→" in two).
 """
 
 from __future__ import annotations

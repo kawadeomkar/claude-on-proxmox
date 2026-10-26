@@ -437,6 +437,17 @@ that finds the VM signed in, or a settings blocker, removes it (`tasks/path_unit
 with turning Remote Control off) before it starts the service, so a start the server refuses - an
 organisation that disabled Remote Control - leaves no path unit behind to start it again later.
 
+### Under `just status`
+
+The `status` entry point (`tasks/status.yml`) reads, and never runs `claude`: whether `claude auth status`
+can refresh a login's token, and so write, is still to be checked on a real VM, and `just status` changes
+nothing ([§4.6](lifecycle.md#46-playbooksstatusyml--read-only-drawn-live)). It reads where the native
+installer's `~/.local/bin/claude` link points - its version, the target's name - whether
+`~/.claude/.credentials.json` is there (the file's being there, never what it holds), and Remote Control's
+service and path unit with `systemd_service`, no state asked for. `just status` then says the login as
+stored or not, and Remote Control as running, down (failed or restarting, with its restarts), waiting for
+the login, stopped, not set up, or off on purpose.
+
 ### How it is tested
 
 `tests/unit/test_remote_control_playbooks.py` runs the playbook against canned `claude auth status`
@@ -541,6 +552,14 @@ flow itself (`device_flow.yml`) for each VM signed out, then, after the last app
 for every VM named, signed in now or before, so the private repositories arrive in that run (and a
 vault token is applied); under `just deploy`, whose configure has just run the role, only for the VMs
 signed in just now.
+
+`login.yml` is three parts: `login_read.yml` (the home, `which gh`, `auth_status.yml`), the prompt and the
+device flow, and `login_report.yml` (the report, and its NEXT STEPS record, decided by
+`github_projects_login_left`). The `status` entry point, which `just status` runs, is the first and the
+last of them and nothing between, so it says what `just login --only github` would and signs nothing in.
+A check gh could not make with GitHub - no network - is `github_projects_auth_unchecked`: gh says both it
+and a refused token as state `error`, and only a refusal carries GitHub's `HTTP 401` or `403`, so status
+says "not checked", never "not signed in".
 
 ### The device flow
 
@@ -655,7 +674,7 @@ plan's research record.
   gated on a change, never handlers, which would run outside `configure.yml`'s rescue. In check mode on a
   VM without the package the package, flags and service are skipped: `apt` fails in check mode on a
   package from a repository the same run adds, and `systemd_service` on a unit that does not exist.
-- **State.** `tailscale status --json`, read `until` the state is neither `NoState` nor `Starting`, 30 s
+- **State** (`state.yml`). `tailscale status --json`, read `until` the state is neither `NoState` nor `Starting`, 30 s
   at most: tailscaled tells systemd it is ready before its backend has a state, and a joined node waits in
   `Starting` for a relay. Still unsettled is a report. A daemon the role just started that does not answer
   is a failure, named with the CLI's own line. Everything is decided from this JSON and `debug prefs`,
@@ -688,7 +707,13 @@ plan's research record.
   without that order a refusal from earlier in the run hid the page.
 - **The report.** One line per VM, built in `vars:`, everything the VM reports through `plain_text`, and
   the tailnet named (`CurrentTailnet.Name`), so a login someone else approved into their tailnet shows -
-  but not under `tailscale_login_server`, where Headscale sends a constant.
+  but not under `tailscale_login_server`, where Headscale sends a constant. Which line applies
+  (`tailscale_report_case`) and whether it leaves something to do (`tailscale_report_left`, NEXT STEPS'
+  record) are in `vars/main.yml`, read by `just status` too.
+- **Under `just status`** (`status.yml`, the `status` entry point): `ownership.yml`, `state.yml` read once
+  (`tailscale_settle_seconds: 0`: "connecting" is said, not waited out) and `report.yml`, and nothing else -
+  no install, join, setting or sign-in. Run under `--check`, as status runs, the report's check-mode cases
+  say what a configure would do, which status words as what is missing.
 - **The join method** (`tailscale_auth_method`): `auto` joins with the key when there is one and leaves the
   VM for the web login otherwise; `key` is the key only - an empty one fails at the role's first task by
   name, the web login is never offered or started (`tailscale_login_possible`), and an expired node is told

@@ -67,8 +67,11 @@ environment where `python3` is not it.
 | `just login [<name>...]` | Sign the VM(s) in to Claude, GitHub and Tailscale, or report how each is signed in |
 | &emsp;`--only SIGN_IN` | One sign-in: claude (by the browser, then Remote Control), github (the device flow, then the private repositories) or tailscale (its web login) |
 | &emsp;`<name>` | The VMs to sign in, one after another; none reports every VM this project created |
-| `just list [<name>...]` | Show the VMs this project created, and their addresses |
-| &emsp;`<name>` | Only these VMs; none lists every VM this project created |
+| `just status [<name>...]` | What every VM this project created is doing, and what needs doing next, read without changing anything |
+| &emsp;`--only ONLY` | Only these sections, comma-separated: vms storage access sign-ins system work; vms,storage reads only the Proxmox API, never a VM |
+| &emsp;`--json` | The report as JSON, alone on standard output, with the same exit code |
+| &emsp;`<name>` | Only these VMs; none reads every VM this project created |
+| &emsp;`just list` | Another name for `just status`, and the same in every way |
 | `just destroy [<name>...]` | Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them |
 | &emsp;`<name>` | The VMs; none means claude-on-proxmox-default |
 | `just logs` | List the run logs in .logs/, newest first |

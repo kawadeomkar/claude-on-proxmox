@@ -30,6 +30,7 @@
     headers: "{{ proxmox_api_headers }}"
     validate_certs: "{{ proxmox_validate_certs }}"
     ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+    timeout: "{{ claude_vm_api_timeout }}"
   register: claude_vm_configs
   # A GET changes nothing, and `just deploy --check` needs the answers to find anything
   # to check, so this runs in check mode too.
@@ -48,6 +49,7 @@
     headers: "{{ proxmox_api_headers }}"
     validate_certs: "{{ proxmox_validate_certs }}"
     ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+    timeout: "{{ claude_vm_api_timeout }}"
   register: claude_vm_networks
   check_mode: false
   no_log: true

@@ -51,7 +51,7 @@ PLAYBOOK_RECIPES = {
     "deploy": "deploy.yml",
     "code": "playbooks/code.yml",
     "login": "playbooks/login.yml",
-    "list": "playbooks/list.yml",
+    "status": "playbooks/status.yml",
     "destroy": "playbooks/destroy.yml",
 }
 NAMES_PATTERN = "[A-Za-z0-9][A-Za-z0-9._,-]*"
@@ -124,6 +124,9 @@ def _stand_in(bin_dir: Path, name: str, body: str = "", rc: int = 0) -> Path:
     """A tool in bin_dir that appends its arguments, one per line and then --end--, to <tmp>/<name>.args, and its
     name to <tmp>/order; then runs body and exits rc. Returns the record."""
     bin_dir.mkdir(parents=True, exist_ok=True)
+    if name == "ansible-playbook":
+        # just status reads its exit code from the report the run writes: a run that works writes one.
+        body = '[ -z "${STATUS_REPORT_FILE:-}" ] || printf \'{"exit": 0}\\n\' > "$STATUS_REPORT_FILE"\n' + body
     record = bin_dir.parent / f"{name}.args"
     order = bin_dir.parent / "order"
     tool = bin_dir / name
@@ -155,7 +158,15 @@ def _vault(tmp_path: Path, content: str = VAULT_HEADER) -> Path:
 def _safe(tmp_path: Path, galaxy_rc: int = 0) -> list[str]:
     """A run nothing can harm: tools with no ansible-playbook among them, a vault stub, logs in tmp_path."""
     _stand_in(tmp_path / "bin", "ansible-galaxy", rc=galaxy_rc)
-    return [f"BIN={tmp_path / 'bin'}", f"VAULT_FILE={_vault(tmp_path)}", f"LOG_DIR={tmp_path / 'logs'}"]
+    # The environment's Python, which just status's last step reads the report with (tools/status-exit).
+    if not (tmp_path / "bin" / "python").exists():
+        (tmp_path / "bin" / "python").symlink_to(sys.executable)
+    return [
+        f"BIN={tmp_path / 'bin'}",
+        f"VAULT_FILE={_vault(tmp_path)}",
+        f"LOG_DIR={tmp_path / 'logs'}",
+        f"STATUS_DIR={tmp_path / 'status'}",
+    ]
 
 
 def _recording(tmp_path: Path, playbook_body: str = "") -> list[str]:
@@ -293,7 +304,7 @@ def test_the_justfile_is_formatted_as_just_formats_it() -> None:
 
 
 def test_the_vault_check_refuses_a_missing_vault_naming_just_init(tmp_path: Path) -> None:
-    output = _refused(tmp_path, "list", settings=[f"VAULT_FILE={tmp_path / 'none.yml'}"])
+    output = _refused(tmp_path, "status", settings=[f"VAULT_FILE={tmp_path / 'none.yml'}"])
     assert f"{tmp_path / 'none.yml'} missing. Run: just init" in output
     assert "not encrypted" not in output
 
@@ -301,16 +312,16 @@ def test_the_vault_check_refuses_a_missing_vault_naming_just_init(tmp_path: Path
 def test_the_vault_check_refuses_a_plaintext_vault(tmp_path: Path) -> None:
     plain = tmp_path / "plain.yml"
     plain.write_text("vault_proxmox_api_token_secret: not-a-real-secret\n")
-    output = _refused(tmp_path, "list", settings=[f"VAULT_FILE={plain}"])
+    output = _refused(tmp_path, "status", settings=[f"VAULT_FILE={plain}"])
     assert f"{plain} is not encrypted. Run: just vault" in output
 
 
 def test_the_collections_check_asks_galaxy_offline_whether_the_pins_are_installed(tmp_path: Path) -> None:
-    _playbook(tmp_path, "list")
+    _playbook(tmp_path, "status")
     assert _runs(tmp_path, "ansible-galaxy") == [["collection", "install", "-r", "requirements.yml", "--offline"]]
 
 
-@pytest.mark.parametrize("args", [["deploy"], ["code", "alpha"], ["login"], ["list"], ["destroy"], ["test", "unit"]])
+@pytest.mark.parametrize("args", [["deploy"], ["code", "alpha"], ["login"], ["status"], ["destroy"], ["test", "unit"]])
 def test_every_recipe_that_runs_ansible_stops_at_collections_that_are_not_the_pins(tmp_path: Path, args) -> None:
     settings = _safe(tmp_path, galaxy_rc=1)
     _stand_in(tmp_path / "bin", "ansible-playbook")
@@ -322,7 +333,7 @@ def test_every_recipe_that_runs_ansible_stops_at_collections_that_are_not_the_pi
 
 
 def test_a_recipe_without_the_tools_says_just_install(tmp_path: Path) -> None:
-    result = _just("list", settings=[f"BIN={tmp_path / 'empty'}", f"VAULT_FILE={_vault(tmp_path)}"])
+    result = _just("status", settings=[f"BIN={tmp_path / 'empty'}", f"VAULT_FILE={_vault(tmp_path)}"])
     assert result.returncode != 0
     assert f"no ansible-galaxy in [{tmp_path / 'empty'}]" in _output(result)
     assert "Run: just install" in _output(result)
@@ -337,7 +348,7 @@ def test_the_checks_hold_with_dependencies_switched_off(tmp_path: Path) -> None:
 
 
 def test_a_run_from_a_subdirectory_of_the_checkout_runs(tmp_path: Path) -> None:
-    result = _just("list", settings=_recording(tmp_path), cwd=REPO / "roles")
+    result = _just("status", settings=_recording(tmp_path), cwd=REPO / "roles")
     assert result.returncode == 0, _output(result)
 
 
@@ -346,7 +357,7 @@ def test_a_run_from_another_checkout_is_refused(tmp_path: Path) -> None:
     other = tmp_path / "other"
     other.mkdir()
     subprocess.run(["git", "init", "-q", str(other)], check=True)
-    result = _just("--justfile", str(JUSTFILE), *_recording(tmp_path), "list", cwd=other)
+    result = _just("--justfile", str(JUSTFILE), *_recording(tmp_path), "status", cwd=other)
     assert result.returncode != 0
     assert f"in the checkout {other.resolve()}" in result.stderr or f"in the checkout {other}" in result.stderr
     assert _runs(tmp_path, "ansible-playbook") == []
@@ -358,7 +369,7 @@ def test_a_run_from_the_checkout_spelt_in_another_case_runs(tmp_path: Path) -> N
     variant = REPO.with_name(REPO.name.swapcase())
     if variant == REPO or not variant.exists() or not variant.samefile(REPO):
         pytest.skip("this file system tells the checkout's name from its other case")
-    result = _just("list", settings=_recording(tmp_path), env={"PWD": str(variant)}, cwd=variant)
+    result = _just("status", settings=_recording(tmp_path), env={"PWD": str(variant)}, cwd=variant)
     assert result.returncode == 0, _output(result)
 
 
@@ -668,8 +679,8 @@ def test_each_sign_in_runs_its_playbook_and_none_all_three(tmp_path: Path, only:
         pytest.param(["deploy", "--type", "configure"], "does not have option `--type`", id="make-s-type"),
         pytest.param(["deploy", "--tags", "a", "--tags", "b"], "cannot be passed more than once", id="twice"),
         pytest.param(["test", "lint"], NOT_MATCHED, id="lint-is-its-own"),
-        # list takes no options, so an option is a word to it, and no name starts with -.
-        pytest.param(["list", "--only", "x"], NOT_MATCHED, id="list"),
+        # status takes its sections from --only, each one it has, and no name starts with -.
+        pytest.param(["status", "--only", "x"], NOT_MATCHED, id="status-section"),
         pytest.param(["destroy", "--project", "repo"], NOT_MATCHED, id="destroy"),
         pytest.param(["deploy", "alpha", "TAGS=claude_code"], NOT_MATCHED, id="make-s-spelling"),
     ],
@@ -840,7 +851,7 @@ def _stub_log_path(output: str) -> str:
 @pytest.mark.parametrize(
     ("args", "name"),
     [
-        (["list", "alpha"], "list"),
+        (["status", "alpha"], "status"),
         (["deploy", "alpha"], "deploy"),
         (["deploy", "alpha", "--only", "configure"], "deploy-configure"),
         (["deploy", "alpha", "--tags", "claude_code"], "deploy-configure"),
@@ -865,7 +876,7 @@ def test_a_recipe_logs_its_run_to_its_own_file(tmp_path: Path, args: list[str], 
 
 
 def test_an_empty_log_dir_turns_logging_off(tmp_path: Path) -> None:
-    result = _just("list", settings=[*_logged(tmp_path), "LOG_DIR="])
+    result = _just("status", settings=[*_logged(tmp_path), "LOG_DIR="])
     assert result.returncode == 0, _output(result)
     assert _stub_log_path(_output(result)) == ""
     assert "Logging this run" not in _output(result)
@@ -873,14 +884,14 @@ def test_an_empty_log_dir_turns_logging_off(tmp_path: Path) -> None:
 
 def test_an_ansible_log_path_of_your_own_is_kept(tmp_path: Path) -> None:
     mine = tmp_path / "elsewhere" / "ansible.log"
-    result = _just("list", settings=_logged(tmp_path), env={"ANSIBLE_LOG_PATH": str(mine)})
+    result = _just("status", settings=_logged(tmp_path), env={"ANSIBLE_LOG_PATH": str(mine)})
     assert result.returncode == 0, _output(result)
     assert _stub_log_path(_output(result)) == str(mine)
 
 
 def test_a_log_dir_exported_or_given_is_the_one_used(tmp_path: Path) -> None:
     exported = _just(
-        "list",
+        "status",
         settings=[s for s in _logged(tmp_path) if not s.startswith("LOG_DIR=")],
         env={"LOG_DIR": str(tmp_path / "exported")},
     )
@@ -890,13 +901,13 @@ def test_a_log_dir_exported_or_given_is_the_one_used(tmp_path: Path) -> None:
 def test_old_run_logs_are_pruned_and_nothing_else_is(tmp_path: Path) -> None:
     logs = tmp_path / "logs"
     logs.mkdir()
-    old, recent, notes = logs / "20260101-000000-deploy.log", logs / "20261001-000000-list.log", logs / "notes.log"
+    old, recent, notes = logs / "20260101-000000-deploy.log", logs / "20261001-000000-status.log", logs / "notes.log"
     for path in (old, recent, notes):
         path.write_text("x")
     month_ago = time.time() - 30 * 86400
     for path in (old, notes):
         os.utime(path, (month_ago, month_ago))
-    result = _just("list", settings=_logged(tmp_path))
+    result = _just("status", settings=_logged(tmp_path))
     assert result.returncode == 0, _output(result)
     assert not old.exists() and recent.exists()
     # Not named the way run-logged names its logs, so not its to delete.
@@ -910,7 +921,7 @@ def test_a_retention_that_is_not_a_number_prunes_nothing(tmp_path: Path) -> None
     old.write_text("x")
     month_ago = time.time() - 30 * 86400
     os.utime(old, (month_ago, month_ago))
-    result = _just("list", settings=[*_logged(tmp_path), "LOG_RETENTION_DAYS=14;rm"])
+    result = _just("status", settings=[*_logged(tmp_path), "LOG_RETENTION_DAYS=14;rm"])
     assert result.returncode == 0, _output(result)
     assert "LOG_RETENTION_DAYS must be a number of days" in _output(result)
     assert old.exists()
@@ -974,7 +985,7 @@ def test_code_refuses_a_bad_project_before_the_playbook(tmp_path: Path, value: s
     assert error in _refused(tmp_path, "code", "alpha", "--project", value)
 
 
-@pytest.mark.parametrize("recipe", ["deploy", "login", "list", "destroy"])
+@pytest.mark.parametrize("recipe", ["deploy", "login", "status", "destroy"])
 def test_only_code_takes_a_project(tmp_path: Path, recipe: str) -> None:
     output = _refused(tmp_path, recipe, "alpha", "--project", "repo")
     assert "does not have option `--project`" in output or NOT_MATCHED in output
@@ -1043,7 +1054,7 @@ def test_a_project_or_session_is_never_run_as_code(tmp_path: Path) -> None:
     assert not ran.exists()
 
 
-@pytest.mark.parametrize("recipe", ["deploy", "login", "list", "destroy"])
+@pytest.mark.parametrize("recipe", ["deploy", "login", "status", "destroy"])
 def test_only_code_takes_a_session(tmp_path: Path, recipe: str) -> None:
     output = _refused(tmp_path, recipe, "alpha", "--session", SESSION_ID)
     assert "does not have option `--session`" in output or NOT_MATCHED in output
@@ -1223,7 +1234,9 @@ def test_install_refuses_the_base_python_of_the_tests_virtualenv() -> None:
     assert "is not the Python of a virtualenv" in _output(refused)
 
 
-@pytest.mark.parametrize("args", [["list"], ["lint", "yaml"], ["docs"], ["vault"], ["test", "unit"], ["code", "alpha"]])
+@pytest.mark.parametrize(
+    "args", [["status"], ["lint", "yaml"], ["docs"], ["vault"], ["test", "unit"], ["code", "alpha"]]
+)
 def test_every_recipe_that_runs_a_tool_refuses_a_python_that_is_no_virtualenv(tmp_path: Path, args) -> None:
     # Its scripts directory would be /usr/local/bin or the like, where a system-wide Ansible lives.
     python = _not_a_virtualenv(tmp_path)
@@ -1240,14 +1253,21 @@ def test_recipes_run_the_tools_of_python_s_environment(tmp_path: Path) -> None:
     # A Python whose environment's scripts are stand-ins: what env-run --bin asks it is where the tools come from.
     _stand_in(tmp_path / "env" / "bin", "ansible-playbook")
     _stand_in(tmp_path / "env" / "bin", "ansible-galaxy")
+    (tmp_path / "env" / "bin" / "python").symlink_to(sys.executable)
     python = tmp_path / "python3"
     python.write_text(f'#!/bin/sh\necho "{tmp_path / "env" / "bin"}"\n')
     python.chmod(0o755)
     result = _just(
-        "list", settings=[f"PYTHON={python}", f"VAULT_FILE={_vault(tmp_path)}", f"LOG_DIR={tmp_path / 'logs'}"]
+        "status",
+        settings=[
+            f"PYTHON={python}",
+            f"VAULT_FILE={_vault(tmp_path)}",
+            f"LOG_DIR={tmp_path / 'logs'}",
+            f"STATUS_DIR={tmp_path / 'status'}",
+        ],
     )
     assert result.returncode == 0, _output(result)
-    assert _runs(tmp_path / "env", "ansible-playbook")[0][-1] == "playbooks/list.yml"
+    assert _runs(tmp_path / "env", "ansible-playbook")[0][-1] == "playbooks/status.yml"
 
 
 def test_a_bin_in_the_environment_is_not_the_tools(tmp_path: Path) -> None:
@@ -1255,7 +1275,7 @@ def test_a_bin_in_the_environment_is_not_the_tools(tmp_path: Path) -> None:
     _stand_in(tmp_path / "bin", "ansible-galaxy")
     python = _not_a_virtualenv(tmp_path)
     result = _just(
-        "list", settings=[f"PYTHON={python}", f"VAULT_FILE={_vault(tmp_path)}"], env={"BIN": str(tmp_path / "bin")}
+        "status", settings=[f"PYTHON={python}", f"VAULT_FILE={_vault(tmp_path)}"], env={"BIN": str(tmp_path / "bin")}
     )
     assert result.returncode != 0 and _runs(tmp_path, "ansible-playbook") == []
 
@@ -1549,8 +1569,9 @@ def test_no_prompt_asks_nothing_even_at_a_terminal(tmp_path: Path) -> None:
 
 def test_init_logs_its_run_once(tmp_path: Path) -> None:
     result, _ = _init(tmp_path)
-    said = re.findall(r"Logging this run to .*/logs/\d{8}-\d{6}-init\.log", result.stdout)
-    assert len(said) == 1, result.stdout
+    # On stderr: stdout is the run's own, which just status --json prints JSON on.
+    said = re.findall(r"Logging this run to .*/logs/\d{8}-\d{6}-init\.log", result.stderr)
+    assert len(said) == 1, result.stderr
 
 
 GIVEN = [
@@ -1944,3 +1965,79 @@ def test_docs_regenerates_the_pages_or_serves_or_builds_the_site(tmp_path: Path,
     result = _just("docs", *args, settings=[f"BIN={tmp_path / 'bin'}"])
     assert result.returncode == 0, _output(result)
     assert _runs(tmp_path, tool) == [expect]
+
+
+# ---------------------------------------------------------------- just status ----
+
+
+def _status(tmp_path: Path, *args: str, body: str = "", rc: int = 0) -> subprocess.CompletedProcess[str]:
+    """just status against a stand-in ansible-playbook that runs body (after writing an exit-0 report) and exits rc."""
+    _stand_in(tmp_path / "bin", "ansible-playbook", body, rc=rc)
+    return _just("status", *args, settings=_safe(tmp_path))
+
+
+@pytest.mark.parametrize("code", [0, 1, 2])
+def test_status_exits_with_the_reports_own_code_and_removes_it(tmp_path: Path, code: int) -> None:
+    result = _status(tmp_path, body=f'printf \'{{"exit": {code}}}\\n\' > "$STATUS_REPORT_FILE"')
+    assert result.returncode == code, _output(result)
+    # Printed only under --json; the run's own scratch, removed once read.
+    assert result.stdout == ""
+    assert list((tmp_path / "status").glob("*")) == []
+
+
+def test_status_json_prints_the_report_alone(tmp_path: Path) -> None:
+    report = '{"exit": 1, "vms": [], "attention": []}'
+    result = _status(tmp_path, "--json", body=f"printf '%s\\n' '{report}' > \"$STATUS_REPORT_FILE\"")
+    assert result.returncode == 1, _output(result)
+    assert json.loads(result.stdout) == json.loads(report)
+
+
+def test_status_without_a_report_exits_3_and_says_why(tmp_path: Path) -> None:
+    result = _status(tmp_path, body='rm -f "$STATUS_REPORT_FILE"')
+    assert result.returncode == 3, _output(result)
+    assert "wrote no report" in result.stderr
+
+
+def test_status_exits_3_when_ansible_fails_never_with_ansibles_own_code(tmp_path: Path) -> None:
+    # ansible-playbook's 2 is a failed task, status's 2 "something could not be read": never passed on.
+    result = _status(tmp_path, rc=2)
+    assert result.returncode == 3, _output(result)
+    assert "ansible-playbook exited 2" in result.stderr
+    assert list((tmp_path / "status").glob("*")) == []
+
+
+def test_status_runs_as_a_dry_run_with_its_own_callback_alone(tmp_path: Path) -> None:
+    seen = tmp_path / "seen"
+    result = _status(
+        tmp_path,
+        "--json",
+        body='printf "%s\\n" "$ANSIBLE_STDOUT_CALLBACK" "$ANSIBLE_CALLBACKS_ENABLED" "$STATUS_QUIET"'
+        f' "$STATUS_REPORT_FILE" "$ANSIBLE_HOST_PATTERN_MISMATCH" > "{seen}"',
+    )
+    assert result.returncode == 0, _output(result)
+    callback, enabled, quiet, report, mismatch = seen.read_text().splitlines()
+    # profile_tasks, which ansible.cfg enables, would print on stdout: naming the stdout callback loads nothing more.
+    assert callback == enabled == "claude_on_proxmox_status"
+    assert quiet == "true"
+    # A fleet with no VM to read leaves play 2's group empty: the report says so, never Ansible's warning above it.
+    assert mismatch == "ignore"
+    assert re.fullmatch(rf"{re.escape(str(tmp_path / 'status'))}/\d{{8}}-\d{{6}}-\d+\.json", report), report
+    run = _runs(tmp_path, "ansible-playbook")[0]
+    assert "--check" in run and run[-1] == "playbooks/status.yml", run
+
+
+def test_status_takes_its_sections_as_one_json_extra_var(tmp_path: Path) -> None:
+    run = _playbook(tmp_path, "status", "alpha", "--only", "vms,storage")
+    assert run[run.index('{"status_only": "vms,storage"}') - 1] == "-e", run
+    assert run[run.index('{"vm_name": "alpha"}') - 1] == "-e", run
+
+
+@pytest.mark.parametrize("only", ["vms,,storage", "vms storage", "VMS", "access;id", ",vms"])
+def test_status_refuses_a_section_it_has_not_got(tmp_path: Path, only: str) -> None:
+    assert NOT_MATCHED in _refused(tmp_path, "status", "--only", only)
+
+
+def test_list_is_status_by_the_name_it_had_before(tmp_path: Path) -> None:
+    run = _playbook(tmp_path, "list", "alpha")
+    assert run[-1] == "playbooks/status.yml", run
+    assert run[run.index('{"vm_name": "alpha"}') - 1] == "-e", run

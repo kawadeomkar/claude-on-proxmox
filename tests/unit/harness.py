@@ -151,10 +151,12 @@ PASSED_ON = frozenset(
 )
 
 # What opens a page or fills a clipboard on this machine, as the sign-ins look
-# for them, and this machine's tailscale: each stand-in records its call beside
-# itself and fails.
+# for them, and this machine's tailscale, gh and claude, which a run looking for
+# them on PATH - `which gh` in a host's own directory that has none - would
+# otherwise find, signed in as the developer: each stand-in records its call
+# beside itself and fails. A host that needs one puts its own first.
 DESKTOP_TOOLS = ("open", "xdg-open", "pbcopy", "wl-copy", "xclip")
-GUARDED_TOOLS = ("tailscale",)
+GUARDED_TOOLS = ("tailscale", "gh", "claude")
 DESKTOP_STAND_IN = """#!/bin/sh
 printf '%s %s\\n' "${0##*/}" "$*" >> "$(dirname "$0")/calls.log"
 exit 1
@@ -213,7 +215,7 @@ def _fail_if_the_desktop_was_reached(root: Path) -> None:
     calls = _desktop_calls(root)
     if calls:
         pytest.fail(
-            f"a run under {root} called this machine's browser or clipboard, or its tailscale"
+            f"a run under {root} called this machine's browser or clipboard, or its tailscale, gh or claude"
             f" (a stand-in caught it):\n{calls}"
         )
 
@@ -475,27 +477,40 @@ def _pve_cli_calls(directory: Path) -> list[list[str]]:
 
 
 def _free_port() -> int:
+    # On every address, as the fakes bind: a port free on loopback alone can be another interface's.
     with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
+        probe.bind(("0.0.0.0", 0))
         return probe.getsockname()[1]
+
+
+def _start(script: Path, *args: str) -> tuple[subprocess.Popen, int]:
+    """A fake API on a free port, once it answers. A port can still be taken between the probe and the fake's bind
+    - the runs' own connections take local ports too - so a fake that lost it is started again on another."""
+    for _ in range(5):
+        port = _free_port()
+        server = subprocess.Popen([sys.executable, str(script), str(port), *args], stderr=subprocess.PIPE, text=True)
+        for _ in range(100):
+            if server.poll() is not None:
+                said = server.stderr.read()
+                if "Address already in use" in said:
+                    break
+                pytest.fail(f"{script.name} exited: {said}")
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    return server, port
+            except OSError:
+                time.sleep(0.05)
+        else:
+            server.terminate()
+            server.wait(timeout=10)
+            pytest.fail(f"{script.name} did not start")
+    pytest.fail(f"{script.name} found no free port in five tries")
 
 
 def _serve(script: Path, *args: str):
     """A fake API on a loopback port, until the fixture ends; yields its base URL."""
-    port = _free_port()
-    command = [sys.executable, str(script), str(port), *args]
-    server = subprocess.Popen(command, stderr=subprocess.PIPE, text=True)
+    server, port = _start(script, *args)
     try:
-        for _ in range(100):
-            if server.poll() is not None:
-                pytest.fail(f"{script.name} exited: {server.stderr.read()}")
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    break
-            except OSError:
-                time.sleep(0.05)
-        else:
-            pytest.fail(f"{script.name} did not start")
         yield f"http://127.0.0.1:{port}"
     finally:
         server.terminate()
