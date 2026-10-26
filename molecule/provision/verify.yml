@@ -456,6 +456,9 @@
       # lines the way the yaml result format wraps it.
       ANSIBLE_CALLBACK_RESULT_FORMAT: json
       ANSIBLE_NOCOLOR: "1"
+      # The fake VMs report 192.0.2.x, which drops packets: a child run that
+      # reaches for one waits this out, not Ansible's 10 s.
+      ANSIBLE_TIMEOUT: "3"
   tasks:
     # Proxmox permits duplicate names. Discovery would add_host the second over
     # the first and configure one of them, unpredictably.
@@ -1156,6 +1159,9 @@
     verify_playbook_env:
       ANSIBLE_CALLBACK_RESULT_FORMAT: json
       ANSIBLE_NOCOLOR: "1"
+      # The fake VMs report 192.0.2.x, which drops packets: a child run that
+      # reaches for one waits this out, not Ansible's 10 s.
+      ANSIBLE_TIMEOUT: "3"
     verify_ssh_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
     verify_ssh_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/claude-on-proxmox.conf"
     verify_ssh_playbook: "{{ playbook_dir }}/../../playbooks/ssh_config.yml"
@@ -1693,6 +1699,10 @@
         path: "{{ verify_ssh_dir }}/projects/PARKBNB"
       register: verify_fs_folds_case
 
+    # Each case is a playbook run of its own, a few seconds apiece. Those that
+    # code.yml refuses before "Refresh the alias" read the fleet and write
+    # nothing, so they run at once; the ones it refuses after it (writes) write
+    # the shared SSH config, and run one after another.
     - name: Run just code's playbook where it must refuse
       vars:
         verify_code_cases:
@@ -1706,12 +1716,15 @@
           # file among it is not.
           - expect: 'There is no project named nope in \S+/projects on alpha\.\s+The projects there are: discord-music-bot, ParkBnb\.'
             vars: {vm_project: nope}
+            writes: true
           # Right name, wrong case: Linux paths are case-sensitive.
           - expect: 'Did you mean ParkBnb\? Folder names are case-sensitive\.'
             vars: {vm_project: parkbnb}
             case_sensitive_only: true
+            writes: true
           - expect: '/projects/notes\.txt on alpha is a file, not a project folder\.'
             vars: {vm_project: notes.txt}
+            writes: true
           # just code refuses these first; the playbook must too.
           - expect: '--project names one project folder on the VM.*"\.\./etc" is not one'
             vars: {vm_project: ../etc}
@@ -1731,8 +1744,10 @@
           # A VM never configured: no projects directory at all.
           - expect: '\S+/nowhere does not exist on solo yet'
             vars: {vm_name: solo, vm_projects_dir: "{{ verify_ssh_dir }}/nowhere"}
+            writes: true
           - expect: '\S+/empty on alpha holds no projects yet'
             vars: {vm_project: anything, vm_projects_dir: "{{ verify_ssh_dir }}/empty"}
+            writes: true
           # Real SSH to an address nothing answers on. Not ansible_connection:
           # ssh, which as an extra var would reach the controller's own tasks
           # too; without the local override, only the VM is reached over SSH.
@@ -1743,36 +1758,75 @@
               code_session_source_dir: "{{ verify_code_vars.code_session_source_dir }}"
               code_session_dest_dir: "{{ verify_code_vars.code_session_dest_dir }}"
             vars: {ansible_ssh_timeout: 3}
-      ansible.builtin.command:
-        argv: >-
-          {{ verify_playbook_cmd
-             + ['--extra-vars', (verify_case.base | default(verify_code_vars)) | combine(verify_case.vars) | to_json,
-                verify_code_playbook] }}
-      environment: "{{ verify_code_env }}"
-      register: verify_code_refusals
-      changed_when: false
-      failed_when: false
-      loop: >-
-        {{ verify_code_cases | rejectattr('case_sensitive_only', 'defined') | list
-           if verify_fs_folds_case.stat.exists else verify_code_cases }}
-      loop_control:
-        loop_var: verify_case
-        label: "{{ verify_case.vars }}"
+        verify_code_selected: >-
+          {{ verify_code_cases | rejectattr('case_sensitive_only', 'defined') | list
+             if verify_fs_folds_case.stat.exists else verify_code_cases }}
+      block:
+        - name: Start the refusals that write nothing, all at once
+          ansible.builtin.command:
+            argv: >-
+              {{ verify_playbook_cmd
+                 + ['--extra-vars', (verify_case.base | default(verify_code_vars)) | combine(verify_case.vars) | to_json,
+                    verify_code_playbook] }}
+          environment: "{{ verify_code_env }}"
+          async: 300
+          poll: 0
+          changed_when: false
+          register: verify_code_started
+          loop: "{{ verify_code_selected | rejectattr('writes', 'defined') | list }}"
+          loop_control:
+            loop_var: verify_case
+            label: "{{ verify_case.vars }}"
 
-    - name: Assert each refusal said why
-      ansible.builtin.assert:
-        that:
-          - verify_code_refusal.rc != 0
-          - (verify_code_refusal.stdout ~ '\n' ~ verify_code_refusal.stderr) is search(verify_code_refusal.verify_case.expect)
-        fail_msg: >-
-          just code {{ verify_code_refusal.verify_case.vars }} exited {{ verify_code_refusal.rc }}, expected
-          /{{ verify_code_refusal.verify_case.expect }}/:
-          {{ (verify_code_refusal.stdout ~ '\n' ~ verify_code_refusal.stderr) | regex_findall('\[ERROR\]: [^\n]*') }}
-        quiet: true
-      loop: "{{ verify_code_refusals.results }}"
-      loop_control:
-        loop_var: verify_code_refusal
-        label: "{{ verify_code_refusal.verify_case.vars }}"
+        - name: Run the refusals that write the SSH config, one after another
+          ansible.builtin.command:
+            argv: >-
+              {{ verify_playbook_cmd
+                 + ['--extra-vars', (verify_case.base | default(verify_code_vars)) | combine(verify_case.vars) | to_json,
+                    verify_code_playbook] }}
+          environment: "{{ verify_code_env }}"
+          register: verify_code_written
+          changed_when: false
+          failed_when: false
+          loop: "{{ verify_code_selected | selectattr('writes', 'defined') | list }}"
+          loop_control:
+            loop_var: verify_case
+            label: "{{ verify_case.vars }}"
+
+        - name: Wait for the refusals that started at once
+          ansible.builtin.async_status:
+            jid: "{{ verify_job.ansible_job_id }}"
+          register: verify_code_waited
+          until: verify_code_waited.finished
+          retries: 300
+          delay: 1
+          failed_when: false
+          loop: "{{ verify_code_started.results }}"
+          loop_control:
+            loop_var: verify_job
+            label: "{{ verify_job.verify_case.vars }}"
+
+        - name: Assert each refusal said why
+          vars:
+            verify_code_case: "{{ verify_code_refusal.verify_case | default(verify_code_refusal.verify_job.verify_case) }}"
+            verify_code_said: "{{ verify_code_refusal.stdout | default('') ~ '\n' ~ verify_code_refusal.stderr | default('') }}"
+          ansible.builtin.assert:
+            that:
+              - verify_code_refusal.rc | default(0) != 0
+              - verify_code_said is search(verify_code_case.expect)
+            fail_msg: >-
+              just code {{ verify_code_case.vars }} exited {{ verify_code_refusal.rc | default('?') }}, expected
+              /{{ verify_code_case.expect }}/: {{ verify_code_said | regex_findall('\[ERROR\]: [^\n]*') }}
+            quiet: true
+          loop: "{{ verify_code_waited.results + verify_code_written.results }}"
+          loop_control:
+            loop_var: verify_code_refusal
+            label: "{{ (verify_code_refusal.verify_case | default(verify_code_refusal.verify_job.verify_case)).vars }}"
+
+        - name: Assert every refusal ran
+          ansible.builtin.assert:
+            that: (verify_code_waited.results + verify_code_written.results) | length == verify_code_selected | length
+            quiet: true
 
     # The session notes too: a refusal writes none.
     - name: Find the workspace files and session notes on the VM after the refusals
