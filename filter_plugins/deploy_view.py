@@ -23,6 +23,8 @@ the end. Nothing here prints; the callback does.
 from __future__ import annotations
 
 import os
+import re
+import textwrap
 import time
 from collections import OrderedDict
 
@@ -43,6 +45,8 @@ STAGE_FILES = {
 RANK = {"skipped": 0, "included": 1, "ok": 2, "changed": 3, "ignored": 4, "rescued": 4, "failed": 5, "unreachable": 5}
 SGR = {"b": "1", "d": "90", "h": "1", "g": "32", "y": "33", "r": "31", "c": "36", "m": "35", "w": "1;93"}
 WINDOW = 5
+# A task tagged as a wait for a person (attention_browser) is one once it has run this long: a skipped one ends first.
+WAIT_AFTER = 2.0
 
 
 def stages_of(files):
@@ -151,23 +155,13 @@ def bar(fraction, style, cells=20):
     return [("█" * filled, style), ("░" * (cells - filled), "d")]
 
 
-def wrap(text, limit, lines):
-    out = [""]
-    for word in text.split():
-        if not out[-1]:
-            out[-1] = word
-        elif len(out[-1]) + 1 + len(word) <= limit:
-            out[-1] += " " + word
-        elif len(out) < lines:
-            out.append(word)
-        else:
-            out[-1] = (out[-1] + " " + word)[: limit - 1] + "…"
-            break
-    return [line for line in out if line]
-
-
 def one_line(text):
     return " ".join(str(text).split())
+
+
+def fill(text, limit):
+    """text wrapped to limit, nothing cut: a word longer than a line, a URL, has a line of its own."""
+    return textwrap.wrap(str(text), max(1, limit), break_long_words=False, break_on_hyphens=False) or [""]
 
 
 def tasks_said(count):
@@ -176,8 +170,10 @@ def tasks_said(count):
 
 # --- the run ---------------------------------------------------------------------------------------------------
 class Task:
-    def __init__(self, key, name, stage, step, start):
+    def __init__(self, key, name, stage, step, start, role=None, waits=False):
         self.key, self.name, self.stage, self.step, self.start = key, name, stage, step, start
+        self.role = role
+        self.waits = waits  # tagged as a wait for a person: one once it has run WAIT_AFTER seconds
         self.end = None
         self.hosts = OrderedDict()  # host: [start, end, outcome]
         self.outcome = ""
@@ -248,7 +244,8 @@ class Step:
         return max((task.end if task.end is not None else now) for task in self.tasks) if self.tasks else None
 
     def seconds(self, now):
-        return (self.end(now) - self.start()) if self.tasks else 0.0
+        # Its own tasks' time, not first to last: a role's handler runs at the end of the play, after the others.
+        return sum(task.seconds(now) for task in self.tasks)
 
     def changed(self):
         return sum(task.outcome == "changed" for task in self.tasks)
@@ -316,9 +313,11 @@ class Run:
         self.current = None  # the task running now
         self.order = []  # every task, in the order started
         self.plan = []  # the run's own first words: what it will do
-        self.notes = []  # (host, text)
+        self.notes = []  # (host, text, the task that said it)
+        self.records = OrderedDict()  # (vm, matter): every line recorded for NEXT STEPS, in order
         self.facts = OrderedDict()  # host: {vmid, address, new}
         self.finished = None
+        self.failed = False
         self.said = set()  # steps and stages a line was printed for (output that is not a terminal)
 
     # --- what the playbook is ---------------------------------------------------------------------------------
@@ -341,11 +340,11 @@ class Run:
         self.play = key
 
     # --- the events -------------------------------------------------------------------------------------------
-    def task(self, key, name, role, now):
+    def task(self, key, name, role, now, waits=False):
         stage, override = self.play_stage.get(self.play, ("run", None))
         if self.current is not None:
             self.current.close(now)
-        task = Task(key, name, stage, override or role, now)
+        task = Task(key, name, stage, override or role, now, role=role, waits=waits)
         self._stage(stage).step(task.step).reach(task)
         self.current = task
         self.order.append(task)
@@ -369,39 +368,62 @@ class Run:
         task = self.find(key)
         if task is not None:
             task.host_end(host, outcome, now)
+            if task.end is not None and task.waits and task.wait is None and task.seconds(now) >= WAIT_AFTER:
+                task.wait = (task.start, 0)
         return task
 
     def retry(self, key, host, now, seconds):
-        """A wait for a person: True the first time, for the bell."""
-        task = self.find(key)
-        if task is None or task.wait is not None:
-            return False
-        task.wait = (now, seconds)
-        return True
+        """A retried wait for a person, with the seconds it may still take: True the first time, for the bell."""
+        return self._wait(self.find(key), now, seconds)
 
-    def note(self, host, text, plan=False):
-        """A report: plan is the run's own first words, what it will do, which the header shows."""
+    def settle(self, now):
+        """Whether the running task has just become a wait for a person: one tagged so, running WAIT_AFTER seconds
+        (GitHub's device flow, a wait_for that never retries). True once, for the bell."""
+        task = self.current
+        if task is None or self.finished is not None or task.end is not None or not task.waits:
+            return False
+        return now - task.start >= WAIT_AFTER and self._wait(task, task.start, 0)
+
+    @staticmethod
+    def _wait(task, since, seconds):
+        if task is None:
+            return False
+        if task.wait is None:
+            task.wait = (since, seconds)
+            return True
+        if seconds and not task.wait[1]:
+            task.wait = (since, seconds)
+        return False
+
+    def note(self, host, text, plan=False, task=None):
+        """A report, by the task that made it: plan is the run's own first words, what it will do, kept apart."""
         text = one_line(text)
         if not text:
             return
         if plan:
             self.plan.append(text)
         else:
-            self.notes.append((host, text))
+            self.notes.append((host, text, task))
+
+    def record(self, vm, matter, line):
+        """A line recorded for NEXT STEPS: '' once nothing is left of that matter."""
+        self.records.setdefault((vm, matter), []).append(one_line(line))
 
     def fact(self, host, name, value):
         entry = self.facts.setdefault(host, {})
         if name == "proxmox_vm_resolved_id":
-            entry["vmid"] = value
+            if str(value).isdigit():
+                entry["vmid"] = int(value)
         elif name == "proxmox_vm_address":
-            entry["address"] = value
+            entry["address"] = one_line(value)
         elif name == "proxmox_vm_exists":
             entry.setdefault("new", not value)
 
-    def end(self, now):
+    def end(self, now, failed=False):
         if self.current is not None:
             self.current.close(now)
         self.finished = now
+        self.failed = failed
 
     # --- where it is ------------------------------------------------------------------------------------------
     def running_stage(self):
@@ -453,17 +475,25 @@ class Run:
         return [ansi(cut(line, limit), color) for line in lines]
 
     def _header(self, now, limit):
+        # The plan is printed whole above the region, as every report is: here it could only be cut.
         started = time.strftime("%H:%M", time.localtime(self.started_at))
         first = [("claude-on-proxmox", "b"), (f"  {self.title} · started {started}", "")]
         if self.check:
             first.append((" · a dry run: nothing is changed", "y"))
-        lines = [first]
-        plan = " ".join(self.plan)
-        lines += [[("  ", ""), (line, "d")] for line in wrap(plan, limit - 2, 2)]
-        lines.append([])
-        return lines
+        return [first, []]
 
-    def _row(self, indent, glyph, label, label_width, step, state, now, tiers, info="", limit=99):
+    def _whole(self, stage):
+        """The tasks a stage will reach: an ended step's as it reached them, its own tasks' all of them."""
+        if self._state(stage) == "done":
+            return stage.reached
+        return sum(
+            step.reached
+            if key is not None and self._step_state(stage, step) == "done"
+            else max(step.expected, step.reached)
+            for key, step in stage.steps.items()
+        )
+
+    def _row(self, indent, glyph, label, label_width, step, state, now, tiers, info="", limit=99, total=None):
         """One stage's or step's line."""
         style = {"done": "g", "running": "c", "waiting": "y", "to come": "d"}[state]
         if step.failed() and state != "to come":
@@ -474,7 +504,8 @@ class Run:
         glyph = {"done": "✓", "waiting": "⏸"}.get(state, glyph) if style != "r" else glyph
         left = [(" " * indent, ""), (glyph + " ", style), (label.ljust(label_width), "" if state == "done" else "b")]
         # A step that ended is whole, whatever it would have reached: a rescue that never ran is no task left.
-        total = step.reached if state == "done" else max(step.expected, step.reached)
+        if total is None:
+            total = step.reached if state == "done" else max(step.expected, step.reached)
         if tiers["bars"]:
             left += bar(step.reached / total if total else 1, "g" if state == "done" else style)
         if tiers["counts"]:
@@ -563,7 +594,8 @@ class Run:
                 info = self._vm_info() if stage.key == "provision" and state != "to come" else ""
                 if state == "done" and not info and not stage.changed() and not stage.failed():
                     info = "no changes"
-                lines.append(self._row(1, glyph, stage.key, 13, stage, state, now, tiers, info, limit))
+                total = self._whole(stage)
+                lines.append(self._row(1, glyph, stage.key, 13, stage, state, now, tiers, info, limit, total))
             if state not in ("running", "waiting"):
                 continue
             own = stage.steps.get(None)
@@ -604,14 +636,14 @@ class Run:
     def title_text(self, now):
         """The terminal's title: the run, and where it is."""
         if self.finished is not None:
-            return f"{self.title} · done"
+            return f"{self.title} · {'failed' if self.failed else 'done'}"
         if self.current is not None and self.current.wait and self.current.end is None:
             return f"{self.title} · waiting for you"
         stage = self.running_stage()
         if stage is None:
             return self.title
         stages = self.stages.values()
-        expected = sum(s.reached if self._state(s) == "done" else max(s.expected, s.reached) for s in stages)
+        expected = sum(self._whole(s) for s in stages)
         reached = sum(s.reached for s in stages)
         return f"{self.title} · {stage} {round(100 * reached / expected) if expected else 0}%"
 
@@ -676,14 +708,24 @@ class Run:
             if stage.key == "provision" and self._vm_info():
                 parts.insert(0, self._vm_info())
             lines += self._flow(head, parts, limit)
-        notes = OrderedDict()
         vms = [host for host in self.facts] + sorted({h for t in self.order for h in t.hosts} - set(self.facts))
-        for host, text in self.notes:
-            # What a play on this machine said about a VM - its address, its alias - is that VM's.
+        vms = [vm for vm in vms if vm != "localhost"]
+        said = []
+        for host, text, task in self.notes:
+            # What a play on this machine said about a VM - its address, its alias, its window - is that VM's.
             if host == "localhost":
-                host = next((vm for vm in vms if vm != "localhost" and text.startswith((vm + ":", vm + " "))), host)
-            if text.startswith(host + ": "):
-                text = text[len(host) + 2 :]
+                host = self._named(text, vms) or host
+            said.append((host, self._unnamed(host, text), task))
+        # Lines left to do that a later record replaced: configure's "not signed in" once the sign-in signed it in.
+        replaced = set()
+        for (vm, _), recorded in self.records.items():
+            replaced |= {(vm, self._unnamed(vm, line)) for line in recorded if line and line != recorded[-1]}
+        # The same report again, in a later play - configure's repositories, then the sign-in's: its last run holds.
+        last = {(host, task.name): task for host, _, task in said if task is not None}
+        notes = OrderedDict()
+        for host, text, task in said:
+            if (host, text) in replaced or (task is not None and last[(host, task.name)] is not task):
+                continue
             notes.setdefault(host, [])
             if text not in notes[host]:
                 notes[host].append(text)
@@ -696,7 +738,7 @@ class Run:
             heading = "THIS MACHINE" if host == "localhost" else host.upper()
             new = " · new" if facts.get("new") else ""
             lines.append([(heading, "h"), (f"  {said}{new}" if said else "", "")])
-            lines += [cut([(" ", ""), (text, "")], limit) for text in texts[-8:]]
+            lines += [cut([(" ", ""), (text, "")], limit) for text in texts[-10:]]
         slowest = sorted(
             (task for task in self.order if not task.wait), key=lambda task: task.seconds(now), reverse=True
         )
@@ -715,6 +757,19 @@ class Run:
             totals.append(f"log {self.log}")
         lines += self._flow([], totals, limit, style="d")
         return [ansi(cut(line, limit), color) for line in lines]
+
+    @staticmethod
+    def _unnamed(host, text):
+        return text[len(host) + 2 :] if text.startswith(host + ": ") else text
+
+    @staticmethod
+    def _named(text, vms):
+        """The VM a line said on this machine is about: the one it starts with, else the only one it names."""
+        for vm in vms:
+            if text.startswith((vm + ":", vm + " ")):
+                return vm
+        named = [vm for vm in vms if re.search(rf"(?<![\w-]){re.escape(vm)}(?![\w-])", text)]
+        return named[0] if len(named) == 1 else None
 
     @staticmethod
     def _flow(head, parts, limit, style=""):

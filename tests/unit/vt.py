@@ -4,7 +4,7 @@ Text wraps at the right edge with the pending-wrap rule terminals use; a line fe
 screen into the history (the scrollback); cursor up (CSI n A), carriage return, erase to the end of the line
 (CSI K, CSI 2K) and erase below (CSI J) move and clear; colours are taken and ignored, and synchronized output
 (CSI ?2026 h/l) marks what is drawn as a frame, where a line that wraps is counted (`frame_wraps`): the callback's
-live region, which must never wrap. A title (OSC 0, ended by BEL) is recorded in `titles`, a bell on its own is
+live region, which must never wrap. A title (OSC 0, ended by BEL or ST) is recorded in `titles`, a bell on its own is
 counted in `bells`; an ESC [ before a control is the control (Ansible's pause writes them). Any other sequence is
 recorded, so a test can say the callback wrote none. A resize keeps lines
 as they are, as xterm does (no reflow), and a shorter window keeps its bottom rows, the rest going to the history.
@@ -17,9 +17,9 @@ from __future__ import annotations
 import re
 
 CSI = re.compile(rb"\x1b\[([?0-9;]*)([A-Za-z])")
-OSC = re.compile(rb"\x1b\]([0-9]*);([^\x07\x1b]*)\x07")
-# What a feed may end inside of: an escape sequence not yet ended.
-OPEN = re.compile(rb"\x1b(\[[?0-9;]*|\][^\x07]*)?\Z")
+OSC = re.compile(rb"\x1b\]([0-9]*);([^\x07\x1b]*)(?:\x07|\x1b\\)")
+# What a feed may end inside of: an escape sequence not yet ended, an OSC by BEL or by ST (ESC \).
+OPEN = re.compile(rb"\x1b(\[[?0-9;]*|\][^\x07\x1b]*\x1b?)?\Z")
 
 
 class VT:
@@ -72,7 +72,11 @@ class VT:
         """How much of data ends whole: not inside an escape sequence or a UTF-8 character."""
         open_seq = OPEN.search(data)
         if open_seq:
-            return open_seq.start()
+            start = open_seq.start()
+            # An ESC [ just before it is pause's, before a control: it waits to be read with what follows.
+            while start >= 2 and data[start - 2 : start] == b"\x1b[":
+                start -= 2
+            return start
         tail = len(data)
         while tail > 0 and (data[tail - 1] & 0xC0) == 0x80:
             tail -= 1

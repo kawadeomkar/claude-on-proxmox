@@ -3,11 +3,12 @@
 ## What `just deploy` shows
 
 At a terminal, `just deploy` draws the run instead of streaming every task: a few lines at the bottom of the
-screen, redrawn in place.
+screen, redrawn in place, under what the run will do, which it says first.
 
 ```
-claude-on-proxmox  deploy alpha · started 18:22
   Template "ubuntu-24.04-cloudinit" is already built. Then provisioning and configuring alpha.
+  alpha is up at 192.0.2.51
+claude-on-proxmox  deploy alpha · started 18:22
 
  ✓ template     ████████████████████    3/3                    no changes                     0.7 s
  ✓ provision    ████████████████████    5/5    2 changed       VM 104 · 192.0.2.51             1:00
@@ -30,15 +31,18 @@ claude-on-proxmox  deploy alpha · started 18:22
 - **Steps**: the running stage's roles, or its sign-ins (Claude, GitHub, Tailscale), the same way, with the
   running step's last five tasks under it: the newest with its timer, a skipped one dim. A task that several
   VMs run says each VM's state, or how many have finished when they do not fit.
-- **Above it, for good**: what the run reports - each VM's address, a page to approve, a prompt, the diffs of
-  `--check`, a warning, a failure with what it said and where the log has the rest. A prompt has the screen
-  to itself while you answer it.
-- **The tab's title** says where the run is (`deploy alpha · configure 59%`, `· waiting for you`, `· done`),
-  and the terminal's bell rings when the run starts to wait for you in the browser and when it ends.
+- **Above it, for good**: what the run reports, whole - each VM's address, a page to approve, a prompt, the
+  diffs of `--check`, a warning, a failure with what it said and where the log has the rest. A prompt has the screen
+  to itself while you answer it; anything else you type during the run is not echoed, so it cannot push the
+  region out of place.
+- **The tab's title** says where the run is (`deploy alpha · configure 59%`, `· waiting for you`, `· done`,
+  `· failed`, `· stopped` after Ctrl-C),
+  and the terminal's bell rings when the run starts to wait for you in the browser - Claude's page, GitHub's
+  code, Tailscale's page - and when it ends.
 
 When the run ends, the region gives way to a summary, in place of PLAY RECAP: each stage's time, tasks and
-changes, with its steps' times (your time in the browser said apart); what the run said about each VM; the
-slowest tasks; the totals and the log. NEXT STEPS follows it.
+changes, with its steps' times (your time in the browser said apart); the last word each part of the run
+had on each VM, a line each; the slowest tasks; the totals and the log. NEXT STEPS follows it.
 
 ```
 claude-on-proxmox  deploy alpha · done in 6 min 12 s · 18:28
@@ -63,8 +67,9 @@ SLOWEST  node | Install Node.js 48 s · present | Wait for the guest agent 45 s
 Every form of `just deploy` is drawn - `--only`, `--tags` and `--check` too - and only `just deploy`: the
 other recipes print as before. Without a terminal - output piped into a file, CI - it prints a line as each
 step ends, the reports, and the summary. For the stream as before, give any `-v` (`just ANSIBLE_ARGS=-v
-deploy alpha`) or put `ANSIBLE_STDOUT_CALLBACK=default` in front. Either way the run log keeps the whole
-stream: every task as Ansible prints it, PLAY RECAP and the task timings, with the summary after them.
+deploy alpha`) or put `ANSIBLE_STDOUT_CALLBACK=default` in front; a run without a log (`LOG_DIR=`) streams too,
+since the log is where the stream would go. Either way the run log keeps the whole stream: every task as
+Ansible prints it and PLAY RECAP, then the summary, NEXT STEPS and the task timings.
 
 ## What a run asks of you
 

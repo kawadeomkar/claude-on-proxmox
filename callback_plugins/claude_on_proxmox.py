@@ -58,6 +58,7 @@ from pathlib import Path
 from ansible import constants as C
 from ansible import context
 from ansible.plugins.callback.default import CallbackModule as DefaultCallback
+from ansible.utils import display as ansible_display
 
 FILTERS = Path(__file__).resolve().parents[1] / "filter_plugins"
 
@@ -84,6 +85,7 @@ live = _load("live_region", "claude_on_proxmox_live_region")
 
 WAITING_TAG = "attention_browser"
 DEBUG_ACTIONS = frozenset({"debug", "ansible.builtin.debug", "ansible.legacy.debug"})
+STATS_ACTIONS = frozenset({"set_stats", "ansible.builtin.set_stats", "ansible.legacy.set_stats"})
 # A wait's block names the sign-in it belongs to, by the role the task is in.
 TOPICS = {
     "claude_code": "Claude Code sign-in",
@@ -119,16 +121,26 @@ def next_steps(run_stats):
     return lines
 
 
-def _tasks_of(blocks, out):
-    """Each task a play compiled to, as (its ID, its role's name or None), blocks' rescue and always included."""
+def _tasks_of(blocks, out, play=None):
+    """Each task a play compiled to, as (its ID, its role's name or None), blocks' rescue and always included, and
+    only those --tags and --skip-tags leave, as the play's iterator filters them."""
     for block in blocks:
         for part in (block.block, block.rescue, block.always):
             for item in part or []:
                 if hasattr(item, "block"):
-                    _tasks_of([item], out)
-                elif not getattr(item, "implicit", False):
+                    _tasks_of([item], out, play)
+                elif not getattr(item, "implicit", False) and _tagged_in(item, play):
                     out.append((item._uuid, _role(item)))
     return out
+
+
+def _tagged_in(task, play):
+    if play is None:
+        return True
+    try:
+        return bool(task.evaluate_tags(play.only_tags, play.skip_tags, all_vars={}))
+    except Exception:  # noqa: BLE001 - tags that need a variable to say: counted, as a run may reach them
+        return True
 
 
 def _role(task):
@@ -136,12 +148,15 @@ def _role(task):
 
 
 def _rescued(task):
-    """Whether a block around the task has a rescue: its failure is that block's to handle, not the run's."""
-    parent = getattr(task, "_parent", None)
+    """Whether a block's rescue takes the task's failure: the task is among that block's own tasks, at any depth.
+    One in a rescue or an always is not, unless a block further out has it among its own."""
+    child, parent = task, getattr(task, "_parent", None)
     while parent is not None:
-        if getattr(parent, "rescue", None):
+        if getattr(parent, "rescue", None) and any(
+            getattr(item, "_uuid", None) == getattr(child, "_uuid", None) for item in parent.block or []
+        ):
             return True
-        parent = getattr(parent, "_parent", None)
+        child, parent = parent, getattr(parent, "_parent", None)
     return False
 
 
@@ -160,6 +175,7 @@ class CallbackModule(DefaultCallback):
         self._plan_play = None
         self._speaking = threading.local()
         self._color = False
+        self._failed_items = {}  # (task ID, host): the results of a loop's items that failed, said with the task
 
     # --- the classic hooks, as before --------------------------------------------------------------------------
     # Every block is banner's own width - 80 columns, or the terminal's when
@@ -233,13 +249,6 @@ class CallbackModule(DefaultCallback):
                 self._display.display(coloured, screen_only=True)
                 self._display.display(plain, log_only=True)
 
-    def _lines(self, runs_list):
-        width = self._width()
-        return [
-            (view.ansi(view.cut(runs, width - 1), self._color), view.ansi(view.cut(runs, width - 1), False))
-            for runs in runs_list
-        ]
-
     def _width(self):
         try:
             return os.get_terminal_size(sys.stdout.fileno()).columns
@@ -249,12 +258,27 @@ class CallbackModule(DefaultCallback):
     def _now(self):
         return time.monotonic()
 
+    def _wrapped(self, head, lines, style=""):
+        """head, then lines wrapped under where head ends, whole - never cut: (coloured, plain) pairs for _print."""
+        column = view.width(head)
+        room = max(20, self._width() - 1 - column)
+        out = []
+        pieces = [piece for line in lines for piece in view.fill(line, room)]
+        for index, piece in enumerate(pieces):
+            runs = [*(head if index == 0 else [(" " * column, "")]), (piece, style)]
+            out.append((view.ansi(runs, self._color), view.ansi(runs, False)))
+        return out
+
     def _frame(self, cols, rows, glyph):
         with self._display._lock:
             if self._run is None:
                 return []
-            self._region.title(self._run.title_text(self._now()))
-            return self._run.frame(self._now(), cols, rows, glyph, self._color)
+            now = self._now()
+            # A tagged wait that never retries, GitHub's device flow, is known by how long it runs.
+            if self._run.settle(now):
+                self._region.bell()
+            self._region.title(self._run.title_text(now))
+            return self._run.frame(now, cols, rows, glyph, self._color)
 
     def _drawn(self):
         return self._mode in ("live", "lines")
@@ -279,8 +303,11 @@ class CallbackModule(DefaultCallback):
 
     # --- the playbook -----------------------------------------------------------------------------------------
     def v2_playbook_on_start(self, playbook):
-        title = os.environ.get(LIVE_ENV, "").strip()
-        if title and self._display.verbosity == 0:
+        # Taken out of the environment, so nothing this run starts - VS Code, whose terminals a later just destroy
+        # may run in - inherits it.
+        title = os.environ.pop(LIVE_ENV, "").strip()
+        # Drawn only with a log to send the stream to: without one (LOG_DIR= turns it off) the stream is the screen's.
+        if title and self._display.verbosity == 0 and ansible_display.logger is not None:
             self._mode = "live" if live.can_draw() else "lines"
             self._color = self._mode == "live" and not C.ANSIBLE_NOCOLOR
             check = bool((context.CLIARGS or {}).get("check"))
@@ -288,7 +315,7 @@ class CallbackModule(DefaultCallback):
             plays = []
             for play in playbook.get_plays():
                 try:
-                    tasks = _tasks_of(play.compile(), [])
+                    tasks = _tasks_of(play.compile(), [], play)
                 except Exception:  # noqa: BLE001 - a count is a nicety: a play that will not compile here still runs
                     tasks = []
                 plays.append((play._uuid, play.get_path(), tasks))
@@ -323,7 +350,8 @@ class CallbackModule(DefaultCallback):
                 role = _role(task)
                 if role and name.startswith(role + " : "):
                     name = name[len(role) + 3 :]
-                self._run.task(task._uuid, name, role, self._now())
+                waits = WAITING_TAG in task.tags and task.action not in DEBUG_ACTIONS
+                self._run.task(task._uuid, name, role, self._now(), waits=waits)
                 self._after()
 
     def v2_playbook_on_task_start(self, task, is_conditional):
@@ -367,11 +395,15 @@ class CallbackModule(DefaultCallback):
             return
         self._result(result, "changed" if result.result.get("changed") else "ok")
         host = result.host.get_name()
-        facts = result.result.get("ansible_facts") or {}
+        # The VM's ID and address as proxmox_vm sets them, and only then: a task on the VM could set any fact.
+        facts = (result.result.get("ansible_facts") or {}) if _role(result.task) == "proxmox_vm" else {}
         with self._display._lock:
             for name in VM_FACTS:
                 if name in facts:
-                    self._run.fact(host, name, facts[name])
+                    value = facts[name]
+                    self._run.fact(host, name, plain_text(str(value)) if name == "proxmox_vm_address" else value)
+        if result.task.action in STATS_ACTIONS:
+            self._records(result)
         msg = result.result.get("msg")
         if WAITING_TAG in result.task.tags and result.task.action in DEBUG_ACTIONS and isinstance(msg, str):
             with self._say():
@@ -387,23 +419,35 @@ class CallbackModule(DefaultCallback):
             self._report(result)
         super().v2_runner_item_on_ok(result)
 
+    def _records(self, result):
+        """What a report recorded for NEXT STEPS, as it goes: a report whose line a later record replaced is not
+        repeated in the summary."""
+        data = (result.result.get("ansible_stats") or {}).get("data") or {}
+        with self._display._lock:
+            for stat in NEXT_STATS:
+                for vm, matters in (data.get(stat) or {}).items() if isinstance(data.get(stat), dict) else ():
+                    for matter, line in matters.items() if isinstance(matters, dict) else ():
+                        if isinstance(line, str):
+                            self._run.record(str(vm), str(matter), plain_text(line))
+
     def _report(self, result):
-        """A debug message, a report: a line above the region, and the summary's, under its VM."""
+        """A debug message, a report: whole above the region, wrapped, and a line of the summary, under its VM."""
         msg = result.result.get("msg")
         if msg in (None, ""):
             return
         host = result.host.get_name()
-        text = msg if isinstance(msg, str) else " ".join(map(str, msg)) if isinstance(msg, list) else str(msg)
+        parts = msg if isinstance(msg, list) else str(msg).splitlines()
+        lines = [said for said in (view.one_line(plain_text(str(part))) for part in parts) if said]
+        if not lines:
+            return
         plan = self._plan_play is not None and self._run.play == self._plan_play
         with self._display._lock:
-            self._run.note(host, plain_text(text), plan=plan)
-        if not plan or self._mode == "lines":
-            # A play on this machine names the VM in its words; anywhere else the VM leads, once.
-            said = view.one_line(plain_text(text))
-            if said.startswith(host + ": "):
-                said = said[len(host) + 2 :]
-            who = [] if host == "localhost" or said.startswith(host + " ") else [(host, "b"), ("  ", "")]
-            self._print(self._lines([[("  ", ""), *who, (said, "")]]))
+            self._run.note(host, " ".join(lines), plan=plan, task=self._run.find(result.task._uuid))
+        # A play on this machine names the VM in its words; anywhere else the VM leads, once.
+        if lines[0].startswith(host + ": "):
+            lines[0] = lines[0][len(host) + 2 :]
+        who = [] if host == "localhost" or lines[0].startswith(host + " ") else [(host, "b"), ("  ", "")]
+        self._print(self._wrapped([("  ", ""), *who], lines))
 
     def v2_runner_on_skipped(self, result):
         if self._drawn():
@@ -419,6 +463,12 @@ class CallbackModule(DefaultCallback):
         if outcome == "failed":
             self._failure(result, "failed")
         super().v2_runner_on_failed(result, ignore_errors)
+
+    def v2_runner_item_on_failed(self, result):
+        if self._drawn():
+            with self._display._lock:
+                self._failed_items.setdefault((result.task._uuid, result.host.get_name()), []).append(result.result)
+        super().v2_runner_item_on_failed(result)
 
     def v2_runner_on_unreachable(self, result):
         if not self._drawn():
@@ -437,20 +487,34 @@ class CallbackModule(DefaultCallback):
             where = (task.step or task.stage) if task is not None else ""
             took = f" ({view.fmt(task.seconds(self._now()))})" if task is not None else ""
             name = task.name if task is not None else result.task.get_name()
+        said = self._said(result.result)
+        # A loop's own msg is "One or more items failed": what each failed item said is the failure.
+        for item in self._failed_items.pop((result.task._uuid, result.host.get_name()), []):
+            said.append(f"{view.one_line(plain_text(str(self._get_item_label(item))))}:")
+            said += [f"  {line}" for line in self._said(item)]
+        said_how = "" if how == "failed" else f" · {how}"
+        out = [("", "")]
+        out += self._wrapped([("✗ ", "r")], [f"{where} on {result.host.get_name()}: {name}{took}{said_how}"], "r")
+        out += self._wrapped([("    ", "")], [line for line in said if line.strip()][: FAILURE_LINES * 2])
+        if self._run.log:
+            out += self._wrapped([("    ", "")], [f"the whole output: {self._run.log}"], "d")
+        self._print([*out, ("", "")])
+
+    @staticmethod
+    def _said(res):
+        """What a failed result says: its message, then the last lines of its output - a module's own, should it
+        have crashed."""
         said = []
         for key in ("msg", "reason"):
-            if result.result.get(key):
-                said += plain_text(str(result.result[key])).splitlines()
-        for key in ("stderr_lines", "stdout_lines"):
-            if result.result.get(key):
-                said += [plain_text(str(line)) for line in result.result[key]][-FAILURE_LINES:]
+            if res.get(key):
+                said += plain_text(str(res[key])).splitlines()
+        for key in ("stderr_lines", "module_stderr", "stdout_lines", "module_stdout"):
+            value = res.get(key)
+            if value:
+                lines = value if isinstance(value, list) else str(value).splitlines()
+                said += [plain_text(str(line)) for line in lines][-FAILURE_LINES:]
                 break
-        said_how = "" if how == "failed" else f" · {how}"
-        lines = [[("✗ ", "r"), (f"{where} on {result.host.get_name()}: {name}{took}{said_how}", "r")]]
-        lines += [[("    ", ""), (line, "")] for line in said[:FAILURE_LINES] if line.strip()]
-        if self._run.log:
-            lines.append([("    ", ""), (f"the whole output: {self._run.log}", "d")])
-        self._print(self._lines([[], *lines, []]))
+        return said
 
     def v2_runner_retry(self, result):
         if not self._drawn():
@@ -495,8 +559,9 @@ class CallbackModule(DefaultCallback):
                 self._display.display(banner(lines, "NEXT STEPS"), color=COLOR)
             return
         now = self._now()
+        failed = sorted(set(stats.failures) | set(stats.dark))
         with self._display._lock:
-            self._run.end(now)
+            self._run.end(now, failed=bool(failed))
             if self._mode == "live":
                 self._region.title(self._run.title_text(now))
         if self._mode == "lines":
@@ -504,7 +569,6 @@ class CallbackModule(DefaultCallback):
         self._region.finish()
         # PLAY RECAP, for the log alone; the summary is what the screen gets.
         DefaultCallback.v2_playbook_on_stats(self, stats)
-        failed = sorted(set(stats.failures) | set(stats.dark))
         width = self._width()
         summary = self._run.summary(now, width, self._color, failed_hosts=failed)
         plain = self._run.summary(now, width, False, failed_hosts=failed)

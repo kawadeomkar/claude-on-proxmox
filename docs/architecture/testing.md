@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 1936 tests. By file:
+pytest over `tests/unit/`: 1957 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -15,19 +15,24 @@ pytest over `tests/unit/`: 1936 tests. By file:
 - **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
-  the log - and statically, the five tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
+  the log - and statically, the six tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
-- **`just deploy`'s live output** (`test_deploy_view.py` 78, `test_deploy_live.py` 10): the model, fed
-  events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, no line wider
-  than the terminal at any of ten widths, a frame folded to its height, the line per step, the summary -
-  the stage table against `deploy.yml`'s imports and `--only`'s playbooks, and the region against a stand-in
-  `Display`, whose `display`, `prompt_until` and lock it holds to ansible-core's. Then the callback for real:
-  a stand-in deploy, its playbooks named as the real ones, at a pseudo-terminal of the test's own, read back
-  through `vt.py` (a VT100 that counts a frame's wrapped lines, the titles and the bells): the region erased
-  at the end, the prompt whole and answered, the diffs of `--check`, 50 by 12 and 200 by 60, Ctrl-C; the log
-  every line the stream logs, in order; a line per step through a pipe; `-v` and no variable streamed; and no
-  other file naming the variable.
+- **`just deploy`'s live output** (`test_deploy_view.py` 95, `test_deploy_live.py` 14): the model, fed
+  events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
+  by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
+  record replaced left out of the summary, no line wider than the terminal at any of ten widths, a frame
+  folded to its height, the line per step, the summary - the stage table against `deploy.yml`'s imports and
+  `--only`'s playbooks, and the region against a stand-in `Display` (a vars prompt, a screen too small, the
+  echo off on a pseudo-terminal of the test's own), whose `display`, `prompt_until`, `do_var_prompt` and lock
+  it holds to ansible-core's. Then the callback for real: a stand-in deploy, its playbooks named as the real
+  ones, at a pseudo-terminal of the test's own, read back through `vt.py` (a VT100 that counts a frame's
+  wrapped lines, the titles and the bells, and reads the same however the reads split): the region drawn and
+  nothing of it left, with Enter pressed mid-run, the plan and a long report whole, a fact a VM forged unused,
+  the switch not inherited, the prompt whole and answered, the diffs of `--check`, 50 by 12, 200 by 60 and a
+  resize, Ctrl-C; a failure in a rescue, a loop's failed item, a crashed module and a long output's end said;
+  the log every line the stream logs, in order; a line per step through a pipe; `-v`, no variable and no log
+  streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`

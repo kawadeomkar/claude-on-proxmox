@@ -379,16 +379,21 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `tests/unit/test_ssh_config.py` fails if any of them stops.
 
 - **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
-  which only the deploy recipe exports (the run's title), turns the stdout callback's live mode on at
-  verbosity 0: at a terminal, a region at the bottom of the screen (`filter_plugins/live_region.py`) drawn from
+  which only the deploy recipe exports (the run's title) and the callback takes out of its environment at once,
+  so nothing the run starts inherits it, turns the stdout callback's live mode on at verbosity 0 with a run
+  log: at a terminal, a region at the bottom of the screen (`filter_plugins/live_region.py`) drawn from
   `filter_plugins/deploy_view.py`'s model; otherwise a line per step. Every line the stream would print still
-  reaches the run log, in order, through `Display`'s `log_only`; the reports, browser blocks, diffs, warnings
-  and failures print above the region for good; and a prompt erases the region before it prints and gets it
-  back only once answered, since `prompt_until` prints through `display` and then locks. Any `-v` or another
-  stdout callback is the stream. No line of a frame may wrap (`tests/unit/vt.py` counts them). No test or
-  scenario sets the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against
-  a stand-in deploy, holds the log to the stream's, and fails if another file names it (`test_justfile.py`'s
-  recording stand-in aside). See docs/architecture/custom-code.md §7.5.
+  reaches the run log, in order, through `Display`'s `log_only` - so without a log (`LOG_DIR=`) the run is the
+  stream; the reports, browser blocks, diffs, warnings and failures print above the region for good, whole -
+  a report is wrapped, never cut, a failure says its output's end and each failed loop item, and only a
+  failure among a rescued block's own tasks is the block's; and a prompt (`prompt_until`, and a
+  `vars_prompt`'s `do_var_prompt`) erases the region before it prints and gets it back only once answered.
+  What a VM said reaches the screen through `plain_text`, and only `proxmox_vm` gives the summary a VM's
+  address. Any `-v` or another stdout callback is the stream. No line of a frame may wrap
+  (`tests/unit/vt.py` counts them). No test or scenario sets the variable: `test_deploy_live.py` runs the
+  callback at a pseudo-terminal of its own against a stand-in deploy, holds the log to the stream's, and fails
+  if a tracked file other than the callback, the deploy recipe and `test_justfile.py`'s recording stand-in names
+  it. See docs/architecture/custom-code.md §7.5.
 
 - **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`

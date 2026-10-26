@@ -14,8 +14,10 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import io
+import os
 import re
 import signal
+import termios
 import threading
 import time
 from pathlib import Path
@@ -213,7 +215,6 @@ def test_text_is_cut_with_an_ellipsis_and_a_tail_dropped_without_room():
     assert view.cut([("ab", ""), ("cd", "d")], 4) == [("ab", ""), ("cd", "d")]
     assert view.right([("left", "")], [("tail", "")], 12) == [("left", ""), ("    ", ""), ("tail", "")]
     assert view.right([("left side", "")], [("tail", "")], 12) == [("left side", "")]
-    assert view.wrap("one two three four", 9, 2) == ["one two", "three fo…"]
     assert view.tasks_said(1) == "1 task" and view.tasks_said(0) == "0 tasks"
 
 
@@ -222,7 +223,8 @@ def test_a_running_frame_shows_the_stages_the_running_steps_tasks_and_where_the_
     lines = script.run.frame(script.now + 2.5, 100, 40, "⠋", color=False)
     started = time.strftime("%H:%M", time.localtime(STARTED))
     assert lines[0] == f"claude-on-proxmox  deploy alpha · started {started}"
-    assert lines[1] == "  Template is already built. Then provisioning and configuring alpha."
+    # The plan is printed whole above the region, and not cut into it.
+    assert lines[1] == "" and "Template is already built" not in "\n".join(lines)
     text = "\n".join(lines)
     # Done stages whole, the template stage's skipped build no failure; provision says the VM.
     assert re.search(r"^ ✓ template     █{20}    3/3 .* no changes +0\.7 s$", text, re.M), text
@@ -393,6 +395,135 @@ def test_the_summary_has_the_stages_each_vms_words_the_slowest_tasks_and_the_tot
     assert all(len(line) <= 99 for line in summary)
 
 
+def test_a_steps_time_is_its_own_tasks_and_a_handler_at_the_end_of_the_play_adds_only_its_own():
+    script = Script()
+    script.task("configure", "c1", "Harden sshd", "common", took=2.0, outcome="changed")
+    script.task("configure", "v1", "Install the editor", "dev_tools", took=50.0)
+    script.task("configure", "c9", "Restart ssh", "common", took=1.0, outcome="changed")
+    script.run.end(script.now)
+    summary = "\n".join(script.run.summary(script.now, 100, color=False))
+    assert re.search(r"^ ✓ configure    53 s .* common 3\.0 s · dev_tools 50 s$", summary, re.M), summary
+
+
+def test_a_tagged_task_that_runs_on_is_a_wait_once_and_a_quick_one_never():
+    script = Script()
+    script.run.play_start("login")
+    script.run.task("l1", "device_flow | Wait for the approval", "github_projects", 0.0, waits=True)
+    assert script.run.settle(1.9) is False and script.run.current.wait is None
+    assert script.run.settle(2.0) is True, "the bell"
+    assert script.run.settle(9.0) is False, "once"
+    assert script.run.title_text(9.0) == "deploy alpha · waiting for you"
+    lines = script.run.frame(65.0, 120, 40, "⠋", color=False)
+    assert " ⏸ sign in      Claude: waiting for you in the browser ·  · 1:05" in lines, lines
+    script.run.result("l1", "alpha", "ok", 70.0)
+    assert script.run.current.waited(70.0) == 70.0
+    # A retry after it says how long the wait may still take, and rings no second bell.
+    script.run.task("l2", "browser_login | Wait for your browser", "claude_code", 70.0, waits=True)
+    assert script.run.settle(73.0) is True
+    assert script.run.retry("l2", "alpha", 75.0, 300) is False
+    assert script.run.current.wait == (75.0, 300)
+    # Skipped on every VM, as it is where nobody need sign in: over before it could be a wait.
+    script.run.task("l3", "web_login | Wait for the page", "tailscale", 80.0, waits=True)
+    script.run.result("l3", "alpha", "skipped", 80.1)
+    assert script.run.settle(85.0) is False and script.run.current.wait is None
+    # Without a terminal there is no frame to notice it: a long one is counted as yours when it ends.
+    script.run.task("l4", "device_flow | Wait for the approval", "github_projects", 90.0, waits=True)
+    script.run.result("l4", "alpha", "ok", 120.0)
+    assert script.run.current.waited(120.0) == 30.0
+
+
+def test_the_summary_drops_a_report_a_later_one_replaced_and_keeps_every_other():
+    script = Script().to_configure()
+    script.run.result("c6", "alpha", "ok", script.now)
+    say = {}
+    for key, name in (("g1", "auth | Say how to sign gh in"), ("r1", "clone | Say what was selected")):
+        script.task("configure", key, name, "github_projects", took=0.1)
+        say[key] = script.run.find(key)
+    script.task("configure", "k1", "remote_control | Report where to reach the session", "claude_code", took=0.1)
+    # A report and its NEXT STEPS record, as each report task and the set_stats after it make them.
+    script.run.note("alpha", "alpha: gh is not signed in. just deploy signs it in next.", task=say["g1"])
+    script.run.record("alpha", "github", "alpha: gh is not signed in. just deploy signs it in next.")
+    script.run.note("alpha", "24 of 24 repositories selected", task=say["r1"])
+    script.run.note("alpha", "Remote Control is live for alpha.", task=script.run.find("k1"))
+    script.run.record("alpha", "remote_control", "")
+    script.run.record("alpha", "tailscale", "alpha: Tailscale is off.")
+    script.run.note("localhost", "VS Code is opening /home/dev/projects on alpha (192.0.2.61).")
+    script.run.note("localhost", "Every alias is up to date.")
+    # The sign-in: the login's own report clears the record, and the repositories are reported again.
+    script.task("login", "l1", "login | Report the login state", "github_projects", took=0.1)
+    script.run.note("alpha", "alpha: signed in to GitHub as dev", task=script.run.find("l1"))
+    script.run.record("alpha", "github", "")
+    script.task("login", "r2", "clone | Say what was selected", "github_projects", took=0.1)
+    script.run.note("alpha", "25 of 25 repositories selected", task=script.run.find("r2"))
+    script.run.end(script.now)
+    text = "\n".join(script.run.summary(script.now, 100, color=False))
+    alpha = text.split("ALPHA", 1)[1].split("\n\n", 1)[0]
+    assert alpha.splitlines()[1:] == [
+        " alpha is up at 192.0.2.61",
+        " Remote Control is live for alpha.",
+        " VS Code is opening /home/dev/projects on alpha (192.0.2.61).",
+        " signed in to GitHub as dev",
+        " 25 of 25 repositories selected",
+    ], alpha
+    assert "\nTHIS MACHINE\n Every alias is up to date.\n" in text
+    assert text.startswith("claude-on-proxmox  deploy alpha · done") and "\nSTAGES " in text and "\nSLOWEST " in text
+
+
+def test_a_failed_run_says_so_in_the_title():
+    script = Script().to_configure()
+    script.run.end(script.now, failed=True)
+    assert script.run.title_text(script.now) == "deploy alpha · failed"
+
+
+def test_a_vms_id_is_a_number_or_nothing():
+    run = view.Run("deploy alpha", 0.0)
+    run.fact("alpha", "proxmox_vm_resolved_id", "104; rm -rf")
+    run.fact("alpha", "proxmox_vm_address", "192.0.2.61\nProxyCommand x")
+    assert run.facts["alpha"] == {"address": "192.0.2.61 ProxyCommand x"}
+    run.fact("alpha", "proxmox_vm_resolved_id", 104)
+    assert run.facts["alpha"]["vmid"] == 104
+
+
+def test_a_running_stage_counts_its_ended_steps_whole():
+    # --tags, or a rescue never run: a step ends short of what was counted for it, and the stage goes on.
+    plays = [
+        (
+            "configure",
+            "/r/playbooks/configure.yml:20",
+            [*((f"c{n}", "common") for n in range(9)), ("v1", "dev_tools"), ("v2", "dev_tools")],
+        )
+    ]
+    script = Script(plays=plays)
+    script.task("configure", "c0", "Harden sshd", "common")
+    script.task("configure", "v1", "Install the editor", "dev_tools", outcome=None)
+    row = next(line for line in script.run.frame(script.now, 100, 40, "⠋", color=False) if "configure" in line)
+    assert "  2/3  " in row, row
+    assert script.run.title_text(script.now) == "deploy alpha · configure 67%"
+
+
+@pytest.mark.parametrize(
+    ("text", "vm"),
+    [
+        ("alpha: the alias is ready", "alpha"),
+        ("alpha is up at 192.0.2.61", "alpha"),
+        ("VS Code is opening /home/dev/projects on beta (192.0.2.62).", "beta"),
+        ("the aliases of alpha and beta are written", None),
+        ("alphabet soup", None),
+        ("on Tailscale as alpha.tail0.ts.net", "alpha"),
+        ("nothing to say", None),
+    ],
+)
+def test_a_line_said_on_this_machine_is_the_vms_it_names(text, vm):
+    assert view.Run._named(text, ["alpha", "beta"]) == vm
+
+
+def test_fill_wraps_and_never_cuts():
+    text = "Remote Control is live for alpha. Open https://claude.ai/code/a-very-long-path-that-will-not-fit there."
+    lines = view.fill(text, 30)
+    assert " ".join(lines) == text and "…" not in "".join(lines)
+    assert all(len(line) <= 30 for line in lines if " " in line)
+
+
 def test_a_title_follows_the_run_to_done():
     script = Script()
     assert script.run.title_text(0) == "deploy alpha"
@@ -421,6 +552,10 @@ class Display:
         self.display(msg, newline=False)
         return b"typed"
 
+    def do_var_prompt(self, varname, private=True, prompt=None, **kwargs):
+        self.stream.write(f"{prompt}: ")
+        return "typed"
+
 
 class Screen(io.StringIO):
     def isatty(self):
@@ -429,7 +564,9 @@ class Screen(io.StringIO):
 
 @pytest.fixture(autouse=True)
 def _quiet_region(monkeypatch, request):
-    """For the region's tests: no spinner between two looks at the screen, and SIGWINCH's handler put back."""
+    """For the region's tests: an input that is no terminal - under pytest -s it would be the developer's, whose echo
+    the region turns off - no spinner between two looks at the screen, and SIGWINCH's handler put back."""
+    monkeypatch.setattr(live.sys, "stdin", io.StringIO())
     if "region" not in request.function.__name__ and "printed" not in request.function.__name__:
         yield
         return
@@ -523,6 +660,49 @@ def test_the_route_sends_to_the_log_alone_and_never_a_prompt():
     assert display.logged[-1] == "after the end" and "after the end" not in stream.getvalue()
 
 
+def test_a_region_on_a_screen_too_small_for_one_draws_nothing():
+    region, _, stream = _region(frame=lambda cols, rows, glyph: ["one", "two"])
+    region._terminal_size = lambda: (40, 3)
+    region.start()
+    region.finish()
+    assert "one" not in stream.getvalue()
+
+
+def test_a_region_steps_aside_for_a_vars_prompt_too():
+    region, display, stream = _region(frame=lambda cols, rows, glyph: ["region"])
+    seen = []
+    display.do_var_prompt = lambda *args, **kwargs: seen.append((stream.getvalue(), region.prompting)) or "typed"
+    region.start()
+    try:
+        assert display.do_var_prompt("confirm_destroy", prompt="Delete these VMs?") == "typed"
+    finally:
+        region.finish()
+    before, prompting = seen[0]
+    assert prompting and before.endswith("\r\x1b[J")
+
+
+def test_the_region_turns_the_echo_off_while_it_draws_and_on_for_a_prompt_and_at_the_end(monkeypatch):
+    # A pseudo-terminal of the test's own, never the developer's.
+    master, slave = os.openpty()
+    terminal = os.fdopen(slave, "r")
+    monkeypatch.setattr(live.sys, "stdin", terminal)
+    echoes = lambda: bool(termios.tcgetattr(slave)[3] & termios.ECHO)  # noqa: E731
+    try:
+        assert echoes()
+        region, display, _ = _region(frame=lambda cols, rows, glyph: ["region"])
+        during = []
+        display.prompt_until = lambda *args, **kwargs: during.append(echoes()) or b"typed"
+        region.start()
+        assert not echoes()
+        display.prompt_until("Code:")
+        assert during == [True] and not echoes()
+        region.finish()
+        assert echoes()
+    finally:
+        terminal.close()
+        os.close(master)
+
+
 def test_a_title_is_written_when_it_changes_and_a_bell_when_asked():
     region, _, stream = _region(frame=lambda cols, rows, glyph: [])
     region.title("deploy alpha")
@@ -545,4 +725,7 @@ def test_the_display_the_region_wraps_is_the_one_it_was_built_against():
     source = inspect.getsource(Display.prompt_until)
     assert "self._final_q.send_prompt(" in source, "a worker's prompt is the main process's to print"
     assert source.index("self.display(msg)") < source.index("with self._lock:")
+    # A vars_prompt reads with input(), through the prompt its do_var_prompt looks up each time.
+    assert "do_prompt = self.prompt" in inspect.getsource(Display.do_var_prompt)
+    assert "input(msg)" in inspect.getsource(Display.prompt)
     assert isinstance(Display()._lock, type(threading.RLock()))

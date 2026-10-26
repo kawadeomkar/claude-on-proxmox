@@ -32,6 +32,7 @@ REPO = Path(__file__).resolve().parents[2]
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
 SYNC_ON = b"\x1b[?2026h"
 FOOTER = re.compile(r"^. \d+:\d\d · stage \d of \d")
+HEADER = re.compile(r"^claude-on-proxmox  deploy .* · started \d\d:\d\d")
 PROMPT = "alpha: paste the code here, or press Enter to skip"
 
 PLAYBOOKS = {
@@ -67,14 +68,7 @@ PLAYBOOKS = {
 - name: Create the VMs on Proxmox
   hosts: alpha
   gather_facts: false
-  tasks:
-    - name: present | Clone from template
-      ansible.builtin.command: sleep 0.4
-    - name: Record the VM
-      ansible.builtin.set_fact:
-        proxmox_vm_exists: false
-        proxmox_vm_resolved_id: 104
-        proxmox_vm_address: 192.0.2.61
+  roles: [proxmox_vm]
 - name: Publish and report the provisioned VMs
   hosts: localhost
   gather_facts: false
@@ -119,6 +113,14 @@ PLAYBOOKS = {
   hosts: localhost
   gather_facts: false
   tasks:
+    - name: Ask what this run's commands see of the live switch
+      ansible.builtin.shell: echo "[${CLAUDE_ON_PROXMOX_LIVE-}]"
+      register: inherited
+      changed_when: false
+      check_mode: false
+    - name: Say what they saw
+      ansible.builtin.debug:
+        msg: "The live switch, as this run's commands see it: {{ inherited.stdout }}"
     - name: Say what was opened
       ansible.builtin.debug:
         msg: VS Code is opening /home/dev/projects on alpha.
@@ -127,7 +129,19 @@ PLAYBOOKS = {
         data:
           claude_vm_next: "{{ {'alpha': {'vm': 'alpha: just login alpha --only github'}} }}"
 """,
+    "roles/proxmox_vm/tasks/main.yml": """
+- name: present | Clone from template
+  ansible.builtin.command: sleep 0.4
+- name: present | Record the VM
+  ansible.builtin.set_fact:
+    proxmox_vm_exists: false
+    proxmox_vm_resolved_id: 104
+    proxmox_vm_address: 192.0.2.61
+""",
     "roles/common/tasks/main.yml": """
+- name: A fact the VM could set, any task's, naming another address
+  ansible.builtin.set_fact:
+    proxmox_vm_address: "\\e]0;forged\\a192.0.2.99"
 - name: Refresh apt cache
   ansible.builtin.command: "true"
 - name: Set the time zone
@@ -140,6 +154,12 @@ PLAYBOOKS = {
     mode: "0644"
 - name: Install the tools
   ansible.builtin.include_tasks: tools.yml
+- name: Say what is left to do
+  ansible.builtin.debug:
+    msg: >-
+      Remote Control is configured on alpha but not started: no Claude Code login is stored for dev on it.
+      just deploy signs it in next, in this run. A sign-in made any other way starts it by itself too, and
+      just deploy alpha --only configure then confirms it.
 """,
     "roles/common/tasks/tools.yml": """
 - name: tools | Install Node.js
@@ -161,6 +181,11 @@ PLAYBOOKS = {
   retries: 30
   delay: 1
   changed_when: true
+  tags: [attention_browser]
+- name: device_flow | Wait for the approval
+  ansible.builtin.command: sleep 2.5
+  changed_when: false
+  when: device_wait | default(false) | bool
   tags: [attention_browser]
 - name: browser_login | Ask for the code
   ansible.builtin.pause:
@@ -188,6 +213,18 @@ class Ran:
     @property
     def transcript(self):
         return "\n".join(line.rstrip() for line in self.screen.transcript())
+
+    def assert_drawn_and_gone(self, visible_only=False):
+        """A region was drawn, never wrapped, wrote nothing unknown, swallowed nothing, and left nothing of itself:
+        no footer and no header, on the screen or above it (visible_only: on the screen, after a resize, which
+        pushes the screen into the history by design)."""
+        assert SYNC_ON in self.raw, self.text
+        assert self.screen.unknown == set() and self.screen.pending == b"", (self.screen.unknown, self.screen.pending)
+        lines = self.screen.lines if visible_only else self.screen.transcript()
+        left = [line for line in lines if FOOTER.match(line) or HEADER.match(line)]
+        assert left == [], "\n".join(self.screen.transcript())
+        if not visible_only:
+            assert self.screen.frame_wraps == 0
 
 
 @pytest.fixture
@@ -219,9 +256,20 @@ def _fresh(root):
     (root / "motd").write_text("welcome\n")
 
 
-def _deploy(root, *args, title="deploy alpha", cols=100, rows=30, keys=None, interrupt=None, env=None, timeout=120):
-    """deploy.yml at a pseudo-terminal of cols and rows: keys typed once PROMPT has the terminal, or a Ctrl-C once the
-    title says interrupt."""
+def _seconds(said):
+    """A duration as the summary says it - 0.6 s, 33 s, 3:58 - in seconds."""
+    if ":" in said:
+        minutes, seconds = said.split(":")
+        return int(minutes) * 60 + int(seconds)
+    return float(said.removesuffix(" s"))
+
+
+def _deploy(
+    root, *args, title="deploy alpha", cols=100, rows=30, keys=None, interrupt=None, at=None, env=None, timeout=120
+):
+    """deploy.yml at a pseudo-terminal of cols and rows: keys typed once PROMPT has the terminal, a Ctrl-C once the
+    title says interrupt, and at: (words of the title, bytes typed or a new (cols, rows)) done once the title says
+    them."""
     _fresh(root)
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -260,6 +308,14 @@ def _deploy(root, *args, title="deploy alpha", cols=100, rows=30, keys=None, int
             if interrupt and screen.titles and interrupt in screen.titles[-1]:
                 interrupt = None
                 os.write(master, b"\x03")
+            if at and screen.titles and at[0] in screen.titles[-1]:
+                if isinstance(at[1], bytes):
+                    os.write(master, at[1])
+                else:
+                    # The terminal's new size, which sends the run SIGWINCH; the screen keeps its lines, as xterm does.
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", at[1][1], at[1][0], 0, 0))
+                    screen.resize(*at[1])
+                at = None
         process.wait(timeout=30)
     finally:
         if process.poll() is None:
@@ -270,21 +326,26 @@ def _deploy(root, *args, title="deploy alpha", cols=100, rows=30, keys=None, int
     return Ran(process.returncode, raw, log.read_text() if log.exists() else "", screen)
 
 
-def _piped(root, *args, title="deploy alpha", env=None):
+def _piped(root, *args, title="deploy alpha", env=None, playbook="deploy.yml", timeout=120):
     _fresh(root)
-    result = subprocess.run(
-        [str(ANSIBLE_PLAYBOOK), "-i", str(root / "hosts"), *args, str(root / "deploy.yml")],
+    process = subprocess.Popen(
+        [str(ANSIBLE_PLAYBOOK), "-i", str(root / "hosts"), *args, str(root / playbook)],
         cwd=root,
         env=_environment(root, title, env),
         stdin=subprocess.DEVNULL,
-        capture_output=True,
-        timeout=120,
-        start_new_session=True,
-        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        process_group=0,
     )
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except BaseException:
+        # The run's whole group: its workers, and what they started.
+        _end(process)
+        raise
     _fail_if_the_desktop_was_reached(root)
     log = root / "run.log"
-    return Ran(result.returncode, result.stdout + result.stderr, log.read_text() if log.exists() else "")
+    return Ran(process.returncode, output, log.read_text() if log.exists() else "")
 
 
 def _logged(log: str) -> list[str]:
@@ -311,17 +372,31 @@ def _in_order(part: list[str], whole: list[str]) -> list[str]:
 
 
 def test_a_deploy_at_a_terminal_is_drawn_in_place_and_leaves_its_words_and_the_summary(stand_in):
-    ran = _deploy(stand_in, "-e", "ask_code=true", keys=b"abc123\r")
+    # Enter pressed three times while configure runs: with no echo, the cursor stays where the region left it.
+    at = ("configure", b"\r\r\r")
+    ran = _deploy(stand_in, "-e", "ask_code=true device_wait=true", keys=b"abc123\r", at=at)
     assert ran.rc == 0, ran.text
     screen = ran.transcript
     # The region: drawn, never wrapped, nothing written it does not mean, and erased at the end.
-    assert SYNC_ON in ran.raw
-    assert ran.screen.frame_wraps == 0 and ran.screen.unknown == set(), ran.screen.unknown
-    assert not [line for line in screen.splitlines() if FOOTER.match(line)], screen
+    ran.assert_drawn_and_gone()
+    # The run's plan, whole; what this run's commands inherit, without the switch; a fact the VM set, unused.
+    assert "  The template is already built. Then provisioning and configuring alpha." in screen
+    assert "The live switch, as this run's commands see it: []" in screen
+    assert b"forged" not in ran.raw and "192.0.2.99" not in screen
     # Above it, for good: the reports, the browser's block, the prompt whole and its answer taken.
     assert "  alpha is up at 192.0.2.61" in screen and "All items completed" not in screen
     assert "##  ACTION REQUIRED IN YOUR BROWSER  -  localhost  -  Claude Code sign-in" in screen
     assert f"{PROMPT}:" in screen and "  alpha: the code was abc123" in screen
+    # A report is whole, however long: wrapped under its VM's name, never cut.
+    first, *rest = screen[screen.index("  alpha  Remote Control is configured") :].splitlines()
+    report = [first]
+    for line in rest:
+        if not line.startswith(" " * 9):
+            break
+        report.append(line)
+    said = " ".join(" ".join(report).split())
+    assert len(report) > 1 and said.endswith("just deploy alpha --only configure then confirms it."), report
+    assert "…" not in said and all(len(line) < 100 for line in report)
     # What the stream would have shown is not on the screen: the log has it.
     assert "TASK [" not in screen and "PLAY RECAP" not in screen and "ok: [" not in screen
     # The summary, then NEXT STEPS.
@@ -334,7 +409,10 @@ def test_a_deploy_at_a_terminal_is_drawn_in_place_and_leaves_its_words_and_the_s
     titles = ran.screen.titles
     assert titles[0] == "deploy alpha" and titles[-1] == "deploy alpha · done"
     assert "deploy alpha · waiting for you" in titles and any(t.startswith("deploy alpha · configure ") for t in titles)
-    assert ran.screen.bells == 2
+    # Claude's retried wait, the wait that never retries, and the end; both waits' time is yours.
+    assert ran.screen.bells == 3
+    yours = re.search(r"^ ✓ sign in .*Claude \S+(?: s)? \((\S+(?: s)?) yours\)$", screen, re.M)
+    assert yours and _seconds(yours.group(1)) >= 2.5, screen
     # The log: no colour, the stream's every task, and the run's own words.
     assert "\x1b" not in ran.log
     for said in ("TASK [common : Write the motd]", "PLAY RECAP", "##  NEXT STEPS", "STAGES", "alpha is up at"):
@@ -354,7 +432,7 @@ def test_the_log_is_the_streams_with_the_runs_own_words_added(stand_in):
 def test_a_dry_run_is_drawn_with_its_diffs_above(stand_in):
     ran = _deploy(stand_in, "--check", "--diff", title="deploy --check alpha")
     assert ran.rc == 0, ran.text
-    assert ran.screen.frame_wraps == 0
+    ran.assert_drawn_and_gone()
     screen = ran.transcript
     assert "-welcome\n+welcome to alpha" in screen, screen
     assert "WOULD CHANGE" in screen and re.search(r"^ ✓ configure .* 1 +common", screen, re.M), screen
@@ -365,15 +443,21 @@ def test_a_dry_run_is_drawn_with_its_diffs_above(stand_in):
 def test_any_size_of_terminal_takes_the_region_unwrapped(stand_in, cols, rows):
     ran = _deploy(stand_in, cols=cols, rows=rows)
     assert ran.rc == 0, ran.text
-    assert ran.screen.frame_wraps == 0 and ran.screen.unknown == set()
-    assert not [line for line in ran.transcript.splitlines() if FOOTER.match(line)]
+    ran.assert_drawn_and_gone()
+
+
+def test_a_resize_mid_run_leaves_no_region_on_the_screen(stand_in):
+    ran = _deploy(stand_in, at=("configure", (60, 16)))
+    assert ran.rc == 0, ran.text
+    ran.assert_drawn_and_gone(visible_only=True)
+    assert any(line.startswith("claude-on-proxmox  deploy alpha · done") for line in ran.screen.transcript())
 
 
 def test_ctrl_c_ends_the_run_with_the_region_gone_and_the_tab_saying_so(stand_in):
     ran = _deploy(stand_in, interrupt="waiting for you")
     assert ran.rc != 0
     assert ran.screen.titles[-1] == "deploy alpha · stopped", ran.screen.titles
-    assert not [line for line in ran.transcript.splitlines() if FOOTER.match(line)], ran.transcript
+    ran.assert_drawn_and_gone()
     assert "User interrupted execution" in ran.transcript
 
 
@@ -382,10 +466,10 @@ def test_without_a_terminal_each_step_is_a_line(stand_in):
     assert ran.rc == 0, ran.text
     assert "\x1b" not in ran.text, ran.text
     lines = ran.text.splitlines()
-    assert re.search(r"^✓ configure / common +6 tasks · 2 changed +\d", ran.text, re.M), ran.text
-    assert re.search(r"^✓ configure +7 tasks · 2 changed", ran.text, re.M), ran.text
+    assert re.search(r"^✓ configure / common +8 tasks · 2 changed +\d", ran.text, re.M), ran.text
+    assert re.search(r"^✓ configure +9 tasks · 2 changed", ran.text, re.M), ran.text
     assert (
-        re.search(r"^✓ sign in / Claude +6 tasks · 1 changed", ran.text, re.M)
+        re.search(r"^✓ sign in / Claude +7 tasks · 1 changed", ran.text, re.M)
         and len(re.findall(r"^✓ sign in", ran.text, re.M)) == 1
     )
     assert "Waiting for you in the browser for localhost" in ran.text
@@ -393,24 +477,116 @@ def test_without_a_terminal_each_step_is_a_line(stand_in):
     assert lines.index("STAGES          TIME    TASKS  CHANGED") > lines.index("  alpha is up at 192.0.2.61")
 
 
-@pytest.mark.parametrize("args", [["-v"], []], ids=["verbose", "no-variable"])
-def test_verbose_or_without_the_variable_the_run_is_streamed(stand_in, args):
-    ran = _piped(stand_in, *args, title="deploy alpha" if args else "")
+FAILURES = """
+- name: Four ways to fail, one VM each
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: A block whose rescue fails
+      when: inventory_hostname == 'h1'
+      block:
+        - name: Fail inside the block
+          ansible.builtin.fail:
+            msg: the block failed and was rescued
+      rescue:
+        - name: Fail inside the rescue
+          ansible.builtin.fail:
+            msg: the rescue failed too
+    - name: Run each item
+      ansible.builtin.shell: "echo {{ item }}-says-no >&2; test {{ item }} != b"
+      loop: [a, b]
+      when: inventory_hostname == 'h2'
+    - name: Crash
+      crash: {}
+      when: inventory_hostname == 'h3'
+    - name: Thirty lines, then fail
+      ansible.builtin.shell: "for n in $(seq 1 30); do echo line-$n >&2; done; exit 1"
+      when: inventory_hostname == 'h4'
+"""
+
+
+def test_a_failure_says_what_failed_whole_wherever_it_is(tmp_path):
+    (tmp_path / "failures.yml").write_text(FAILURES)
+    (tmp_path / "library").mkdir()
+    (tmp_path / "library" / "crash.py").write_text(
+        "#!/usr/bin/python\nimport sys\nsys.stderr.write('module went bang\\n')\nsys.exit(1)\n"
+    )
+    python = f"ansible_connection=local ansible_python_interpreter={sys.executable}"
+    (tmp_path / "hosts").write_text("".join(f"h{n} {python}\n" for n in range(1, 5)))
+    ran = _piped(tmp_path, playbook="failures.yml")
+    assert ran.rc == 2, ran.text
+    text = ran.text
+    # A failure in a rescue is the run's: only what the rescue took is not.
+    assert "✗ run on h1: Fail inside the rescue" in text and "the rescue failed too" in text
+    assert "the block failed and was rescued" not in text
+    # A loop's failure is its items'.
+    assert "✗ run on h2: Run each item" in text and "b-says-no" in text
+    # A module that crashed says why.
+    assert "✗ run on h3: Crash" in text and "module went bang" in text
+    # The end of a long output, where the error is.
+    assert "line-30" in text and "line-10\n" not in text
+    assert re.search(r"^\d+ tasks · nothing changed · 4 failed", text, re.M), text
+
+
+@pytest.mark.parametrize(
+    ("args", "env"),
+    [(["-v"], {}), ([], {"CLAUDE_ON_PROXMOX_LIVE": ""}), ([], {"ANSIBLE_LOG_PATH": ""})],
+    ids=["verbose", "no-variable", "no-log"],
+)
+def test_verbose_without_the_variable_or_without_a_log_the_run_is_streamed(stand_in, args, env):
+    # No log, as LOG_DIR= makes it: the stream it would have held must reach the screen.
+    ran = _piped(stand_in, *args, env=env)
     assert ran.rc == 0, ran.text
     assert "TASK [common : Write the motd]" in ran.text and "PLAY RECAP" in ran.text
     assert "STAGES" not in ran.text
 
 
+def test_the_screen_reads_the_same_however_the_terminals_reads_split():
+    # vt.py, which every test here reads the screen with: a title by BEL and by ST, a frame, pause's ESC [ before
+    # its carriage return and its erase, a character of three bytes, and a bell, split at any two places.
+    stream = (
+        b"\x1b]0;deploy alpha\x07\x1b[?2026h\rone\x1b[K\ntwo\x1b[K\x1b[J\x1b[?2026l\x1b[1A\r\x1b[J"
+        b"alpha: paste the code:\r\nabc123^M\x1b[\r\x1b[\x1b[K\x1b]0;t\x1b\\"
+        b"\x1b[?2026h\rr\xe2\x9c\x93gion\x1b[K\x1b[J\x1b[?2026l\x07"
+    )
+    whole = VT(40, 10)
+    whole.feed(stream)
+    assert whole.titles == ["deploy alpha", "t"] and whole.bells == 1 and whole.unknown == set()
+    assert whole.transcript() == ["alpha: paste the code:", "r✓gion"] and whole.pending == b""
+    for first in range(len(stream) + 1):
+        for second in range(first, len(stream) + 1):
+            split = VT(40, 10)
+            for part in (stream[:first], stream[first:second], stream[second:]):
+                split.feed(part)
+            assert (split.history, split.lines, split.titles, split.bells, split.unknown, split.pending) == (
+                whole.history,
+                whole.lines,
+                whole.titles,
+                whole.bells,
+                whole.unknown,
+                whole.pending,
+            ), (first, second)
+
+
 def test_no_other_test_or_scenario_draws_a_run():
-    mentions = [
-        str(path.relative_to(REPO))
-        for root in ("tests", ".github")
-        for path in (REPO / root).rglob("*")
-        if path.is_file()
-        and path.suffix in (".py", ".yml", ".yaml", ".sh", ".cfg", ".ini")
-        and "CLAUDE_ON_PROXMOX_LIVE" in path.read_text(errors="replace")
-    ]
-    # test_justfile.py reads the title the recipe exports, from an ansible-playbook stand-in that runs nothing.
-    assert sorted(mentions) == ["tests/unit/test_deploy_live.py", "tests/unit/test_justfile.py"], mentions
-    justfile = (REPO / "justfile").read_text()
-    assert justfile.count("export CLAUDE_ON_PROXMOX_LIVE") == 1
+    tracked = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True).stdout
+    mentions = sorted(
+        name
+        for name in tracked.splitlines()
+        if not name.endswith(".md")
+        and (REPO / name).is_file()
+        and "CLAUDE_ON_PROXMOX_LIVE" in (REPO / name).read_text(errors="replace")
+    )
+    # The callback that reads it, the recipe that sets it, and the tests: test_justfile.py reads the title the
+    # recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or config.
+    assert mentions == [
+        "callback_plugins/claude_on_proxmox.py",
+        "justfile",
+        "tests/unit/test_deploy_live.py",
+        "tests/unit/test_justfile.py",
+    ], mentions
+    # In the justfile, deploy's recipe alone.
+    lines = (REPO / "justfile").read_text().splitlines()
+    start = next(n for n, line in enumerate(lines) if line.startswith("deploy "))
+    end = next(n for n in range(start + 1, len(lines)) if lines[n] and not lines[n].startswith(" "))
+    assert all(start < n < end for n, line in enumerate(lines) if "CLAUDE_ON_PROXMOX_LIVE" in line)

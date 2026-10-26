@@ -9,16 +9,20 @@ What it does, once started:
 
 - Draws what its frame function returns at the bottom of the screen: one write per redraw, inside
   synchronized-output marks (CSI ?2026), the cursor moved up exactly the lines drawn, the region cut to the height,
-  and ten times a second for a spinner. A frame's lines come already cut to the width, so none wraps.
+  and ten times a second for a spinner. A frame's lines come already cut to the width, so none wraps. A screen
+  under MIN_ROWS rows or MIN_COLS columns gets no region at all: a region as tall as the screen scrolls each redraw.
 - Wraps Display.display: anything printed erases the region first and redraws it after, so it stays above for
   good. A route function, given the call's keyword arguments, may send it to the log only (log_only), which leaves
   the screen alone.
-- Wraps Display.prompt_until: a prompt prints with display() and only then takes Display's lock to read the keys
-  (ansible-core 2.21), so the region is erased before it and drawn again only once it returns. The spinner takes
-  the same lock, and draws nothing while a prompt is up.
+- Wraps Display.prompt_until and Display.do_var_prompt: a pause prints with display() and only then takes Display's
+  lock to read the keys (ansible-core 2.21), and a vars_prompt reads with input(), so the region is erased before
+  either and drawn again only once it returns. The spinner takes the same lock, and draws nothing while a prompt is
+  up.
 - On a resize (SIGWINCH), which can wrap a frame worked out for the old size, pushes the screen into the
   scrollback and draws again from the top. The cursor is never hidden.
 - Sets the terminal's title (OSC 0) when it changes, and rings the bell when asked.
+- Turns the terminal's echo off while it draws, and back on for a prompt and at the end: an Enter typed during the
+  run would move the cursor under the region, and the next redraw would leave a copy of it behind.
 - Erases the region at exit, Ctrl-C included.
 
 Forked workers inherit the wrapped methods: only the process that started the region draws. Without a frame
@@ -31,11 +35,13 @@ import atexit
 import os
 import signal
 import sys
+import termios
 import threading
 
 FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SYNC_ON, SYNC_OFF = "\x1b[?2026h", "\x1b[?2026l"
 FRAME_SECONDS = 0.1
+MIN_ROWS, MIN_COLS = 4, 20
 
 
 def can_draw(stream=None, environ=None) -> bool:
@@ -68,6 +74,7 @@ class LiveRegion:
         self._stop = threading.Event()
         self._thread = None
         self._title = None
+        self._echo = None  # the terminal's settings before the echo went off, while it is off
         self.prompting = False
 
     # --- the screen -------------------------------------------------------------------------------------------
@@ -100,9 +107,11 @@ class LiveRegion:
                 self._drawn = 0
             self._size = (cols, rows)
             lines = self._frame(cols, rows, FRAMES[self._tick % len(FRAMES)])
-            limit = max(3, rows - 1)
+            if rows < MIN_ROWS or cols < MIN_COLS:
+                lines = []
+            limit = rows - 1
             if len(lines) > limit:
-                lines = lines[: limit - 2] + [f"⋮ {len(lines) - limit + 1} more lines", lines[-1]]
+                lines = lines[: limit - 2] + [f"⋮ {len(lines) - limit + 1} more lines"[: cols - 1], lines[-1]]
             up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
             self._write(SYNC_ON + up + "\r" + "\x1b[K\n".join(lines) + "\x1b[K\x1b[J" + SYNC_OFF)
             self._drawn = len(lines)
@@ -119,10 +128,25 @@ class LiveRegion:
             with self._display._lock:
                 self._write("\a")
 
+    def _quiet(self, on):
+        """The terminal's echo off (on=True), or back as it was. Nothing for an input that is no terminal."""
+        try:
+            fd = sys.stdin.fileno()
+            if on and self._echo is None and os.isatty(fd):
+                settings = termios.tcgetattr(fd)
+                quiet = [*settings[:3], settings[3] & ~termios.ECHO, *settings[4:]]
+                termios.tcsetattr(fd, termios.TCSADRAIN, quiet)
+                self._echo = settings
+            elif not on and self._echo is not None:
+                termios.tcsetattr(fd, termios.TCSADRAIN, self._echo)
+                self._echo = None
+        except (OSError, ValueError, AttributeError, termios.error):
+            self._echo = None
+
     # --- the wrappers -----------------------------------------------------------------------------------------
     def _wrap(self):
         display = self._display
-        original_display, original_prompt = display.display, display.prompt_until
+        original_display = display.display
 
         def wrapped_display(
             msg, color=None, stderr=False, screen_only=False, log_only=False, newline=True, caplevel=None
@@ -135,31 +159,40 @@ class LiveRegion:
             # Routed even once the region is finished: what prints after it, a recap, follows the same rule.
             if self._route and not self.prompting:
                 kwargs = self._route(kwargs)
+            # Under the lock either way, so every write to the log takes the locks in one order.
             if kwargs.get("log_only") or not self._frame or self._stop.is_set():
-                return original_display(msg, **kwargs)
+                with display._lock:
+                    return original_display(msg, **kwargs)
             with display._lock:
                 self._erase()
                 original_display(msg, **kwargs)
                 self.redraw()
 
-        def wrapped_prompt(msg, *args, **kwargs):
-            if os.getpid() != self._pid:
-                return original_prompt(msg, *args, **kwargs)
-            # The prompt prints through display(), and goes to the screen whatever the route says.
-            with display._lock:
-                self._erase()
-                self._paused = True
-                self.prompting = True
-            try:
-                return original_prompt(msg, *args, **kwargs)
-            finally:
+        def stepping_aside(original):
+            def wrapped_prompt(*args, **kwargs):
+                if os.getpid() != self._pid:
+                    return original(*args, **kwargs)
+                # The prompt prints through display() or input(), and goes to the screen whatever the route says.
                 with display._lock:
-                    self._paused = False
-                    self.prompting = False
-                    self.redraw()
+                    self._erase()
+                    self._paused = True
+                    self.prompting = True
+                    self._quiet(False)
+                try:
+                    return original(*args, **kwargs)
+                finally:
+                    with display._lock:
+                        self._paused = False
+                        self.prompting = False
+                        if self._frame and not self._stop.is_set():
+                            self._quiet(True)
+                        self.redraw()
+
+            return wrapped_prompt
 
         display.display = wrapped_display
-        display.prompt_until = wrapped_prompt
+        display.prompt_until = stepping_aside(display.prompt_until)
+        display.do_var_prompt = stepping_aside(display.do_var_prompt)
 
     def _spin(self):
         while not self._stop.wait(FRAME_SECONDS):
@@ -177,6 +210,7 @@ class LiveRegion:
         if self._frame:
             signal.signal(signal.SIGWINCH, lambda *_: setattr(self, "_resized", True))
             atexit.register(self.finish)
+            self._quiet(True)
             self._thread = threading.Thread(target=self._spin, daemon=True)
             self._thread.start()
             self.redraw()
@@ -187,6 +221,7 @@ class LiveRegion:
             with self._display._lock:
                 self._erase()
                 self._stop.set()
+                self._quiet(False)
 
 
 class FilterModule:
