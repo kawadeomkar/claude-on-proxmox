@@ -235,7 +235,14 @@ class CallbackModule(CallbackBase):
             self._reported = True
             if not self._quiet:
                 model = facts["status_report"]
-                self._display.display(self._status.status_text(model, self._color, reading=self._reading(model)))
+                reading = self._reading(model)
+                plain = self._status.status_text(model, False, reading=reading)
+                if self._color:
+                    # The colours are for the screen: Display logs what it is given, so the log gets the plain text.
+                    self._display.display(self._status.status_text(model, True, reading=reading), screen_only=True)
+                    self._display.display(plain, log_only=True)
+                else:
+                    self._display.display(plain)
 
     # A failure or an unreachable VM is the report's to say - a rescue records it, or the ping's register does - so
     # neither prints Ansible's error: only its warnings, and its message at the end of a run that left no report.

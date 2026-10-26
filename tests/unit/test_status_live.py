@@ -75,6 +75,7 @@ def _at_a_terminal(
     resize=None,
     interrupt=False,
     playbook=None,
+    colour=False,
 ):
     """Run status.yml at a pseudo-terminal of cols x rows: its rc, the VT the bytes went through, the raw bytes and
     the run log. resize, (cols, rows), changes the size once the first frame with the VMs is drawn; interrupt sends
@@ -85,6 +86,9 @@ def _at_a_terminal(
     # The test's own module beside the project's, which the harness names alone.
     library = f"{tmp_path / 'library'}{os.pathsep}{REPO / 'playbooks' / 'library'}"
     env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM=term, ANSIBLE_LIBRARY=library, **LIVE)
+    if colour:
+        # The harness turns colour off for every run; this one is at a colour terminal, as a person's is.
+        env["ANSIBLE_NOCOLOR"] = "0"
     master, slave = pty.openpty()
     _size(slave, cols, rows)
     process = subprocess.Popen(
@@ -210,6 +214,15 @@ def test_ctrl_c_erases_the_live_region_and_ends_the_run(tmp_path, fleet) -> None
     shown = "\n".join(_shown(vt))
     assert not any(glyph in shown for glyph in FRAMES), shown
     assert "interrupted" in shown.lower(), shown
+
+
+def test_colour_reaches_the_screen_and_never_the_log(tmp_path, fleet) -> None:
+    # A live smoke at a colour terminal found the run log full of the report's colour codes.
+    rc, vt, output, log = _at_a_terminal(tmp_path, fleet, 100, 60, colour=True)
+    assert rc == 0, output.decode(errors="replace")
+    assert b"\x1b[1;36mVMS" in output
+    assert "\x1b" not in log
+    assert _shown(vt) == [line.rstrip() for line in _report(log)]
 
 
 def test_a_dumb_terminal_is_given_the_finished_report_only(tmp_path, fleet) -> None:
