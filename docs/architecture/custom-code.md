@@ -289,10 +289,9 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   and the summary.
 
 No test or scenario sets the variable - the harness passes on only `PASSED_ON`, and `test_deploy_live.py`
-fails if a tracked file other than the callback, the engine, the declarations, the justfile's recipes drawn live,
-the live tests' kit, the live tests themselves and `test_justfile.py`, whose `ansible-playbook` only records,
-names it - so nothing a test
-pins is drawn.
+fails if a tracked file other than the callback, the engines (a playbook's, a command's, and `tools/live`), the
+declarations, the justfile's recipes drawn live, the live tests' kit, the live tests themselves and
+`test_justfile.py`, whose `ansible-playbook` only records, names it - so nothing a test pins is drawn.
 
 ## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
 
@@ -526,6 +525,44 @@ its own and hands the frame to an `Output`, drawing its lines with `screen.py`. 
 own, read back through `vt.py`, or piped, with the checks every drawn run must pass (`Ran`); and
 `test_deploy_live.py`'s guard names each tracked file that may name the variable.
 
+**Runs in parts, and commands.** A recipe that is more than one process - checks one after another, two playbooks -
+is drawn as one run, its parts in turn:
+
+- **`tools/live`.** The justfile's `live` runs it with the environment's Python and the run's logging settings:
+  `run <stage> [--step <label>] -- <command>` in front of each command of the recipe, `end "$?"` from the recipe's
+  trap. It decides first, with the standard library alone, since a fresh virtualenv's first command must work before
+  `just install` has put the engine's packages there: it passes the command through - `exec`'d unchanged, the switch
+  and the state's path taken out of its environment and nothing else changed - when there is no terminal, no title,
+  a `-v` in `ANSIBLE_ARGS`, no run log (`LOG_DIR=`), or no PyYAML and ansible-core. Otherwise it runs itself again
+  through `tools/run-logged` under the title's recipe, so a command's run has a log under its rules, and hands the
+  command to `filter_plugins/live_commands.py`.
+- **A command, drawn.** Its child gets `/dev/null` for stdin, one pipe for stdout and stderr, and this environment
+  without `CLAUDE_ON_PROXMOX_LIVE`, the state's path or `ANSIBLE_LOG_PATH`, with `NO_COLOR`, `PYTHONUNBUFFERED` and
+  `PRE_COMMIT_COLOR=never`. It is one task of its stage's step (`Run.command`), on this machine; every line it prints
+  goes to the run's log through Ansible's `Display`, in the log's format and order, and the last one is drawn dim
+  after the task. A part that fails prints its last 40 lines above, whole. Ctrl-C is the child's - it shares the
+  terminal's process group - and a handler's here, never `SIG_IGN`, which the child would inherit: the part reads
+  the pipe to its end, so the child's last words reach the log, and exits 130; a second Ctrl-C ends the child.
+- **The state.** Each part takes over the run's model from the parts before it (`Run.dump` and `Run.adopt`: every
+  task, step, report and NEXT STEPS record, each time from the run's start, so one clock runs through the parts),
+  draws them done above its own, works and saves it again. It is a file in `LIVE_DIR` (`.cache/live/`: git-ignored,
+  refused by `tests/check_no_local_files.sh`) named for the run's stamp and its top recipe, which the recipe exports
+  as `CLAUDE_ON_PROXMOX_LIVE_STATE`: made by the run's first part, written whole, 0600 in a 0700 directory, and
+  taken over only when it is of this version and this run's title. A playbook that is a part does the same in the
+  engine: it draws the parts before it, and at its end saves its state, PLAY RECAP to the log, instead of saying
+  the summary; its NEXT STEPS records join the earlier parts', the later winning for a VM and matter.
+- **The end.** `end` says the summary and NEXT STEPS from the state, whatever ended the run - a part that failed, a
+  playbook that died before its callbacks ran, a line between parts, Ctrl-C, after which the head says `stopped
+  after … at` the last part - then removes the state. A run whose parts all passed through has none, and ends with
+  nothing said, as it did.
+- **Nested recipes.** A recipe in parts that runs another runs it as `{{ self }} live_run=<its name> <recipe>`: that
+  one exports no title or state of its own, sets no trap and takes the parent's, so its parts are a stage of the
+  parent's run. `live_run` is a just setting, which `self` passes on, never the environment, so a variable left
+  exported joins no run.
+
 Covered by `tests/unit/test_live_region.py` (the region against a stand-in `Display`, whose `display`,
 `prompt_until`, `do_var_prompt` and lock it holds to ansible-core's), `tests/unit/test_screen.py`,
-`tests/unit/test_vt.py` (the small terminal, a stream cut anywhere), and each output's own live tests.
+`tests/unit/test_vt.py` (the small terminal, a stream cut anywhere), `tests/unit/test_live_commands.py` (a stand-in
+recipe in parts at a pseudo-terminal: passed through piped, without a title, with a `-v` and without the engine's
+packages; drawn as one run, its failed part's end whole, its log every line, its state the run's alone, Ctrl-C, a
+playbook as a part, and an end with no state), and each output's own live tests.

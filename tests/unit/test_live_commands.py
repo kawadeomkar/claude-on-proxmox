@@ -1,0 +1,191 @@
+"""A run in parts, and a command drawn live: tools/live and filter_plugins/live_commands.py.
+
+tools/live decides with the standard library alone whether a part is drawn, and passes it through otherwise: piped, no
+title, a -v, no log, or no engine to draw with - a fresh virtualenv's. Drawn, each part takes over the run's state from
+the parts before it, and the recipe's trap says the summary from it at the end, whatever ended the run. Each run here
+is a stand-in recipe - a bash script with the justfile's trap and parts - at a pseudo-terminal of the test's own, its
+state and log in the test's directory (docs/architecture/custom-code.md §7.8).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+
+import live_kit as kit
+import pytest
+from harness import REPO
+
+LIVE = REPO / "tools" / "live"
+STAMP = "20261026-131050"
+# A recipe in parts, as the justfile writes one: the trap at its top, each command behind tools/live.
+RECIPE = """#!/bin/bash
+set -eu
+live() {{ "{python}" "{live}" --log-dir "{logs}" --stamp {stamp} --ansible-args "${{ARGS:-}}" "$@"; }}
+live_end() {{ live end "$1"; }}
+trap 'live_end $?' EXIT
+{parts}
+"""
+SAYS = "import os, sys; print('one'); print('two', os.environ.get('CLAUDE_ON_PROXMOX_LIVE', 'unset'))"
+FAILS = "import sys; [print(f'line-{n}') for n in range(1, 51)]; sys.exit(3)"
+
+
+def _recipe(root, parts, title="lint", **env):
+    script = root / "recipe.sh"
+    script.write_text(
+        RECIPE.format(python=sys.executable, live=LIVE, logs=root / "logs", stamp=STAMP, parts="\n".join(parts))
+    )
+    script.chmod(0o755)
+    state = root / "live" / f"{STAMP}-lint.json"
+    environment = kit.environment(root, title, CLAUDE_ON_PROXMOX_LIVE_STATE=str(state), **env)
+    return [str(script)], environment, state
+
+
+def _part(step, code, stage="lint"):
+    return f'live run {stage} --step {step} -- "{sys.executable}" -c "{code}"'
+
+
+@pytest.fixture(scope="module")
+def two_parts(tmp_path_factory):
+    root = tmp_path_factory.mktemp("two_parts")
+    # Between the parts, the state the first saved for the second.
+    saved = f"test -f {root / 'live' / f'{STAMP}-lint.json'}"
+    argv, env, state = _recipe(root, [_part("says", SAYS), saved, _part("fails", FAILS)])
+    ran = kit.at_a_terminal(argv, root, env, timeout=120)
+    ran.state = state
+    return ran
+
+
+def test_a_command_passed_through_is_exactly_what_it_printed_and_never_sees_the_switch(tmp_path):
+    argv, env, state = _recipe(tmp_path, [_part("says", SAYS)])
+    ran = kit.piped(argv, tmp_path, env)
+    assert ran.rc == 0 and ran.text == "one\ntwo unset\n", ran.text
+    assert not state.exists()
+
+
+@pytest.mark.parametrize(
+    ("why", "env"),
+    [("no title", {"CLAUDE_ON_PROXMOX_LIVE": ""}), ("a -v", {"ARGS": "-f 30 -vv"})],
+)
+def test_at_a_terminal_a_part_is_passed_through_without_a_title_or_with_a_v(tmp_path, why, env):
+    argv, environment, state = _recipe(tmp_path, [_part("says", SAYS)])
+    environment.update(env)
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
+    assert ran.rc == 0, ran.text
+    assert kit.SYNC_ON not in ran.raw and "one" in ran.text and "two unset" in ran.text, why
+    assert not state.exists()
+
+
+def test_without_its_packages_a_part_is_passed_through(tmp_path):
+    # A Python with no site-packages, as a fresh virtualenv before just install: neither PyYAML nor ansible-core.
+    argv, environment, state = _recipe(tmp_path, [_part("says", SAYS)])
+    script = tmp_path / "recipe.sh"
+    script.write_text(script.read_text().replace(f'"{sys.executable}" "{LIVE}"', f'"{sys.executable}" -S "{LIVE}"'))
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
+    assert ran.rc == 0 and kit.SYNC_ON not in ran.raw and "two unset" in ran.text, ran.text
+
+
+def test_parts_are_drawn_as_one_run_and_its_end_says_it_whatever_ended_it(two_parts):
+    ran = two_parts
+    assert ran.rc == 3, ran.text
+    ran.assert_drawn_and_gone()
+    # The second part drew the first, done.
+    assert any(re.search(r"^ ✓ says .*\n ⠋|^ ✓ says ", frame, re.M) and " fails " in frame for frame in ran.frames)
+    screen = ran.transcript
+    # The failed part's end above, whole: its last 40 lines.
+    assert re.search(r"^✗ fails: python\S* \(.*\) · exit 3$", screen, re.M), screen
+    assert "line-11\n" in screen + "\n" and "line-10\n" not in screen + "\n", screen
+    assert re.search(r"^claude-on-proxmox  lint · failed after \d+ s at fails · \d\d:\d\d$", screen, re.M), screen
+    table = screen.split("STEPS", 1)[1].split("\n\n", 1)[0]
+    assert re.search(r"^ ✓ says ", table, re.M) and re.search(r"^ ✗ fails ", table, re.M), table
+    assert ran.screen.titles[-1] == "lint · failed"
+    assert not ran.state.exists(), "the end removes the state"
+
+
+def test_every_line_a_part_printed_is_in_the_run_log_and_the_child_saw_no_switch(two_parts):
+    log = two_parts.log
+    assert re.search(r"n=ansible INFO\| one$", log, re.M), log
+    assert re.search(r"n=ansible INFO\| two unset$", log, re.M), log
+    assert all(f"| line-{n}\n" in log for n in range(1, 51)), log
+    assert "claude-on-proxmox  lint · failed after" in log
+
+
+def test_the_state_is_the_run_s_alone(tmp_path):
+    state_path = '"$CLAUDE_ON_PROXMOX_LIVE_STATE"'
+    modes = f'ls -ld "$(dirname {state_path})" {state_path} > {tmp_path / "modes"}'
+    argv, environment, state = _recipe(tmp_path, [_part("says", SAYS), modes])
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
+    assert ran.rc == 0, ran.text
+    modes = (tmp_path / "modes").read_text().splitlines()
+    assert modes[0].startswith("drwx------") and modes[1].startswith("-rw-------"), modes
+    # Another run's state, under this run's name, is never taken over.
+    state.parent.mkdir(exist_ok=True)
+    state.write_text(json.dumps({"version": 1, "title": "test", "tasks": []}))
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
+    assert ran.rc == 0 and "STEPS" in ran.transcript and "test ·" not in ran.transcript, ran.transcript
+
+
+def test_ctrl_c_ends_the_part_with_the_child_s_last_words_logged_and_the_run_said_stopped(tmp_path):
+    waits = (
+        "import signal, sys, time; print('waiting', flush=True); "
+        "signal.signal(signal.SIGINT, lambda *_: (print('child got INT', flush=True), sys.exit(130))); time.sleep(60)"
+    )
+    argv, environment, state = _recipe(tmp_path, [_part("waits", waits)])
+    sent = []
+
+    def interrupt(chunk, output, master, process, screen):
+        # Once the child said it waits - its last line, dim after the step's task - and not before it has started.
+        if not sent and b"waiting" in output:
+            sent.append(os.write(master, b"\x03"))
+
+    ran = kit.at_a_terminal(argv, tmp_path, environment, act=interrupt, timeout=60)
+    assert ran.rc == 130, ran.text
+    ran.assert_drawn_and_gone()
+    assert "child got INT" in ran.log
+    head = r"^claude-on-proxmox  lint · stopped after \d+ s at waits · "
+    assert re.search(head, ran.transcript, re.M), ran.transcript
+    assert ran.screen.titles[-1] == "lint · stopped"
+
+
+def test_without_a_state_the_end_says_nothing(tmp_path):
+    env = {name: value for name, value in os.environ.items() if name != "CLAUDE_ON_PROXMOX_LIVE_STATE"}
+    env["CLAUDE_ON_PROXMOX_LIVE_STATE"] = str(tmp_path / "none.json")
+    ran = subprocess.run([sys.executable, str(LIVE), "end", "0"], capture_output=True, text=True, env=env, check=False)
+    assert ran.returncode == 0 and ran.stdout == ran.stderr == ""
+
+
+PLAYBOOK = """
+- name: A playbook as a part
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Say what is left
+      ansible.builtin.debug:
+        msg: "alpha: something is left to do"
+    - name: Keep it for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_vm_next:
+            alpha:
+              vm: "alpha: something is left to do"
+"""
+
+
+def test_a_playbook_is_a_part_too_and_its_next_steps_wait_for_the_end(tmp_path):
+    (tmp_path / "part.yml").write_text(PLAYBOOK)
+    (tmp_path / "hosts").write_text(f"localhost ansible_connection=local ansible_python_interpreter={sys.executable}\n")
+    playbook = f'"{kit.ANSIBLE_PLAYBOOK}" -i "{tmp_path / "hosts"}" "{tmp_path / "part.yml"}"'
+    argv, environment, state = _recipe(tmp_path, [_part("says", SAYS), playbook])
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=120)
+    assert ran.rc == 0, ran.text
+    ran.assert_drawn_and_gone()
+    screen = ran.transcript
+    # The playbook's NEXT STEPS once, after the run's one summary, which has both parts.
+    assert screen.count("##  NEXT STEPS") == 1 and screen.count("claude-on-proxmox  lint · done in") == 1, screen
+    assert screen.index("claude-on-proxmox  lint · done in") < screen.index("##  NEXT STEPS")
+    assert "says" in screen.split("claude-on-proxmox  lint · done in", 1)[1]
+    assert stat.S_IMODE(os.stat(tmp_path).st_mode) and not state.exists()

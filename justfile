@@ -59,6 +59,9 @@ LOG_RETENTION_DAYS := env('LOG_RETENTION_DAYS', '14')
 # Where just status's run writes its report, which the recipe reads and then
 # removes: git-ignored, and refused by tests/check_no_local_files.sh.
 STATUS_DIR := env('STATUS_DIR', justfile_directory() / '.cache' / 'status')
+# Where a run drawn in parts keeps its model between its parts (tools/live), a file named for the run's stamp and its
+# top recipe that its end removes: git-ignored, and refused by tests/check_no_local_files.sh. LIVE_DIR= keeps none.
+LIVE_DIR := env('LIVE_DIR', justfile_directory() / '.cache' / 'live')
 # From the command line only (just BIN=<dir> ...): the tools of another
 # directory, which the unit tests point at stand-ins. A BIN in the
 # environment, a name many shells use for ~/bin, is never read.
@@ -70,11 +73,15 @@ INIT_FILES := 'inventory/hosts.yml inventory/group_vars/all/local.yml ' + VAULT_
 
 # One run, one moment: every log of the run is named after it.
 stamp := datetime('%Y%m%d-%H%M%S')
+# The top recipe of a run drawn in parts, which a recipe sets on another it runs as a stage of its own run
+# ({{ self }} live_run=test lint): that one then draws into the parent's run, under its title. A setting, never the
+# environment, so a variable left exported joins no run.
+live_run := ''
 # The same just on the same justfile, with every setting of this run: what a
 # recipe that includes another's work (test lints, init installs) runs it by.
 # A recursive just would otherwise start without the command line's BIN= and
 # the rest; tests/unit/test_justfile.py holds this to every setting above.
-self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' INIT_FILES=' + quote(INIT_FILES) + ' stamp=' + quote(stamp)
+self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' INIT_FILES=' + quote(INIT_FILES) + ' LIVE_DIR=' + quote(LIVE_DIR) + ' stamp=' + quote(stamp) + ' live_run=' + quote(live_run)
 # The first line of every recipe but help.
 guard := quote(justfile_directory() / 'tools/check') + ' checkout ' + quote(invocation_directory())
 # The scripts directory of PYTHON's environment, or BIN: refused, with how to
@@ -83,6 +90,11 @@ find_bin := 'bin=' + quote(BIN) + '; [ -n "$bin" ] || bin=$(PYTHON=' + quote(PYT
 # tools/run-logged with the run's logging settings; its first argument is the
 # log's name.
 run_logged := 'env LOG_DIR=' + quote(if LOG_DIR == '' { '' } else { absolute_path(LOG_DIR) }) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' CLAUDE_ON_PROXMOX_LOG_STAMP=' + quote(stamp) + ' ' + quote(justfile_directory() / 'tools/run-logged')
+# tools/live with the environment's Python and the run's logging settings: `run <stage> [--step <label>] --
+# <command>` in front of each command of a recipe drawn in parts, `end "$?"` from its trap.
+live := '"$bin/python" ' + quote(justfile_directory() / 'tools/live') + ' --log-dir ' + quote(if LOG_DIR == '' { '' } else { absolute_path(LOG_DIR) }) + ' --retention ' + quote(LOG_RETENTION_DAYS) + ' --stamp ' + quote(stamp) + ' --ansible-args ' + quote(ANSIBLE_ARGS)
+# Where a run in parts keeps its state, but for the top recipe's name and .json: none without LIVE_DIR.
+live_state := if LIVE_DIR == '' { '' } else { absolute_path(LIVE_DIR) / stamp }
 # --vault-password-file .vault_pass, where there is one, decided by the shell
 # when the line runs (init's questions may make it), not when just reads this.
 vault_args := '[ ! -f ' + quote(VAULT_PASS) + ' ] || set -- "$@" --vault-password-file ' + quote(VAULT_PASS)

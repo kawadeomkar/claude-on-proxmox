@@ -49,8 +49,10 @@ plain_text = text.plain_text
 screen = _sibling("screen")
 view = _sibling("run_view")
 live = _sibling("live_region")
+commands = _sibling("live_commands")
 
-LIVE_ENV = "CLAUDE_ON_PROXMOX_LIVE"
+LIVE_ENV = commands.LIVE_ENV
+STATE_ENV = commands.STATE_ENV
 WAITING_TAG = "attention_browser"
 DEBUG_ACTIONS = frozenset({"debug", "ansible.builtin.debug", "ansible.legacy.debug"})
 STATS_ACTIONS = frozenset({"set_stats", "ansible.builtin.set_stats", "ansible.legacy.set_stats"})
@@ -72,12 +74,14 @@ NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def from_environment(callback, playbook):
     """The engine for this run, or None for the stream: CLAUDE_ON_PROXMOX_LIVE set, verbosity 0, and a log to send
-    the stream to (LOG_DIR= turns it off). The variable is taken out of the environment either way, so nothing the
-    run starts - VS Code, whose terminals a later just destroy may run in - inherits it."""
+    the stream to (LOG_DIR= turns it off). The variable, and the state's path of a run in parts
+    (CLAUDE_ON_PROXMOX_LIVE_STATE), are taken out of the environment either way, so nothing the run starts - VS Code,
+    whose terminals a later just destroy may run in - inherits them."""
     title = os.environ.pop(LIVE_ENV, "").strip()
+    state = os.environ.pop(STATE_ENV, "").strip()
     if not title or callback._display.verbosity != 0 or ansible_display.logger is None:
         return None
-    engine = Engine(callback, title)
+    engine = Engine(callback, title, state)
     engine.start(playbook)
     return engine
 
@@ -250,8 +254,12 @@ def play_batches(play):
 class Engine:
     """One live run: the callback's events in; the region, the run's own words and the summary out."""
 
-    def __init__(self, callback, title):
+    def __init__(self, callback, title, state=""):
         self.cb = callback
+        self.state = state  # where a run in parts keeps its model between parts; "" for a run of one playbook
+        self.records = {}  # the earlier parts' NEXT STEPS records
+        self.failed_hosts = []  # the earlier parts' failed hosts
+        self.saved = False  # a part's state saved, at its end
         self.display = callback._display
         self.mode = "live" if live.can_draw() else "lines"
         self.run = None
@@ -363,6 +371,12 @@ class Engine:
             log=self._log_path(),
             vms=vm_names(cli.get("extra_vars")),
         )
+        # A part of a run in parts: the parts before it, done, drawn above its own stages.
+        earlier = commands.load_state(self.state, self.title) if self.state else None
+        if earlier is not None:
+            self.run.adopt(earlier, self._now())
+            self.records = earlier.get("next_records") or {}
+            self.failed_hosts = list(earlier.get("failed_hosts") or [])
         search = [os.path.join(os.getcwd(), "roles"), *C.DEFAULT_ROLES_PATH]
         plays = []
         for play in playbook.get_plays():
@@ -387,7 +401,8 @@ class Engine:
             atexit.register(self._stopped_title)
 
     def _stopped_title(self):
-        if self.run.finished is None:
+        # A part that saved its state is no stopped run: the next part, or the run's end, goes on with the title.
+        if self.run.finished is None and not self.saved:
             self.out.title(f"{self.run.title} · stopped")
 
     def play_start(self, play):
@@ -525,6 +540,11 @@ class Engine:
             if address:
                 self.run.fact(name, "proxmox_vm_address", address)
             self.run.fact(name, "proxmox_vm_resolved_id", str(vmid or "").strip())
+
+    def _next_records(self, stats):
+        """This part's NEXT STEPS records, {stat: {vm: {matter: line}}}, as the callback reads them."""
+        run_stats = stats.custom.get("_run", {}) if isinstance(getattr(stats, "custom", None), dict) else {}
+        return {stat: run_stats[stat] for stat in self.cb.NEXT_STATS if isinstance(run_stats.get(stat), dict)}
 
     def _records(self, result):
         """What a report recorded for NEXT STEPS, as it goes: a report on a matter a later report recorded again is
@@ -728,9 +748,17 @@ class Engine:
 
     # --- the end -----------------------------------------------------------------------------------------------
     def stats(self, stats, recap):
-        """The end: the region gone, PLAY RECAP (recap) to the log alone, the summary and NEXT STEPS on the screen."""
+        """The end: the region gone, PLAY RECAP (recap) to the log alone, the summary and NEXT STEPS on the screen -
+        or, for a part of a run in parts, its state saved for the next part, whose end says them."""
         now = self._now()
         failed = sorted(set(stats.failures) | set(stats.dark))
+        if self.state:
+            self.out.finish()
+            recap(stats)
+            records = commands.merged_records(self.records, self._next_records(stats))
+            commands.save_state(self.state, self.run.dump(now, records, [*self.failed_hosts, *failed]))
+            self.saved = True
+            return
         with self.display._lock:
             self.run.end(now, failed=bool(failed))
             if self.mode == "live":
@@ -740,19 +768,7 @@ class Engine:
         self.out.finish()
         recap(stats)
         lines = self.cb.next_steps_of(stats)
-        width = self._width()
-        summary = self.run.summary(now, width, self.color, failed_hosts=failed, next_steps=lines)
-        plain = self.run.summary(now, width, False, failed_hosts=failed, next_steps=lines)
-        self.print([("", ""), *zip(summary, plain, strict=True)])
-        if lines:
-            # Wrapped with every word whole, to the block's own width: a command or a URL is never split.
-            room = min(80, width) - 2
-            wrapped = []
-            for line in lines:
-                pieces = screen.fill(line, room)
-                wrapped += [pieces[0], *(f"  {piece}" for piece in pieces[1:])]
-            with self.say():
-                self.display.display(text.banner(wrapped, "NEXT STEPS"), color=self.cb.COLOR)
+        commands.say_end(self.out, self.display, self.run, now, failed, lines, self._width())
         if self.mode == "live":
             self.out.bell()
 
