@@ -248,7 +248,8 @@ def _check_run(root: Path, tasks_from: str, hosts: dict, **role_vars) -> dict:
 
 @pytest.fixture(scope="module")
 def check_mode(tmp_path_factory):
-    """remote_control.yml in check mode, once for every login and seeded settings.json: root, hosts and the report."""
+    """remote_control.yml in check mode, once for every login and seeded settings.json, and with spawn: worktree on
+    a signed-in VM with and without a repository: root, hosts and the report."""
     if UNIT.exists():
         pytest.skip("this machine has a real claude-remote-control unit")
     _require_daemon_user()
@@ -260,6 +261,9 @@ def check_mode(tmp_path_factory):
         "not-ready-in-deploy": LOGINS["logged-out"],
         # No login, and a setting that would keep Remote Control off after one.
         "not-ready-blocked": LOGINS["logged-out"],
+        # spawn: worktree, its session directory a git repository and not one.
+        "repo": LOGINS["claude-ai"],
+        "no-repo": LOGINS["claude-ai"],
     }
     logins.update({name: LOGINS["claude-ai"] for name in SETTINGS})
     hosts = _stand_in_hosts(root, logins)
@@ -268,12 +272,25 @@ def check_mode(tmp_path_factory):
     _seed_settings(root, "not-ready-blocked", {"env": {"DISABLE_TELEMETRY": "1"}})
     hosts["not-ready-in-deploy"]["claude_code_sign_in_follows"] = True
     (root / "projects").mkdir()
-    report = _check_run(root, "remote_control", hosts, claude_code_remote_control_dir=str(root / "projects"))
-    assert report["rc"] == 0, _failures(report)
+    # The session directory set per host, not on the include, whose vars would
+    # outrank every host's: the two worktree hosts each have their own.
+    for hostvars in hosts.values():
+        hostvars["claude_code_remote_control_dir"] = str(root / "projects")
+    for name in ("repo", "no-repo"):
+        projects = root / name / "projects"
+        projects.mkdir()
+        hosts[name]["claude_code_remote_control_dir"] = str(projects)
+        hosts[name]["claude_code_remote_control_spawn"] = "worktree"
+    (root / "repo" / "projects" / ".git").mkdir()
+    report = _check_run(root, "remote_control", hosts)
+    # Every host but the one whose worktree spawn has no repository to spawn in.
+    assert set(_failures(report)) == {"no-repo"}, _failures(report)
     return root, hosts, report
 
 
 def test_check_mode_on_a_vm_without_the_unit_does_not_fail(check_mode):
+    # No host failed - the fixture holds that - but no-repo, refused for its
+    # worktree spawn (below).
     root, hosts, report = check_mode
     assert "no Claude Code login is stored" in _messages(report, "Say exactly what to run")["not-ready"]
     for host in hosts:
@@ -357,30 +374,11 @@ def test_the_path_unit_is_retired_before_remote_control_starts():
     assert max(retire) < min(start), (retire, start)
 
 
-@pytest.fixture(scope="module")
-def worktree_spawn(tmp_path_factory):
-    """remote_control.yml in check mode with spawn: worktree, on a signed-in VM with and without a repository."""
-    if UNIT.exists():
-        pytest.skip("this machine has a real claude-remote-control unit")
-    _require_daemon_user()
-    root = tmp_path_factory.mktemp("worktree_spawn")
-    hosts = _stand_in_hosts(root, {"repo": LOGINS["claude-ai"], "no-repo": LOGINS["claude-ai"]})
-    for name, hostvars in hosts.items():
-        # Each host's own session directory: a git repository for one, an empty
-        # directory for the other. Set per host, not on the include, so the two
-        # hosts of one play can differ.
-        projects = root / name / "projects"
-        projects.mkdir()
-        hostvars["claude_code_remote_control_dir"] = str(projects)
-        hostvars["claude_code_remote_control_spawn"] = "worktree"
-    (root / "repo" / "projects" / ".git").mkdir()
-    return _check_run(root, "remote_control", hosts)
-
-
-def test_worktree_spawn_without_a_repository_says_so(worktree_spawn):
-    report = worktree_spawn
+def test_worktree_spawn_without_a_repository_says_so(check_mode):
+    _, _, report = check_mode
     assert report["rc"] != 0
     failures = _failures(report)
+    # repo, its session directory a git repository, went on.
     assert set(failures) == {"no-repo"}, failures
     assert "is not a git repository" in failures["no-repo"]
     assert "same-dir or session" in failures["no-repo"]
@@ -690,7 +688,7 @@ def test_keys_typed_before_a_prompt_is_ready_still_reach_it(tmp_path):
     # pause flushes the terminal's input as it starts, so keys typed a moment
     # early are lost; the terminal driver waits for the prompt's raw mode, and
     # types again when the prompt has not taken its keys. Here the keys are due
-    # three seconds before the prompt.
+    # a second before the prompt.
     playbook = tmp_path / "early.yml"
     playbook.write_text(
         yaml.safe_dump(
@@ -700,8 +698,8 @@ def test_keys_typed_before_a_prompt_is_ready_still_reach_it(tmp_path):
                     "hosts": "localhost",
                     "gather_facts": False,
                     "tasks": [
-                        {"name": "Say", "ansible.builtin.debug": {"msg": "a prompt comes in three seconds"}},
-                        {"name": "Wait", "ansible.builtin.wait_for": {"timeout": 3}},
+                        {"name": "Say", "ansible.builtin.debug": {"msg": "a prompt comes in a second"}},
+                        {"name": "Wait", "ansible.builtin.wait_for": {"timeout": 1}},
                         {"name": "Ask", "ansible.builtin.pause": {"prompt": "Type here"}, "register": "paused"},
                         {"name": "Answer", "ansible.builtin.debug": {"msg": "took {{ paused.user_input }}"}},
                     ],
@@ -709,7 +707,7 @@ def test_keys_typed_before_a_prompt_is_ready_still_reach_it(tmp_path):
             ]
         )
     )
-    steps = [(b"a prompt comes in three seconds", b"typed-early\n")]
+    steps = [(b"a prompt comes in a second", b"typed-early\n")]
     rc, output, log = _run_at_a_terminal(tmp_path, playbook, {}, {}, steps=steps, timeout=60)
     assert rc == 0, output
     assert "took typed-early" in log, output

@@ -24,14 +24,18 @@ What these guard:
   async job are gone afterwards, the code reaches no output, and
   claude_login_args reach `claude auth login`.
 - A rejected code and a malformed one are named failures that quote claude's
-  answer, and fail the run only after every VM, those after them included, has
-  had its turn.
+  answer, said in their own turn, and fail the run only after every VM, those
+  after them included, has had its turn.
+- A VM that cannot be reached is named at once and ends no other VM's turn:
+  rescue never sees an unreachable host, and under serial one was a whole batch
+  failed, which ended the run.
 - No code at all (Enter, or a run with no terminal) ends the attempt - claude is
   ended rather than left waiting on its pipe, by a TERM, and by a KILL only
   while it outlives that by a second - and is not a failure.
 - A VM whose API key is its login is never sent through the sign-in.
-- Several names are signed in one after another, never together, and the steps
-  on this machine never run in a test.
+- Several names are signed in one after another, never together, what a
+  sign-in leads to waits for the last of them, and the steps on this machine
+  never run in a test.
 - claude's other answers - an account on hold, a refusal written with escape
   sequences - end the wait at once and are quoted without their control
   characters; an error where the page should be, and an attempt that ended
@@ -103,6 +107,14 @@ ON_HOLD = "Your account is on hold and can't sign in to Claude Code. View detail
 ESCAPES = "\x1b]52;c;b3duZWQ=\x07\x1b]0;retitled\x07\x1b[31m"
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
+# ssh, scp and sftp for a VM that is down: what ssh says when nothing listens,
+# and the exit status the ssh plugin takes for "unreachable".
+SSH_REFUSED = """#!/bin/sh
+echo "$*" >> "$(dirname "$0")/ssh.log"
+echo "ssh: connect to host 192.0.2.10 port 22: Connection refused" >&2
+exit 255
+"""
+
 
 def _hosts(root: Path, cases: dict) -> dict:
     """Inventory hosts, one per case, whose modules run with the stand-ins and their own HOME; returns hostvars."""
@@ -150,6 +162,21 @@ def _hosts(root: Path, cases: dict) -> dict:
             **({"claude_code_anthropic_api_key": case["api_key"]} if "api_key" in case else {}),
             **({"claude_code_login_args": case["args"]} if "args" in case else {}),
         }
+        if case.get("down"):
+            # Reached over ssh, and the stand-in refuses the connection: nothing
+            # leaves this machine, and nothing reads ~/.ssh.
+            refused = bin_dir / "ssh"
+            refused.write_text(SSH_REFUSED)
+            refused.chmod(0o755)
+            hosts[name].update(
+                ansible_connection="ssh",
+                ansible_ssh_executable=str(refused),
+                ansible_scp_executable=str(refused),
+                ansible_sftp_executable=str(refused),
+                # No ControlPersist, so no socket directory is made for it.
+                ansible_ssh_args="",
+                ansible_control_path_dir=str(root / "cp"),
+            )
     return hosts
 
 
@@ -195,6 +222,20 @@ def _turns(report: dict) -> list[str]:
     return turns
 
 
+# claude_login.yml's sign-in play, serial where it prompts, and the play after it for every VM at once.
+SIGN_IN_PLAY = "Sign Claude Code in, or say how each VM is signed in"
+AFTER_PLAY = "Start Remote Control on each VM signed in just now"
+
+
+def _batches(report: dict, play: str) -> list[list[str]]:
+    """The hosts of each batch the play ran: the json callback reports each batch of a serial play as a play."""
+    return [
+        sorted({host for task in entry["tasks"] for host in task["hosts"]})
+        for entry in report["plays"]
+        if entry["play"]["name"] == play
+    ]
+
+
 def _seconds_per_turn(report: dict) -> dict:
     took = {}
     for play in report["plays"]:
@@ -224,6 +265,8 @@ def _strings(value):
 CASES = {
     "rejected": {"code": CODES["rejected"], "reject": True},
     "invalid": {"code": CODES["invalid"]},
+    # Its ssh refuses the connection: said at once, and no end of the run.
+    "down": {"down": True},
     "accepted": {"code": CODES["accepted"]},
     # No code given and no terminal: the prompt returns empty at once.
     "skipped": {},
@@ -239,10 +282,41 @@ SIGNING_IN = ["rejected", "invalid", "accepted", "skipped", "sso"]
 
 @pytest.fixture(scope="module")
 def signed(tmp_path_factory):
-    """claude_login.yml for every case at once, as just login ... --only claude runs it: root and report."""
+    """claude_login.yml for every case at once, as just login ... --only claude runs it: root and report.
+
+    Then two plays of the test's own say what each VM, and this machine, were
+    left holding of the answer (test_each_vm_records_whether_its_code_was_entered).
+    """
     root = tmp_path_factory.mktemp("claude_login_flow")
     hosts = _hosts(root, CASES)
-    report = _run(root, PLAYBOOK, hosts, "-e", json.dumps(_extra(*CASES)), ordered=True)
+    playbook = root / "signed.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                {"import_playbook": str(PLAYBOOK)},
+                {
+                    "hosts": "claude_vms",
+                    "gather_facts": False,
+                    "tasks": [
+                        {
+                            "ansible.builtin.debug": {
+                                "msg": "answered={{ claude_code_login_answered | default('unset') }}"
+                                " skipped={{ claude_code_login_skipped | default('unset') }}"
+                            }
+                        }
+                    ],
+                },
+                {
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "tasks": [
+                        {"ansible.builtin.debug": {"msg": "here={{ claude_code_login_answered | default('unset') }}"}}
+                    ],
+                },
+            ]
+        )
+    )
+    report = _run(root, playbook, hosts, "-e", json.dumps(_extra(*CASES)), ordered=True)
     return root, report
 
 
@@ -273,7 +347,8 @@ def test_a_rejected_or_malformed_code_is_a_named_failure_after_every_vm_had_its_
     root, report = signed
     assert report["rc"] != 0
     failures = _failures(report)
-    assert set(failures) == {"rejected", "invalid"}, failures
+    # And down, which could not be reached (below).
+    assert set(failures) == {"rejected", "invalid", "down"}, failures
     assert "the Claude sign-in did not complete" in failures["rejected"]
     assert "Login failed: Request failed with status code 400" in failures["rejected"]
     assert "just login rejected --only claude again" in failures["rejected"]
@@ -341,6 +416,7 @@ def test_vms_are_signed_in_one_after_another(signed):
     # turn in one of its own, in the order given, is the proof.
     _, report = signed
     assert _turns(report) == list(CASES)
+    assert _batches(report, SIGN_IN_PLAY) == [[vm] for vm in CASES]
 
 
 def test_no_code_and_no_secret_reach_the_output(signed):
@@ -375,50 +451,88 @@ def test_the_sign_in_reads_this_machine_s_desktop_switch():
     )
 
 
-def test_each_vm_records_whether_its_code_was_entered(tmp_path):
+def test_each_vm_records_whether_its_code_was_entered(signed):
     # just deploy's GitHub step decides VM by VM from these: a code entered
     # signs that VM in, Enter there skips it, and a VM that showed no prompt
     # (signed in already, or an API key) has neither and is asked on its own.
-    cases = {"answered": {"code": CODES["accepted"]}, "unanswered": {}, "already": {"signed_in": True}}
-    hosts = _hosts(tmp_path, cases)
-    playbook = tmp_path / "answered.yml"
-    playbook.write_text(
-        yaml.safe_dump(
-            [
-                {"import_playbook": str(PLAYBOOK)},
-                {
-                    "hosts": "claude_vms",
-                    "gather_facts": False,
-                    "tasks": [
-                        {
-                            "ansible.builtin.debug": {
-                                "msg": "answered={{ claude_code_login_answered | default('unset') }}"
-                                " skipped={{ claude_code_login_skipped | default('unset') }}"
-                            }
-                        }
-                    ],
-                },
-                {
-                    "hosts": "localhost",
-                    "gather_facts": False,
-                    "tasks": [
-                        {"ansible.builtin.debug": {"msg": "here={{ claude_code_login_answered | default('unset') }}"}}
-                    ],
-                },
-            ]
-        )
-    )
-    report = _run(tmp_path, playbook, hosts, "-e", json.dumps(_extra(*cases)))
+    # Said by the fixture's own plays after claude_login.yml, which a VM whose
+    # sign-in failed has left by then, failed by its last play.
+    _, report = signed
     said = {
         host: r["msg"] for _, host, r in _results(report) if str(r.get("msg", "")).startswith(("answered=", "here="))
     }
     assert said == {
-        "answered": "answered=True skipped=False",
-        "unanswered": "answered=False skipped=True",
+        "accepted": "answered=True skipped=False",
+        "sso": "answered=True skipped=False",
+        "skipped": "answered=False skipped=True",
         "already": "answered=unset skipped=unset",
+        "keyed": "answered=unset skipped=unset",
         # The facts are the VM's own: nothing is written onto this machine.
         "localhost": "here=unset",
     }, said
+
+
+# ------------------------------------------------ a VM that cannot be reached
+# claude_login.yml's part of what test_sign_in_plays.py holds for every sign-in.
+# rescue never sees an unreachable host, and under serial one is a whole batch
+# failed, which ended the run before the VMs after it; and the sign-in block's
+# condition was its rescue's too, so a failed sign-in went unsaid in its turn.
+
+
+def _standing(report: dict) -> dict:
+    """What the run failed each host with, rescued failures left out: the last failure of each host, if it stands."""
+    failures = {}
+    for name, host, result in _results(report):
+        if result.get("failed") or result.get("unreachable"):
+            failures[host] = f"{name}: {result.get('msg')}"
+    return {host: text for host, text in failures.items() if report["stats"][host]["failures"]}
+
+
+def test_a_vm_that_cannot_be_reached_is_named_and_the_vms_after_it_have_their_turn(signed):
+    root, report = signed
+    # accepted's turn came after a refused code, a malformed one and a VM that cannot be reached.
+    assert "accepted" in _calls(root, "accepted")
+    assert (root / "accepted" / ".claude" / ".credentials.json").exists()
+    # down was tried, by the stand-in ssh, said at once, and never handed a sign-in.
+    assert (root / "bin" / "ssh.log").exists()
+    assert _calls(root, "down") == []
+    said = _messages(report, "Say which VM could not be reached")
+    assert set(said) == {"down"}, said
+    assert said["down"].startswith("down could not be reached, so it was not signed in"), said["down"]
+    failures = _standing(report)
+    assert set(failures) == {"rejected", "invalid", "down"}, failures
+    assert failures["down"].startswith("Fail where the sign-in failed: "), failures["down"]
+    assert "down could not be reached, so it was not signed in" in failures["down"]
+    assert "Connection refused" in failures["down"]
+
+
+@pytest.mark.parametrize("host", ["rejected", "invalid"])
+def test_a_failed_sign_in_is_said_in_its_turn_and_raised_once_every_vm_had_its_own(signed, host):
+    _, report = signed
+    said = [
+        (index, result["msg"])
+        for index, entry in enumerate(report["plays"])
+        for task in entry["tasks"]
+        if task["task"]["name"] == "Say why, and go on with the next VM"
+        for vm, result in task["hosts"].items()
+        if vm == host and not result.get("skipped")
+    ]
+    assert len(said) == 1, said
+    index, message = said[0]
+    assert message.startswith(f"{host}: ") and f"just login {host}" in message, message
+    # Said in its own turn, the batch that held it alone, which came before the next VM's.
+    turn = report["plays"][index]
+    assert turn["play"]["name"] == SIGN_IN_PLAY, turn["play"]["name"]
+    assert sorted({vm for task in turn["tasks"] for vm in task["hosts"]}) == [host]
+    assert _standing(report)[host] == "Fail where the sign-in failed: " + message
+
+
+def test_the_work_after_the_sign_ins_waits_for_the_last_one_then_runs_for_every_vm(signed):
+    _, report = signed
+    assert _batches(report, AFTER_PLAY) == [sorted(CASES)]
+    positions = [index for index, entry in enumerate(report["plays"]) if entry["play"]["name"] == AFTER_PLAY]
+    sign_ins = [index for index, entry in enumerate(report["plays"]) if entry["play"]["name"] == SIGN_IN_PLAY]
+    assert len(positions) == 1 and positions[0] > max(sign_ins), (positions, sign_ins)
 
 
 # ------------------------------------------- the browser coming back by itself
@@ -559,7 +673,8 @@ def test_a_page_that_is_not_claude_s_is_neither_forwarded_nor_opened(tmp_path):
 
 def test_a_browser_that_never_comes_back_ends_the_attempt_and_skips_the_vm(tmp_path):
     hosts = _hosts(tmp_path, {"away": {}})
-    ssh = _forwarding(tmp_path, hosts, wait=6)
+    # One wait of three seconds (the wait is asked every three): the shortest.
+    ssh = _forwarding(tmp_path, hosts, wait=3)
     playbook = tmp_path / "away.yml"
     playbook.write_text(
         yaml.safe_dump(
@@ -577,7 +692,7 @@ def test_a_browser_that_never_comes_back_ends_the_attempt_and_skips_the_vm(tmp_p
     assert report["rc"] == 0, _failures(report)
     said = _messages(report, "browser_login | Say that the browser did not come back")["away"]
     assert said == (
-        "away: the browser did not come back within 6 seconds, so Claude Code is left signed out there. just"
+        "away: the browser did not come back within 3 seconds, so Claude Code is left signed out there. just"
         " login away --only claude signs it in later."
     )
     assert "just login away --only claude" in _left_to_do(report)["away"]["claude"]
@@ -813,11 +928,14 @@ def test_a_partly_copied_code_is_asked_for_again(tmp_path):
 
 
 def test_a_code_typed_after_the_attempt_expired_is_said_to_be_too_late(tmp_path):
-    # An attempt of two seconds, and a code typed six seconds after the
-    # prompt: Ansible's async limit has ended claude by then.
+    # An attempt of two seconds, and a code typed three seconds after the
+    # prompt: Ansible's async limit has ended claude by then - two seconds
+    # after it started, which was before the prompt - and recorded "Timeout
+    # exceeded" a second after that. Never less than three: typed before that
+    # record, the code would be handed to a claude already gone.
     hosts = _hosts(tmp_path, {"late": {"timeout": 2}})
     extra = {**_extra("late"), "claude_code_login_attempt_seconds": 0}
-    steps = [(b"Code:", CODES["late"].encode() + b"\n", 6)]
+    steps = [(b"Code:", CODES["late"].encode() + b"\n", 3)]
     rc, output, _ = _run_at_a_terminal(tmp_path, PLAYBOOK, hosts, extra, steps=steps)
     assert rc != 0, output
     assert "late: the sign-in had ended before the code was pasted (its page expired" in output, output

@@ -20,7 +20,10 @@ What these guard:
 - A VM that cannot be reached ends neither sign-in. rescue never sees an
   unreachable host, and under serial one is a whole batch failed, which ended
   the run before the VMs after it: now it is named, the VMs after it have their
-  turn, the run fails at its end, and just deploy goes on and exits 0.
+  turn, the run fails at its end, and just deploy goes on and exits 0. For
+  claude_login.yml run alone, test_claude_login.py holds this - with the
+  failure said in its turn, one VM per batch and the work after the sign-ins
+  below - on its one run of every sign-in case, such a VM among them.
 - A failed sign-in is said in its own turn. The sign-in block's condition was
   every rescue task's too, and the rescue's first record of the failure made
   the message after it skip, so just deploy, which raises no failed sign-in at
@@ -75,7 +78,6 @@ DEFAULTS = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults
 
 # The plays whose batches and order are under test.
 CLAUDE_SIGN_IN = "Sign Claude Code in, or say how each VM is signed in"
-CLAUDE_AFTER = "Start Remote Control on each VM signed in just now"
 GITHUB_SIGN_IN = "Sign gh in to GitHub, or say how each VM is signed in"
 GITHUB_AFTER = "Configure the repositories of each VM signed in"
 TAILSCALE_SIGN_IN = "Sign each VM in to Tailscale, or say how it is on it"
@@ -359,39 +361,19 @@ def github(tmp_path_factory):
 # ------------------------------------------------ a VM that cannot be reached
 
 
-@pytest.fixture(scope="module")
-def claude_named(tmp_path_factory):
-    """just login alpha beta gamma --only claude: a code claude refuses, a VM that cannot be reached, a sign-in."""
-    root = tmp_path_factory.mktemp("claude_named")
-    cases = {"alpha": {"code": CODE, "reject": True}, "beta": {"down": True}, "gamma": {"code": CODE}}
-    return root, _run(root, CLAUDE_LOGIN, _hosts(root, cases), "-e", _extra(vm_name=",".join(cases)))
+# claude_login.yml's part of this is test_claude_login.py's: its run of every
+# sign-in case holds a VM that cannot be reached, after a refused code.
 
 
 @pytest.fixture(scope="module")
 def github_named(tmp_path_factory, github):
-    """just login alpha,beta,gamma --only github: a code that expires, a VM that cannot be reached, a sign-in."""
+    """just login alpha,beta,delta,gamma --only github: a code that expires, a VM that cannot be reached, a sign-in
+    whose clone of molecule/gone then fails (delta, below), and a sign-in."""
     root = tmp_path_factory.mktemp("github_named")
-    cases = {"alpha": {"expire": True}, "beta": {"down": True}, "gamma": {}}
-    for case in cases.values():
-        case["vars"] = {"github_projects_exclude": ["gone"]}
+    cases = {"alpha": {"expire": True}, "beta": {"down": True}, "gamma": {}, "delta": {}}
+    for name in ("alpha", "beta", "gamma"):
+        cases[name]["vars"] = {"github_projects_exclude": ["gone"]}
     return root, _run(root, GITHUB_LOGIN, _hosts(root, cases, github), "-e", _extra(vm_name=",".join(cases)))
-
-
-def test_claude_login_names_a_vm_it_cannot_reach_and_signs_in_the_vms_after_it(claude_named):
-    root, report = claude_named
-    # gamma's turn came after a refused code and a VM that cannot be reached.
-    assert "accepted" in _claude_calls(root, "gamma"), _claude_calls(root, "gamma")
-    assert _signed_in(root, "gamma")
-    # beta was tried, by the stand-in ssh, said at once, and never handed a sign-in.
-    assert (root / "bin" / "ssh.log").exists()
-    assert _claude_calls(root, "beta") == []
-    assert _said(report, "Say which VM could not be reached", "beta")
-    assert report["rc"] != 0
-    failures = _failed(report)
-    assert set(failures) == {"alpha", "beta"}, failures
-    assert failures["beta"].startswith("Fail where the sign-in failed: "), failures["beta"]
-    assert "beta could not be reached, so it was not signed in" in failures["beta"]
-    assert "Connection refused" in failures["beta"]
 
 
 def test_github_login_names_a_vm_it_cannot_reach_and_signs_in_the_vms_after_it(github_named):
@@ -406,15 +388,15 @@ def test_github_login_names_a_vm_it_cannot_reach_and_signs_in_the_vms_after_it(g
     assert _said(report, "Say which VM could not be reached", "beta")
     assert report["rc"] != 0
     failures = _failed(report)
-    assert set(failures) == {"alpha", "beta"}, failures
+    # And delta's clone, after its sign-in (below).
+    assert set(failures) == {"alpha", "beta", "delta"}, failures
     assert failures["beta"].startswith("Fail where the sign-in failed: "), failures["beta"]
     assert "beta could not be reached, so gh was not signed in there" in failures["beta"]
     assert "Connection refused" in failures["beta"]
 
 
-@pytest.mark.parametrize("fixture", ["claude_named", "github_named"])
-def test_a_failed_sign_in_is_said_in_its_turn_and_raised_once_every_vm_had_its_own(request, fixture):
-    _, report = request.getfixturevalue(fixture)
+def test_a_failed_sign_in_is_said_in_its_turn_and_raised_once_every_vm_had_its_own(github_named):
+    _, report = github_named
     said = [
         (index, result["msg"])
         for index, entry in enumerate(report["plays"])
@@ -429,16 +411,22 @@ def test_a_failed_sign_in_is_said_in_its_turn_and_raised_once_every_vm_had_its_o
     # Said in alpha's own turn, the batch that held alpha alone, which came
     # before the next VM's.
     turn = report["plays"][index]
-    assert turn["play"]["name"] in (CLAUDE_SIGN_IN, GITHUB_SIGN_IN), turn["play"]["name"]
+    assert turn["play"]["name"] == GITHUB_SIGN_IN, turn["play"]["name"]
     assert sorted({host for task in turn["tasks"] for host in task["hosts"]}) == ["alpha"]
     assert _failed(report)["alpha"] == "Fail where the sign-in failed: " + message
 
 
 @pytest.fixture(scope="module")
 def deployed(tmp_path_factory):
-    """just deploy's sign-ins for a-rejected (a code claude refuses), b-down (unreachable) and c-accepted."""
+    """just deploy </dev/null from its sign-ins on, for a-rejected (a code claude refuses), b-down (unreachable),
+    c-accepted and d-unanswered (no code, and no terminal to ask at)."""
     root = tmp_path_factory.mktemp("deployed")
-    cases = {"a-rejected": {"code": CODE, "reject": True}, "b-down": {"down": True}, "c-accepted": {"code": CODE}}
+    cases = {
+        "a-rejected": {"code": CODE, "reject": True},
+        "b-down": {"down": True},
+        "c-accepted": {"code": CODE},
+        "d-unanswered": {},
+    }
     return root, _deploy(root, _hosts(root, cases))
 
 
@@ -477,13 +465,6 @@ def deployed_after(tmp_path_factory):
     root = tmp_path_factory.mktemp("deployed_after")
     cases = {"a-rejected": {"code": CODE, "reject": True}, "b-after": {"code": CODE, "after_fails": True}}
     return root, _deploy(root, _hosts(root, cases))
-
-
-@pytest.fixture(scope="module")
-def after_github(tmp_path_factory, github):
-    """just login delta --only github: the device flow signs gh in, then the clone of molecule/gone fails."""
-    root = tmp_path_factory.mktemp("after_github")
-    return root, _run(root, GITHUB_LOGIN, _hosts(root, {"delta": {}}, github), "-e", _extra(vm_name="delta"))
 
 
 def _remote_control_failed(message: str, host: str) -> None:
@@ -527,38 +508,30 @@ def test_just_deploy_fails_at_its_end_on_a_failure_after_a_sign_in_and_not_on_a_
     _remote_control_failed(failures["b-after"], "b-after")
 
 
-def test_a_clone_failure_after_the_device_flow_names_the_repository_and_how_to_retry(after_github):
-    root, report = after_github
+def test_a_clone_failure_after_the_device_flow_names_the_repository_and_how_to_retry(github_named):
+    # delta: the device flow signs gh in, then the clone of molecule/gone fails.
+    root, report = github_named
     assert (root / "delta" / ".config" / "gh" / "fake-token").read_text().strip() == DEVICE_TOKEN
     assert (root / "delta" / "projects" / "pub" / "README.md").exists()
     assert not _ran(report, "Remember why this VM's sign-in failed", "delta")
     assert report["rc"] != 0
-    failures = _failed(report)
-    assert set(failures) == {"delta"}, failures
-    message = failures["delta"]
+    message = _failed(report)["delta"]
     assert message.startswith("Fail where the work after the sign-in failed: "), message
     assert 'configuring its GitHub repositories failed at "clone | Clone repositories"' in message, message
     assert f"{USERNAME}/gone" in message and f"{USERNAME}/pub" not in message, message
     assert "just deploy delta --tags github_projects" in message, message
 
 
-@pytest.mark.parametrize("fixture", ["after_claude", "after_github"])
-def test_the_reason_ends_its_sentence_and_the_message_ends_with_the_command_that_retries_it(request, fixture):
+@pytest.mark.parametrize(("fixture", "host"), [("after_claude", "epsilon"), ("github_named", "delta")])
+def test_the_reason_ends_its_sentence_and_the_message_ends_with_the_command_that_retries_it(request, fixture, host):
     # A module's message often has no full stop of its own: "One or more items
     # failed" ran on into "Retry it with".
     _, report = request.getfixturevalue(fixture)
-    (message,) = _failed(report).values()
+    message = _failed(report)[host]
     assert re.search(r"[.!?] Retry it with: just deploy \S+ --tags \w+$", message), message
 
 
 # ------------------------------------------------ just deploy's switches
-
-
-@pytest.fixture(scope="module")
-def unattended(tmp_path_factory):
-    """just deploy </dev/null from the sign-ins on, for a signed-out VM: no code, and no terminal to ask at."""
-    root = tmp_path_factory.mktemp("unattended")
-    return root, _deploy(root, _hosts(root, {"alpha": {}}))
 
 
 @pytest.fixture(scope="module")
@@ -568,22 +541,23 @@ def switched_off(tmp_path_factory):
     return root, _deploy(root, _hosts(root, {"alpha": {"code": CODE}}), deploy_sign_in=False)
 
 
-def test_an_unattended_deploy_signs_nothing_in_and_fails_nothing(unattended):
-    root, report = unattended
+def test_an_unattended_deploy_signs_nothing_in_and_fails_nothing(deployed):
+    # d-unanswered: no code, and no terminal to ask at.
+    root, report = deployed
     assert report["rc"] == 0, _failed(report)
     assert _failed(report) == {}
-    calls = _claude_calls(root, "alpha")
+    calls = _claude_calls(root, "d-unanswered")
     # The sign-in ran, at deploy_sign_in's default; with nothing entered its
     # claude was ended rather than left waiting.
     assert "auth login" in calls and "TERM" in calls and "accepted" not in calls, calls
-    assert not _signed_in(root, "alpha")
-    assert _said(report, "Say that no code was entered", "alpha")
-    assert not any(call.startswith("auth login") for call in _gh_calls(root, "alpha"))
+    assert not _signed_in(root, "d-unanswered")
+    assert _said(report, "Say that no code was entered", "d-unanswered")
+    assert not any(call.startswith("auth login") for call in _gh_calls(root, "d-unanswered"))
 
 
 def test_deploy_signs_in_by_default():
-    # The unattended test above runs at this default, and needs the sign-in
-    # to run; just deploy is documented as ending signed in.
+    # The deploy above runs at this default, and its unanswered VM needs the
+    # sign-in to run; just deploy is documented as ending signed in.
     assert DEFAULTS["deploy_sign_in"] is True
 
 
@@ -748,10 +722,10 @@ def test_a_report_reads_every_vm_in_one_batch(reports, playbook, play):
     assert _batches(report, play) == [["alpha", "beta", "gamma"]]
 
 
+# claude_login.yml's own, run for names: test_claude_login.py's test_vms_are_signed_in_one_after_another.
 @pytest.mark.parametrize(
     ("fixture", "play"),
     [
-        ("claude_named", CLAUDE_SIGN_IN),
         ("github_named", GITHUB_SIGN_IN),
         ("deployed", CLAUDE_SIGN_IN),
         ("deployed", GITHUB_SIGN_IN),
@@ -760,18 +734,15 @@ def test_a_report_reads_every_vm_in_one_batch(reports, playbook, play):
 def test_a_sign_in_takes_one_vm_per_batch(request, fixture, play):
     _, report = request.getfixturevalue(fixture)
     vms = sorted(set(report["stats"]) - {"localhost"})
-    assert len(vms) == 3, vms
+    assert len(vms) == 4, vms
     assert _batches(report, play) == [[vm] for vm in vms]
 
 
-@pytest.mark.parametrize(
-    ("fixture", "sign_in", "after"),
-    [("claude_named", CLAUDE_SIGN_IN, CLAUDE_AFTER), ("github_named", GITHUB_SIGN_IN, GITHUB_AFTER)],
-)
-def test_the_work_after_the_sign_ins_waits_for_the_last_one_then_runs_for_every_vm(request, fixture, sign_in, after):
-    _, report = request.getfixturevalue(fixture)
-    assert _batches(report, after) == [["alpha", "beta", "gamma"]]
-    assert _play_positions(report, after)[0] > max(_play_positions(report, sign_in))
+# claude_login.yml's: test_claude_login.py's test of the same name.
+def test_the_work_after_the_sign_ins_waits_for_the_last_one_then_runs_for_every_vm(github_named):
+    _, report = github_named
+    assert _batches(report, GITHUB_AFTER) == [["alpha", "beta", "delta", "gamma"]]
+    assert _play_positions(report, GITHUB_AFTER)[0] > max(_play_positions(report, GITHUB_SIGN_IN))
 
 
 # ------------------------------------------------- switches no longer read

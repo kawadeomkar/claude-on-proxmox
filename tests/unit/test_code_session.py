@@ -320,7 +320,9 @@ def test_a_resume_that_fails_starts_no_other_claude(tmp_path):
 
 def test_a_continued_session_that_ends_badly_is_not_started_again(tmp_path):
     # Only a --continue that fails at once means there was nothing to continue.
-    result, asked = _run(tmp_path, status_rc=0, continue_rc=1, continue_sleep=6)
+    # Five seconds is the least that is not at once: bash's SECONDS counts
+    # whole seconds of the clock, so it says five or more after a sleep of five.
+    result, asked = _run(tmp_path, status_rc=0, continue_rc=1, continue_sleep=5)
     assert result.returncode == 0
     assert asked[-1] == "claude --continue"
 
