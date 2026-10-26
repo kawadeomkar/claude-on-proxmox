@@ -205,6 +205,28 @@ def _run(tmp_path: Path, **case):
     return result, _asked(tmp_path)
 
 
+def _session(sid: int) -> str:
+    """Each process left in a session, with its group, its terminal's foreground group and its signal masks.
+
+    What a hang leaves running, from /proc (Linux): the evidence for why a Ctrl-C ended nothing.
+    """
+    lines = []
+    for status in sorted(Path("/proc").glob("[0-9]*/status")):
+        try:
+            stat_text = (status.parent / "stat").read_text()
+            # state ppid pgrp session tty_nr tpgid, after the parenthesised command name
+            state, ppid, pgrp, session, _, tpgid = stat_text[stat_text.rindex(")") + 2 :].split()[:6]
+            if int(session) != sid:
+                continue
+            fields = dict(line.split(":\t", 1) for line in status.read_text().splitlines() if ":\t" in line)
+            command = (status.parent / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+        except (OSError, ValueError):
+            continue
+        masks = " ".join(f"{name} {fields.get(name, '?').strip()}" for name in ("SigIgn", "SigBlk", "SigCgt", "SigPnd"))
+        lines.append(f"pid {status.parent.name} ppid {ppid} pgrp {pgrp} tpgid {tpgid} {state} {masks}: {command}")
+    return "\n".join(lines) or "(nothing, or no /proc)"
+
+
 def _run_at_a_terminal(tmp_path: Path, keys: bytes, *, after: str, **case) -> tuple[int, str, list[str]]:
     """Run the script at a pseudo-terminal of its own; type `keys` once the stand-ins have logged `after`."""
     argv, env = _terminal(tmp_path, **case)
@@ -236,7 +258,13 @@ def _run_at_a_terminal(tmp_path: Path, keys: bytes, *, after: str, **case) -> tu
             elif process.poll() is not None:
                 break
         else:
-            pytest.fail("the script did not finish within 30 seconds:\n" + output.decode(errors="replace"))
+            pytest.fail(
+                "the script did not finish within 30 seconds:\n"
+                + output.decode(errors="replace")
+                + f"\nthe terminal's ISIG is {'on' if termios.tcgetattr(master)[3] & termios.ISIG else 'off'};"
+                + " what is left of its session:\n"
+                + _session(process.pid)
+            )
         rc = process.wait(timeout=10)
     finally:
         if process.poll() is None:
