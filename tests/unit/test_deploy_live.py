@@ -521,6 +521,86 @@ def test_a_failure_says_what_failed_whole_wherever_it_is(tmp_path):
     assert re.search(r"^\d+ tasks · nothing changed · 4 failed", text, re.M), text
 
 
+RESCUED = """
+- name: A failure under each way in, each block's rescue taking it
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: An imported file
+      block:
+        - name: Import the file
+          ansible.builtin.import_tasks: fails.yml
+      rescue:
+        - name: Take the imported file's failure
+          ansible.builtin.debug:
+            msg: took the import's
+    - name: An imported role
+      block:
+        - name: Import the role
+          ansible.builtin.import_role:
+            name: fails
+      rescue:
+        - name: Take the imported role's failure
+          ansible.builtin.debug:
+            msg: took the role's
+    - name: An included file
+      block:
+        - name: Include the file
+          ansible.builtin.include_tasks: fails.yml
+      rescue:
+        - name: Take the included file's failure
+          ansible.builtin.debug:
+            msg: took the include's
+    - name: An included role, in a block in a block
+      block:
+        - name: The inner block, with no rescue of its own
+          block:
+            - name: Include the role
+              ansible.builtin.include_role:
+                name: fails
+      rescue:
+        - name: Take the included role's failure
+          ansible.builtin.debug:
+            msg: took the included role's
+"""
+
+
+def _failing_file_and_role(root):
+    (root / "fails.yml").write_text(
+        "- name: fails | Fail in the file\n  ansible.builtin.fail:\n    msg: file-says-no\n"
+    )
+    (root / "roles" / "fails" / "tasks").mkdir(parents=True)
+    (root / "roles" / "fails" / "tasks" / "main.yml").write_text(
+        "- name: Fail in the role\n  ansible.builtin.fail:\n    msg: role-says-no\n"
+    )
+    (root / "hosts").write_text(f"localhost ansible_connection=local ansible_python_interpreter={sys.executable}\n")
+
+
+def test_a_failure_a_rescue_takes_through_an_import_or_include_is_the_blocks(tmp_path):
+    # A static import puts its file's block under a TaskInclude that no block lists: the rescue still takes it.
+    _failing_file_and_role(tmp_path)
+    (tmp_path / "rescued.yml").write_text(RESCUED)
+    ran = _piped(tmp_path, playbook="rescued.yml")
+    assert ran.rc == 0, ran.text
+    assert "✗" not in ran.text and "says-no" not in ran.text, ran.text
+    assert re.search(r"^\d+ tasks · nothing changed · 0 failed", ran.text, re.M), ran.text
+
+
+def test_a_rescue_the_tags_leave_out_takes_nothing(tmp_path):
+    # --tags runs the block's tagged import and filters its untagged rescue out: Ansible fails the host, and so does
+    # the screen. (A tag on the block itself would reach the rescue too.)
+    _failing_file_and_role(tmp_path)
+    (tmp_path / "tagged.yml").write_text(
+        "- name: A block whose import is tagged and whose rescue is not\n  hosts: localhost\n  gather_facts: false\n"
+        "  tasks:\n    - name: The block\n      block:\n        - name: Import the file\n"
+        "          ansible.builtin.import_tasks: fails.yml\n          tags: [picked]\n      rescue:\n"
+        "        - name: Never run\n          ansible.builtin.debug:\n            msg: never\n"
+    )
+    ran = _piped(tmp_path, "--tags", "picked", playbook="tagged.yml")
+    assert ran.rc == 2, ran.text
+    assert "✗ run on localhost: fails | Fail in the file" in ran.text and "file-says-no" in ran.text, ran.text
+
+
 @pytest.mark.parametrize(
     ("args", "env"),
     [(["-v"], {}), ([], {"CLAUDE_ON_PROXMOX_LIVE": ""}), ([], {"ANSIBLE_LOG_PATH": ""})],

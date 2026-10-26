@@ -144,16 +144,38 @@ def _role(task):
     return task._role.get_name(include_role_fqcn=False) if getattr(task, "_role", None) else None
 
 
-def _rescued(task):
-    """Whether a block's rescue takes the task's failure: the task is among that block's own tasks, at any depth.
-    One in a rescue or an always is not, unless a block further out has it among its own."""
-    child, parent = task, getattr(task, "_parent", None)
-    while parent is not None:
-        if getattr(parent, "rescue", None) and any(
-            getattr(item, "_uuid", None) == getattr(child, "_uuid", None) for item in parent.block or []
-        ):
+def _rescued(task, play=None):
+    """Whether a block's rescue takes the task's failure: the task is among that block's own tasks, at any depth, and
+    the rescue has a task the play's tags leave. One in a rescue or an always is not, unless a block further out has
+    it among its own.
+
+    Any link between the task and the block may be the one the block lists: a static import puts the file's own block
+    there, under a TaskInclude that no block lists, so the link right under the block is not always it."""
+    below, node = [], task
+    while node is not None:
+        below.append(getattr(node, "_uuid", None))
+        parent = getattr(node, "_parent", None)
+        if parent is not None and getattr(parent, "rescue", None) and _keeps(parent.rescue, play):
+            ids = set(below)
+            if not ids & (_uuids(parent.rescue) | _uuids(parent.always)) and ids & _uuids(parent.block):
+                return True
+        node = parent
+    return False
+
+
+def _uuids(items):
+    return {getattr(item, "_uuid", None) for item in items or []}
+
+
+def _keeps(items, play):
+    """Whether any task among items, at any depth, is one the play's --tags and --skip-tags leave: a rescue they filter
+    out entirely rescues nothing, and Ansible fails the host."""
+    for item in items or []:
+        if hasattr(item, "block"):
+            if any(_keeps(part, play) for part in (item.block, item.rescue, item.always)):
+                return True
+        elif _tagged_in(item, play):
             return True
-        child, parent = parent, getattr(parent, "_parent", None)
     return False
 
 
@@ -458,7 +480,7 @@ class CallbackModule(DefaultCallback):
         if not self._drawn():
             super().v2_runner_on_failed(result, ignore_errors)
             return
-        outcome = "ignored" if ignore_errors else "rescued" if _rescued(result.task) else "failed"
+        outcome = "ignored" if ignore_errors else "rescued" if _rescued(result.task, self._play) else "failed"
         self._result(result, outcome)
         if outcome == "failed":
             self._failure(result, "failed")
