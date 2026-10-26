@@ -469,6 +469,44 @@ def test_the_summary_drops_a_report_a_later_one_replaced_and_keeps_every_other()
     assert text.startswith("claude-on-proxmox  deploy alpha · done") and "\nSTAGES " in text and "\nSLOWEST " in text
 
 
+def _report(script, play, key, role, vm, text, records):
+    """A report and the set_stats task after it, as every report task is followed by its NEXT STEPS record."""
+    script.task(play, key, f"{key} | Report", role, took=0.1)
+    script.run.note(vm, text, task=script.run.find(key))
+    script.task(play, f"{key}-keep", f"{key} | Keep what is left to do", role, took=0.1)
+    for matter, line in records.items():
+        script.run.record(vm, matter, line, task=script.run.find(f"{key}-keep"))
+
+
+@pytest.mark.parametrize("signed_in", [False, True], ids=["signed-in-by-this-run", "signed-in-before"])
+def test_a_report_on_a_matter_a_later_report_recorded_again_is_left_out(signed_in):
+    script = Script().to_configure()
+    script.run.result("c6", "alpha", "ok", script.now)
+    if signed_in:
+        _report(script, "configure", "rc", "claude_code", "alpha", "Remote Control is live.", {"remote_control": ""})
+        _report(script, "login", "li", "claude_code", "alpha", "alpha: signed in as you", {"claude": ""})
+    else:
+        # Under just deploy configure records nothing left, since its sign-in follows: no line to be replaced.
+        said = "Remote Control is configured on alpha but not started: no login."
+        _report(script, "configure", "rc", "claude_code", "alpha", said, {"remote_control": "", "claude": ""})
+        _report(script, "configure", "gh", "github_projects", "alpha", "gh is not signed in.", {"github": ""})
+        _report(script, "login", "li", "claude_code", "alpha", "alpha: signed in as you", {"claude": ""})
+        _report(script, "login", "rl", "claude_code", "alpha", "Remote Control is live.", {"remote_control": ""})
+        _report(script, "login", "dl", "github_projects", "alpha", "signed in to GitHub", {"github": ""})
+    script.run.end(script.now)
+    text = "\n".join(script.run.summary(script.now, 100, color=False))
+    alpha = text.split("ALPHA", 1)[1].split("\n\n", 1)[0].splitlines()[1:]
+    if signed_in:
+        assert alpha == [" alpha is up at 192.0.2.61", " Remote Control is live.", " signed in as you"], alpha
+    else:
+        assert alpha == [
+            " alpha is up at 192.0.2.61",
+            " signed in as you",
+            " Remote Control is live.",
+            " signed in to GitHub",
+        ], alpha
+
+
 def test_a_failed_run_says_so_in_the_title():
     script = Script().to_configure()
     script.run.end(script.now, failed=True)

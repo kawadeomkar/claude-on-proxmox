@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 1957 tests. By file:
+pytest over `tests/unit/`: 1959 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -18,10 +18,10 @@ pytest over `tests/unit/`: 1957 tests. By file:
   the log - and statically, the six tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
-- **`just deploy`'s live output** (`test_deploy_view.py` 95, `test_deploy_live.py` 14): the model, fed
+- **`just deploy`'s live output** (`test_deploy_view.py` 97, `test_deploy_live.py` 14): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
-  record replaced left out of the summary, no line wider than the terminal at any of ten widths, a frame
+  report on its matter made old left out of the summary, as under `just deploy`, no line wider than the terminal at any of ten widths, a frame
   folded to its height, the line per step, the summary - the stage table against `deploy.yml`'s imports and
   `--only`'s playbooks, and the region against a stand-in `Display` (a vars prompt, a screen too small, the
   echo off on a pseudo-terminal of the test's own), whose `display`, `prompt_until`, `do_var_prompt` and lock

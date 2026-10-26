@@ -420,15 +420,16 @@ class CallbackModule(DefaultCallback):
         super().v2_runner_item_on_ok(result)
 
     def _records(self, result):
-        """What a report recorded for NEXT STEPS, as it goes: a report whose line a later record replaced is not
-        repeated in the summary."""
+        """What a report recorded for NEXT STEPS, as it goes: a report on a matter a later report recorded again is
+        not repeated in the summary."""
         data = (result.result.get("ansible_stats") or {}).get("data") or {}
         with self._display._lock:
+            task = self._run.find(result.task._uuid)
             for stat in NEXT_STATS:
                 for vm, matters in (data.get(stat) or {}).items() if isinstance(data.get(stat), dict) else ():
                     for matter, line in matters.items() if isinstance(matters, dict) else ():
                         if isinstance(line, str):
-                            self._run.record(str(vm), str(matter), plain_text(line))
+                            self._run.record(str(vm), str(matter), plain_text(line), task=task)
 
     def _report(self, result):
         """A debug message, a report: whole above the region, wrapped, and a line of the summary, under its VM."""

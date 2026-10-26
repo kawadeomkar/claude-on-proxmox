@@ -201,6 +201,14 @@ class Task:
         return self.seconds(now) if self.wait else 0.0
 
 
+class Note:
+    """A report: who said it, its words, the task that said it, and the (VM, matter)s its NEXT STEPS record wrote."""
+
+    def __init__(self, host, text, task):
+        self.host, self.text, self.task = host, text, task
+        self.matters = set()
+
+
 class Step:
     """A stage's step - a role, a sign-in, or the stage's own tasks (key None) - and how far it is."""
 
@@ -313,7 +321,7 @@ class Run:
         self.current = None  # the task running now
         self.order = []  # every task, in the order started
         self.plan = []  # the run's own first words: what it will do
-        self.notes = []  # (host, text, the task that said it)
+        self.notes = []  # Note, in the order said
         self.records = OrderedDict()  # (vm, matter): every line recorded for NEXT STEPS, in order
         self.facts = OrderedDict()  # host: {vmid, address, new}
         self.finished = None
@@ -403,11 +411,29 @@ class Run:
         if plan:
             self.plan.append(text)
         else:
-            self.notes.append((host, text, task))
+            self.notes.append(Note(host, text, task))
 
-    def record(self, vm, matter, line):
-        """A line recorded for NEXT STEPS: '' once nothing is left of that matter."""
+    def record(self, vm, matter, line, task=None):
+        """A line recorded for NEXT STEPS, '' once nothing is left of that matter, by the set_stats task given: the
+        record of the report the task before it made about that VM, as every report's record follows it."""
         self.records.setdefault((vm, matter), []).append(one_line(line))
+        index = next((n for n in range(len(self.order) - 1, -1, -1) if self.order[n] is task), 0)
+        if task is None or index == 0:
+            return
+        report = self.order[index - 1]
+        vms = self._vms()
+        for note in reversed(self.notes):
+            if note.task is report and self._about(note, vms) == vm:
+                note.matters.add((vm, matter))
+                return
+
+    def _vms(self):
+        hosts = [host for host in self.facts] + sorted({h for t in self.order for h in t.hosts} - set(self.facts))
+        return [host for host in hosts if host != "localhost"]
+
+    def _about(self, note, vms):
+        """The VM a note is about: its own host's, or for a play on this machine, the one VM it names."""
+        return (self._named(note.text, vms) or note.host) if note.host == "localhost" else note.host
 
     def fact(self, host, name, value):
         entry = self.facts.setdefault(host, {})
@@ -708,23 +734,29 @@ class Run:
             if stage.key == "provision" and self._vm_info():
                 parts.insert(0, self._vm_info())
             lines += self._flow(head, parts, limit)
-        vms = [host for host in self.facts] + sorted({h for t in self.order for h in t.hosts} - set(self.facts))
-        vms = [vm for vm in vms if vm != "localhost"]
-        said = []
-        for host, text, task in self.notes:
-            # What a play on this machine said about a VM - its address, its alias, its window - is that VM's.
-            if host == "localhost":
-                host = self._named(text, vms) or host
-            said.append((host, self._unnamed(host, text), task))
-        # Lines left to do that a later record replaced: configure's "not signed in" once the sign-in signed it in.
+        vms = self._vms()
+        # What a play on this machine said about a VM - its address, its alias, its window - is that VM's.
+        said = [(self._about(note, vms), note) for note in self.notes]
+        # A report on a matter a later report recorded again is over: configure's "not signed in" once the sign-in
+        # reports the login, under just deploy, where configure records nothing left since the sign-in follows.
+        later = set()
+        over = set()
+        for _, note in reversed(said):
+            if note.matters & later:
+                over.add(id(note))
+            later |= note.matters
+        # A line left to do that a later record replaced, though no report of its own said so.
         replaced = set()
         for (vm, _), recorded in self.records.items():
             replaced |= {(vm, self._unnamed(vm, line)) for line in recorded if line and line != recorded[-1]}
         # The same report again, in a later play - configure's repositories, then the sign-in's: its last run holds.
-        last = {(host, task.name): task for host, _, task in said if task is not None}
+        last = {(host, note.task.name): note.task for host, note in said if note.task is not None}
         notes = OrderedDict()
-        for host, text, task in said:
-            if (host, text) in replaced or (task is not None and last[(host, task.name)] is not task):
+        for host, note in said:
+            text = self._unnamed(host, note.text)
+            if id(note) in over or (host, text) in replaced:
+                continue
+            if note.task is not None and last[(host, note.task.name)] is not note.task:
                 continue
             notes.setdefault(host, [])
             if text not in notes[host]:

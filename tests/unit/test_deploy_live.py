@@ -160,6 +160,10 @@ PLAYBOOKS = {
       Remote Control is configured on alpha but not started: no Claude Code login is stored for dev on it.
       just deploy signs it in next, in this run. A sign-in made any other way starts it by itself too, and
       just deploy alpha --only configure then confirms it.
+- name: Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      claude_code_next: "{{ {inventory_hostname: {'remote_control': '', 'claude': ''}} }}"
 """,
     "roles/common/tasks/tools.yml": """
 - name: tools | Install Node.js
@@ -196,6 +200,13 @@ PLAYBOOKS = {
   ansible.builtin.debug:
     msg: "alpha: the code was {{ claude_answer.user_input }}"
   when: ask_code | default(false) | bool
+- name: remote_control | Report where to reach the session
+  ansible.builtin.debug:
+    msg: "alpha: Remote Control is live for alpha."
+- name: remote_control | Keep what is left to do for the end of the run
+  ansible.builtin.set_stats:
+    data:
+      claude_code_next: "{{ {'alpha': {'remote_control': ''}} }}"
 """,
 }
 CONFIG = f"""callback_result_format = yaml
@@ -405,6 +416,9 @@ def test_a_deploy_at_a_terminal_is_drawn_in_place_and_leaves_its_words_and_the_s
     assert stages == ["template", "provision", "configure", "sign in", "VS Code"], screen
     assert screen.index("STAGES") < screen.index("##  NEXT STEPS") and "alpha: just login alpha --only github" in screen
     assert "\nALPHA  192.0.2.61 · VM 104 · new\n" in screen
+    # configure's "not started", which the sign-in's report on Remote Control made old, is said above only.
+    alpha = screen.split("\nALPHA  ", 1)[1].split("\n\n", 1)[0]
+    assert " Remote Control is live for alpha." in alpha and "not started" not in alpha, alpha
     # The tab says where the run is, a wait for the person and the end ring once each.
     titles = ran.screen.titles
     assert titles[0] == "deploy alpha" and titles[-1] == "deploy alpha · done"
@@ -466,10 +480,10 @@ def test_without_a_terminal_each_step_is_a_line(stand_in):
     assert ran.rc == 0, ran.text
     assert "\x1b" not in ran.text, ran.text
     lines = ran.text.splitlines()
-    assert re.search(r"^✓ configure / common +8 tasks · 2 changed +\d", ran.text, re.M), ran.text
-    assert re.search(r"^✓ configure +9 tasks · 2 changed", ran.text, re.M), ran.text
+    assert re.search(r"^✓ configure / common +9 tasks · 2 changed +\d", ran.text, re.M), ran.text
+    assert re.search(r"^✓ configure +10 tasks · 2 changed", ran.text, re.M), ran.text
     assert (
-        re.search(r"^✓ sign in / Claude +7 tasks · 1 changed", ran.text, re.M)
+        re.search(r"^✓ sign in / Claude +9 tasks · 1 changed", ran.text, re.M)
         and len(re.findall(r"^✓ sign in", ran.text, re.M)) == 1
     )
     assert "Waiting for you in the browser for localhost" in ran.text

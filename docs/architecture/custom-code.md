@@ -205,9 +205,11 @@ callback is warned about on every run, so each has an empty `FilterModule` inste
 - **The end.** At the stats event the region is erased for good, PLAY RECAP goes to the log, and the summary
   (`Run.summary`) and NEXT STEPS print, the title `done`, or `failed` when a VM failed. The summary gives each
   VM a line per report, cut to the width, the report being whole above: a report run again in a later play -
-  the repositories, configure's and then the sign-in's - by its last run, and none whose NEXT STEPS line a
-  later record replaced (configure's "not signed in", once the sign-in's report clears it); a play on this
-  machine's under the one VM it names. Ctrl-C has no stats event: the region's `atexit` erases it and the
+  the repositories, configure's and then the sign-in's - by its last run; none on a matter a later report
+  recorded again (each report's NEXT STEPS record, the `set_stats` task straight after it, names its matters:
+  configure's "not signed in", which records nothing left under `just deploy` since the sign-in follows, goes
+  once the sign-in's report on that matter comes), nor one whose line a later record replaced; and a play on
+  this machine's under the one VM it names. Ctrl-C has no stats event: the region's `atexit` erases it and the
   title says `stopped`. Without a terminal there is no region: a line as each step ends
   (`Run.ended_lines`), the reports, and the summary.
 
