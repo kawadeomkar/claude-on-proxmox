@@ -12,6 +12,12 @@
 # changed by one validated lineinfile on the example's own line; the vault is
 # written once, at the end, encrypted: it never reaches the disk in plaintext.
 #
+# Before the secret is asked for, at a terminal, just init offers to make the
+# token itself (tasks/init_access.yml): it shows what tools/proxmox-access.sh
+# would run on the Proxmox host, over root SSH, and runs it on a y - the one
+# change just init makes on Proxmox - and the vault takes the secret it prints.
+# On n, the secret is asked for, as the script prints it when run by hand.
+#
 # Only at a terminal: init_ask is false unless just init sees one, so a run
 # with no terminal, or this playbook run by hand, asks nothing and writes only
 # the values given on the command line (init_given). A plaintext vault is
@@ -44,6 +50,13 @@
     init_vault_pass_file: "{{ init_root }}/.vault_pass"
     # This run's own ansible-vault, beside the Python running it, as the justfile's BIN.
     init_ansible_vault: "{{ ansible_playbook_python | dirname }}/ansible-vault"
+    # Its environment, quiet whatever the person's or ansible.cfg says: the
+    # decryption's stdout is the vault's text, and verbosity or debugging adds
+    # lines to it ("Using ... as config file"), which would be read as the
+    # vault's and fail the read-back.
+    init_ansible_vault_env:
+      ANSIBLE_VERBOSITY: "0"
+      ANSIBLE_DEBUG: "0"
 
     # What the example files ship with.
     init_host_placeholder: 192.0.2.10
@@ -51,6 +64,39 @@
     init_github_placeholder: your-github-username
     init_token_user_default: ansible@pve
     init_token_name_default: ansible
+    # defaults.yml's, which this play does not load.
+    init_storage_default: local-lvm
+    init_bridge_default: vmbr0
+
+    # The offer to set up the API access (tasks/init_access.yml): the script,
+    # and the host it runs on as hosts.yml has it - its first proxmox host, at
+    # the address answered or set, with the connection settings hosts.yml gives
+    # it, the groups' under its own - for the token answered or set.
+    init_access_script: "{{ init_root }}/tools/proxmox-access.sh"
+    init_access_host: "{{ init_hosts_proxmox[0].key if init_hosts_proxmox | length > 0 else '' }}"
+    init_access_hostvars: >-
+      {{ (init_hosts_inventory.all.vars | default({}, true))
+         | combine(init_hosts_inventory.all.children.proxmox.vars | default({}, true))
+         | combine(init_hosts_proxmox[0].value | default({}, true) if init_hosts_proxmox | length > 0 else {}) }}
+    init_hosts_inventory: "{{ init_hosts_text | from_yaml }}"
+    init_access_address: "{{ init_answers.host | default(init_hosts_current) }}"
+    init_access_user: "{{ init_answers.token_id.split('!')[0] if init_answers.token_id is defined else init_token_user }}"
+    init_access_token: "{{ init_answers.token_id.split('!')[1] if init_answers.token_id is defined else init_token_name }}"
+    # The script's options for what is not its default, the storage and bridge
+    # once settled.
+    init_access_arguments: >-
+      {{ (['--storage', (init_access_settled | default({})).storage]
+          if (init_access_settled | default({})).storage | default(init_storage_default) != init_storage_default else [])
+         + (['--bridge', (init_access_settled | default({})).bridge]
+            if (init_access_settled | default({})).bridge | default(init_bridge_default) != init_bridge_default else [])
+         + (['--user', init_access_user] if init_access_user != init_token_user_default else [])
+         + (['--token', init_access_token] if init_access_token != init_token_name_default else []) }}
+    # Whether ansible-vault wrote the vault: from then on it holds the secret.
+    init_access_vault_written: >-
+      {{ init_vault_encrypt is defined and init_vault_encrypt is not skipped and init_vault_encrypt.rc | default(1) == 0 }}
+    init_access_plan_ready: >-
+      {{ init_access_plan is defined and init_access_plan is not skipped and init_access_plan.rc | default(1) == 0
+         and init_access_plan.stdout_lines | default([]) | length > 0 }}
 
     # hosts.yml: the example's line is the only one ever written.
     init_hosts_text: "{{ init_hosts_read.content | b64decode }}"
@@ -197,6 +243,7 @@
     - name: Open the encrypted vault
       ansible.builtin.command:
         argv: "{{ [init_ansible_vault, 'decrypt'] + init_vault_password_args + ['--output', '-', init_vault_file] }}"
+      environment: "{{ init_ansible_vault_env }}"
       register: init_vault_decrypted
       changed_when: false
       check_mode: false
@@ -407,8 +454,8 @@
           {{ ((['--token-user'] if init_given.token_user is defined else [])
               + (['--token-name'] if init_given.token_name is defined else [])) | join(' and ') }}
         init_ask_text:
-          - The API token the pveum commands in docs/getting-started/proxmox-access.md made,
-          - as user@realm!name. Enter keeps {{ init_token_user_default }}!{{ init_token_name_default }}.
+          - "The API token to use, as user@realm!name: one you made, or the one just init offers to make"
+          - next. Enter keeps {{ init_token_user_default }}!{{ init_token_name_default }}.
       when: >-
         init_given.token_user is defined or init_given.token_name is defined
         or (init_vault_readable and not init_secret_set and not init_secret_given
@@ -425,21 +472,7 @@
         label: "{{ item.key }}"
       when: init_ask | bool or init_given.token_user is defined or init_given.token_name is defined
 
-    # --------------------------------------------------------- 3. token secret ---
-    - name: Ask for the API token's secret
-      ansible.builtin.include_tasks: tasks/init_ask.yml
-      vars:
-        init_ask_name: secret
-        init_ask_label: API token secret
-        init_ask_kind: uuid
-        init_ask_hidden: true
-        init_ask_given: "{{ init_secret_given_value | default('') }}"
-        init_ask_flag: "{{ init_secret_flag }}"
-        init_ask_text:
-          - The token's secret, which pveum printed once. Enter to decide later.
-      when: init_vault_readable and not init_secret_set
-
-    # ------------------------------------------------------- 4. GitHub username ---
+    # ------------------------------------------------------- 3. GitHub username ---
     - name: Ask for the GitHub username
       ansible.builtin.include_tasks: tasks/init_ask.yml
       vars:
@@ -476,94 +509,151 @@
           tailscale_enabled: false in inventory/group_vars/all/local.yml (or just init --tailscale off).
       when: init_local_settings.tailscale_enabled is not defined and init_given.tailscale is not defined
 
+    # ------------------------------------------------------------ 4. the token ---
+    # Asked last, straight before the vault: a token the offer makes has its
+    # secret written there with no question or other write between, which
+    # could fail or be cut short with the secret, shown once, still unsaved.
+    - name: Offer to set up the API access on the Proxmox host
+      ansible.builtin.include_tasks: tasks/init_access.yml
+      when: >-
+        init_ask | bool and init_vault_readable and not init_secret_set and not init_secret_given
+        and init_access_host | length > 0 and init_access_address not in ['', init_host_placeholder]
+
+    - name: Ask for the API token's secret
+      ansible.builtin.include_tasks: tasks/init_ask.yml
+      vars:
+        init_ask_name: secret
+        init_ask_label: API token secret
+        init_ask_kind: uuid
+        init_ask_hidden: true
+        init_ask_given: "{{ init_secret_given_value | default('') }}"
+        init_ask_flag: "{{ init_secret_flag }}"
+        init_ask_text:
+          - The token's secret, which Proxmox printed once, when the token was made (tools/proxmox-access.sh
+          - prints it). Enter to decide later.
+      when: init_vault_readable and not init_secret_set and (init_hidden_answers | default({})).secret is not defined
+
     # --------------------------------------------------------------- the vault ---
     # The answers in place of the example's lines, in memory. A line that does
     # not hold its value whole - a block scalar - cannot be written in place.
-    - name: Put the answers into the vault's text
+    # A failure here after the offer made a token, before the vault was written,
+    # deletes the token again: its secret, shown once, would be lost, and the
+    # next just init makes a new one. Once ansible-vault has written the vault,
+    # it holds the secret, and the token stays whatever the read-back says.
+    - name: Write the vault
       block:
         - name: Put the answers into the vault's text
-          ansible.builtin.set_fact:
-            init_vault_composed: "{{ init_vault_new_text | length > 0 }}"
+          block:
+            - name: Put the answers into the vault's text
+              ansible.builtin.set_fact:
+                init_vault_composed: "{{ init_vault_new_text | length > 0 }}"
+              no_log: true
+              when: (init_ask | bool or init_any_given | bool) and init_vault_writes | bool
+          rescue:
+            - name: Stop at a vault line the answer cannot replace
+              ansible.builtin.fail:
+                msg: >-
+                  {{ init_vault_file }}'s vault_proxmox_api_token_secret or vault_github_username line cannot take
+                  the answer in place (a value over several lines?): set it with just vault.
+
+        # Only when there is no password anywhere: a .vault_pass of the person's
+        # own is never read as text, rewritten or re-moded. One made here is made
+        # O_EXCL and 0600 by this run's Python, which prints nothing.
+        - name: Make a password for the vault, in .vault_pass
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - -c
+              - |-
+                import os, secrets, sys
+                with os.fdopen(os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+                    f.write(secrets.token_urlsafe(32) + "\n")
+              - "{{ init_vault_pass_file }}"
+            creates: "{{ init_vault_pass_file }}"
+          register: init_vault_pass_made
+          when: (init_ask | bool or init_any_given | bool) and init_vault_writes | bool and not init_vault_password
+
+        # The new text on ansible-vault's stdin: never on argv, never in a file in
+        # plaintext (ansible-vault shreds the old file and writes the new one
+        # 0600), and never through copy, which decrypts what it is given first.
+        - name: Write the vault, encrypted
+          ansible.builtin.command:
+            argv: >-
+              {{ [init_ansible_vault, 'encrypt', '--encrypt-vault-id', 'default'] + init_vault_password_args
+                 + ['--output', init_vault_file, '-'] }}
+            stdin: "{{ init_vault_new_text }}"
+          environment: "{{ init_ansible_vault_env }}"
+          register: init_vault_encrypt
+          changed_when: true
+          failed_when: false
           no_log: true
           when: (init_ask | bool or init_any_given | bool) and init_vault_writes | bool
-      rescue:
-        - name: Stop at a vault line the answer cannot replace
+
+        # What ansible-vault said holds no secret: its errors name files and ids.
+        - name: Stop if the vault could not be written
           ansible.builtin.fail:
             msg: >-
-              {{ init_vault_file }}'s vault_proxmox_api_token_secret or vault_github_username line cannot take
-              the answer in place (a value over several lines?): set it with just vault.
+              ansible-vault could not encrypt {{ init_vault_file }} with
+              {{ init_vault_pass_file if init_vault_pass_now else init_vault_password_env }}:
+              {{ init_vault_encrypt.stderr | plain_text | trim }}
+          when: init_vault_encrypt is not skipped and init_vault_encrypt.rc != 0
 
-    # Only when there is no password anywhere: a .vault_pass of the person's
-    # own is never read as text, rewritten or re-moded. One made here is made
-    # O_EXCL and 0600 by this run's Python, which prints nothing.
-    - name: Make a password for the vault, in .vault_pass
-      ansible.builtin.command:
-        argv:
-          - "{{ ansible_playbook_python }}"
-          - -c
-          - |-
-            import os, secrets, sys
-            with os.fdopen(os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
-                f.write(secrets.token_urlsafe(32) + "\n")
-          - "{{ init_vault_pass_file }}"
-        creates: "{{ init_vault_pass_file }}"
-      register: init_vault_pass_made
-      when: (init_ask | bool or init_any_given | bool) and init_vault_writes | bool and not init_vault_password
+        - name: Open the vault again
+          ansible.builtin.command:
+            argv: "{{ [init_ansible_vault, 'decrypt'] + init_vault_password_args + ['--output', '-', init_vault_file] }}"
+          environment: "{{ init_ansible_vault_env }}"
+          register: init_vault_reread
+          changed_when: false
+          check_mode: false
+          failed_when: false
+          no_log: true
+          when: init_vault_encrypt is not skipped
 
-    # The new text on ansible-vault's stdin: never on argv, never in a file in
-    # plaintext (ansible-vault shreds the old file and writes the new one
-    # 0600), and never through copy, which decrypts what it is given first.
-    - name: Write the vault, encrypted
-      ansible.builtin.command:
-        argv: >-
-          {{ [init_ansible_vault, 'encrypt', '--encrypt-vault-id', 'default'] + init_vault_password_args
-             + ['--output', init_vault_file, '-'] }}
-        stdin: "{{ init_vault_new_text }}"
-      register: init_vault_encrypt
-      changed_when: true
-      failed_when: false
-      no_log: true
-      when: (init_ask | bool or init_any_given | bool) and init_vault_writes | bool
+        - name: Compare it with what was written
+          ansible.builtin.set_fact:
+            init_vault_matches: >-
+              {{ init_vault_reread.rc == 0 and init_vault_reread.stdout | regex_replace('\n+$', '') == init_vault_new_text }}
+          no_log: true
+          when: init_vault_reread is not skipped
 
-    # What ansible-vault said holds no secret: its errors name files and ids.
-    - name: Stop if the vault could not be written
-      ansible.builtin.fail:
-        msg: >-
-          ansible-vault could not encrypt {{ init_vault_file }} with
-          {{ init_vault_pass_file if init_vault_pass_now else init_vault_password_env }}:
-          {{ init_vault_encrypt.stderr | plain_text | trim }}
-      when: init_vault_encrypt is not skipped and init_vault_encrypt.rc != 0
+        - name: Stop if it does not hold what was written
+          ansible.builtin.fail:
+            msg: >-
+              {{ init_vault_file }} does not decrypt to what just init wrote into it
+              ({{ init_vault_reread.stderr | default('') | plain_text | trim or 'the text differs' }}): open it with just vault.
+          when: init_vault_reread is not skipped and not init_vault_matches | bool
+      rescue:
+        - name: Delete the token just made, whose secret the vault could not keep
+          ansible.builtin.command:
+            argv: [pveum, user, token, delete, "{{ init_access_user }}", "{{ init_access_token }}"]
+          # Rendered even when the task is skipped: never empty.
+          delegate_to: "{{ init_access_host | default('localhost', true) }}"
+          register: init_access_deleted
+          changed_when: true
+          failed_when: false
+          ignore_unreachable: true
+          when: init_access_made | default(false) | bool and not init_access_vault_written | bool
 
-    - name: Open the vault again
-      ansible.builtin.command:
-        argv: "{{ [init_ansible_vault, 'decrypt'] + init_vault_password_args + ['--output', '-', init_vault_file] }}"
-      register: init_vault_reread
-      changed_when: false
-      check_mode: false
-      failed_when: false
-      no_log: true
-      when: init_vault_encrypt is not skipped
-
-    - name: Compare it with what was written
-      ansible.builtin.set_fact:
-        init_vault_matches: >-
-          {{ init_vault_reread.rc == 0 and init_vault_reread.stdout | regex_replace('\n+$', '') == init_vault_new_text }}
-      no_log: true
-      when: init_vault_reread is not skipped
-
-    - name: Stop if it does not hold what was written
-      ansible.builtin.fail:
-        msg: >-
-          {{ init_vault_file }} does not decrypt to what just init wrote into it
-          ({{ init_vault_reread.stderr | default('') | plain_text | trim or 'the text differs' }}): open it with just vault.
-      when: init_vault_reread is not skipped and not init_vault_matches | bool
+        - name: Stop, saying why the vault could not be written
+          ansible.builtin.fail:
+            msg: >-
+              {{ ansible_failed_result.msg | default('The vault could not be written.') }}
+              {{ ('The token ' ~ init_access_user ~ '!' ~ init_access_token ~ ' just init made on ' ~ init_access_address
+                  ~ (' is kept, as the vault was written with its secret: if just init then finds the secret refused,'
+                     ~ ' delete the token there (pveum user token delete ' ~ init_access_user ~ ' '
+                     ~ init_access_token ~ ') and run just init again.' if init_access_vault_written | bool
+                     else ' is deleted again: just init makes a new one.' if init_access_deleted.rc | default(1) == 0
+                     else ' could not be deleted again, and its secret is lost: delete it there (pveum user token'
+                          ~ ' delete ' ~ init_access_user ~ ' ' ~ init_access_token ~ ') and run just init again.'))
+                 if init_access_made | default(false) | bool else '' }}
 
     # ----------------------------------------------------------------- the end ---
     - name: Say what was written, and what is left
       ansible.builtin.debug:
         msg: |-
           {% if init_answers.host is defined or init_token_settings | length > 0 or init_vault_wrote
-                or init_tailscale_writes | bool %}
+                or init_tailscale_writes | bool or init_access_wrote | default({}) | length > 0
+                or init_access_made | default(false) | bool %}
           Wrote:
           {% if init_answers.host is defined %}
             inventory/hosts.yml                  ansible_host: {{ init_answers.host | to_json }}
@@ -571,8 +661,14 @@
           {% for key, value in init_token_settings.items() %}
             inventory/group_vars/all/local.yml   {{ key }}: {{ value | to_json }}
           {% endfor %}
+          {% for key, value in (init_access_wrote | default({})).items() %}
+            inventory/group_vars/all/local.yml   {{ key }}: {{ value | to_json }}
+          {% endfor %}
           {% if init_tailscale_writes | bool %}
             inventory/group_vars/all/local.yml   tailscale_enabled: {{ init_tailscale_given | to_json }}
+          {% endif %}
+          {% if init_access_made | default(false) | bool %}
+            the Proxmox host                     the token {{ init_access_user }}!{{ init_access_token }}, with what it needs
           {% endif %}
           {% if init_vault_wrote %}
             inventory/group_vars/all/vault.yml   {{ ((['the token secret'] if init_secret_answered else [])
@@ -598,7 +694,8 @@
           vault.yml is still plaintext, which every recipe refuses: just vault encrypts it, or just init
           does at a terminal.
           {% elif init_missing | length == 0 and init_answers.host is not defined and init_token_settings | length == 0
-                  and not init_vault_wrote and not init_tailscale_writes | bool %}
+                  and not init_vault_wrote and not init_tailscale_writes | bool
+                  and init_access_wrote | default({}) | length == 0 %}
           Every value a first deploy needs is set.
           {% endif %}
           Optional, with just vault: vault_github_token, vault_anthropic_api_key, vault_tailscale_auth_key.

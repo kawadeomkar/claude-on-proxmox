@@ -825,18 +825,41 @@ syntax check and ansible-lint would take it for a playbook.
 
 It reads `hosts.yml` and `local.yml`, and the vault: as text when it is plaintext, through `ansible-vault
 decrypt --output -` under `no_log` when it is encrypted and there is a password (`.vault_pass`, or
-`ANSIBLE_VAULT_PASSWORD_FILE`); an encrypted vault with neither is left alone, and said. Then four
+`ANSIBLE_VAULT_PASSWORD_FILE`); an encrypted vault with neither is left alone, and said. Every `ansible-vault`
+it runs has `ANSIBLE_VERBOSITY` and `ANSIBLE_DEBUG` at 0 (`init_ansible_vault_env`), whatever the environment
+or `ansible.cfg` says: either adds lines to the stdout the vault's text is read from. Then four
 questions, each through `tasks/init_ask.yml` and only while its value is still the example's: the host's
 address (written at once, by one `lineinfile` on the example's `ansible_host: 192.0.2.10` line, comment
 kept, validated as YAML and read back); the token's ID, while there is no secret and `local.yml` names no
 token (only the parts that differ from `ansible@pve!ansible` are written, by `tasks/init_local_setting.yml`,
-in place of their commented example lines); the secret, hidden; the GitHub username. Each answer is held
+in place of their commented example lines); the GitHub username; and last the secret, hidden - last so
+that a token the offer below makes has its secret written into the vault with no question between. Each answer is held
 to its kind by the `init_answer` filter (`filter_plugins/settings.py`); one that breaks the rule is asked
 for once more, saying it, and Enter leaves the value for the next run. The address in effect is the first
 `proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it. Tailscale is not asked about:
 while `local.yml` does not set `tailscale_enabled`, a `NOTICE` says it is on, by the vault's auth key or the
 sign-in page, and how to turn it off, writing nothing, so a later change to the default still reaches the
 person; `--tailscale on` or `off` writes the setting, by `tasks/init_local_setting.yml`.
+
+Before the secret, at a terminal, while the vault has none and none was given, `tasks/init_access.yml`
+offers to make the token: the one change `just init` makes on Proxmox. It adds the first `proxmox` host as
+`hosts.yml` has it (`add_host`, its connection settings passed on), and runs `tools/proxmox-access.sh` there
+as root over SSH with the `command` module - `/bin/sh -s` with the script on stdin, never a copy left on the
+host. `--list` names the node's storages for VM disks and its bridges, which the script reads from `pvesh`
+and nothing changes; the storage and bridge in effect are kept when the host has them, a default it lacks is
+asked for among what it has (`tasks/init_access_choose.yml`, written into `local.yml`), and one `local.yml`
+sets that the host lacks is said and left. `--dry-run` prints the `pveum` commands it would run, which the
+question shows with what exists already; on `y` the script runs them, creating only what is missing - the
+role, the user, its grants where the user does not hold the role's privileges, and the token, last - and
+changes nothing that exists. Its stdout is the token's secret and nothing else, read by a `no_log` task
+into the hidden answers, as a typed secret would be; what it said, on stderr, is said. `n`, Enter, a root
+SSH that fails or a step that cannot be done says how to run the script by hand, and the secret is asked
+for. The offer and the secret are the last tasks before the vault's write, nothing between them, and that
+write is a block whose rescue deletes a token this run made (`pveum user token delete`) while the vault is
+unwritten, since its secret would be lost, and fails with what went wrong. Once `ansible-vault` has written
+the vault, which then holds the secret, the token is kept whatever the read-back says. The connection settings
+come from `hosts.yml` as the template build reads them: `all`'s vars, then the `proxmox` group's, then the
+host's own.
 
 `init_ask` is false unless the justfile sees a terminal and was not given `--no-prompt`, and
 every write is under it, or under a value given on the command line: `init_given`, the JSON

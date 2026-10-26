@@ -10,7 +10,9 @@
 
 This project inherits your infrastructure. It creates VMs and reads back the addresses they were
 given; it does not manage networking, storage, or address allocation, and it will not change
-anything on the host outside the template it builds and the VMs it creates. A host that already runs
+anything on the host outside the template it builds and the VMs it creates - with one exception, made
+once and only if you say so: `just init` offers to create the API user, role and token the project uses
+([Proxmox access](proxmox-access.md#the-api-token)). A host that already runs
 VMs usually has everything it needs; check the first and third rows in particular, since a host can run
 VMs with a repository that fails `apt update`, or with static addresses and no DHCP server:
 
@@ -77,9 +79,10 @@ VM disks your token can use on the node, and asks which, when `local-lvm` is not
 *Datacenter → Storage* and set `proxmox_storage` in `local.yml` yourself.
 
 The same setting is how a storage of this project's own is handed to it: an admin who provisions a
-dedicated pool for these VMs (on a NAS, say) gives you its id, you put it in `proxmox_storage` and
-grant it to the token with the `pveum aclmod /storage/<id>` line in
-[Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token). The id is the whole
+dedicated pool for these VMs (on a NAS, say) gives you its id, you put it in `proxmox_storage`, and
+`just init` grants it to the token when it makes the token - or `tools/proxmox-access.sh --storage <id>`
+does ([Setting it up yourself](proxmox-access.md#setting-it-up-yourself)), and either leaves it alone when
+the admin has granted it already. The id is the whole
 interface. This project only ever names a storage and puts the template and every clone on it; it
 never creates or changes one, never asks for more than `Datastore.AllocateSpace` and
 `Datastore.Audit` on that one path, and needs the `images` content type and nothing else.

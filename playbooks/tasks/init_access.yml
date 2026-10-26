@@ -1,0 +1,201 @@
+---
+# just init's offer to set up the Proxmox API access the project uses, by
+# running tools/proxmox-access.sh on the Proxmox host as root, over the SSH the
+# template build uses. It is the one change just init makes on Proxmox, and
+# only on a y typed at its question: init_settings.yml includes it at a
+# terminal alone, while the vault holds no token secret and none was given.
+#
+#   1. Reach the host as inventory/hosts.yml has it, and list its storages for
+#      VM disks and its bridges: the script's --list, which changes nothing.
+#   2. Settle the storage and the bridge: those in effect, when the host has
+#      them; otherwise one it has, asked for and written into local.yml.
+#   3. Show what the script would run there (--dry-run), and ask y or n.
+#   4. On y, run it. The secret of the token it made is the answer to the
+#      secret question, and the vault, written next, takes it encrypted.
+#
+# n, Enter, or a step that cannot be done says how to run the script by hand,
+# and the secret is asked for as before. The script is the same either way.
+# What the host prints reaches a message only through plain_text (banner
+# applies it too); the run that prints the secret is no_log, and the secret
+# goes nowhere but init_hidden_answers. Inputs, from init_settings.yml's
+# vars: init_access_host, init_access_address, init_access_hostvars,
+# init_access_user, init_access_token, init_access_script and the defaults.
+- name: init_access | Reach the Proxmox host as hosts.yml has it
+  ansible.builtin.add_host:
+    name: "{{ init_access_host }}"
+    ansible_host: "{{ init_access_address }}"
+    ansible_user: "{{ init_access_hostvars.ansible_user | default('root') }}"
+    ansible_port: "{{ init_access_hostvars.ansible_port | default(omit) }}"
+    ansible_connection: "{{ init_access_hostvars.ansible_connection | default(omit) }}"
+    ansible_python_interpreter: "{{ init_access_hostvars.ansible_python_interpreter | default(omit) }}"
+    ansible_ssh_private_key_file: "{{ init_access_hostvars.ansible_ssh_private_key_file | default(omit) }}"
+    ansible_ssh_common_args: "{{ init_access_hostvars.ansible_ssh_common_args | default(omit) }}"
+    ansible_ssh_extra_args: "{{ init_access_hostvars.ansible_ssh_extra_args | default(omit) }}"
+  changed_when: false
+
+- name: init_access | List the host's storages and bridges, over root SSH
+  ansible.builtin.command:
+    argv: [/bin/sh, -s, --, --list]
+    stdin: "{{ lookup('ansible.builtin.file', init_access_script) }}"
+  delegate_to: "{{ init_access_host }}"
+  register: init_access_listed
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  ignore_unreachable: true
+
+- name: init_access | Record what the host has
+  ansible.builtin.set_fact:
+    init_access_reached: >-
+      {{ not (init_access_listed.unreachable | default(false)) and init_access_listed.rc | default(1) == 0 }}
+    init_access_storages: >-
+      {{ init_access_listed.stdout_lines | default([]) | select('match', 'storage ') | map('regex_replace', '^storage ', '')
+         | list }}
+    init_access_bridges: >-
+      {{ init_access_listed.stdout_lines | default([]) | select('match', 'bridge ') | map('regex_replace', '^bridge ', '')
+         | list }}
+    init_access_why: >-
+      {{ 'root SSH to ' ~ init_access_address ~ ' failed (' ~ init_access_listed.msg | default('') | plain_text
+         | trim | truncate(300) ~ '): install your key with ssh-copy-id root@' ~ init_access_address
+         ~ ' and run just init again'
+         if init_access_listed.unreachable | default(false) else
+         'tools/proxmox-access.sh refused on ' ~ init_access_address ~ ': '
+         ~ (init_access_listed.stderr | default(init_access_listed.msg | default('')) | plain_text | trim
+            | truncate(300))
+         if init_access_listed.rc | default(1) != 0 else '' }}
+
+# ---------------------------------------------------- the storage and bridge ---
+# Each: the value in effect, when the host has it; one local.yml sets that the
+# host does not have is the person's to fix; a default the host does not have
+# is asked for, y or n for the one it has, a number for several.
+- name: init_access | Settle the storage and the bridge
+  ansible.builtin.include_tasks: init_access_choose.yml
+  vars:
+    init_access_what: "{{ item.what }}"
+    init_access_setting: "{{ item.setting }}"
+    init_access_default: "{{ item.default }}"
+    init_access_listing: "{{ item.listing }}"
+  loop:
+    - {what: storage, setting: proxmox_storage, default: "{{ init_storage_default }}", listing: "{{ init_access_storages }}"}
+    - {what: bridge, setting: proxmox_bridge, default: "{{ init_bridge_default }}", listing: "{{ init_access_bridges }}"}
+  loop_control:
+    label: "{{ item.what }}"
+  when: init_access_reached | bool
+
+# ------------------------------------------------------------- the question ---
+- name: init_access | Ask the script what it would run
+  ansible.builtin.command:
+    argv: "{{ ['/bin/sh', '-s', '--', '--dry-run'] + init_access_arguments }}"
+    stdin: "{{ lookup('ansible.builtin.file', init_access_script) }}"
+  delegate_to: "{{ init_access_host }}"
+  register: init_access_plan
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  ignore_unreachable: true
+  when: init_access_reached | bool and init_access_settled | default({}) | length == 2
+
+- name: init_access | Record why the script would run nothing
+  ansible.builtin.set_fact:
+    init_access_why: >-
+      {{ 'tools/proxmox-access.sh refused on ' ~ init_access_address ~ ': '
+         ~ (init_access_plan.stderr | default(init_access_plan.msg | default('')) | plain_text | trim | truncate(300)) }}
+  when: >-
+    init_access_plan is not skipped
+    and (init_access_plan.unreachable | default(false) or init_access_plan.rc | default(1) != 0)
+
+- name: init_access | Ask whether to run it
+  ansible.builtin.include_tasks: init_ask.yml
+  vars:
+    init_ask_name: proxmox_access
+    init_ask_label: Set it up now? y or n
+    init_ask_kind: yes_no
+    init_ask_hidden: false
+    init_ask_given: ""
+    init_ask_flag: ""
+    init_ask_text: >-
+      {{ ['just init can set up the API access this project uses on ' ~ init_access_address ~ ', as root over SSH.',
+          'It would run there, creating only what is missing:']
+         + init_access_plan.stdout_lines | map('regex_replace', '^', '  ') | list
+         + (['Already there:'] + init_access_plan.stderr_lines | map('regex_replace', '^', '  ') | list
+            if init_access_plan.stderr_lines | length > 0 else [])
+         + ["Nothing else on the host changes, and the token's secret goes straight into the encrypted vault.",
+            'n, or Enter, to do it yourself with tools/proxmox-access.sh (docs/getting-started/proxmox-access.md).'] }}
+  when: init_access_plan_ready | bool
+
+- name: init_access | Say that the access is set up already
+  ansible.builtin.debug:
+    msg: >-
+      NOTICE  The API access is set up on {{ init_access_address }} already:
+      {{ init_access_plan.stderr_lines | map('plain_text') | join(' ') }}
+  when: >-
+    init_access_plan is not skipped and init_access_plan.rc | default(1) == 0
+    and init_access_plan.stdout_lines | length == 0
+
+# ------------------------------------------------------------------ the run ---
+# no_log: its stdout is the token's secret. What it said goes to stderr, which
+# never holds the secret, and is said by the next task.
+- name: init_access | Set up the access on the Proxmox host
+  ansible.builtin.command:
+    argv: "{{ ['/bin/sh', '-s', '--'] + init_access_arguments }}"
+    stdin: "{{ lookup('ansible.builtin.file', init_access_script) }}"
+  delegate_to: "{{ init_access_host }}"
+  register: init_access_run
+  changed_when: true
+  failed_when: false
+  ignore_unreachable: true
+  no_log: true
+  when: init_access_plan_ready | bool and (init_answers | default({})).proxmox_access | default('') == 'y'
+
+- name: init_access | Stop if it failed
+  ansible.builtin.fail:
+    msg: >-
+      tools/proxmox-access.sh failed on {{ init_access_address }}:
+      {{ (init_access_run.stderr | default(init_access_run.msg | default(''))) | plain_text | trim }}
+      What it did before that stays, and just init again does only what is still missing.
+  when: >-
+    init_access_run is not skipped
+    and (init_access_run.unreachable | default(false) or init_access_run.rc | default(1) != 0)
+
+- name: init_access | Say what it ran
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Set up on ' ~ init_access_address ~ ':']
+         + init_access_run.stderr_lines | select('match', '[+] ') | map('plain_text') | list }}
+  when: init_access_run is not skipped
+
+# The token's secret, as the secret question would have kept it: it is the
+# script's stdout, and the only thing there. init_access_made says a token was
+# made, which the vault's write deletes again if it cannot keep the secret.
+- name: init_access | Keep the secret of the token it made
+  ansible.builtin.set_fact:
+    init_hidden_answers: >-
+      {{ init_hidden_answers | default({}) | combine({'secret': init_access_secret} if init_access_secret | length > 0
+                                                     else {}) }}
+    init_access_made: true
+  vars:
+    init_access_secret: "{{ init_access_run.stdout | init_answer('uuid') }}"
+  no_log: true
+  when: init_access_run is not skipped and init_access_run.stdout | length > 0
+
+- name: init_access | Stop if what it printed is no secret
+  ansible.builtin.fail:
+    msg: >-
+      tools/proxmox-access.sh made the token {{ init_access_user }}!{{ init_access_token }} on {{ init_access_address }}
+      but printed no secret: delete the token there (pveum user token delete {{ init_access_user }}
+      {{ init_access_token }}) and run just init again.
+  when: init_access_made | default(false) | bool and (init_hidden_answers | default({})).secret is not defined
+
+# --------------------------------------------------------------- otherwise ---
+- name: init_access | Say how to set up the access by hand
+  ansible.builtin.debug:
+    msg: >-
+      NOTICE  {{ (init_access_why ~ '. ') if init_access_why | default('') | length > 0 else '' }}To set up the API
+      access yourself, run tools/proxmox-access.sh on the Proxmox host as root - from this checkout, ssh
+      root@{{ init_access_address }} sh -s{{ (' -- ' ~ init_access_arguments | join(' '))
+      if init_access_arguments | length > 0 else '' }} < tools/proxmox-access.sh - and give the next question,
+      or the next just init, the secret it prints (docs/getting-started/proxmox-access.md).
+  when: >-
+    init_access_run is skipped
+    and not (init_access_plan is not skipped and init_access_plan.rc | default(1) == 0
+             and init_access_plan.stdout_lines | length == 0)

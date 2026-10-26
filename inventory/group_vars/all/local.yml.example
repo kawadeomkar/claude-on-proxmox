@@ -17,8 +17,8 @@
 # The bridge the template's NIC is attached to, which every clone inherits. Set
 # it before the template is built, and grant the token SDN.Use on it.
 # proxmox_bridge: vmbr0
-# The API user and token the pveum commands in
-# docs/getting-started/proxmox-access.md create, and the API's port.
+# The API user and token, as just init or tools/proxmox-access.sh makes them
+# (docs/getting-started/proxmox-access.md), and the API's port.
 # proxmox_api_user: ansible@pve
 # proxmox_api_token_id: ansible
 # proxmox_api_port: 8006

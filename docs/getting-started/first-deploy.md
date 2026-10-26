@@ -1,14 +1,15 @@
 # Your first deploy
 
-Before this, the Proxmox host needs an API token and your SSH key: see [Proxmox access](proxmox-access.md),
-and [Requirements](requirements.md) for what the project assumes of the host.
+Before this, the Proxmox host needs your SSH key for root - `just init` offers to make the API token over it -
+see [Proxmox access](proxmox-access.md), and [Requirements](requirements.md) for what the project assumes of
+the host.
 
 ## Set up the project
 
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
-just init            # installs the tools, then asks for your Proxmox host, its API token and your GitHub username
+just init            # installs the tools, asks for your Proxmox host and GitHub username, and offers to make the API token
 ```
 
 The project keeps no environment of its own, and needs no particular tool to make one: pyenv, above, is a
@@ -25,10 +26,17 @@ for each value a first deploy needs that is still the example's:
 
 1. **The Proxmox host's address**, as this machine reaches it: an IP address or a host name, without
    `https://` or a port.
-2. **The API token's ID**, `user@realm!name`. Enter keeps `ansible@pve!ansible`, the name the `pveum`
-   commands in [Proxmox access](proxmox-access.md) give it.
-3. **The token's secret**, which `pveum` printed once. It is not shown as you type.
-4. **Your GitHub username**, whose repositories are cloned onto each VM.
+2. **The API token's ID**, `user@realm!name`. Enter keeps `ansible@pve!ansible`, the name
+   `tools/proxmox-access.sh` gives it.
+3. **Your GitHub username**, whose repositories are cloned onto each VM.
+4. **Whether to set up the API access.** `just init` reaches the host over root SSH, shows the `pveum`
+   commands `tools/proxmox-access.sh` would run there to make the role, the user, its grants and the token,
+   and runs them on `y`, putting the token's secret straight into the vault
+   ([Letting `just init` set it up](proxmox-access.md#letting-just-init-set-it-up)). It asks first which
+   storage or bridge to use when the host has no `local-lvm` or `vmbr0`. It changes nothing on the host on `n`
+   or Enter, and asks nothing when the host is set up already or root SSH fails.
+5. **The token's secret**, unless `just init` just made the token: the one `tools/proxmox-access.sh` printed,
+   when you ran it yourself. It is not shown as you type.
 
 Enter at a question leaves it for the next `just init`, which asks again for what is still missing; an
 answer that cannot be right (a URL for the address, a secret that is not one) is asked for once more.
@@ -48,7 +56,7 @@ the example's, nothing is checked.
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | Encrypted: the token secret and your GitHub username, which `just init` asks for. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `just vault` |
+| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `just vault` |
 | `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone, `tailscale_enabled: false` without a Tailscale account - and what `just init` writes there: a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
 Every setting the two files take, with its default, is in the [settings reference](../reference/settings.md),
@@ -62,7 +70,9 @@ for it. `just init` reminds you while `local.yml` does not set it either way, an
 With no terminal, `just init` asks nothing and writes nothing but what its command line gives it, so it
 can be scripted. Each answer is an option of `just init`'s, and the token's secret comes from a file, or
 from the environment, never from the command line, which your shell keeps in its history and the process
-list shows (a word after the options, make's `TOKEN_SECRET=` among them, is refused without being said):
+list shows (a word after the options, make's `TOKEN_SECRET=` among them, is refused without being said).
+Nor does it offer to set up the API access: run `tools/proxmox-access.sh` on the host yourself
+([Setting it up yourself](proxmox-access.md#setting-it-up-yourself)) and hand over the secret it prints:
 
 ```console
 $ (umask 077; printf %s "$PVE_SECRET" > ~/.config/pve-token)
@@ -236,8 +246,8 @@ run:
 |---|---|
 | `just init` marks a check `!!` | The line says what to fix - an address, the token's name or secret, a privilege for the role, root SSH: [Failure modes](../architecture/failure-modes.md#a-problem-just-init-finds) |
 | `just deploy --only template` cannot refresh the package lists | An enterprise repository enabled on the host without a subscription: [Package repositories](requirements.md#package-repositories) |
-| The token is refused (401 or 403) | `proxmox_api_user`, `proxmox_api_token_id` and `vault_proxmox_api_token_secret`, and the role's privileges: [Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token) |
+| The token is refused (401 or 403) | `proxmox_api_user`, `proxmox_api_token_id` and `vault_proxmox_api_token_secret`, and the role's privileges: [The API token](proxmox-access.md#the-api-token) |
 | A VM never reports an address | The token's guest-agent privilege (`VM.Monitor` on 8.x, `VM.GuestAgent.Audit` on 9.x), and a template built with the guest agent: [Upgrading](../guides/upgrading.md) |
-| The VM is created untagged, or `just deploy --only configure` finds no VM | Datacenter → Options → User Tag Access: [Creating the Proxmox API token](proxmox-access.md#creating-the-proxmox-api-token) |
+| The VM is created untagged, or `just deploy --only configure` finds no VM | Datacenter → Options → User Tag Access: [User Tag Access](proxmox-access.md#user-tag-access) |
 | The clone fails, or the disk cannot be created | `proxmox_storage` (an install on ZFS has `local-zfs`, not `local-lvm`) and `proxmox_node`, which must be the node that holds the template: [Requirements](requirements.md#storage) |
 | A sign-in fails | The run names the command that retries it - `just login` with the VM's name and `--only` the sign-in - and the rest of the deploy goes on |

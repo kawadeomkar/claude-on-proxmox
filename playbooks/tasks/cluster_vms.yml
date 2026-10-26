@@ -34,7 +34,7 @@
   vars:
     claude_vm_all_hint: >-
       {{ 'Check proxmox_api_user, proxmox_api_token_id and vault_proxmox_api_token_secret'
-           ~ ' (docs/getting-started/proxmox-access.md, "Creating the Proxmox API token").'
+           ~ ' (docs/getting-started/proxmox-access.md, "The API token").'
          if claude_vm_all.status | default(-1) in [401, 403]
          else 'Check that proxmox_api_host in inventory/hosts.yml is the Proxmox host, and that it is reachable.' }}
   ansible.builtin.assert:

@@ -19,6 +19,7 @@ tools/check                       the justfile's checks: the checkout, the vault
 tools/run-logged                  run a command with its Ansible output logged to .logs/ (every recipe that runs Ansible)
 tools/status-exit                 just status's last step: the report's exit code, the report under --json, then no report
 tools/stale_scripts.py            just install: the locked packages whose commands start another Python, to reinstall
+tools/proxmox-access.sh           on the Proxmox host, as root: the API role, user, grants and token, what is missing of them
 pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
 
 playbooks/
@@ -30,7 +31,8 @@ playbooks/
   github_login.yml                sign gh in by the device flow, VM by VM, then run github_projects; bare, report
   tailscale_login.yml             sign the VM in to Tailscale by its web login, VM by VM; bare, report
   login.yml                       just login: discovery, then the three sign-ins above in deploy's order and by its rules
-  init_settings.yml               just init's questions: the host's address, the token, the GitHub username; the vault encrypted
+  init_settings.yml               just init's questions: the host's address, the token, the GitHub username, the offer
+                                  to make the token; the vault encrypted
   init_check.yml                  just init's checks: the API and token, privileges, the template or root SSH, node, storage, bridge, a key
   inventory/init.yml              init_settings.yml's own inventory: the controller alone, no group_vars
   configure.yml                   discover, then common → vscode_server → dev_tools → claude_code → github_projects,
@@ -57,6 +59,8 @@ playbooks/
   tasks/init_ask.yml              one just init question: a value given, or asked, held to its kind, asked once more
   tasks/init_local_setting.yml    one setting written into local.yml in place of its commented example line
   tasks/init_choose.yml           one of just init's choices: a storage or bridge the node lists and the token can use
+  tasks/init_access.yml           just init's offer: tools/proxmox-access.sh on the host over root SSH, shown, then run on y
+  tasks/init_access_choose.yml    the offer's storage or bridge, among what the host lists to root
 
 roles/                            one role per concern, each with defaults/, meta/argument_specs.yml, molecule/
   proxmox_template/               qm + virt-customize on the PVE node
