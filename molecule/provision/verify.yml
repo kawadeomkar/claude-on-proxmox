@@ -330,6 +330,21 @@
         fail_msg: provision.yml must ask Proxmox for the next free VMID, once, for a fleet.
         quiet: true
 
+# alpha made two days ago, as its disk's ctime says - Proxmox's own record of when a clone was made - so its
+# day of CPU history is its own; beta was made just now, and the history the fake keeps for its VMID is another
+# VM's, which status leaves out.
+- name: Date alpha's disk two days back
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Set the ctime of alpha's disk in the fake
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:18007/api2/json/fake/disk-ctime?vmid=9001&ctime={{ now().timestamp() | int - 2 * 86400 }}"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
+        validate_certs: false
+
 # What `just status` shows of the fleet, from the API alone: the fake's VMs
 # never answer over SSH, so only the sections that read the API (vms, storage).
 # Asserted on the report's model rather than its text, so a formatting change
@@ -363,9 +378,12 @@
           # docker bridge the fake also reports.
           - status_vms_seen | map(attribute='address') | list == ['192.0.2.51', '192.0.2.54', '192.0.2.58', '', '', '', '']
           - status_vms_seen | map(attribute='state') | list == ['running', 'running', 'running', 'running', 'running', 'stopped', 'unknown']
-          # Each VM's own reads, by its name, as status_vms hosts: the ones that answer have their history.
+          # Each VM's own reads, by its name, as status_vms hosts: alpha has its day of history, beta, made
+          # just now, none of what came before it.
           - (status_vms_seen | first).api.read
           - (status_vms_seen | first).api.cpu_24h | select | list | length > 0
+          - (status_vms_seen | first).created_ago == '2 d ago'
+          - status_vms_seen[1].api.cpu_24h | reject('none') | list | length <= 1
           # The VM on the node that is down could not be read, and says so, as do the two running VMs whose
           # agent reports no address on net0 after three minutes; they make the run's code 2.
           - status_report.attention | selectattr('level', 'equalto', 'unread') | map(attribute='vm') | list == ['VMID 8001', 'netone', 'nonic']
