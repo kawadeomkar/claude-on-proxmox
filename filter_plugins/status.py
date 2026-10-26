@@ -180,6 +180,18 @@ def status_fleet(
         if isinstance(r, dict) and isinstance(r.get("item"), dict)
     }
     template_config = _data(template_config) or {}
+    # When each VM was made: its disk's ctime in the storage's content. A clone's config carries the template's
+    # meta ctime (Proxmox VE 9.2, checked on a real clone), so that says nothing of the clone.
+    disk_ctimes = {}
+    for volumes in contents.values():
+        for volume in volumes if isinstance(volumes, list) else []:
+            if not isinstance(volume, dict) or not re.search(r":(base|vm)-\d+-disk-\d+$", str(volume.get("volid"))):
+                continue
+            try:
+                vmid, ctime = int(volume.get("vmid")), int(volume.get("ctime"))
+            except (TypeError, ValueError):
+                continue
+            disk_ctimes[vmid] = min(ctime, disk_ctimes.get(vmid, ctime))
     given = [n for n in settings.get("names") or [] if n]
     entries = [e for e in listing if isinstance(e, dict) and e.get("type", "qemu") == "qemu"]
     tagged_ids = {e.get("vmid") for e in tagged or [] if isinstance(e, dict)}
@@ -247,7 +259,7 @@ def status_fleet(
                 "address": found.get("address", ""),
                 "unfinished": f"{tag}-unfinished" in _tags(entry),
                 "config": config,
-                "created": _ctime(config),
+                "created": disk_ctimes.get(entry.get("vmid")) or _ctime(config),
                 # Read in play 2, by name: a VM that is not can only be shown from the listing.
                 "read": reason == "",
                 "skipped": reason,
@@ -320,17 +332,20 @@ def status_aliases(text, enabled=True):
 # ------------------------------------------------------------------------------------------- one VM's API ----
 
 
-def _buckets(points, now, hours=24, count=12, key="cpu"):
+def _buckets(points, now, hours=24, count=12, key="cpu", since=None):
     """``points`` (rrddata) as ``count`` averages of ``key`` over the last ``hours``, by timestamp; None where the
-    VM has no point in a bucket. Either resolution reads the same: Proxmox VE 9's minute or 8's twenty minutes."""
+    VM has no point in a bucket. Either resolution reads the same: Proxmox VE 9's minute or 8's twenty minutes.
+    Nothing from before ``since``, when the VM was made: Proxmox keeps a VMID's history, and an ID used again
+    carries the deleted VM's."""
     span = hours * 3600 / count
     start = now - hours * 3600
+    floor = max(start, since) if isinstance(since, (int, float)) else start
     sums, ns = [0.0] * count, [0] * count
     for point in points or []:
         if not isinstance(point, dict) or not isinstance(point.get(key), (int, float)):
             continue
         t = point.get("time")
-        if not isinstance(t, (int, float)) or t < start or t > now:
+        if not isinstance(t, (int, float)) or t < floor or t > now:
             continue
         i = min(int((t - start) // span), count - 1)
         sums[i] += float(point[key])
@@ -338,15 +353,16 @@ def _buckets(points, now, hours=24, count=12, key="cpu"):
     return [round(sums[i] / ns[i], 4) if ns[i] else None for i in range(count)]
 
 
-def _pressure(points, now):
+def _pressure(points, now, since=None):
     """The VM's CPU pressure ("some") over the last hour, as a fraction; None where Proxmox keeps none (VE 8)."""
+    floor = max(now - 3600, since) if isinstance(since, (int, float)) else now - 3600
     values = [
         float(p["pressurecpusome"])
         for p in points or []
         if isinstance(p, dict)
         and isinstance(p.get("pressurecpusome"), (int, float))
         and isinstance(p.get("time"), (int, float))
-        and now - 3600 <= p["time"] <= now
+        and floor <= p["time"] <= now
     ]
     if not values:
         return None
@@ -354,10 +370,11 @@ def _pressure(points, now):
     return round(sum(values) / len(values) / 100, 4)
 
 
-def status_vm_api(results, now=None):
+def status_vm_api(results, now=None, since=None):
     """One VM's API reads (play 2's loop over status/current, rrddata, pending and the agent) as its "api" part.
 
-    ``results`` is the loop's registered results, each with ``item.name`` saying which read it was."""
+    ``results`` is the loop's registered results, each with ``item.name`` saying which read it was; ``since`` when
+    the VM was made, before which its history is another VM's of the same ID."""
     now = time.time() if now is None else now
     by = {}
     for result in results or []:
@@ -380,8 +397,8 @@ def status_vm_api(results, now=None):
         "cpu": current.get("cpu"),
         "mem": current.get("mem"),
         "maxmem": current.get("maxmem"),
-        "cpu_24h": _buckets(rrd, now),
-        "pressure_1h": _pressure(rrd, now),
+        "cpu_24h": _buckets(rrd, now, since=since),
+        "pressure_1h": _pressure(rrd, now, since),
         "pending": sorted(
             p.get("key") for p in pending if isinstance(p, dict) and ("pending" in p or "delete" in p) and p.get("key")
         ),
@@ -970,6 +987,17 @@ def status_report(found, read_at="", now=None, live=False):
         vm["ssh"] = parts.get("ssh")
         vm["needs_ssh"] = bool(ssh_wanted and vm.get("read") and vm.get("status") == "running" and vm.get("address"))
         vm["pending_ssh"] = live and vm["needs_ssh"] and vm["ssh"] is None
+        # Memory in use as the VM counts it, where it was read over SSH: Proxmox's own figure counts the page cache
+        # as used, which on a live VM was twice the VM's MemTotal - MemAvailable. Proxmox's otherwise.
+        memory = ((vm["ssh"] or {}).get("system") or {}).get("memory") or {}
+        if isinstance(memory.get("total"), int) and isinstance(memory.get("available"), int) and memory["total"]:
+            vm["mem_used"], vm["mem_total"], vm["mem_source"] = (
+                memory["total"] - memory["available"],
+                memory["total"],
+                "guest",
+            )
+        else:
+            vm["mem_used"], vm["mem_total"], vm["mem_source"] = vm.get("mem"), vm.get("maxmem"), "proxmox"
         vms.append(vm)
     # With discovery off the VMs are the inventory's (claude_vms), which the API never listed: each is shown from
     # what was read of it over SSH.
@@ -1176,7 +1204,7 @@ def _vms_lines(model):
         cpu = vm.get("cpu")
         cpu_text = f"{cpu * 100:.0f}%" if isinstance(cpu, (int, float)) else "—"
         spark = PENDING if pending else _spark((vm.get("api") or {}).get("cpu_24h"))
-        mem_text = f"{_fmt_gib(vm.get('mem'))} / {_fmt_gib(vm.get('maxmem'))}"
+        mem_text = f"{_fmt_gib(vm.get('mem_used', vm.get('mem')))} / {_fmt_gib(vm.get('mem_total', vm.get('maxmem')))}"
         if vm.get("min_mem"):
             mem_text += f", min {_fmt_gib(vm['min_mem'])}"
         root = vm.get("root")
@@ -1406,7 +1434,7 @@ def _system_lines(model):
         return []
     nw = _name_width(vms)
     first = max(nw + 3, len("SYSTEM") + 4)
-    widths = (16, 27, 18)
+    widths = (16, 29, 17)
     head = [
         _seg("SYSTEM", "h"),
         _seg(
@@ -1546,7 +1574,7 @@ def _footer(model, reading):
         )
     line = [_seg(f"exit {code}", "r" if code else "g"), _seg(f" · {said}")]
     if model["vms"]:
-        line += [_seg(" · "), _seg(f"sections: {' '.join(SECTIONS)} · --only · --json", "d")]
+        line += [_seg(" · "), _seg("--only, --json: just help status", "d")]
     lines.append(line)
     return lines
 

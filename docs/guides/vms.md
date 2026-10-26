@@ -65,9 +65,12 @@ and snapd while no snap is installed), and apt deletes each package it downloads
 VMs, not Proxmox, not this machine. At a terminal the whole report is on screen within a second and fills
 in as each value is read; piped, or in `just logs`, only the finished report appears.
 
-- **VMS** - each VM with its uptime, vCPUs, CPU now and over the last 24 hours, memory (with the minimum
-  the host may take it down to, `vm_memory_min_mb`), its root disk as the guest agent reports it, and
-  when it was created; the other VMs on the cluster as one line of totals, never by name.
+- **VMS** - each VM with its uptime, vCPUs, CPU now and over the last 24 hours (since it was made: a VMID
+  used again keeps the old VM's history in Proxmox, which is left out), memory in use (as the VM counts
+  it where it was read over SSH; Proxmox's own figure counts the disk cache as used, so without SSH it
+  reads higher), with the minimum the host may take it down to (`vm_memory_min_mb`), its root disk as the
+  guest agent reports it, and when it was made - its disk's age, since a clone keeps the template's
+  creation time; the other VMs on the cluster as one line of totals, never by name.
 - **STORAGE** - the storage your VMs' disks are on, how full it is and this project's share of it, and
   the template and when it was built.
 - **ACCESS** - each VM's LAN address, whether it has its SSH alias, and its tailnet name and address.

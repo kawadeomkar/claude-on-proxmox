@@ -6,13 +6,13 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 1877 tests. By file:
+pytest over `tests/unit/`: 1881 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
   sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
-- **`just status`** (`test_status.py` 47, `test_status_live.py` 9, `test_status_vms.py` 13,
+- **`just status`** (`test_status.py` 50, `test_status_live.py` 9, `test_status_vms.py` 13,
   `test_status_work.py` 3): the report's filters on canned
   reads - every value one line of plain text over a corpus of hostile ones, the drift between a VM and
   `local.yml`, the twelve buckets of a day at Proxmox VE 9's resolution and 8's, the ranking and exit code,
@@ -435,7 +435,8 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   `PUT /api2/json/fake/version?version=` changes it - and for the `noagent` token, without it.
 - What `just status` reads is shaped by that version, as Proxmox VE's own: from 9 the listing carries
   `memhost` and `rrddata` the `pressure*` fields, and a day is 1440 points; on 8 it is 70. A clone's config
-  carries a `ctime` of its own, the template's a fixed one. `PUT /api2/json/fake/pending?vmid=&key=&value=`
+  carries the template's meta `ctime`, as a real one does; its disk's `ctime` in the storage's content is when it
+  was made, which `PUT /api2/json/fake/disk-ctime?vmid=&ctime=` backdates. `PUT /api2/json/fake/pending?vmid=&key=&value=`
   makes a change wait for a restart, and `PUT /api2/json/fake/root?vmid=&used=` sets how full a VM's root
   disk is.
 

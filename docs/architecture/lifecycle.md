@@ -318,7 +318,8 @@ so every GET carries `check_mode: false` as the listing's does, and the allowlis
 **Play 1 — list the fleet (localhost).** In one block whose rescue records why Proxmox could not be
 read: the listing (§4.3, steps 1–3) and each VM's config and agent report (`tasks/vm_addresses.yml`),
 both with `claude_vm_api_timeout` at `status_api_timeout`, 10 s; the version and the storages; the
-template's config, whose `ctime` says when it was built; each of this project's storages' disks. The
+template's config, whose `ctime` says when it was built; each of this project's storages' disks, whose
+`ctime` dates each VM, since a clone's config keeps the template's. The
 rescue tells a refused token from a host that did not answer by the listing's own status, and says what
 to check for each. Then the managed SSH file's aliases, read only (§4.8). `status_fleet` turns all of it
 into the fleet: this project's VMs, other VMs as totals only (never named, never read), the storages, the

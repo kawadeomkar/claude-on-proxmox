@@ -60,8 +60,10 @@ reports them only once /version says 9 or later, and a day of rrddata is 1440
 points then, 70 on 8. /nodes/<node>/storage/<id>/content lists the disks on a
 storage. A fixture marks a change waiting for a restart with PUT
 /api2/json/fake/pending?vmid=&key=&value=, and sets how full a VM's root disk
-is with PUT /api2/json/fake/root?vmid=&used=<bytes>. A clone's config carries a
-meta ctime of its own, the moment it was made; the template's is fixed.
+is with PUT /api2/json/fake/root?vmid=&used=<bytes>. A clone's config carries the
+template's meta ctime, as Proxmox VE 9.2's did when it was checked against a real
+clone; the moment it was made is its disk's ctime, in the storage's content, which
+PUT /api2/json/fake/disk-ctime?vmid=&ctime= sets for a fixture's VM made earlier.
 
 Usage: fake_pve_api.py <port> <certfile> <keyfile> <state_dir> <expected_token_secret>
 """
@@ -444,6 +446,11 @@ class Handler(BaseHTTPRequestHandler):
             # Not a PVE endpoint: a fixture's change waiting for a restart.
             PENDING.setdefault(int(params["vmid"]), {})[params["key"]] = params.get("value", "")
             return self._reply(200, PENDING[int(params["vmid"])])
+        if parts[:2] == ["fake", "disk-ctime"] and method == "PUT":
+            # Not a PVE endpoint: when a fixture's VM was made, as its disk's ctime says.
+            VMS[int(params["vmid"])]["disk_ctime"] = int(params["ctime"])
+            save_state()
+            return self._reply(200, {"vmid": int(params["vmid"]), "ctime": int(params["ctime"])})
         if parts[:2] == ["fake", "root"] and method == "PUT":
             # Not a PVE endpoint: how full a fixture's VM's root disk is.
             ROOT_USED[int(params["vmid"])] = int(params["used"])
@@ -505,6 +512,7 @@ class Handler(BaseHTTPRequestHandler):
                             "size": disk_bytes(vm["config"]),
                             "format": "raw",
                             "content": "images",
+                            "ctime": vm.get("disk_ctime", 1760000000),
                         }
                     )
             return self._reply(200, volumes)
@@ -577,9 +585,9 @@ class Handler(BaseHTTPRequestHandler):
                     "name": params.get("name"),
                     "scsi0": vm["config"]["scsi0"].replace(f"base-{vmid}", f"vm-{newid}"),
                     "net0": f"virtio={mac_for(newid)},bridge=vmbr0",
-                    # A clone is a VM of its own, made now.
-                    "meta": f"creation-qemu=8.1.5,ctime={int(time.time())}",
                 },
+                # Its config keeps the template's meta; its disk is made now.
+                "disk_ctime": int(time.time()),
             }
             save_state()
             return self._reply(200, new_task())

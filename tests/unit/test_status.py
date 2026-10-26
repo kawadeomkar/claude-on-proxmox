@@ -19,6 +19,7 @@ import io
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -389,6 +390,9 @@ def fake_fleet(directory: Path, version: str = "9.2.21"):
         for vmid, name, running in [(9010, "alpha", True), (9011, "beta", True), (9012, "gamma", False)]:
             _pve(base, "POST", "nodes/pve/qemu/9000/clone", newid=vmid, name=name)
             _pve(base, "PUT", f"nodes/pve/qemu/{vmid}/config", tags="claude-on-proxmox", ciuser="dev", onboot="1")
+            if name == "alpha":
+                # Made two days ago, so its day of history is its own; beta and gamma were made just now.
+                _pve(base, "PUT", "fake/disk-ctime", vmid=vmid, ctime=int(time.time()) - 2 * 86400)
             if running:
                 _pve(base, "POST", f"nodes/pve/qemu/{vmid}/status/start")
                 for _ in range(3):
@@ -484,6 +488,9 @@ def test_status_reads_the_fleet_from_the_api_and_changes_nothing(tmp_path, fake_
         and alpha["os"]["pretty"] == "Ubuntu 24.04.3 LTS"
     )
     assert len([v for v in alpha["api"]["cpu_24h"] if v is not None]) == 12
+    # beta was made just now: the fake's day of history for its VMID is another VM's, and none of it is drawn.
+    assert len([v for v in model["vms"][1]["api"]["cpu_24h"] if v is not None]) <= 1
+    assert alpha["created_ago"] == "2 d ago" and model["vms"][1]["created_ago"] in ("just now", "1 m ago")
     assert model["proxmox"]["version"] == "9.2.21" and model["template"]["name"] == "ubuntu-24.04-cloudinit"
     # Read only: GETs, every one of them, and not one write.
     calls = [json.loads(line) for line in (tmp_path / "pve" / "calls.log").read_text().splitlines()]
@@ -860,8 +867,9 @@ def _claude(**kw):
 
 SYSTEM = {
     "os": "Ubuntu 24.04.3 LTS",
-    "kernel": "6.8.0-85-generic",
-    "kernel_newest": "6.8.0-87-generic",
+    # Ubuntu's ABI numbers run to three digits: 6.8.0-142 with 6.8.0-147 waiting cut the column once.
+    "kernel": "6.8.0-142-generic",
+    "kernel_newest": "6.8.0-147-generic",
     "reboot_required": True,
     "reboot_packages": ["linux-image-6.8.0-87-generic"],
     "load": [12.42, 9.31, 8.2],
@@ -1053,6 +1061,91 @@ def test_every_line_of_a_report_of_every_state_fits_100_columns() -> None:
         "local.yml asks for",
     ):
         assert words in said, words
+
+
+def test_the_longest_footer_and_kernel_fit_100_columns() -> None:
+    # Nothing wrong and things to do is the footer's longest; a live smoke found it cut, and the kernel cell too.
+    fleet = _fleet()
+    found = {"localhost": {"fleet": fleet}}
+    for vm in fleet["vms"][:2]:
+        vm["address"] = "192.0.2.60"
+    model = S.status_report(found, "2026-10-25 14:32 PDT", 1_800_000_000)
+    model["attention"] = [S._item("todo", "alpha", "alpha", "x")] * 12
+    model["counts"] = {"unread": 0, "problem": 0, "todo": 12}
+    model["exit"] = 0
+    model["proxmox"]["unread"] = ""
+    footer = S.status_text(model).splitlines()[-1]
+    assert footer == "exit 0 · nothing is wrong; 12 things wait for you · --only, --json: just help status"
+    system = S._system_lines({**model, "vms": [{"name": "alpha", "needs_ssh": True, "ssh": {"system": SYSTEM}}]})
+    kernel = S._plain(system[1])
+    assert "6.8.0-142 · 6.8.0-147 waits" in kernel and len(kernel) <= S.WIDTH, kernel
+
+
+def test_a_vm_is_dated_by_its_disk_and_drawn_from_then_on() -> None:
+    # A clone carries the template's meta ctime (Proxmox VE 9.2, on a real clone); its disk's ctime is its own.
+    # And Proxmox keeps a VMID's history: a VM made an hour ago under a reused ID shows none of the one before it.
+    now = 1_800_000_000
+    listing = [dict(LISTING[0])]
+    contents = [
+        {
+            "item": {"node": "pve", "storage": "local-lvm"},
+            "status": 200,
+            "json": {
+                "data": [
+                    {"volid": "local-lvm:vm-100-disk-0", "vmid": 100, "size": 1, "ctime": str(now - 3600)},
+                    {"volid": "local-lvm:vm-100-cloudinit", "vmid": 100, "size": 1, "ctime": str(now - 60)},
+                ]
+            },
+        }
+    ]
+    configs = [
+        {"item": {"vmid": 100}, "status": 200, "json": {"data": {"meta": "creation-qemu=9.2.0,ctime=1700000000"}}}
+    ]
+    fleet = S.status_fleet(
+        listing,
+        tagged=listing,
+        requested=listing,
+        addressed=[dict(listing[0], address="")],
+        configs=configs,
+        lists=[
+            {
+                "item": "cluster/resources?type=storage",
+                "status": 200,
+                "json": {"data": [{"storage": "local-lvm", "node": "pve"}]},
+            }
+        ],
+        contents=contents,
+        settings=SETTINGS,
+    )
+    assert fleet["vms"][0]["created"] == now - 3600
+    points = [{"time": now - 7200 + 60 * i, "cpu": 0.9 if i < 60 else 0.1} for i in range(120)]
+    api = S.status_vm_api([_result("rrddata", points)], now, since=now - 3600)
+    assert [v for v in api["cpu_24h"] if v is not None] == [0.1]
+    model = S.status_report({"localhost": {"fleet": fleet}}, "now", now)
+    assert model["vms"][0]["created_ago"] == "1 h ago"
+
+
+def test_memory_is_the_vms_own_count_where_it_was_read_over_ssh() -> None:
+    # On a live VM Proxmox said 3.5 of 4.0 GiB in use and the VM 1.7: Proxmox counts the page cache as used.
+    fleet = _fleet()
+    found = {"localhost": {"fleet": fleet}}
+    alpha = fleet["vms"][0]
+    alpha["address"] = "192.0.2.60"
+    alpha["mem"], alpha["maxmem"] = int(3.5 * G), 4 * G
+    found["alpha"] = {
+        "api": {"read": True, "state": "running", "root": None, "pending": []},
+        "ssh": {"reached": True, "system": {"memory": {"total": int(3.82 * G), "available": int(2.13 * G)}}},
+    }
+    model = S.status_report(found, "now", 1_800_000_000)
+    vm = model["vms"][0]
+    assert (vm["mem_source"], round(vm["mem_used"] / G, 2)) == ("guest", 1.69)
+    row = next(line for line in S.status_text(model).splitlines() if "● alpha" in line)
+    assert " 1.7 / 3.8 " in row, row
+    # API alone, Proxmox's figure.
+    fleet["settings"]["sections"] = "vms,storage"
+    del found["alpha"]["ssh"]
+    model = S.status_report(found, "now", 1_800_000_000)
+    assert model["vms"][0]["mem_source"] == "proxmox"
 
 
 def test_every_just_command_status_gives_is_one_the_justfile_accepts() -> None:

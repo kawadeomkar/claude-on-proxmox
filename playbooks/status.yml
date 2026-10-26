@@ -238,7 +238,7 @@
     - name: Keep what Proxmox says of the VM
       ansible.builtin.set_fact:
         status_found: >-
-          {{ {'api': status_api_reads.results | default([]) | status_vm_api(now().timestamp()),
+          {{ {'api': status_api_reads.results | default([]) | status_vm_api(now().timestamp(), status_vm.created),
               'drift': proxmox_vm_settings_drift | default({})} | status_clean }}
       when: status_vm is defined
 

@@ -270,9 +270,14 @@ found, as data: this project's VMs with what the listing, their config and their
 `read` or with why it is not (`node`, `nameless`, `duplicate`, `name`); the other VMs as totals only; the
 storages with this project's share of each (`status_storages` picks them); the template; the aliases in
 the managed SSH file (`status_aliases`); the names given that match no VM; and the settings the report
-needs. **`status_vm_api(results, now)`** — one VM's own GETs as the report keeps them: its state, a day
-of CPU in twelve buckets (Proxmox VE 9 keeps a point a minute, 8 one every twenty), the last hour's CPU
-pressure (9 only), the root filesystem from the agent, the OS, and the settings waiting for a restart.
+needs. A VM is dated by its disk's `ctime` in the storage's content: a clone's config carries the
+template's meta `ctime`, as a live Proxmox VE 9.2 showed. **`status_vm_api(results, now, since)`** — one
+VM's own GETs as the report keeps them: its state, a day of CPU in twelve buckets (Proxmox VE 9 keeps a
+point a minute, 8 one every twenty) and the last hour's CPU pressure (9 only), each from `since`, when the
+VM was made, on - Proxmox keeps a VMID's history, and an ID used again carries the deleted VM's - the root
+filesystem from the agent, the OS, and the settings waiting for a restart. `status_report` takes memory in
+use from the VM's own `/proc/meminfo` where it was read over SSH: Proxmox's figure counts the page cache as
+used, twice the VM's own on a live VM.
 **`status_system_read(result)`** — what `vm_status_info` read of a VM, its fields alone, or none when it
 was not read. **`status_work_read(result, directory)`** — what `git_checkouts_info`'s `work` read of a VM's
 projects directory, per checkout: its worktrees, its commits and branches on no remote, the commits on a

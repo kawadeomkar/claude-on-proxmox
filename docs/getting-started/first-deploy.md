@@ -214,7 +214,7 @@ WORK  in ~/projects, as of each checkout's last fetch
  beta     1 checkout              nothing                                         —        —
 
 read in 7.9 s · proxmox 0.9 s · vms 3 of 3 6.1 s
-exit 0 · nothing is wrong · sections: vms storage access sign-ins system work · --only · --json
+exit 0 · nothing is wrong · --only, --json: just help status
 ```
 
 It exits 0 when nothing is wrong, 1 for a problem, 2 when something could not be read, so a script can
