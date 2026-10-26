@@ -6,7 +6,8 @@ screen into the history (the scrollback); cursor up (CSI n A), carriage return, 
 (CSI ?2026 h/l) marks what is drawn as a frame, where a line that wraps is counted (`frame_wraps`): the callback's
 live region, which must never wrap. Any other sequence is recorded, so a test can say the callback wrote none. A
 resize keeps lines as they are, as xterm does (no reflow), and a shorter window keeps its bottom rows, the rest going
-to the history.
+to the history. Bytes arrive as a pseudo-terminal's reads cut them: a character or an escape sequence cut at the end
+of one feed is kept until the next completes it, as a terminal does (on Linux a read once split a "→" in two).
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from __future__ import annotations
 import re
 
 CSI = re.compile(rb"\x1b\[([?0-9;]*)([A-Za-z])")
+# An escape sequence not finished yet: what a read can end in.
+CSI_PART = re.compile(rb"\x1b(\[[?0-9;]*)?\Z")
 
 
 class VT:
@@ -27,6 +30,7 @@ class VT:
         self.unknown: set[str] = set()
         self.in_frame = False
         self.frame_wraps = 0
+        self.pending = b""
 
     def resize(self, cols: int, rows: int) -> None:
         self.cols = cols
@@ -59,8 +63,12 @@ class VT:
             self.c += 1
 
     def feed(self, data: bytes) -> None:
+        data, self.pending = self.pending + data, b""
         i = 0
         while i < len(data):
+            if CSI_PART.match(data, i):
+                self.pending = data[i:]
+                return
             match = CSI.match(data, i)
             if match:
                 arg, op = match.group(1).decode(), match.group(2).decode()
@@ -96,11 +104,13 @@ class VT:
                 self.unknown.add("ESC")
                 i += 1
             else:
-                j = i + 1
-                while j < len(data) and (data[j] & 0xC0) == 0x80:
-                    j += 1
-                self._put(data[i:j].decode("utf-8", "replace"))
-                i = j
+                lead = data[i]
+                size = 4 if lead >= 0xF0 else 3 if lead >= 0xE0 else 2 if lead >= 0xC0 else 1
+                if i + size > len(data):
+                    self.pending = data[i:]
+                    return
+                self._put(data[i : i + size].decode("utf-8", "replace"))
+                i += size
 
     def transcript(self) -> list[str]:
         """The scrollback and the screen, as lines, without the blank ones at the bottom."""

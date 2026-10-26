@@ -162,6 +162,27 @@ def _shown(vt: VT) -> list[str]:
     return [line.rstrip() for line in vt.transcript()]
 
 
+def test_the_terminal_reads_a_stream_cut_anywhere_as_it_reads_it_whole() -> None:
+    # A pseudo-terminal's reads can end inside a character or an escape sequence: on Linux CI one split a "→" in
+    # two, and the screen read "��" where the log had the arrow.
+    stream = (
+        b"\x1b[?2026h\x1b[1;36mVMS\x1b[0m \xe2\x97\x8f alpha\r\n"
+        b"\x1b[36m               \xe2\x86\x92 just deploy alpha\x1b[0m\x1b[K\r\n\x1b[2A\r\x1b[J"
+        b"\xe2\xa0\x8b reading \xf0\x9f\x99\x82\x1b[?2026l"
+    )
+    whole = VT(60, 10)
+    whole.feed(stream)
+    for cut in range(1, len(stream)):
+        parts = VT(60, 10)
+        parts.feed(stream[:cut])
+        parts.feed(stream[cut:])
+        assert parts.transcript() == whole.transcript() and parts.unknown == whole.unknown == set(), cut
+    one = VT(60, 10)
+    for byte in stream:
+        one.feed(bytes([byte]))
+    assert one.transcript() == whole.transcript() == ["⠋ reading 🙂"]
+
+
 def test_a_report_that_fits_is_redrawn_in_place_and_leaves_only_the_finished_one(tmp_path, fleet) -> None:
     rc, vt, output, log = _at_a_terminal(tmp_path, fleet, 100, 60)
     assert rc == 0, output.decode(errors="replace")
