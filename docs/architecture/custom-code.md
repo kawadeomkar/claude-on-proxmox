@@ -425,6 +425,13 @@ good, and runs at exit, Ctrl-C included.
   what was drawn holds once a frame meant for the old size has wrapped. `title()` sets the tab's title (OSC
   0) when it changes, and `bell()` rings.
 
+**`Output`**, beside it, is what every live output does around its region, whatever it draws: whether to draw
+(`can_draw()`, unless the caller decided), whether to colour (the caller's `ANSIBLE_NOCOLOR`), the region, and the
+output's own words printed coloured to the screen and plain to the log (`print`). With `to_log`, everything
+`Display` prints goes to the log alone - the stream a drawn run replaces - but what is printed inside `say()` and
+anything on stderr. The live run's engine and `just status`'s callback both draw through one, so neither keeps a
+copy of that logic.
+
 **`screen.py`** — a line is a list of `(text, style)` segments, the style one of `PALETTE`'s: headings,
 bold, dim, and the colours of done, to do, failed, running and waiting. `cut` (to a width, ending in a dim
 "…"), `pad`, `right` (a tail aligned to the edge, dropped before it would crowd the line), `render` (in the
@@ -441,11 +448,11 @@ callbacks, `status.py`, `run_view.py` and `live_ansible.py` share one copy of ea
 title, as `deploy`'s does; its declaration in `filter_plugins/live_recipes.py`, named by the title's first word,
 names its playbooks' stages (the sign-in playbooks already are deploy's) and the playbook whose first play reports
 what the run will do; its reports, waits and NEXT STEPS records follow §7.5's conventions, which the engine already
-reads. A command that is a report rather than a
-run, as `just status` is, keeps a model and a frame function of its own and hands the frame to `LiveRegion`,
-drawing its lines with `screen.py`. Either way its test runs it at a pseudo-terminal through
-`harness._at_a_pseudo_terminal` and reads the screen back through `vt.py`, and `test_deploy_live.py`'s guard
-names each tracked file that may name the variable.
+reads. A command that is a report rather than a run, as `just status` is, keeps a model and a frame function of
+its own and hands the frame to an `Output`, drawing its lines with `screen.py`. Either way its test runs it through
+`tests/unit/live_kit.py`: at a pseudo-terminal of its own (`harness._at_a_pseudo_terminal`) with a `HOME` of its
+own, read back through `vt.py`, or piped, with the checks every drawn run must pass (`Ran`); and
+`test_deploy_live.py`'s guard names each tracked file that may name the variable.
 
 Covered by `tests/unit/test_live_region.py` (the region against a stand-in `Display`, whose `display`,
 `prompt_until`, `do_var_prompt` and lock it holds to ansible-core's), `tests/unit/test_screen.py`,

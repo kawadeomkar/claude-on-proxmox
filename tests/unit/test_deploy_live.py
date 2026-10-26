@@ -12,25 +12,15 @@ variable, so no other run is drawn (docs/architecture/custom-code.md §7.5).
 
 from __future__ import annotations
 
-import fcntl
-import os
 import re
-import struct
 import subprocess
 import sys
-import termios
-import time
 from pathlib import Path
 
+import live_kit as kit
 import pytest
-from harness import _at_a_pseudo_terminal, _end, _env, _fail_if_the_desktop_was_reached, _in_raw_mode
-from vt import VT
 
 REPO = Path(__file__).resolve().parents[2]
-ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
-SYNC_ON = b"\x1b[?2026h"
-FOOTER = re.compile(r"^. \d+:\d\d · stage \d of \d")
-HEADER = re.compile(r"^claude-on-proxmox  deploy .* · started \d\d:\d\d")
 PROMPT = "alpha: paste the code here, or press Enter to skip"
 
 PLAYBOOKS = {
@@ -207,33 +197,6 @@ PLAYBOOKS = {
       claude_code_next: "{{ {'alpha': {'remote_control': ''}} }}"
 """,
 }
-CONFIG = f"""callback_result_format = yaml
-stdout_callback = claude_on_proxmox
-callback_plugins = {REPO / "callback_plugins"}
-callbacks_enabled = ansible.posix.profile_tasks
-"""
-
-
-class Ran:
-    def __init__(self, rc, raw, log, screen=None):
-        self.rc, self.raw, self.log, self.screen = rc, raw, log, screen
-        self.text = raw.decode(errors="replace")
-
-    @property
-    def transcript(self):
-        return "\n".join(line.rstrip() for line in self.screen.transcript())
-
-    def assert_drawn_and_gone(self, visible_only=False):
-        """A region was drawn, never wrapped, wrote nothing unknown, swallowed nothing, and left nothing of itself:
-        no footer and no header, on the screen or above it (visible_only: on the screen, after a resize, which
-        pushes the screen into the history by design)."""
-        assert SYNC_ON in self.raw, self.text
-        assert self.screen.unknown == set() and self.screen.pending == b"", (self.screen.unknown, self.screen.pending)
-        lines = self.screen.lines if visible_only else self.screen.transcript()
-        left = [line for line in lines if FOOTER.match(line) or HEADER.match(line)]
-        assert left == [], "\n".join(self.screen.transcript())
-        if not visible_only:
-            assert self.screen.frame_wraps == 0
 
 
 @pytest.fixture
@@ -247,30 +210,13 @@ def stand_in(tmp_path):
 
 
 def _environment(root, title, env):
-    settings = {
-        "ANSIBLE_LOG_PATH": str(root / "run.log"),
-        "ANSIBLE_ROLES_PATH": str(root / "roles"),
-        "ANSIBLE_NOCOLOR": "0",
-        "TERM": "xterm-256color",
-        "PYTHONUTF8": "1",
-        **({"CLAUDE_ON_PROXMOX_LIVE": title} if title else {}),
-        **(env or {}),
-    }
-    return _env(root, config=CONFIG, **settings)
+    return kit.environment(root, title, ANSIBLE_ROLES_PATH=str(root / "roles"), **(env or {}))
 
 
 def _fresh(root):
     """Each run as the first: no log, and the motd it writes as it was."""
     (root / "run.log").unlink(missing_ok=True)
     (root / "motd").write_text("welcome\n")
-
-
-def _seconds(said):
-    """A duration as the summary says it - 0.6 s, 33 s, 3:58 - in seconds."""
-    if ":" in said:
-        minutes, seconds = said.split(":")
-        return int(minutes) * 60 + int(seconds)
-    return float(said.removesuffix(" s"))
 
 
 def _deploy(
@@ -280,85 +226,23 @@ def _deploy(
     title says interrupt, and at: (words of the title, bytes typed or a new (cols, rows)) done once the title says
     them."""
     _fresh(root)
-    screen, state = VT(cols, rows), {"typed": None, "interrupt": interrupt, "at": at}
-
-    def act(chunk, output, master, process):
-        screen.feed(chunk)
-        if keys is not None and PROMPT.encode() in output and _in_raw_mode(master):
-            # Typed again while pause has not taken them: keys in the moment before it flushed are lost.
-            if state["typed"] is None or (time.monotonic() - state["typed"] > 2 and b"the code was" not in output):
-                os.write(master, keys)
-                state["typed"] = time.monotonic()
-        title = screen.titles[-1] if screen.titles else ""
-        if state["interrupt"] and state["interrupt"] in title:
-            state["interrupt"] = None
-            os.write(master, b"\x03")
-        if state["at"] and state["at"][0] in title:
-            then, state["at"] = state["at"][1], None
-            if isinstance(then, bytes):
-                os.write(master, then)
-            else:
-                # The terminal's new size, which sends the run SIGWINCH; the screen keeps its lines, as xterm does.
-                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", then[1], then[0], 0, 0))
-                screen.resize(*then)
-
-    rc, raw = _at_a_pseudo_terminal(
-        [str(ANSIBLE_PLAYBOOK), "-i", str(root / "hosts"), *args, str(root / "deploy.yml")],
+    return kit.at_a_terminal(
+        kit.playbook(root, root / "hosts", root / "deploy.yml", *args),
         root,
         _environment(root, title, env),
-        size=(cols, rows),
-        act=act,
+        cols=cols,
+        rows=rows,
+        prompts={PROMPT: keys} if keys is not None else None,
+        interrupt=interrupt,
+        at=at,
         timeout=timeout,
-        poll=0.1,
     )
-    _fail_if_the_desktop_was_reached(root)
-    log = root / "run.log"
-    return Ran(rc, raw, log.read_text() if log.exists() else "", screen)
 
 
 def _piped(root, *args, title="deploy alpha", env=None, playbook="deploy.yml", timeout=120):
     _fresh(root)
-    process = subprocess.Popen(
-        [str(ANSIBLE_PLAYBOOK), "-i", str(root / "hosts"), *args, str(root / playbook)],
-        cwd=root,
-        env=_environment(root, title, env),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        process_group=0,
-    )
-    try:
-        output, _ = process.communicate(timeout=timeout)
-    except BaseException:
-        # The run's whole group: its workers, and what they started.
-        _end(process)
-        raise
-    _fail_if_the_desktop_was_reached(root)
-    log = root / "run.log"
-    return Ran(process.returncode, output, log.read_text() if log.exists() else "")
-
-
-def _logged(log: str) -> list[str]:
-    """A run log's lines without what changes from run to run: the time and process each starts with, every number
-    (profile_tasks' times, a command's), and profile_tasks' recap, which it sorts by time."""
-    lines = []
-    for line in log.splitlines():
-        line = re.sub(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+ p=\d+ u=\S+ n=ansible \w+\| ", "", line)
-        line = re.sub(r"\d", "0", line)
-        if not re.search(r" -{3,} 0\.00s$", line):
-            lines.append(line)
-    return lines
-
-
-def _in_order(part: list[str], whole: list[str]) -> list[str]:
-    """What of part is not in whole in the same order: [] when part is whole's with lines added."""
-    position = 0
-    for index, line in enumerate(part):
-        try:
-            position = whole.index(line, position) + 1
-        except ValueError:
-            return part[index:]
-    return []
+    argv = kit.playbook(root, root / "hosts", root / playbook, *args)
+    return kit.piped(argv, root, _environment(root, title, env), timeout=timeout)
 
 
 def test_a_deploy_at_a_terminal_is_drawn_in_place_and_leaves_its_words_and_the_summary(stand_in):
@@ -405,7 +289,7 @@ def test_a_deploy_at_a_terminal_is_drawn_in_place_and_leaves_its_words_and_the_s
     # Claude's retried wait, the wait that never retries, and the end; both waits' time is yours.
     assert ran.screen.bells == 3
     yours = re.search(r"^ ✓ sign in .*Claude \S+(?: s)? \((\S+(?: s)?) yours\)$", screen, re.M)
-    assert yours and _seconds(yours.group(1)) >= 2.5, screen
+    assert yours and kit.seconds(yours.group(1)) >= 2.5, screen
     # The log: no colour, the stream's every task, and the run's own words.
     assert "\x1b" not in ran.log
     for said in ("TASK [common : Write the motd]", "PLAY RECAP", "##  NEXT STEPS", "STAGES", "alpha is up at"):
@@ -416,9 +300,9 @@ def test_the_log_is_the_streams_with_the_runs_own_words_added(stand_in):
     drawn = _deploy(stand_in)
     streamed = _deploy(stand_in, title="")
     assert drawn.rc == streamed.rc == 0
-    assert SYNC_ON not in streamed.raw and "PLAY RECAP" in streamed.transcript
-    assert _in_order(_logged(streamed.log), _logged(drawn.log)) == []
-    added = [line for line in _logged(drawn.log) if line not in _logged(streamed.log)]
+    assert kit.SYNC_ON not in streamed.raw and "PLAY RECAP" in streamed.transcript
+    assert kit.in_order(kit.logged(streamed.log), kit.logged(drawn.log)) == []
+    added = [line for line in kit.logged(drawn.log) if line not in kit.logged(streamed.log)]
     assert any(line.startswith("STAGES") for line in added), added
 
 

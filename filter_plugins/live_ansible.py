@@ -23,9 +23,7 @@ import atexit
 import importlib.util
 import os
 import sys
-import threading
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
 from ansible import constants as C
@@ -139,38 +137,25 @@ class Engine:
         self.cb = callback
         self.display = callback._display
         self.mode = "live" if live.can_draw() else "lines"
-        self.color = self.mode == "live" and not C.ANSIBLE_NOCOLOR
         self.run = None
-        self.region = None
+        self.out = live.Output(
+            self.display, frame=self._frame, live=self.mode == "live", color=not C.ANSIBLE_NOCOLOR, to_log=True
+        )
+        self.color = self.out.color
+        self.region = self.out.region
         self.plan_play = None
         self.title = title
-        self._speaking = threading.local()
         self._failed_items = {}  # (task ID, host): the results of a loop's items that failed, said with the task
 
     # --- what the run says, and where it goes ------------------------------------------------------------------
-    @contextmanager
+    # The run's own words and anything on stderr - warnings, deprecations, errors - stay on the screen; the rest,
+    # the default callback's every task and profile_tasks' timings, goes to the log alone (live_region.Output).
     def say(self):
-        """What is printed inside goes to the screen, where the route would send it to the log alone."""
-        previous = getattr(self._speaking, "on", False)
-        self._speaking.on = True
-        try:
-            yield
-        finally:
-            self._speaking.on = previous
-
-    def _route(self, kwargs):
-        # The run's own words and anything on stderr - warnings, deprecations, errors - stay on the screen; the
-        # rest, the default callback's every task and profile_tasks' timings, goes to the log alone.
-        if getattr(self._speaking, "on", False) or kwargs.get("stderr"):
-            return kwargs
-        return {**kwargs, "log_only": True}
+        return self.out.say()
 
     def print(self, lines):
         """Lines of the run's own, (coloured, plain) each: the colour to the screen, the plain text to the log."""
-        with self.say():
-            for coloured, plain in lines:
-                self.display.display(coloured, screen_only=True)
-                self.display.display(plain, log_only=True)
+        self.out.print(lines)
 
     def _width(self):
         try:
@@ -236,11 +221,9 @@ class Engine:
         first = playbook.get_plays()[:1]
         if first and Path(str(first[0].get_path()).split(":", 1)[0]).name in self.run.recipe.plan:
             self.plan_play = first[0]._uuid
-        frame = self._frame if self.mode == "live" else None
-        self.region = live.LiveRegion(self.display, frame=frame, route=self._route)
-        self.region.start()
-        self.region.redraw()
-        self.region.spin()
+        self.out.start()
+        self.out.redraw()
+        self.out.spin()
         if self.mode == "live":
             # Registered after the region's own, so it runs first: a run that ends without its stats, at Ctrl-C,
             # does not leave the tab saying it is still at work.
