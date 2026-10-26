@@ -197,8 +197,11 @@ be drawn with: `just deploy` is the first, and §7.8 says how another recipe joi
   width and never cut, its VM first unless a play on this machine names it; the browser blocks and
   `--check`'s diffs; and each failure: the task, the VM, its message, the last 20 lines of its output - a
   crashed module's own - and for a loop, what each item that failed said. A failure among a block's own tasks,
-  where the block has a `rescue`, is the block's to handle: dim in the window, nothing printed. One in a
-  `rescue` or an `always` is the run's, unless a block further out has it among its own.
+  where the block has a `rescue`, is the block's to handle: dim in the window, nothing printed. That holds at any
+  depth and through any import or include: a static import puts its file's block under a `TaskInclude` that no
+  block lists, so every link between the task and the block is looked at, not only the one under it. One in a
+  `rescue` or an `always` is the run's, unless a block further out has it among its own, and a rescue the play's
+  `--tags` leave no task of takes nothing, as Ansible then fails the host.
 - **What a VM may set.** Only `proxmox_vm`'s tasks give the summary a VM's ID and address: a task on the VM
   could set any fact. The ID is a number or nothing, and the address goes through `plain_text`, as everything
   else a VM said does.
