@@ -155,19 +155,27 @@ class CallbackModule(CallbackBase):
     @staticmethod
     @contextmanager
     def _uninterrupted():
-        """Ctrl-C held off in the main thread for one write to the terminal and the count of the lines it drew.
+        """Ctrl-C held off for one write to the terminal and the count of the lines it drew, then delivered.
 
         A KeyboardInterrupt between the two left the count stale: the erase then missed the region, which stayed
-        on the screen above the run's last words. The signal is delivered as soon as the count is right again.
+        on the screen above the run's last words. Held at Python's level, where it is raised: a signal mask holds
+        it in one thread only, and the kernel hands it to another, after which Python raises it here all the same.
+        Only the main thread may set a handler, and only it is ever interrupted.
         """
-        if threading.current_thread() is not threading.main_thread():
+        if threading.current_thread() is not threading.main_thread() or signal.getsignal(signal.SIGINT) is None:
             yield
             return
-        held = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+        held = []
+        previous = signal.signal(signal.SIGINT, lambda signum, frame: held.append(frame))
         try:
             yield
         finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, held)
+            signal.signal(signal.SIGINT, previous)
+            if held:
+                if callable(previous):
+                    previous(signal.SIGINT, held[0])
+                elif previous == signal.SIG_DFL:
+                    signal.raise_signal(signal.SIGINT)
 
     def _erase(self):
         if self._drawn:

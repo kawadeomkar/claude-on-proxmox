@@ -21,6 +21,7 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -780,8 +781,17 @@ def test_a_ctrl_c_as_a_frame_reaches_the_terminal_leaves_its_count_of_lines_righ
         os.kill(os.getpid(), signal.SIGINT)
 
     cb._write = write_then_interrupt
-    with pytest.raises(KeyboardInterrupt):
-        cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": _fleet()}}))
+    # A thread besides the main one, as Ansible's results thread is: the kernel may hand the signal to it, which
+    # is why a signal mask in the main thread held nothing off.
+    idle = threading.Event()
+    other = threading.Thread(target=idle.wait, daemon=True)
+    other.start()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": _fleet()}}))
+    finally:
+        idle.set()
+        other.join()
     cb._write = written
     assert cb._drawn == terminal.getvalue().count("\n") + 1
 

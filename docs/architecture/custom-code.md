@@ -304,9 +304,10 @@ up exactly the lines it drew, each line cut to the width, the region cut to the 
 for the rest. It wraps `Display.display`, so every other message - a warning, an error - erases the
 region first and redraws it after. A resize (`SIGWINCH`) pushes the screen into the scrollback and draws
 afresh, since no count of what was drawn holds once a frame meant for the old size has wrapped. Each
-write and its count of the lines it drew hold Ctrl-C off between them in the main thread: a
-`KeyboardInterrupt` in that gap left the count stale and the region on the screen above the run's last
-words. The cursor is never hidden. When the report fact arrives, the region is erased and the finished report
+write and its count of the lines it drew hold Ctrl-C off between them, by a SIGINT handler of their own
+that keeps the signal for the one in place after: a `KeyboardInterrupt` in that gap left the count stale
+and the region on the screen above the run's last words. A signal mask would not do: it holds the signal
+in one thread, the kernel hands it to another, and Python raises it in the main thread all the same. The cursor is never hidden. When the report fact arrives, the region is erased and the finished report
 printed through `Display`, so the log has it and nothing else - in colour on the screen, plain in the log,
 since `Display` logs the text it is given; under `--json` (`STATUS_QUIET`) nothing is
 printed. It shows each task's warnings, which since ansible-core 2.19 travel on the result and which a
