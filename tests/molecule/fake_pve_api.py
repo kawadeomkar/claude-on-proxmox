@@ -95,6 +95,10 @@ DOWN_NODE = "pve2"
 # from. While it is on, its guests are listed with their names and as
 # stopped, the way Proxmox lists guests on a node that has just come back.
 NODES_ONLINE = {DOWN_NODE: False}
+# Whether its guests are still listed with their names while it is down, as
+# in the five minutes before the cluster drops its statistics: on with
+# PUT /api2/json/fake/nodes/pve2?status=offline&named=1.
+NODES_NAMED = {DOWN_NODE: False}
 
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 VMS = {
@@ -304,7 +308,7 @@ def resource(vm):
     # statistics, which the cluster drops five minutes after a node stops
     # reporting. A guest on a node that is down is therefore listed with
     # neither, and consumers that index `name` without a default fall over.
-    if vm["node"] != DOWN_NODE or NODES_ONLINE[DOWN_NODE]:
+    if vm["node"] != DOWN_NODE or NODES_ONLINE[DOWN_NODE] or NODES_NAMED[DOWN_NODE]:
         entry["name"] = vm["name"]
         entry["template"] = vm["template"]
     if vm["node"] == DOWN_NODE and NODES_ONLINE[DOWN_NODE]:
@@ -399,6 +403,7 @@ class Handler(BaseHTTPRequestHandler):
         if parts[:2] == ["fake", "nodes"] and method == "PUT" and len(parts) == 3:
             # Not a PVE endpoint: a fixture's switch for the node that is down.
             NODES_ONLINE[parts[2]] = params.get("status") == "online"
+            NODES_NAMED[parts[2]] = params.get("named") == "1"
             return self._reply(200, {"node": parts[2], "status": params.get("status")})
         if parts == ["nodes"]:
             return self._reply(

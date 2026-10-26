@@ -96,8 +96,10 @@ Code:
 At the end, after the recap (under `just deploy`, the summary), a `NEXT STEPS` block lists what is still
 left to do on each VM - a sign-in you skipped, a VM left stopped, a Tailscale device to delete by hand -
 each once, and only what the run did not settle: a "not signed in" that a later step of the same `just
-deploy` signed in is not listed. Nothing is printed when nothing is left. The task timings come after it,
-and under `just deploy` in the run log only.
+deploy` signed in is not listed. Nothing is printed when nothing is left. `just init` prints one after its
+questions, with what is still to set, and one after its checks, with each problem and its fix, or `just
+deploy alpha` once there is none. The task timings come after it, and under `just deploy` in the run log
+only.
 
 The blocks come from `callback_plugins/claude_on_proxmox.py`, which `ansible.cfg` names; put
 `ANSIBLE_STDOUT_CALLBACK=default` in front of a `just` command for Ansible's own output (the prompts keep

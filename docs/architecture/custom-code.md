@@ -144,19 +144,26 @@ A run waits for the person in three ways, and each is set apart:
   `wait_for` has no retries to fold, and carries it for `just deploy`'s live output (below), which tells a
   wait that never retries by how long it runs.
 - **What is left after the run**: NEXT STEPS, after PLAY RECAP, from what the report tasks recorded.
-  Each of the 18 reports that can say what to do later registers its message and records it straight
+  Each of the 20 reports that can say what to do later registers its message and records it straight
   after with `ansible.builtin.set_stats` under its owner's stat - `claude_code_next`,
-  `github_projects_next`, `tailscale_next`, `claude_vm_next` (provision and destroy) and `code_next` - as
-  `{vm: {matter: line}}`: the message itself while something is left, `''` once nothing is. `aggregate`
-  merges the records, so the last one of a VM and matter wins across plays: configure's "not signed in"
-  is cleared by the sign-in's own report later in the same `just deploy`. The decision is made in Jinja
-  beside the message, from the same facts, because the text cannot carry it: a stopped Tailscale or a
-  missing workflow scope names no `just` command, and "just deploy signs it in next" names one with
-  nothing to do. A looped report records each VM in a looped `set_stats` keyed by the loop var, so the
-  callback reads no task result for this at all. Printed by VM name, the matters in a fixed order (`vm`,
-  `claude`, `remote_control`, `github`, `github_identity`, `tailscale`, `vscode`, `destroy`), each line
-  once, nothing when nothing is left, and nothing after Ctrl-C, which has no stats event. `profile_tasks`'
-  TASKS RECAP follows it: Ansible calls collection callbacks after the stdout one.
+  `github_projects_next`, `tailscale_next`, `claude_vm_next` (provision, destroy and `just init`) and
+  `code_next` - as `{vm: {matter: line}}`: the message itself while something is left, `''` once nothing is.
+  A record about no VM is keyed by words no VM is named, a VM's name being one plain word: destroy's `kept
+  SSH aliases`, and `just init`. Its two playbooks are two `ansible-playbook` runs, each printing its own
+  NEXT STEPS, and each records under a matter of its own: `init_settings`, the values still to set or a vault
+  that cannot be opened, and nothing once every value is set, the checks deciding what comes next; and
+  `init_check`, each problem with its fix, what could not be checked when nothing is wrong, or else `just
+  deploy alpha` - nothing while the GitHub username, which the first names, is still the example's - and
+  nothing at all when it ends before checking, a value still the example's. `aggregate` merges the
+  records, so the last one of a VM and matter wins across plays: configure's "not signed in" is cleared by
+  the sign-in's own report later in the same `just deploy`. The decision is made in Jinja beside the
+  message, from the same facts, because the text cannot carry it: a stopped Tailscale or a missing
+  workflow scope names no `just` command, and "just deploy signs it in next" names one with nothing to do.
+  A looped report records each VM in a looped `set_stats` keyed by the loop var, so the callback reads no
+  task result for this at all. Printed by VM name, the matters in a fixed order (`init_settings`,
+  `init_check`, `vm`, `claude`, `remote_control`, `github`, `github_identity`, `tailscale`, `vscode`,
+  `destroy`), each line once, nothing when nothing is left, and nothing after Ctrl-C, which has no stats
+  event. `profile_tasks`' TASKS RECAP follows it: Ansible calls collection callbacks after the stdout one.
 
 The blocks are bright yellow through `Display`, plain under `ANSIBLE_NOCOLOR` or with no terminal; the run
 log gets them plain, but never destroy's question, which `vars_prompt` reads with `input()`. The harness
