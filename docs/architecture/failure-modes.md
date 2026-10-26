@@ -71,6 +71,23 @@ each problem `!!` with its fix; `just init` then fails, so a scripted one exits 
 Storage and bridge are checked on the node worked out, among what it lists: a default `local-lvm` on a ZFS
 host is a name to replace, which `just init` offers, not a missing privilege.
 
+Before those checks, at a terminal, `just init` offers to make the token (`tasks/init_access.yml`). What
+stops the offer is a `NOTICE` that ends in how to run `tools/proxmox-access.sh` by hand, and `just init` asks
+for the secret instead:
+
+| `NOTICE` | Cause, and the fix |
+|---|---|
+| `root SSH to ... failed` | the key is not installed for root: `ssh-copy-id root@<host>`, then `just init` again |
+| `tools/proxmox-access.sh refused on ...: error: run it as root` | `hosts.yml` reaches the host as another user: the template build needs root too |
+| `proxmox_storage is X in local.yml, and the Proxmox host has no storage of that name` | a storage set by hand that the host does not list for VM disks: fix `local.yml` |
+| `the storage is not chosen yet` | Enter at the storage (or bridge) question: `just init` asks again |
+| `The API access is set up on ... already` | not a problem: the role, the user, its grants and the token exist, so `just init` asks for the secret Proxmox showed when the token was made. Lost it? Delete the token (`pveum user token delete ansible@pve ansible`; every machine that uses it loses access), and `just init` makes a new one |
+
+A failure while the script runs fails `just init` with what it said; what it did before that stays, and the
+next `just init` does only what is still missing. A vault that cannot be written after the token was made
+deletes the token again, and says so; one written but not read back as written keeps it, since it holds the
+secret, and says how to delete it should the checks then refuse that secret.
+
 ## Duplicate names
 
 Proxmox permits them. The role refuses to act on one; `discover.yml` refuses to

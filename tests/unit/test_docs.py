@@ -423,7 +423,7 @@ def test_every_cross_page_section_reference_is_a_link():
 
 
 def test_the_quick_start_matches_the_wiki():
-    """The README repeats what a first deploy needs so it needs no second page: the token commands
+    """The README repeats what a first deploy needs so it needs no second page: the root SSH command
     from Proxmox access, and the set-up commands and the files table from Your first deploy."""
 
     def fragment(path: Path, marker: str) -> str:
@@ -436,6 +436,6 @@ def test_the_quick_start_matches_the_wiki():
 
     readme = REPO / "README.md"
     started = DOCS / "getting-started"
-    assert fragment(readme, "pveum role add") == fragment(started / "proxmox-access.md", "pveum role add")
+    assert fragment(readme, "ssh-copy-id") == fragment(started / "proxmox-access.md", "ssh-copy-id")
     for marker in ("git clone", "just deploy alpha\n```", "| File | Contents |"):
         assert fragment(readme, marker) == fragment(started / "first-deploy.md", marker), marker

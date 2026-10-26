@@ -6,8 +6,12 @@ with; this is the mechanism.
 
 ## Authentication
 
-Authentication is API tokens only, never a password. [Proxmox access](../getting-started/proxmox-access.md) documents creating a
-dedicated, VM-scoped `ansible@pve` token rather than using `root@pam`. `validate_certs` defaults to `false`
+Authentication is API tokens only, never a password. [Proxmox access](../getting-started/proxmox-access.md) documents the
+dedicated, VM-scoped `ansible@pve` token used rather than `root@pam`, which `tools/proxmox-access.sh` makes:
+`just init` runs it on the Proxmox host over root SSH only after showing what it would run and taking a `y`,
+creates only what is missing, changes nothing that exists, and pipes the token's secret from the script's
+stdout into the encrypted vault under `no_log` - never on the screen or a command line. A vault it cannot
+write deletes the token again, since its secret, shown once, would be lost. `validate_certs` defaults to `false`
 because Proxmox ships a self-signed certificate, and the same page covers trusting the PVE CA to turn it
 on.
 

@@ -12,9 +12,10 @@
 # docs/reference/settings.md lists them, generated from this file (just docs).
 
 # ---------------------------------------------------------------- Proxmox ---
-# Proxmox API token secret for proxmox_api_user (default ansible@pve). See
-# "Creating the Proxmox API token" in docs/getting-started/proxmox-access.md
-# for the pveum commands that create a VM-scoped user, role and token.
+# Proxmox API token secret for proxmox_api_user (default ansible@pve): just
+# init writes it when it makes the token, and tools/proxmox-access.sh prints
+# it when you make the VM-scoped user, role and token yourself
+# (docs/getting-started/proxmox-access.md).
 vault_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 # -------------------------------------------------------------------- VMs ---

@@ -16,6 +16,13 @@ One command, `just deploy alpha`:
 Every step is idempotent, so the same command is how you apply a change later. Everything specific to
 your environment - the Proxmox address, tokens - lives in git-ignored files.
 
+Then `just status` shows the whole fleet on one screen: each VM's size and the last day of its CPU, the
+storage, each VM's addresses on the LAN and the tailnet, its sign-ins and Remote Control, its system and
+updates, and the work in its checkouts that is not pushed yet. What needs you comes last, ranked, each with
+the command that fixes it. It only reads, and changes nothing.
+
+![just status: the whole report drawn at once, each value filling in as it is read](.github/assets/just-status.svg)
+
 **Documentation:** [`docs/`](docs/README.md) covers every feature, setting and design decision, and
 reads as a site with search at <https://kawadeomkar.github.io/claude-on-proxmox/>. This page gets you to
 a first deploy.
@@ -35,41 +42,25 @@ a first deploy.
 
 ## Quick start
 
-**1. Give it access to Proxmox.** Install your key for the one root SSH step (the template build):
+**1. Give it root SSH to Proxmox.** Install your key on the Proxmox host:
 
 ```bash
 ssh-copy-id root@<proxmox-host>
 ```
 
-Then, on the Proxmox host's shell, create a user and API token with only the rights this project needs
-(swap in your storage and bridge if they are not `local-lvm` and `vmbr0`):
-
-```bash
-# The guest-agent privilege is the one name that differs by version (`pveversion` shows yours):
-# VM.Monitor on Proxmox VE 8, VM.GuestAgent.Audit on 9, which removed VM.Monitor.
-AGENT_PRIV=VM.GuestAgent.Audit
-pveversion | grep -q '^pve-manager/8\.' && AGENT_PRIV=VM.Monitor
-
-pveum role add AnsibleVM -privs "VM.Allocate VM.Clone VM.Config.CPU VM.Config.Cloudinit \
-  VM.Config.Disk VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt VM.Audit \
-  Datastore.AllocateSpace Datastore.Audit SDN.Use $AGENT_PRIV"
-pveum user add ansible@pve
-pveum aclmod /vms -user ansible@pve -role AnsibleVM
-pveum aclmod /storage/local-lvm -user ansible@pve -role AnsibleVM   # your VM storage
-pveum aclmod /sdn/zones/localnetwork/vmbr0 -user ansible@pve -role AnsibleVM   # your bridge
-pveum user token add ansible@pve ansible --privsep 0
-```
-
-Keep the token's secret, which `pveum` prints once, for the next step.
-[Proxmox access](docs/getting-started/proxmox-access.md) explains the guest-agent privilege, a datacenter
-setting that can block the project's tag, and validating the host's certificate.
+The template build uses it. `just init` uses it too, once: it offers to create the API user, role and token
+this project uses for everything else, with only the rights it needs, shows the commands it would run on the
+host, and runs them only if you answer `y`. To create them yourself instead, answer `n` and run
+[`tools/proxmox-access.sh`](tools/proxmox-access.sh) on the host. [Proxmox access](docs/getting-started/proxmox-access.md)
+says how, and explains a datacenter setting that can block the project's tag and validating the host's
+certificate.
 
 **2. Get the project, and answer `just init`.**
 
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
-just init            # installs the tools, then asks for your Proxmox host, its API token and your GitHub username
+just init            # installs the tools, asks for your Proxmox host and GitHub username, and offers to make the API token
 ```
 
 pyenv, with its pyenv-virtualenv plugin, is the suggestion: `pyenv local` makes that environment this
@@ -83,7 +74,7 @@ the vault encrypted, with its password in `.vault_pass`: keep that file.
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | Encrypted: the token secret and your GitHub username, which `just init` asks for. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `just vault` |
+| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `just vault` |
 | `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone, `tailscale_enabled: false` without a Tailscale account - and what `just init` writes there: a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
 Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md),

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import datetime
 import fcntl
+import importlib.util
 import json
 import os
 import pty
@@ -452,6 +453,25 @@ def _failures(report: dict) -> dict:
 # made for the run, and accepts the token whose secret is PVE_SECRET.
 PVE_SECRET = "unit-test-pve-secret"
 FAKES = REPO / "tests" / "molecule"
+
+
+def _pve_cli(directory: Path, state: dict | None = None) -> Path:
+    """The stand-in pveum, pvesh, pveversion, hostname and id (fake_pve_cli.py) in directory, the host's state given
+    on top of its default; returns directory, to put first on PATH."""
+    spec = importlib.util.spec_from_file_location("fake_pve_cli", FAKES / "fake_pve_cli.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.install(directory, state)
+
+
+def _pve_cli_state(directory: Path) -> dict:
+    return json.loads((directory / "pve-state.json").read_text())
+
+
+def _pve_cli_calls(directory: Path) -> list[list[str]]:
+    """Every call the stand-ins in directory took, each its command and words."""
+    log = directory / "calls.log"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
 def _free_port() -> int:

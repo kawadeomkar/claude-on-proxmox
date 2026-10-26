@@ -1,0 +1,78 @@
+---
+# One of init_access.yml's two choices - the storage for VM disks, the bridge -
+# among what the Proxmox host listed to root. Inputs, through the include's
+# vars (never facts):
+#
+#   init_access_what     storage or bridge
+#   init_access_setting  its local.yml setting: proxmox_storage
+#   init_access_default  the project's default: local-lvm
+#   init_access_listing  what the host has
+#
+# The value in effect - local.yml's, or the default - is kept when the host has
+# it. One local.yml sets that the host does not have is the person's to fix. A
+# default the host does not have is asked for among what it has, and the answer
+# written into local.yml, as init_check.yml's choices write theirs. What is
+# settled goes into init_access_settled, and what was written into
+# init_access_wrote; why one is not settled, into init_access_why.
+- name: init_access_choose | Work out the {{ init_access_what }}
+  ansible.builtin.set_fact:
+    init_access_in_effect: "{{ init_local_settings[init_access_setting] | default(init_access_default) }}"
+    init_access_asked: >-
+      {{ init_access_setting not in init_local_settings and init_access_default not in init_access_listing
+         and init_access_listing | length > 0 }}
+
+- name: init_access_choose | Ask which to use, {{ init_access_what }}
+  ansible.builtin.include_tasks: init_ask.yml
+  vars:
+    init_ask_name: "{{ init_access_setting }}"
+    init_ask_label: >-
+      {{ 'Use ' ~ init_access_listing[0] ~ '? y or n' if init_access_listing | length == 1 else 'Number' }}, Enter to
+      decide later
+    init_ask_kind: "{{ 'yes_no' if init_access_listing | length == 1 else 'choice' }}"
+    init_ask_choices: "{{ init_access_listing }}"
+    init_ask_hidden: false
+    init_ask_given: ""
+    init_ask_flag: ""
+    init_ask_text: >-
+      {{ ['The ' ~ init_access_what ~ ' for the VMs: ' ~ init_access_default ~ ', the default, is not on the Proxmox'
+          ~ ' host. It has:']
+         + (range(1, init_access_listing | length + 1) | map('string') | zip(init_access_listing) | map('join', ') ')
+            | map('regex_replace', '^', '  ') | list) }}
+  when: init_access_asked | bool
+
+- name: init_access_choose | Settle the {{ init_access_what }}
+  ansible.builtin.set_fact:
+    init_access_settled: "{{ init_access_settled | default({}) | combine({init_access_what: init_access_value}) }}"
+    init_access_wrote: >-
+      {{ init_access_wrote | default({}) | combine({init_access_setting: init_access_value} if init_access_asked | bool
+                                                     else {}) }}
+  vars:
+    init_access_answer: "{{ (init_answers | default({}))[init_access_setting] | default('') }}"
+    init_access_value: >-
+      {{ init_access_in_effect if init_access_in_effect in init_access_listing
+         else init_access_listing[0] if init_access_asked | bool and init_access_answer == 'y'
+         else init_access_answer if init_access_asked | bool and init_access_answer not in ['', 'y', 'n']
+         else '' }}
+  when: init_access_value | length > 0
+
+- name: init_access_choose | Write into local.yml the chosen {{ init_access_what }}
+  ansible.builtin.include_tasks: init_local_setting.yml
+  vars:
+    init_setting_key: "{{ init_access_setting }}"
+    init_setting_value: "{{ init_access_settled[init_access_what] }}"
+  when: init_ask | bool and init_access_setting in init_access_wrote | default({})
+
+# Added to any reason the other choice gave, so neither hides the other.
+- name: init_access_choose | Record why it is not settled, {{ init_access_what }}
+  ansible.builtin.set_fact:
+    init_access_why: >-
+      {{ (init_access_why ~ '; ') if init_access_why | default('') | length > 0 else '' }}{{
+         (init_access_setting ~ ' is ' ~ init_access_in_effect ~ ' in local.yml, and the Proxmox host has no '
+          ~ init_access_what ~ ' of that name (it has ' ~ (init_access_listing | join(', ') or 'none')
+          ~ '): change it there, and run just init again')
+         if init_access_setting in init_local_settings else
+         ('the Proxmox host has no ' ~ ('storage for VM disks enabled' if init_access_what == 'storage' else 'bridge'))
+         if init_access_listing | length == 0 else
+         ('the ' ~ init_access_what ~ ' is not chosen yet (the host has ' ~ init_access_listing | join(', ')
+          ~ ', which the script takes as --' ~ init_access_what ~ ' <name>): just init asks again') }}
+  when: init_access_what not in init_access_settled | default({})

@@ -33,7 +33,7 @@ does - the privilege's name as the key, 1 or 0 its propagate flag - from a
 table a fixture fills with PUT /api2/json/fake/privileges?token=&path=&privs=
 (a comma-separated list, empty for none; "VM.Clone:0" without Propagate); a
 path the table does not name holds
-the whole role docs/getting-started/proxmox-access.md makes, its guest-agent
+the whole role tools/proxmox-access.sh makes, its guest-agent
 privilege the one of the version /version reports, which PUT
 /api2/json/fake/version?version= changes (8.2.4 until then).
 

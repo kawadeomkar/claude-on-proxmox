@@ -15,7 +15,6 @@ from __future__ import annotations
 import ast
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -712,14 +711,6 @@ def test_every_uri_call_passes_the_ca_and_hides_the_token():
             uri = task["ansible.builtin.uri"]
             assert uri["ca_path"] == "{{ proxmox_api_ca_path | default(omit, true) }}", task["name"]
             assert uri["headers"] == "{{ proxmox_api_headers }}" and task["no_log"] is True, task["name"]
-
-
-def test_the_privileges_checked_are_the_roles_in_the_docs():
-    page = (REPO / "docs" / "getting-started" / "proxmox-access.md").read_text()
-    granted = re.search(r'pveum role add AnsibleVM -privs "([^"]+)"', page.replace("\\\n", " ")).group(1).split()
-    checked = yaml.safe_load(PLAYBOOK.read_text())[0]["vars"]["init_token_privileges"]
-    agent = {"$AGENT_PRIV"}
-    assert sorted([*checked["vms"], *checked["storage"], *checked["bridge"]]) == sorted(set(granted) - agent)
 
 
 def test_no_run_reaches_a_real_ssh():

@@ -49,7 +49,7 @@ The bridge the template's NIC is attached to, which every clone inherits. Set it
 |---|---|---|
 | `proxmox_bridge` | `vmbr0` | Sets `proxmox_template_bridge` ([`proxmox_template`](roles/proxmox_template.md)): Bridge the template's net0 is attached to, and so every clone's. |
 
-The API user and token the pveum commands in [docs/getting-started/proxmox-access.md](../getting-started/proxmox-access.md) create, and the API's port.
+The API user and token, as just init or tools/proxmox-access.sh makes them ([docs/getting-started/proxmox-access.md](../getting-started/proxmox-access.md)), and the API's port.
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -428,7 +428,7 @@ More flags for a join, and for tailscaled itself.
 
 ### Secrets: Proxmox
 
-Proxmox API token secret for proxmox_api_user (default ansible@pve). See "Creating the Proxmox API token" in [docs/getting-started/proxmox-access.md](../getting-started/proxmox-access.md) for the pveum commands that create a VM-scoped user, role and token.
+Proxmox API token secret for proxmox_api_user (default ansible@pve): just init writes it when it makes the token, and tools/proxmox-access.sh prints it when you make the VM-scoped user, role and token yourself ([docs/getting-started/proxmox-access.md](../getting-started/proxmox-access.md)).
 
 | Secret, in `vault.yml` | Notes |
 |---|---|
