@@ -71,9 +71,20 @@ TOPICS = {
     "tailscale": "Tailscale sign-in",
 }
 # The set_stats names the report tasks record under, each owner's own prefix,
-# and the order a VM's matters are listed in.
+# and the order a VM's matters are listed in: just init's two first, as it comes first.
 NEXT_STATS = ("claude_vm_next", "claude_code_next", "github_projects_next", "tailscale_next", "code_next")
-MATTERS = ("vm", "claude", "remote_control", "github", "github_identity", "tailscale", "vscode", "destroy")
+MATTERS = (
+    "init_settings",
+    "init_check",
+    "vm",
+    "claude",
+    "remote_control",
+    "github",
+    "github_identity",
+    "tailscale",
+    "vscode",
+    "destroy",
+)
 # Bright, so the blocks stand out from ok's green and changed's yellow.
 COLOR = "bright yellow"
 

@@ -85,6 +85,8 @@ REPORTS = {
         "Say what became of each VM, and what is left of it",
         "Say which aliases were kept, and why",
     ],
+    "playbooks/init_settings.yml": ["Say what was written, and what is left"],
+    "playbooks/init_check.yml": ["Say what each check found"],
 }
 
 EVERY_KIND = """
@@ -311,6 +313,8 @@ def test_colour_on_the_screen_never_in_the_log(tmp_path):
         # Not a record: ignored, never a failure at the end of the run.
         ({"github_projects_next": {"a": "flat", "b": {"github": 3}}}, []),
         ({"code_next": {"a": {"something_new": "new", "vscode": "open"}}}, ["open", "new"]),
+        # just init's, the settings' before the checks'.
+        ({"claude_vm_next": {"just init": {"init_check": "deploy", "init_settings": "set"}}}, ["set", "deploy"]),
     ],
 )
 def test_next_steps_reads_the_five_records(records, lines):
@@ -402,5 +406,5 @@ def test_every_report_is_followed_by_its_record_under_one_of_the_five_names():
         for task in _tasks(path)
         if "ansible.builtin.set_stats" in task
     ]
-    assert len(stats) == sum(len(names) for names in REPORTS.values()) == 28
+    assert len(stats) == sum(len(names) for names in REPORTS.values()) == 30
     assert all(len(stat["data"]) == 1 and next(iter(stat["data"])) in _callback.NEXT_STATS for stat in stats), stats

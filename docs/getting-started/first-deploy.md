@@ -53,6 +53,10 @@ cannot use are shown with what it lacks. Each check prints `ok`, or `!!` with wh
 fails when one finds a problem, so run it again once it is fixed. While the address or the secret is still
 the example's, nothing is checked.
 
+Each of the two parts ends with a `NEXT STEPS` block of what is left: after the questions, the values still
+to set; after the checks, each problem with its fix or, once there is none, `just deploy alpha` - the
+command below.
+
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |

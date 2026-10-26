@@ -18,6 +18,10 @@
 # change just init makes on Proxmox - and the vault takes the secret it prints.
 # On n, the secret is asked for, as the script prints it when run by hand.
 #
+# NEXT STEPS gives what is still to set, or a vault that cannot be opened, as
+# the report says them; nothing once every value is set, since the checks,
+# init_check.yml, run next and say what comes after.
+#
 # Only at a terminal: init_ask is false unless just init sees one, so a run
 # with no terminal, or this playbook run by hand, asks nothing and writes only
 # the values given on the command line (init_given). A plaintext vault is
@@ -188,6 +192,30 @@
          + ([{'what': 'the GitHub username', 'flag': '--github-user', 'how': 'just init asks again, or just vault'}]
             if init_vault_readable and init_github_set | length == 0 and init_answers.github_user is not defined
             else []) }}
+    # What is left to do at the end, as the report says it and NEXT STEPS
+    # records it: each value still to set, and a vault no recipe can use yet.
+    # Names and how to set them only, never a value. A template that renders
+    # nothing is none, hence the string beside it.
+    init_left: "{{ init_left_lines | default('', true) | trim }}"
+    init_left_lines: |-
+      {% if init_missing | length > 0 %}
+      Still to set:
+      {% for missing in init_missing %}
+        {{ missing.what }}: {{ missing.how }}
+      {% endfor %}
+      {% if not init_ask | bool %}
+      Nothing is asked without a terminal, or with --no-prompt: run just init at one, give the values on its
+      command line (just init --host ... in docs/getting-started/first-deploy.md), or edit the files and run
+      just vault.
+      {% endif %}
+      {% endif %}
+      {% if not init_vault_readable %}
+      vault.yml is encrypted and there is neither .vault_pass nor ANSIBLE_VAULT_PASSWORD_FILE to open it,
+      so just init leaves it alone: just vault opens it, asking for its password.
+      {% elif init_vault_plaintext | bool %}
+      vault.yml is still plaintext, which every recipe refuses: just vault encrypts it, or just init
+      does at a terminal.
+      {% endif %}
 
   tasks:
     # It turns pipelining off: every module's file, its arguments in it, then
@@ -676,32 +704,27 @@
                                                     | join(' and ') ~ (', ' if init_vault_answered else '') }}encrypted
           {% endif %}
           {% endif %}
-          {% if init_missing | length > 0 %}
-          Still to set:
-          {% for missing in init_missing %}
-            {{ missing.what }}: {{ missing.how }}
-          {% endfor %}
-          {% if not init_ask | bool %}
-          Nothing is asked without a terminal, or with --no-prompt: run just init at one, give the values on its
-          command line (just init --host ... in docs/getting-started/first-deploy.md), or edit the files and run
-          just vault.
-          {% endif %}
-          {% endif %}
-          {% if not init_vault_readable %}
-          vault.yml is encrypted and there is neither .vault_pass nor ANSIBLE_VAULT_PASSWORD_FILE to open it,
-          so just init leaves it alone: just vault opens it, asking for its password.
-          {% elif init_vault_plaintext | bool %}
-          vault.yml is still plaintext, which every recipe refuses: just vault encrypts it, or just init
-          does at a terminal.
-          {% elif init_missing | length == 0 and init_answers.host is not defined and init_token_settings | length == 0
+          {% if init_left | length > 0 %}
+          {{ init_left }}
+          {% elif init_answers.host is not defined and init_token_settings | length == 0
                   and not init_vault_wrote and not init_tailscale_writes | bool
                   and init_access_wrote | default({}) | length == 0 %}
           Every value a first deploy needs is set.
           {% endif %}
           Optional, with just vault: vault_github_token, vault_anthropic_api_key, vault_tailscale_auth_key.
-          {% if init_missing | length == 0 and init_vault_readable and not init_vault_plaintext | bool %}
-          Next: just deploy alpha, which creates a VM named alpha (any name will do).
-          {% endif %}
+
+    # NEXT STEPS (callback_plugins/claude_on_proxmox.py): what the report says
+    # is left while a value is missing or the vault cannot be opened - the
+    # checks then stop at once or do not run. Nothing once every value is set:
+    # init_check.yml, which runs next, decides what comes next and says it.
+    - name: Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_vm_next: >-
+            {{ {'just init': {'init_settings':
+                 init_left if init_missing | length > 0 or not init_vault_readable else ''}} }}
+        aggregate: true
+        per_host: false
 
     - name: Say that the vault is encrypted
       ansible.builtin.debug:

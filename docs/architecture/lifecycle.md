@@ -898,7 +898,11 @@ told which password encrypts (`--encrypt-vault-id default`), since with `.vault_
 `ANSIBLE_VAULT_PASSWORD_FILE` both it has two, and what it says when it fails is said, holding no secret.
 The vault is decrypted again and compared with what was meant. The run ends with what it wrote and what is
 still missing - a vault left plaintext among it - and a run with no terminal (or `--no-prompt`) that was
-given values but still lacks the address, the secret or the username fails, naming them.
+given values but still lacks the address, the secret or the username fails, naming them. What is still
+missing, and a vault no recipe can use yet, are recorded for NEXT STEPS (`claude_vm_next`, under the key
+`just init`, matter `init_settings`) while a value is missing or the vault cannot be opened - when the checks
+below stop at once or do not run. Once every value is set it records nothing and names no `just deploy`: the
+checks run next and say what comes after.
 
 ## 4.13 `playbooks/init_check.yml`
 
@@ -954,6 +958,9 @@ every task a read (held by `tests/unit/test_init_check.py`):
    console, and deploy configures the VMs over SSH, which takes a key; with neither, the public keys in
    `~/.ssh` are listed and the `local.yml` line suggested.
 
-Each result is `ok` or `!!` with its fix, printed together at the end, and the run fails when any is `!!`.
-It writes `local.yml` alone, through `tasks/init_local_setting.yml`, and only at a terminal or for a value
-given; without either, it reports.
+Each result is `ok`, `!!` with its fix, or `--` not checked, printed together at the end, and the run fails
+when any is `!!`. NEXT STEPS (`claude_vm_next`, under the key `just init`, matter `init_check`) then gives
+each `!!` line with its fix; with none, what could not be checked; with neither, `just deploy alpha`, which
+the report's last line says too - unless the GitHub username is still the example's, which the questions'
+NEXT STEPS names. A run that ended at step 1 records nothing. It writes `local.yml` alone, through
+`tasks/init_local_setting.yml`, and only at a terminal or for a value given; without either, it reports.

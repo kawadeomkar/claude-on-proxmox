@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 2168 tests. By file:
+pytest over `tests/unit/`: 2177 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -37,11 +37,11 @@ pytest over `tests/unit/`: 2168 tests. By file:
   repositories - a worktree under `.claude/worktrees/` and one outside the projects directory, a branch with
   no upstream, a detached HEAD with commits of its own, a stash, untracked files - every file of them, `.git`
   included, as it was after.
-- **The stdout callback** (`test_attention_callback.py` 15): `callback_plugins/claude_on_proxmox.py` run
+- **The stdout callback** (`test_attention_callback.py` 16): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in
-  the log - and statically, the six tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
-  and every report followed by its record. Each role's own tests then assert what it records, in every
+  the log, `just init`'s two matters before a VM's - and statically, the six tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
+  and every report followed by its record, `just init`'s two among them. Each role's own tests then assert what it records, in every
   state they run.
 - **What every live output draws with** (`test_live_region.py` 13, `test_screen.py` 17, `test_vt.py` 4): the
   region against a stand-in `Display` - what is printed above it, a frame cut to the screen, a pause and a
@@ -200,7 +200,7 @@ pytest over `tests/unit/`: 2168 tests. By file:
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
-- **`just init`'s questions** (`test_init_settings.py` 77, `test_settings_filter.py` 73):
+- **`just init`'s questions** (`test_init_settings.py` 82, `test_settings_filter.py` 73):
   `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
   which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
   a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
@@ -212,7 +212,11 @@ pytest over `tests/unit/`: 2168 tests. By file:
   encryption that fails said, a host named without an `ansible_host` taken as set, a vault line over several
   lines left alone, a vault left plaintext said, and a run that keeps the modules' files refused; the
   Tailscale notice, naming the auth key or the sign-in page, gone once `tailscale_enabled` is set, and
-  `--tailscale` writing it; the vault decrypted to the example with the answered lines replaced,
+  `--tailscale` writing it; NEXT STEPS keeping each value still to set, as the report says it, with no
+  terminal and with Enter at each, in a scripted run that then fails too, and a vault that cannot be opened;
+  nothing once every value is set, even with the vault left plaintext, which the checks say, and no `just
+  deploy` said there;
+  the vault decrypted to the example with the answered lines replaced,
   `0600`, and the secret in neither the output nor the log, typed or given, with module arguments injected
   and the log at `-vvv`; a vault read and written as it is with `ANSIBLE_VERBOSITY` or `ANSIBLE_DEBUG` in the
   environment, every `ansible-vault` run quiet; statically, every write under `init_ask` and every task that renders the secret
@@ -239,7 +243,7 @@ pytest over `tests/unit/`: 2168 tests. By file:
   `pveum` required; a value that is not one plain word refused before anything runs; a refused write stopping
   it before the token. Statically: its privileges the ones `init_check.yml` checks, the commands
   `docs/getting-started/proxmox-access.md` shows the ones its dry run prints, and stdout carrying data alone.
-- **`just init`'s checks** (`test_init_check.py` 50): `init_check.yml` against the fake Proxmox on a
+- **`just init`'s checks** (`test_init_check.py` 53): `init_check.yml` against the fake Proxmox on a
   loopback port, in an inventory of the test's own with the project's `defaults.yml`: nothing asked of
   Proxmox while a value is the example's; every check `ok` on a host with its template, on 8.x and on 9.x,
   and no SSH then; a wrong secret, a closed port (an IPv6 address said bracketed), a missing privilege on
@@ -257,7 +261,11 @@ pytest over `tests/unit/`: 2168 tests. By file:
   them or they differ from what is set, or while the node is unknown, `--bridge` refused beside a template
   unless it is the template's own, before anything is written. Also: nothing asked or written while the node
   is unknown, a token that sees no storage told what lists one, an inactive storage, a template without a
-  bridge, no host in the `proxmox` group, and the playbook loading with duplicate keys made fatal. Statically: every task a read (a `uri` a GET that saves nothing), every `uri` with the CA
+  bridge, no host in the `proxmox` group, and the playbook loading with duplicate keys made fatal. NEXT
+  STEPS: nothing recorded while a value is the example's; `just deploy alpha` once every check passes, said
+  last in the report too, and nothing while the GitHub username is the example's; each problem with its fix,
+  one and two of them; and what could not be checked when nothing is wrong - the template on a node just
+  gone down, still listed by name (the fake's `named=1`). Statically: every task a read or a NEXT STEPS record (a `uri` a GET that saves nothing), every `uri` with the CA
   path and `no_log`, the settings written only through `tasks/init_local_setting.yml` at a terminal or as
   given, and no run reaching a real `ssh`. Running
   a fake on a loopback port, the fake Proxmox's certificate and `_pve` live in `tests/unit/harness.py`, shared
@@ -501,7 +509,8 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   cannot reach. `PUT /api2/json/fake/nodes/pve2?status=online` - not a PVE endpoint - brings it back:
   its guests are then listed with their names and as stopped, the way Proxmox lists guests on a node
   that has just come back, which is the only way the "nothing is pruned while a node is down" path
-  can be shown to recover.
+  can be shown to recover. `?status=offline&named=1` keeps it down with its guests' names and template
+  flags still listed, as in the five minutes before the cluster drops a silent node's statistics.
 - A config write carrying `fake-verbatim-tags` keeps its tags as sent, for the comma-joined fixture.
   It is not a PVE parameter.
 - Each node lists its storages for VM disks and its bridges, each only where the token may see it -
