@@ -66,7 +66,7 @@ REPORTS = {
     "playbooks/code.yml": ["Say how to open each VM", "Say what was opened", "Say how to open the VM later"],
     "playbooks/provision.yml": ["Show each VM and the address it was given"],
     "playbooks/destroy.yml": [
-        "Say what each deleted VM was released from, and what is left of it",
+        "Say what became of each VM, and what is left of it",
         "Say which aliases were kept, and why",
     ],
 }

@@ -1233,12 +1233,10 @@ def test_the_inventory_wires_the_desktop_switch_into_the_role():
 def test_destroy_names_the_device_left_of_each_vm_it_could_not_release():
     # logout frees no name: a VM built again under it would join as <name>-1, for good.
     # tests/unit/test_release.py runs the report; this holds its wording for an
-    # unreleased VM, and that it reads only the VMs actually deleted.
+    # unreleased VM, and that it reads every VM, the deleted and those still there.
     plays = yaml.safe_load((REPO / "playbooks" / "destroy.yml").read_text())
     tasks = [task for play in plays for task in play.get("tasks", [])]
-    report = next(
-        task for task in tasks if task["name"] == "Say what each deleted VM was released from, and what is left of it"
-    )
-    assert "selectattr('claude_vm_deleted', 'defined')" in report["loop"]
+    report = next(task for task in tasks if task["name"] == "Say what became of each VM, and what is left of it")
+    assert report["loop"] == "{{ groups['claude_vm_doomed'] | default([]) }}"
     assert "https://login.tailscale.com/admin/machines" in report["vars"]["claude_release_where"]
     assert "<name>-1" in report["vars"]["claude_release_left"]
