@@ -33,9 +33,11 @@ What these guard:
   has something to merge, names the file when it is not a JSON object, and
   leaves a broken file alone when nothing is managed.
 - The harness itself: a run inherits only what it names from the shell running
-  pytest, git and gh on a stand-in host never reach the developer's config, the
-  Galaxy collections resolve from wherever ANSIBLE_COLLECTIONS_PATH says, and
-  no run reads the terminal pytest runs at.
+  pytest, and an Ansible command a test starts itself none of that shell's
+  ANSIBLE_* settings (just test unit's run log among them); git and gh on a
+  stand-in host never reach the developer's config, the Galaxy collections
+  resolve from wherever ANSIBLE_COLLECTIONS_PATH says, and no run reads the
+  terminal pytest runs at.
 
 The harness's names are imported here for the test modules that still import
 them from this one (test_github_auth.py among them).
@@ -43,6 +45,7 @@ them from this one (test_github_auth.py among them).
 
 from __future__ import annotations
 
+import ast
 import grp
 import json
 import os
@@ -460,6 +463,126 @@ def test_a_run_inherits_only_what_the_harness_names(tmp_path, monkeypatch):
     # The desktop stand-ins come first, and BROWSER is one of them.
     assert env["PATH"].split(os.pathsep)[0] == str(tmp_path / ".desktop")
     assert env["BROWSER"] == str(tmp_path / ".desktop" / "open")
+
+
+# What starts a process, and the harness's playbook runners, whose env goes on top of _env's.
+STARTERS = {"run", "Popen", "check_output", "check_call", "call", "_at_a_pseudo_terminal"}
+RUNNERS = {"_run", "_run_at_a_terminal"}
+# The one way to start from the whole of os.environ and still leave its Ansible settings behind.
+WITHOUT_ANSIBLE = re.compile(r"not \w+\.startswith\('ANSIBLE_'\)")
+
+
+def _starts_ansible(node: ast.expr) -> bool:
+    """Whether an argv names an Ansible command: ANSIBLE_PLAYBOOK, ANSIBLE_VAULT, or ansible-<tool> by name."""
+    return any(
+        (isinstance(part, ast.Name) and part.id.startswith("ANSIBLE_"))
+        or (isinstance(part, ast.Constant) and re.fullmatch(r"ansible(-[a-z]+)?", str(part.value)) is not None)
+        for part in ast.walk(node)
+    )
+
+
+def _whole_environ(node: ast.AST, parents: dict) -> list[int]:
+    """The lines under node that hand os.environ on whole: anything but one variable read off it, or its items
+    with ANSIBLE_* filtered out."""
+    found = []
+    for part in ast.walk(node):
+        if not (isinstance(part, ast.Attribute) and ast.unparse(part) == "os.environ"):
+            continue
+        above = parents[part]
+        if isinstance(above, ast.Subscript) or (isinstance(above, ast.Attribute) and above.attr == "get"):
+            continue
+        if isinstance(above, ast.Attribute) and above.attr == "items":
+            loop = parents[parents[above]]
+            if isinstance(loop, ast.comprehension) and any(WITHOUT_ANSIBLE.fullmatch(ast.unparse(c)) for c in loop.ifs):
+                continue
+        found.append(part.lineno)
+    return found
+
+
+def _inherited_environments(source: str) -> list[int]:
+    """The lines where a test starts an Ansible command with no env of its own, or with one that carries the
+    shell's ANSIBLE_* settings: os.environ handed on whole in the call, in a statement of the function that
+    names a variable it passes, or in a function of the module that it calls to build it."""
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    helpers = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    found = []
+    for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
+        simple = [node for node in ast.walk(function) if isinstance(node, (ast.Assign, ast.AugAssign, ast.Expr))]
+
+        def naming(name: str, simple: list = simple) -> list:
+            return [node for node in simple if any(getattr(part, "id", None) == name for part in ast.walk(node))]
+
+        for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
+            called = getattr(call.func, "attr", None) or getattr(call.func, "id", None)
+            env = next((keyword.value for keyword in call.keywords if keyword.arg == "env"), None)
+            if called in STARTERS and call.args:
+                # The argv, or what the function assigns to the variable passed as one.
+                argv = call.args[0]
+                made = [argv, *(node.value for node in naming(getattr(argv, "id", "")) if isinstance(node, ast.Assign))]
+                if not any(_starts_ansible(node) for node in made):
+                    continue
+                if env is None and called == "_at_a_pseudo_terminal" and len(call.args) > 2:
+                    env = call.args[2]
+                if env is None:
+                    found.append(call.lineno)
+                    continue
+            elif called not in RUNNERS or env is None:
+                continue
+            reached = [env, *(node for part in ast.walk(env) if isinstance(part, ast.Name) for node in naming(part.id))]
+            reached += [
+                helpers[part.func.id]
+                for node in reached
+                for part in ast.walk(node)
+                if isinstance(part, ast.Call) and getattr(part.func, "id", None) in helpers
+            ]
+            found += [line for node in reached for line in _whole_environ(node, parents)]
+    return sorted(set(found))
+
+
+def test_no_ansible_command_a_test_starts_inherits_the_shell_s_ansible_settings():
+    # Under just test unit the shell holds the run log's ANSIBLE_LOG_PATH, so a
+    # child given os.environ writes its lines into the developer's log; and a
+    # verbosity or a vault password file exported there changes what it does.
+    # The harness, which builds the allowlist, is the one module it does not read.
+    elsewhere = [
+        f"{path.name}:{line}"
+        for path in sorted((REPO / "tests" / "unit").glob("*.py"))
+        if path.name != "harness.py"
+        for line in _inherited_environments(path.read_text())
+    ]
+    assert not elsewhere, "give each Ansible command harness._env's environment: " + ", ".join(elsewhere)
+
+
+def test_the_environment_guard_sees_what_it_guards():
+    starts = "def f(root, PLAYBOOK):\n    "
+    refused = [
+        'subprocess.run([str(ANSIBLE_PLAYBOOK), "--syntax-check", "p.yml"], env=os.environ | {"A": "error"})',
+        'subprocess.run([str(ANSIBLE_VAULT), "decrypt", "v.yml"], check=True)',
+        'subprocess.run(["ansible-galaxy", "collection", "list"], env=dict(os.environ))',
+        'env = {**os.environ, "HOME": "/h"}\n    subprocess.run([str(ANSIBLE_PLAYBOOK), "p.yml"], env=env)',
+        'env = _env(root)\n    env.update(os.environ)\n    subprocess.Popen([str(ANSIBLE_PLAYBOOK), "p.yml"], env=env)',
+        'argv = [str(ANSIBLE_PLAYBOOK), "p.yml"]\n    subprocess.run(argv, env=os.environ.copy())',
+        '_at_a_pseudo_terminal([str(ANSIBLE_PLAYBOOK), "p.yml"], root, {**os.environ})',
+        "_run(root, PLAYBOOK, {}, env=os.environ)",
+        'subprocess.run([str(ANSIBLE_PLAYBOOK)], env={k: v for k, v in os.environ.items() if k != "HOME"})',
+    ]
+    for source in refused:
+        assert _inherited_environments(starts + source), source
+    built = "def g():\n    return {**os.environ}\n\n\n"
+    assert _inherited_environments(built + starts + 'subprocess.run(["ansible-playbook", "p.yml"], env=g())')
+    accepted = [
+        'subprocess.run([str(ANSIBLE_PLAYBOOK), "p.yml"], env=_env(root, ANSIBLE_DUPLICATE_YAML_DICT_KEY="error"))',
+        'env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}\n'
+        "    env.update(ANSIBLE_CONFIG=ansible_config(root))\n"
+        '    subprocess.run([str(ANSIBLE_PLAYBOOK), "p.yml"], env=env)',
+        'subprocess.run([str(ANSIBLE_VAULT)], env={"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/")})',
+        'subprocess.run(["git", "status"], env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull})',
+        '_run(root, PLAYBOOK, {}, env={"PATH": f"/stand-ins:{os.environ.get(\'PATH\', os.defpath)}"})',
+        "_run(root, PLAYBOOK, {})",
+    ]
+    for source in accepted:
+        assert not _inherited_environments(starts + source), source
 
 
 def test_a_stand_in_host_never_sees_the_developer_s_git_gh_or_claude_config(tmp_path):

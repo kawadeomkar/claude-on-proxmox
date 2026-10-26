@@ -16,18 +16,19 @@ import ast
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
 from harness import (
+    ANSIBLE_PLAYBOOK,
     FAKES,
     LOGINS,
     PVE_SECRET,
     REPO,
     _certificate,
     _desktop,
+    _env,
     _failures,
     _free_port,
     _messages,
@@ -692,11 +693,14 @@ def test_a_setting_is_written_only_at_a_terminal_or_as_given():
     )
 
 
-def test_the_playbook_has_no_duplicate_key():
+def test_the_playbook_has_no_duplicate_key(tmp_path):
     # A YAML merge that redefines a key loads with a warning on every just init.
+    # The harness's environment, not this shell's: under just test unit that
+    # holds the run log's ANSIBLE_LOG_PATH, which the check wrote its line into.
     result = subprocess.run(
-        [str(Path(sys.executable).with_name("ansible-playbook")), "--syntax-check", str(PLAYBOOK)],
-        env=os.environ | {"ANSIBLE_DUPLICATE_YAML_DICT_KEY": "error"},
+        [str(ANSIBLE_PLAYBOOK), "--syntax-check", str(PLAYBOOK)],
+        cwd=tmp_path,
+        env=_env(tmp_path, ANSIBLE_DUPLICATE_YAML_DICT_KEY="error"),
         capture_output=True,
         text=True,
         check=False,

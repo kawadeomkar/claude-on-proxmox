@@ -56,7 +56,9 @@ idempotence stage, which reruns the converge and fails on any changed task.
 The unit tests that run a playbook share `tests/unit/harness.py`: `_run`, or `_run_at_a_terminal` to type
 at a prompt. Use it rather than a `subprocess` call of your own: a run inherits only the variables it
 names, never reads your terminal, and fails its test if it calls a browser opener, a clipboard or this
-machine's `tailscale`.
+machine's `tailscale`. An Ansible command a test must start itself - a `--syntax-check`, an
+`ansible-vault` - gets the harness's `_env` too, never `os.environ`, which under `just test unit` holds
+your run log's `ANSIBLE_LOG_PATH`; a static test in `tests/unit/test_remote_control_playbooks.py` holds it.
 
 Tests never talk to a real Proxmox, a real GitHub, a real Tailscale or a real hypervisor:
 `tests/molecule/` holds a fake or a stand-in for each, listed in

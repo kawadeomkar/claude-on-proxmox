@@ -33,6 +33,7 @@ import yaml
 from harness import (
     REPO,
     _desktop,
+    _env,
     _failures,
     _messages,
     _pve_cli,
@@ -160,16 +161,28 @@ def _snapshot(files: dict) -> dict:
     return snapshot
 
 
-def _decrypt(files: dict) -> str:
-    result = subprocess.run(
-        [str(ANSIBLE_VAULT), "decrypt", "--vault-password-file", files["init_vault_pass_file"], "--output", "-"]
-        + [files["init_vault_file"]],
+def _ansible_vault(files: dict, *args: str, text: str | None = None) -> str:
+    """ansible-vault with args, text on its stdin; its stdout. In the harness's environment under the test's
+    directory (_files' root), never this shell's: an ANSIBLE_VERBOSITY there puts more than the vault on stdout,
+    and an ANSIBLE_LOG_PATH, just test unit's run log among them, gains its lines."""
+    root = Path(files["init_vault_file"]).parents[1]
+    return subprocess.run(
+        [str(ANSIBLE_VAULT), *args],
+        cwd=root,
+        env=_env(root),
+        input=text,
+        stdin=None if text is not None else subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=True,
-        stdin=subprocess.DEVNULL,
+    ).stdout
+
+
+def _decrypt(files: dict) -> str:
+    password = files["init_vault_pass_file"]
+    return _ansible_vault(
+        files, "decrypt", "--vault-password-file", password, "--output", "-", files["init_vault_file"]
     )
-    return result.stdout
 
 
 def _example(var: str) -> str:
@@ -191,13 +204,15 @@ def _mode(path: str) -> int:
 def _encrypt(files: dict, text: str, password: str = "a-password-of-the-persons-own\n") -> None:
     Path(files["init_vault_pass_file"]).write_text(password)
     Path(files["init_vault_pass_file"]).chmod(0o600)
-    subprocess.run(
-        [str(ANSIBLE_VAULT), "encrypt", "--vault-password-file", files["init_vault_pass_file"]]
-        + ["--output", files["init_vault_file"], "-"],
-        input=text,
-        capture_output=True,
-        text=True,
-        check=True,
+    _ansible_vault(
+        files,
+        "encrypt",
+        "--vault-password-file",
+        files["init_vault_pass_file"],
+        "--output",
+        files["init_vault_file"],
+        "-",
+        text=text,
     )
 
 
@@ -616,14 +631,9 @@ def _password_file(root: Path, name: str = "vault-password") -> Path:
 
 
 def _decrypt_with(files: dict, password: Path) -> str:
-    return subprocess.run(
-        [str(ANSIBLE_VAULT), "decrypt", "--vault-password-file", str(password), "--output", "-"]
-        + [files["init_vault_file"]],
-        capture_output=True,
-        text=True,
-        check=True,
-        stdin=subprocess.DEVNULL,
-    ).stdout
+    return _ansible_vault(
+        files, "decrypt", "--vault-password-file", str(password), "--output", "-", files["init_vault_file"]
+    )
 
 
 def test_a_password_file_of_ansibles_own_encrypts_and_no_vault_pass_is_made(tmp_path: Path) -> None:

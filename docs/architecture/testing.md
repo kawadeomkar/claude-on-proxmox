@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 2064 tests. By file:
+pytest over `tests/unit/`: 2066 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -65,10 +65,11 @@ pytest over `tests/unit/`: 2064 tests. By file:
   streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
-- **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
+- **Remote Control** (`test_remote_control_playbooks.py` 58): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
-  that reaches for them, no terminal).
+  that reaches for them, no terminal); statically, that no Ansible command a test starts itself carries the
+  shell's `ANSIBLE_*` settings, the run log `just test unit` exports among them.
 - **The Claude sign-in** (`test_claude_login.py` 42): `browser_login.yml` against the stand-in `claude`,
   five runs at a pseudo-terminal of the test's own - the page before the prompt, a partly copied code,
   an expired attempt, Ctrl-C then A, and keys typed before the prompt is ready - with the code searched
