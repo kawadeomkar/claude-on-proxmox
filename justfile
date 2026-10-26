@@ -464,8 +464,9 @@ login SIGN_IN='' *NAMES:
 # own stdout callback (callback_plugins/claude_on_proxmox_status.py) the only
 # one, so ansible.cfg's profile_tasks prints nothing on stdout (naming a stdout
 # callback in callbacks_enabled loads nothing more, and an empty one is an
-# error). The callback draws the report live at a terminal and prints it whole
-# at the end. The run writes the report to a file of its own, named after the
+# error). No VM to read leaves a play's group empty, which Ansible warns of
+# above the report: status says it in the report instead. The callback draws the
+# report live at a terminal and prints it whole at the end. The run writes the report to a file of its own, named after the
 # run, which the last line reads its exit code from, prints under --json, and
 # removes: 0 nothing is wrong, 1 a problem, 2 something could not be read, 3
 # the run itself failed or wrote no report. ansible-playbook's own code is
@@ -499,6 +500,7 @@ status ONLY='' JSON='' *NAMES:
     rm -f "$report"
     rc=0
     STATUS_REPORT_FILE=$report STATUS_QUIET=$json ANSIBLE_STDOUT_CALLBACK=claude_on_proxmox_status \
+      ANSIBLE_HOST_PATTERN_MISMATCH=ignore \
       ANSIBLE_CALLBACKS_ENABLED=claude_on_proxmox_status \
       {{ run_logged }} status "$bin/ansible-playbook" "$@" --check {{ ANSIBLE_ARGS }} playbooks/status.yml || rc=$?
     if [ "$rc" -ne 0 ] || [ ! -s "$report" ]; then

@@ -1990,13 +1990,15 @@ def test_status_runs_as_a_dry_run_with_its_own_callback_alone(tmp_path: Path) ->
         tmp_path,
         "--json",
         body='printf "%s\\n" "$ANSIBLE_STDOUT_CALLBACK" "$ANSIBLE_CALLBACKS_ENABLED" "$STATUS_QUIET"'
-        f' "$STATUS_REPORT_FILE" > "{seen}"',
+        f' "$STATUS_REPORT_FILE" "$ANSIBLE_HOST_PATTERN_MISMATCH" > "{seen}"',
     )
     assert result.returncode == 0, _output(result)
-    callback, enabled, quiet, report = seen.read_text().splitlines()
+    callback, enabled, quiet, report, mismatch = seen.read_text().splitlines()
     # profile_tasks, which ansible.cfg enables, would print on stdout: naming the stdout callback loads nothing more.
     assert callback == enabled == "claude_on_proxmox_status"
     assert quiet == "true"
+    # A fleet with no VM to read leaves play 2's group empty: the report says so, never Ansible's warning above it.
+    assert mismatch == "ignore"
     assert re.fullmatch(rf"{re.escape(str(tmp_path / 'status'))}/\d{{8}}-\d{{6}}-\d+\.json", report), report
     run = _runs(tmp_path, "ansible-playbook")[0]
     assert "--check" in run and run[-1] == "playbooks/status.yml", run
