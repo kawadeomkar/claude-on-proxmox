@@ -509,15 +509,16 @@ def test_no_other_test_or_scenario_draws_a_run():
         and "CLAUDE_ON_PROXMOX_LIVE" in (REPO / name).read_text(errors="replace")
     )
     # The callback that hands the run to the engine, the engine that reads it and the declarations its title names,
-    # the recipe that sets it, and the tests: the live kit sets it for the live tests, and test_justfile.py reads the
-    # title the recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or config.
-    assert mentions == [
+    # the recipe that sets it, and the tests: the live kit sets it for the live tests, each live test
+    # (tests/unit/test_<recipe>_live.py) names it, and test_justfile.py reads the title the recipe exports, from an
+    # ansible-playbook stand-in that runs nothing. No scenario, tool or config.
+    live_tests = [name for name in mentions if re.fullmatch(r"tests/unit/test_\w+_live\.py", name)]
+    assert [name for name in mentions if name not in live_tests] == [
         "callback_plugins/claude_on_proxmox.py",
         "filter_plugins/live_ansible.py",
         "filter_plugins/live_recipes.py",
         "justfile",
         "tests/unit/live_kit.py",
-        "tests/unit/test_deploy_live.py",
         "tests/unit/test_justfile.py",
     ], mentions
     # In the justfile, only the recipes a declaration draws (filter_plugins/live_recipes.py), each its own title.
