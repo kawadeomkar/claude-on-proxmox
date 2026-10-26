@@ -53,6 +53,19 @@ With tailscale_login_interactive, or the answer to the question tailscale_login_
 
 Also takes, as described under `main`: `tailscale_enabled`, `tailscale_login_timeout`, `tailscale_login_desktop`, `tailscale_login_server`, `tailscale_advertise_tags`, `tailscale_marker_dir`.
 
+## Entry point `status`
+
+**Say how the VM is on Tailscale, changing nothing**
+
+Reads what Tailscale is installed and whose, and its state once, without waiting for it to settle, and gives the report configure gives, keeping what just status shows in tailscale_status_found. Never installs, joins, signs in, changes a setting or removes anything.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `tailscale_auth_key` | str | `""` | Only whether one is set is read, for the line that says what joins the VM. A secret: never logged. |
+| `tailscale_hostname` | str | computed | The machine name asked for, which a name taken is told by. |
+
+Also takes, as described under `main`: `tailscale_enabled`, `tailscale_auth_method`, `tailscale_login_server`, `tailscale_advertise_tags`, `tailscale_marker_dir`.
+
 ## Entry point `release`
 
 **Take the VM off the tailnet before it is destroyed**
@@ -63,7 +76,7 @@ Also takes, as described under `main`: `tailscale_api_auth_method`, `tailscale_a
 
 ## Internal values
 
-Set in `roles/tailscale/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. 67 of the 75 are computed during a run, from earlier tasks' results.
+Set in `roles/tailscale/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. 69 of the 78 are computed during a run, from earlier tasks' results.
 
 | Name | Value |
 |---|---|
@@ -139,6 +152,9 @@ Set in `roles/tailscale/vars/main.yml`. These are not settings: Ansible ranks a 
 | `tailscale_absent_unasked` | <code>{{ tailscale_package_present &#124; bool and (tailscale_absent_status.rc &#124; default(1)) != 0 }}</code> |
 | `tailscale_absent_logout_failed` | <code>{{ (tailscale_logout &#124; default({'skipped': true})) is not skipped and (tailscale_logout.rc &#124; default(0)) != 0 }}</code> |
 | `tailscale_absent_login_left` | <code>{{ tailscale_absent_unasked &#124; bool or tailscale_absent_logout_failed &#124; bool }}</code> |
+| `tailscale_report_case` | <code>{{ 'not-ours' if not (tailscale_ours &#124; bool) else 'check-no-package' if tailscale_check_without_package &#124; bool else 'check-daemon-down' if ansible_check_mode and not (tailscale_daemon_up &#124; bool) else 'connecting' if not (tailscale_settled &#124; bool) else 'would-join' if ansible_check_mode and tailscale_first_join &#124; bool and tailscale_key_wanted &#124; bool and not (tailscale_key_refused_locally &#124; bool) else 'page-pending' if tailscale_backend == 'NeedsLogin' and tailscale_auth_url &#124; length > 0 else 'expired' if tailscale_backend == 'NeedsLogin' and tailscale_joined &#124; bool else 'refused' if tailscale_backend == 'NeedsLogin' and tailscale_key_wanted &#124; bool and (tailscale_join_ran &#124; bool or tailscale_key_refused_locally &#124; bool) else tailscale_backend }}</code> |
+| `tailscale_report_open` | `["check-no-package", "check-daemon-down", "connecting", "would-join", "page-pending", "expired", "refused", "NeedsMachineAuth", "Stopped"]` |
+| `tailscale_report_left` | <code>{{ tailscale_report_case in tailscale_report_open or (tailscale_report_case == 'NeedsLogin' and not (tailscale_sign_in_follows &#124; bool and tailscale_auth_method != 'key')) or (tailscale_report_case == 'Running' and (tailscale_name_taken &#124; bool or tailscale_tags_missing &#124; length > 0)) }}</code> |
 | `tailscale_admin_page` | <code>{{ 'your control server' if tailscale_login_server &#124; length > 0 else 'https://login.tailscale.com/admin/machines' }}</code> |
 | `tailscale_configure_command` | `just deploy {{ inventory_hostname }} --tags tailscale` |
 | `tailscale_login_command` | `just login {{ inventory_hostname }} --only tailscale` |
@@ -178,8 +194,8 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Fail_when_tailscale_hostname_is_not_one_DNS_label0-->|Task| Fail_when_tailscale_auth_method_is_key_and_there_is_no_key1[fail when tailscale auth method is key and there<br>is no key<br>When: **tailscale enabled   bool and tailscale auth method<br>    key**]:::task
   Fail_when_tailscale_auth_method_is_key_and_there_is_no_key1-->|Include task| Read_what_is_installed__and_who_installed_it_ownership_yml_2[read what is installed  and who installed it<br>include_task: ownership yml]:::includeTasks
   Read_what_is_installed__and_who_installed_it_ownership_yml_2-->|Include task| Install_Tailscale_where_this_role_installed_it__or_nothing_has_install_yml_3[install tailscale where this role installed it  or<br>nothing has<br>When: **tailscale enabled   bool and tailscale ours   bool**<br>include_task: install yml]:::includeTasks
-  Install_Tailscale_where_this_role_installed_it__or_nothing_has_install_yml_3-->|Include task| Read_Tailscale_s_state_status_yml_4[read tailscale s state<br>When: **tailscale enabled   bool**<br>include_task: status yml]:::includeTasks
-  Read_Tailscale_s_state_status_yml_4-->|Include task| Join_the_tailnet_with_the_vault_key__the_first_time_connect_yml_5[join the tailnet with the vault key  the first<br>time<br>When: **tailscale enabled   bool**<br>include_task: connect yml]:::includeTasks
+  Install_Tailscale_where_this_role_installed_it__or_nothing_has_install_yml_3-->|Include task| Read_Tailscale_s_state_state_yml_4[read tailscale s state<br>When: **tailscale enabled   bool**<br>include_task: state yml]:::includeTasks
+  Read_Tailscale_s_state_state_yml_4-->|Include task| Join_the_tailnet_with_the_vault_key__the_first_time_connect_yml_5[join the tailnet with the vault key  the first<br>time<br>When: **tailscale enabled   bool**<br>include_task: connect yml]:::includeTasks
   Join_the_tailnet_with_the_vault_key__the_first_time_connect_yml_5-->|Include task| Keep_the_settings_of_a_login_this_role_made_settings_yml_6[keep the settings of a login this role made<br>When: **tailscale enabled   bool**<br>include_task: settings yml]:::includeTasks
   Keep_the_settings_of_a_login_this_role_made_settings_yml_6-->|Include task| Report_how_the_VM_is_on_Tailscale_report_yml_7[report how the vm is on tailscale<br>When: **tailscale enabled   bool**<br>include_task: report yml]:::includeTasks
   Report_how_the_VM_is_on_Tailscale_report_yml_7-->|Include task| Turn_Tailscale_off_where_this_role_turned_it_on_absent_yml_8[turn tailscale off where this role turned it on<br>When: **not  tailscale enabled   bool**<br>include_task: absent yml]:::includeTasks
@@ -287,8 +303,8 @@ classDef rescue stroke:#665352,stroke-width:2px;
   connect___Record_the_login_a_pending_sign_in_of_this_role_s_ended_in0-->|Include task| connect___Read_what_this_role_has_made__now_that_it_has_recorded_the_login_ownership_yml_1[connect   read what this role has made  now that<br>it has recorded the login<br>When: **tailscale adopted is not skipped**<br>include_task: ownership yml]:::includeTasks
   connect___Read_what_this_role_has_made__now_that_it_has_recorded_the_login_ownership_yml_1-->|Task| connect___Remember_what_tailscaled_said_before_the_join2[connect   remember what tailscaled said before the<br>join<br>When: **not ansible check mode and tailscale ours   bool<br>and tailscale key wanted   bool and tailscale<br>first join   bool and not  tailscale key refused<br>locally   bool**]:::task
   connect___Remember_what_tailscaled_said_before_the_join2-->|Task| connect___Join_the_tailnet_with_the_key3[connect   join the tailnet with the key<br>When: **not ansible check mode and tailscale ours   bool<br>and tailscale key wanted   bool and tailscale<br>first join   bool and not  tailscale key refused<br>locally   bool**]:::task
-  connect___Join_the_tailnet_with_the_key3-->|Include task| connect___Read_the_state_after_the_join_status_yml_4[connect   read the state after the join<br>When: **tailscale join is not skipped**<br>include_task: status yml]:::includeTasks
-  connect___Read_the_state_after_the_join_status_yml_4-->|Task| connect___Remember_that_this_login_is_this_role_s5[connect   remember that this login is this role s<br>When: **tailscale join is not skipped and tailscale signed<br>in   bool**]:::task
+  connect___Join_the_tailnet_with_the_key3-->|Include task| connect___Read_the_state_after_the_join_state_yml_4[connect   read the state after the join<br>When: **tailscale join is not skipped**<br>include_task: state yml]:::includeTasks
+  connect___Read_the_state_after_the_join_state_yml_4-->|Task| connect___Remember_that_this_login_is_this_role_s5[connect   remember that this login is this role s<br>When: **tailscale join is not skipped and tailscale signed<br>in   bool**]:::task
   connect___Remember_that_this_login_is_this_role_s5-->|Task| connect___Mark_a_join_still_under_way_as_this_role_s6[connect   mark a join still under way as this role<br>s<br>When: **tailscale join is not skipped and not  tailscale<br>signed in   bool  and tailscale join under way  <br>bool**]:::task
   connect___Mark_a_join_still_under_way_as_this_role_s6-->|Task| connect___Forget_the_sign_in_a_failed_join_ended7[connect   forget the sign in a failed join ended<br>When: **tailscale join is not skipped and not  tailscale<br>signed in   bool  and not  tailscale join under<br>way   bool**]:::task
   connect___Forget_the_sign_in_a_failed_join_ended7-->|Include task| connect___Read_what_this_role_has_made__now_that_it_has_joined_ownership_yml_8[connect   read what this role has made  now that<br>it has joined<br>When: **tailscale join is not skipped and tailscale signed<br>in   bool**<br>include_task: ownership yml]:::includeTasks
@@ -376,8 +392,8 @@ classDef includeVars stroke:#8e44ad,stroke-width:2px;
 classDef rescue stroke:#665352,stroke-width:2px;
 
   Start-->|Include task| login___Read_what_is_installed__and_who_installed_it_ownership_yml_0[login   read what is installed  and who installed<br>it<br>include_task: ownership yml]:::includeTasks
-  login___Read_what_is_installed__and_who_installed_it_ownership_yml_0-->|Include task| login___Read_Tailscale_s_state_status_yml_1[login   read tailscale s state<br>When: **tailscale enabled   bool and tailscale installed  <br>bool**<br>include_task: status yml]:::includeTasks
-  login___Read_Tailscale_s_state_status_yml_1-->|Task| login___Say_why_there_is_nothing_to_sign_in2[login   say why there is nothing to sign in<br>When: **not  tailscale enabled   bool  or not  tailscale<br>installed   bool**]:::task
+  login___Read_what_is_installed__and_who_installed_it_ownership_yml_0-->|Include task| login___Read_Tailscale_s_state_state_yml_1[login   read tailscale s state<br>When: **tailscale enabled   bool and tailscale installed  <br>bool**<br>include_task: state yml]:::includeTasks
+  login___Read_Tailscale_s_state_state_yml_1-->|Task| login___Say_why_there_is_nothing_to_sign_in2[login   say why there is nothing to sign in<br>When: **not  tailscale enabled   bool  or not  tailscale<br>installed   bool**]:::task
   login___Say_why_there_is_nothing_to_sign_in2-->|Task| login___Keep_what_is_left_to_do_for_the_end_of_the_run3[login   keep what is left to do for the end of the<br>run<br>When: **not  tailscale enabled   bool  or not  tailscale<br>installed   bool**]:::task
   login___Keep_what_is_left_to_do_for_the_end_of_the_run3-->|Task| login___Ask_whether_to_sign_this_VM_in_to_Tailscale_now4[login   ask whether to sign this vm in to<br>tailscale now<br>When: **tailscale login ask   bool and tailscale login<br>possible   bool**]:::task
   login___Ask_whether_to_sign_this_VM_in_to_Tailscale_now4-->|Include task| login___Sign_in_by_Tailscale_s_web_login_web_login_yml_5[login   sign in by tailscale s web login<br>When: **tailscale login go   bool and tailscale login<br>possible   bool**<br>include_task: web login yml]:::includeTasks
@@ -492,11 +508,11 @@ classDef includeVars stroke:#8e44ad,stroke-width:2px;
 classDef rescue stroke:#665352,stroke-width:2px;
 
   Start-->|Task| settings___Change_the_settings_that_differ_from_what_is_configured0[settings   change the settings that differ from<br>what is configured<br>When: **tailscale backend     running  and tailscale login<br>ours   bool and tailscale set flags   length   0**]:::task
-  settings___Change_the_settings_that_differ_from_what_is_configured0-->|Include task| settings___Read_the_state_after_the_change_status_yml_1[settings   read the state after the change<br>When: **tailscale set is not skipped**<br>include_task: status yml]:::includeTasks
-  settings___Read_the_state_after_the_change_status_yml_1-->End
+  settings___Change_the_settings_that_differ_from_what_is_configured0-->|Include task| settings___Read_the_state_after_the_change_state_yml_1[settings   read the state after the change<br>When: **tailscale set is not skipped**<br>include_task: state yml]:::includeTasks
+  settings___Read_the_state_after_the_change_state_yml_1-->End
 ```
 
-### `status.yml`
+### `state.yml`
 
 | Task | Module | When |
 |---|---|---|
@@ -516,10 +532,38 @@ classDef importRole stroke:#699ba7,stroke-width:2px;
 classDef includeVars stroke:#8e44ad,stroke-width:2px;
 classDef rescue stroke:#665352,stroke-width:2px;
 
-  Start-->|Task| status___Read_Tailscale_s_state_once_it_has_settled0[status   read tailscale s state once it has<br>settled<br>When: **not  tailscale check without package   bool**]:::task
-  status___Read_Tailscale_s_state_once_it_has_settled0-->|Task| status___Fail_when_the_tailscaled_this_role_started_does_not_answer1[status   fail when the tailscaled this role<br>started does not answer<br>When: **tailscale ours   bool and not ansible check mode<br>and not  tailscale check without package   bool**]:::task
-  status___Fail_when_the_tailscaled_this_role_started_does_not_answer1-->|Task| status___Read_the_settings_of_a_running_node2[status   read the settings of a running node<br>When: **tailscale backend     running**]:::task
-  status___Read_the_settings_of_a_running_node2-->End
+  Start-->|Task| state___Read_Tailscale_s_state_once_it_has_settled0[state   read tailscale s state once it has settled<br>When: **not  tailscale check without package   bool**]:::task
+  state___Read_Tailscale_s_state_once_it_has_settled0-->|Task| state___Fail_when_the_tailscaled_this_role_started_does_not_answer1[state   fail when the tailscaled this role started<br>does not answer<br>When: **tailscale ours   bool and not ansible check mode<br>and not  tailscale check without package   bool**]:::task
+  state___Fail_when_the_tailscaled_this_role_started_does_not_answer1-->|Task| state___Read_the_settings_of_a_running_node2[state   read the settings of a running node<br>When: **tailscale backend     running**]:::task
+  state___Read_the_settings_of_a_running_node2-->End
+```
+
+### `status.yml` - entry point `status`
+
+| Task | Module | When |
+|---|---|---|
+| Read what is installed, and who installed it | `ansible.builtin.include_tasks` |  |
+| Read Tailscale's state | `ansible.builtin.include_tasks` | <code>tailscale_enabled &#124; bool</code> |
+| Say how this VM is on Tailscale | `ansible.builtin.include_tasks` | <code>tailscale_enabled &#124; bool</code> |
+| Keep how this VM is on Tailscale | `ansible.builtin.set_fact` |  |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Include task| status___Read_what_is_installed__and_who_installed_it_ownership_yml_0[status   read what is installed  and who installed<br>it<br>include_task: ownership yml]:::includeTasks
+  status___Read_what_is_installed__and_who_installed_it_ownership_yml_0-->|Include task| status___Read_Tailscale_s_state_state_yml_1[status   read tailscale s state<br>When: **tailscale enabled   bool**<br>include_task: state yml]:::includeTasks
+  status___Read_Tailscale_s_state_state_yml_1-->|Include task| status___Say_how_this_VM_is_on_Tailscale_report_yml_2[status   say how this vm is on tailscale<br>When: **tailscale enabled   bool**<br>include_task: report yml]:::includeTasks
+  status___Say_how_this_VM_is_on_Tailscale_report_yml_2-->|Task| status___Keep_how_this_VM_is_on_Tailscale3[status   keep how this vm is on tailscale]:::task
+  status___Keep_how_this_VM_is_on_Tailscale3-->End
 ```
 
 ### `web_login.yml`
@@ -562,8 +606,8 @@ classDef rescue stroke:#665352,stroke-width:2px;
   web_login___Say_where_to_sign_in6-->|Task| web_login___Look_for_a_browser_opener_on_this_machine7[web login   look for a browser opener on this<br>machine<br>When: **tailscale login desktop   bool and tailscale web<br>page trusted   bool**]:::task
   web_login___Look_for_a_browser_opener_on_this_machine7-->|Task| web_login___Open_the_sign_in_page_in_your_browser8[web login   open the sign in page in your browser<br>When: **tailscale login desktop   bool and tailscale web<br>page trusted   bool and tailscale web opener  <br>length   0**]:::task
   web_login___Open_the_sign_in_page_in_your_browser8-->|Task| web_login___Wait_for_the_page_to_be_approved9[web login   wait for the page to be approved]:::task
-  web_login___Wait_for_the_page_to_be_approved9-->|Include task| web_login___Read_the_state_after_the_wait_status_yml_10[web login   read the state after the wait<br>include_task: status yml]:::includeTasks
-  web_login___Read_the_state_after_the_wait_status_yml_10-->|Task| web_login___Remember_that_this_login_is_this_role_s11[web login   remember that this login is this role<br>s<br>When: **tailscale signed in   bool**]:::task
+  web_login___Wait_for_the_page_to_be_approved9-->|Include task| web_login___Read_the_state_after_the_wait_state_yml_10[web login   read the state after the wait<br>include_task: state yml]:::includeTasks
+  web_login___Read_the_state_after_the_wait_state_yml_10-->|Task| web_login___Remember_that_this_login_is_this_role_s11[web login   remember that this login is this role<br>s<br>When: **tailscale signed in   bool**]:::task
   web_login___Remember_that_this_login_is_this_role_s11-->|Include task| web_login___Read_what_this_role_has_made__now_that_it_has_signed_in_ownership_yml_12[web login   read what this role has made  now that<br>it has signed in<br>When: **tailscale signed in   bool**<br>include_task: ownership yml]:::includeTasks
   web_login___Read_what_this_role_has_made__now_that_it_has_signed_in_ownership_yml_12-->End
 ```

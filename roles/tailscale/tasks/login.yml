@@ -10,7 +10,7 @@
 # not installed, or installed by hand gets one line below and nothing else:
 # no question, no `up`.
 - name: login | Read Tailscale's state
-  ansible.builtin.include_tasks: status.yml
+  ansible.builtin.include_tasks: state.yml
   when:
     - tailscale_enabled | bool
     - tailscale_installed | bool

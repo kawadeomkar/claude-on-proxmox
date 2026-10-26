@@ -46,6 +46,16 @@ Reads gh's login state on the VM and prints it, with the one command to run when
 | `github_projects_login_ask` | bool | `false` | Ask at a prompt first. just deploy sets it for every VM but one whose Claude prompt got Enter. For a VM with github_projects_login_interactive, Enter runs the device flow and "n" skips it; for any other, "y" runs it and Enter skips it. With no terminal the answer is nothing. |
 | `github_projects_login_role_follows` | bool | `false` | The whole role runs for this VM next, in the same run, so a vault token gh is not yet signed in with is said to be signed in by it rather than by a command to run. |
 
+## Entry point `status`
+
+**Say whether gh is signed in to GitHub, and how, changing nothing**
+
+Reads gh's login state on the VM, as the login entry point does, and gives its report, keeping what just status shows in github_projects_status_found. A check gh could not make with GitHub - no network - is kept as not checked, never as signed out. Never signs in, writes a token or clones.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `github_projects_auth` | bool | `true` | Whether gh's login is this project's business; with it off, gh is left alone and only said. |
+
 ## Entry point `release`
 
 **Sign gh out before the VM is destroyed**
@@ -60,7 +70,7 @@ Also takes, as described under `main`: `github_projects_user`, `github_projects_
 
 ## Internal values
 
-Set in `roles/github_projects/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. 53 of the 56 are computed during a run, from earlier tasks' results.
+Set in `roles/github_projects/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. 55 of the 58 are computed during a run, from earlier tasks' results.
 
 | Name | Value |
 |---|---|
@@ -68,6 +78,7 @@ Set in `roles/github_projects/vars/main.yml`. These are not settings: Ansible ra
 | `github_projects_auth_hosts` | <code>{{ (github_projects_auth_status.stdout &#124; from_json).hosts &#124; default({}) if github_projects_auth_status.rc &#124; default(1) == 0 and (github_projects_auth_status.stdout &#124; default('') &#124; trim).startswith('{') else {} }}</code> |
 | `github_projects_auth_account` | <code>{{ github_projects_auth_hosts['github.com'] &#124; default([]) &#124; selectattr('active', 'defined') &#124; selectattr('active') &#124; list &#124; first &#124; default({}) }}</code> |
 | `github_projects_signed_in` | <code>{{ (github_projects_auth_account.state &#124; default('')) == 'success' }}</code> |
+| `github_projects_auth_unchecked` | <code>{{ (github_projects_auth_account.state &#124; default('')) == 'error' and not ((github_projects_auth_account.error &#124; default('')) is match('HTTP 40[13]')) }}</code> |
 | `github_projects_status_said` | <code>{{ github_projects_auth_status.stderr &#124; default('') &#124; plain_text &#124; trim }}</code> |
 | `github_projects_token_said` | <code>{{ github_projects_login.stderr &#124; default('') &#124; plain_text &#124; trim }}</code> |
 | `github_projects_login_kind` | <code>{{ 'none' if not github_projects_signed_in &#124; bool else 'env' if (github_projects_auth_account.tokenSource &#124; default('')) is match('.*_TOKEN$') else 'pat' if github_projects_stored_token is match('(ghp_&#124;github_pat_)') else 'oauth' if github_projects_stored_token is match('gho_') else 'other' }}</code> |
@@ -120,6 +131,7 @@ Set in `roles/github_projects/vars/main.yml`. These are not settings: Ansible ra
 | `github_projects_release_signed_out` | <code>{{ 'gh signed out' if (github_projects_release_logout.rc &#124; default(1)) == 0 else ('gh could not sign out (' ~ ((github_projects_release_logout.stderr &#124; default('') &#124; plain_text &#124; regex_replace('\s+', ' ') &#124; trim) or 'no reason given') ~ ')') }}</code> |
 | `github_projects_release_unrevoked` | <code>{{ github_projects_release_token &#124; length > 0 and (github_projects_release_ours &#124; bool or not (github_projects_token &#124; length > 0 and github_projects_release_token == github_projects_token)) }}</code> |
 | `github_projects_release_summary` | <code>{{ '' if github_projects_release_token &#124; length == 0 else (github_projects_release_signed_out ~ '; the token this project signed it in with stays valid until revoked at' ~ ' https://github.com/settings/applications, under GitHub CLI - which signs out every gh you have, so' ~ ' destroy does not') if github_projects_release_ours &#124; bool else (github_projects_release_signed_out ~ " (vault_github_token is every VM's, so it is not revoked)") if github_projects_token &#124; length > 0 and github_projects_release_token == github_projects_token else (github_projects_release_signed_out ~ '; its token is not one this project recorded making (a sign-in by' ~ ' hand, or one before this version), and stays valid until revoked - at https://github.com/settings/tokens' ~ ' if it is a personal access token, or under GitHub CLI at https://github.com/settings/applications,' ~ ' which signs out every gh you have') }}</code> |
+| `github_projects_login_left` | <code>{{ github_projects_gh_found &#124; bool and ((github_projects_auth_status.rc &#124; default(0) != 0 and github_projects_auth &#124; bool) or (github_projects_signed_in &#124; bool and github_projects_login_kind == 'oauth' and 'workflow' not in (github_projects_auth_account.scopes &#124; default(''))) or (not github_projects_signed_in &#124; bool and github_projects_auth &#124; bool and not (github_projects_token_wanted &#124; bool and github_projects_token_set &#124; bool and github_projects_login_role_follows &#124; bool))) }}</code> |
 
 ## Tasks
 
@@ -350,11 +362,60 @@ classDef rescue stroke:#665352,stroke-width:2px;
 
 | Task | Module | When |
 |---|---|---|
+| Read gh and its login state | `ansible.builtin.include_tasks` |  |
+| Ask whether to sign gh in to GitHub now for {{ inventory_hostname }} | `ansible.builtin.pause` | <code>github_projects_login_ask &#124; bool and github_projects_auth_wanted &#124; bool and github_projects_web_wanted &#124; bool and github_projects_auth_status.rc &#124; default(1) == 0 and not github_projects_signed_in &#124; bool</code> |
+| Sign gh in by the device flow | `ansible.builtin.include_tasks` | <code>github_projects_login_go &#124; bool and github_projects_auth_wanted &#124; bool and github_projects_web_wanted &#124; bool and github_projects_auth_status.rc &#124; default(1) == 0 and not github_projects_signed_in &#124; bool</code> |
+| Report the login state and what to do about it | `ansible.builtin.include_tasks` |  |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Include task| login___Read_gh_and_its_login_state_login_read_yml_0[login   read gh and its login state<br>include_task: login read yml]:::includeTasks
+  login___Read_gh_and_its_login_state_login_read_yml_0-->|Task| login___Ask_whether_to_sign_gh_in_to_GitHub_now_for_inventory_hostname1[login   ask whether to sign gh in to github now<br>for inventory hostname<br>When: **github projects login ask   bool and github<br>projects auth wanted   bool and github projects<br>web wanted   bool and github projects auth status<br>rc   default 1     0 and not github projects<br>signed in   bool**]:::task
+  login___Ask_whether_to_sign_gh_in_to_GitHub_now_for_inventory_hostname1-->|Include task| login___Sign_gh_in_by_the_device_flow_device_flow_yml_2[login   sign gh in by the device flow<br>When: **github projects login go   bool and github<br>projects auth wanted   bool and github projects<br>web wanted   bool and github projects auth status<br>rc   default 1     0 and not github projects<br>signed in   bool**<br>include_task: device flow yml]:::includeTasks
+  login___Sign_gh_in_by_the_device_flow_device_flow_yml_2-->|Include task| login___Report_the_login_state_and_what_to_do_about_it_login_report_yml_3[login   report the login state and what to do<br>about it<br>include_task: login report yml]:::includeTasks
+  login___Report_the_login_state_and_what_to_do_about_it_login_report_yml_3-->End
+```
+
+### `login_read.yml`
+
+| Task | Module | When |
+|---|---|---|
 | Look up home directory of {{ github_projects_user }} | `ansible.builtin.getent` | <code>github_projects_home &#124; length == 0</code> |
 | Look for gh | `ansible.builtin.command` |  |
 | Read gh's login state | `ansible.builtin.include_tasks` | <code>github_projects_gh_found &#124; bool</code> |
-| Ask whether to sign gh in to GitHub now for {{ inventory_hostname }} | `ansible.builtin.pause` | <code>github_projects_login_ask &#124; bool and github_projects_auth_wanted &#124; bool and github_projects_web_wanted &#124; bool and github_projects_auth_status.rc &#124; default(1) == 0 and not github_projects_signed_in &#124; bool</code> |
-| Sign gh in by the device flow | `ansible.builtin.include_tasks` | <code>github_projects_login_go &#124; bool and github_projects_auth_wanted &#124; bool and github_projects_web_wanted &#124; bool and github_projects_auth_status.rc &#124; default(1) == 0 and not github_projects_signed_in &#124; bool</code> |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| login_read___Look_up_home_directory_of_github_projects_user0[login read   look up home directory of github<br>projects user<br>When: **github projects home   length    0**]:::task
+  login_read___Look_up_home_directory_of_github_projects_user0-->|Task| login_read___Look_for_gh1[login read   look for gh]:::task
+  login_read___Look_for_gh1-->|Include task| login_read___Read_gh_s_login_state_auth_status_yml_2[login read   read gh s login state<br>When: **github projects gh found   bool**<br>include_task: auth status yml]:::includeTasks
+  login_read___Read_gh_s_login_state_auth_status_yml_2-->End
+```
+
+### `login_report.yml`
+
+| Task | Module | When |
+|---|---|---|
 | Report the login state and what to do about it | `ansible.builtin.debug` |  |
 | Keep what is left to do for the end of the run | `ansible.builtin.set_stats` |  |
 
@@ -370,14 +431,9 @@ classDef importRole stroke:#699ba7,stroke-width:2px;
 classDef includeVars stroke:#8e44ad,stroke-width:2px;
 classDef rescue stroke:#665352,stroke-width:2px;
 
-  Start-->|Task| login___Look_up_home_directory_of_github_projects_user0[login   look up home directory of github projects<br>user<br>When: **github projects home   length    0**]:::task
-  login___Look_up_home_directory_of_github_projects_user0-->|Task| login___Look_for_gh1[login   look for gh]:::task
-  login___Look_for_gh1-->|Include task| login___Read_gh_s_login_state_auth_status_yml_2[login   read gh s login state<br>When: **github projects gh found   bool**<br>include_task: auth status yml]:::includeTasks
-  login___Read_gh_s_login_state_auth_status_yml_2-->|Task| login___Ask_whether_to_sign_gh_in_to_GitHub_now_for_inventory_hostname3[login   ask whether to sign gh in to github now<br>for inventory hostname<br>When: **github projects login ask   bool and github<br>projects auth wanted   bool and github projects<br>web wanted   bool and github projects auth status<br>rc   default 1     0 and not github projects<br>signed in   bool**]:::task
-  login___Ask_whether_to_sign_gh_in_to_GitHub_now_for_inventory_hostname3-->|Include task| login___Sign_gh_in_by_the_device_flow_device_flow_yml_4[login   sign gh in by the device flow<br>When: **github projects login go   bool and github<br>projects auth wanted   bool and github projects<br>web wanted   bool and github projects auth status<br>rc   default 1     0 and not github projects<br>signed in   bool**<br>include_task: device flow yml]:::includeTasks
-  login___Sign_gh_in_by_the_device_flow_device_flow_yml_4-->|Task| login___Report_the_login_state_and_what_to_do_about_it5[login   report the login state and what to do<br>about it]:::task
-  login___Report_the_login_state_and_what_to_do_about_it5-->|Task| login___Keep_what_is_left_to_do_for_the_end_of_the_run6[login   keep what is left to do for the end of the<br>run]:::task
-  login___Keep_what_is_left_to_do_for_the_end_of_the_run6-->End
+  Start-->|Task| login_report___Report_the_login_state_and_what_to_do_about_it0[login report   report the login state and what to<br>do about it]:::task
+  login_report___Report_the_login_state_and_what_to_do_about_it0-->|Task| login_report___Keep_what_is_left_to_do_for_the_end_of_the_run1[login report   keep what is left to do for the end<br>of the run]:::task
+  login_report___Keep_what_is_left_to_do_for_the_end_of_the_run1-->End
 ```
 
 ### `release.yml` - entry point `release`
@@ -408,6 +464,32 @@ classDef rescue stroke:#665352,stroke-width:2px;
   release___Read_the_marker_of_the_login_this_role_s_device_flow_made2-->|Task| release___Sign_gh_out3[release   sign gh out<br>When: **github projects release token   length   0**]:::task
   release___Sign_gh_out3-->|Task| release___Record_what_became_of_the_login4[release   record what became of the login]:::task
   release___Record_what_became_of_the_login4-->End
+```
+
+### `status.yml` - entry point `status`
+
+| Task | Module | When |
+|---|---|---|
+| Read gh and its login state | `ansible.builtin.include_tasks` |  |
+| Say how gh is signed in | `ansible.builtin.include_tasks` |  |
+| Keep how gh is signed in | `ansible.builtin.set_fact` |  |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Include task| status___Read_gh_and_its_login_state_login_read_yml_0[status   read gh and its login state<br>include_task: login read yml]:::includeTasks
+  status___Read_gh_and_its_login_state_login_read_yml_0-->|Include task| status___Say_how_gh_is_signed_in_login_report_yml_1[status   say how gh is signed in<br>include_task: login report yml]:::includeTasks
+  status___Say_how_gh_is_signed_in_login_report_yml_1-->|Task| status___Keep_how_gh_is_signed_in2[status   keep how gh is signed in]:::task
+  status___Keep_how_gh_is_signed_in2-->End
 ```
 
 <!-- END_GENERATED: role -->

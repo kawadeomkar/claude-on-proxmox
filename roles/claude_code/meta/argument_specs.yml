@@ -202,3 +202,29 @@ argument_specs:
         could not be saved and that just destroy therefore neither releases nor deletes.
     options:
       claude_code_remote_control_service: *cc_remote_control_service
+
+  # tasks_from: status, which playbooks/status.yml (just status) runs on each VM.
+  status:
+    short_description: Say what Claude Code is on the VM and how Remote Control is, changing nothing
+    description:
+      - Reads the version the native installer's link points to, whether a login is stored (the file's being
+        there, never what it holds) and the state of Remote Control's service and of the path unit that starts it,
+        keeping what just status shows in claude_code_status_found. Never runs claude, starts or stops anything.
+    options:
+      claude_code_user:
+        type: str
+        default: dev
+      claude_code_install_method:
+        type: str
+        default: native
+        choices: [native, npm]
+      claude_code_anthropic_api_key:
+        type: str
+        default: ""
+        no_log: true
+        description: Only whether one is set is read, since it outranks the login Remote Control needs.
+      claude_code_remote_control:
+        type: bool
+        default: true
+        description: Whether Remote Control is wanted, which says what its service being absent means. See the main entry point.
+      claude_code_remote_control_service: *cc_remote_control_service

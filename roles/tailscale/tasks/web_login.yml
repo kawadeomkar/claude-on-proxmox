@@ -150,7 +150,7 @@
   tags: [attention_browser]
 
 - name: web_login | Read the state after the wait
-  ansible.builtin.include_tasks: status.yml
+  ansible.builtin.include_tasks: state.yml
 
 # The node key this login produced marks it as this role's, as a join with the
 # key does: settings.yml then keeps its settings. Not before the login is

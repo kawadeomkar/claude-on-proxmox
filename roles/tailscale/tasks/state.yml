@@ -1,0 +1,55 @@
+---
+# Tailscale's state, read again after every change. A file of its own, like
+# github_projects' auth_status.yml: a skipped include would keep the registers.
+#
+# tailscaled tells systemd it is ready as soon as its socket listens, before
+# its backend has a state, so a read straight after a start can say NoState;
+# a joined node then waits in Starting for a relay. A first join is taken only
+# from a settled NeedsLogin, so the read waits for a state that is neither -
+# under a second for a normal start, and NoState for as long as the control
+# server cannot be reached. A daemon that does not answer is waited for only
+# where this role has just started it: one installed by hand may be stopped on
+# purpose, and in check mode a stopped daemon is what the run would start.
+- name: state | Read Tailscale's state once it has settled
+  ansible.builtin.command:
+    argv: [tailscale, status, --json]
+  register: tailscale_status_raw
+  changed_when: false
+  # Outranks running out of retries (ansible-core 2.21), as the repo's other
+  # waits rely on: an unsettled state is reported, not failed.
+  failed_when: false
+  check_mode: false
+  until: >-
+    (tailscale_status_raw.rc != 0 and (ansible_check_mode or not (tailscale_ours | bool)))
+    or (tailscale_status_raw.rc == 0
+        and (tailscale_status_raw.stdout | from_json).BackendState | default('NoState') not in ['NoState', 'Starting'])
+  retries: "{{ tailscale_settle_seconds }}"
+  delay: 1
+  # In check mode on a VM without the package there is nothing to read: no
+  # binary, no daemon. report.yml says what a real run would do.
+  when: not (tailscale_check_without_package | bool)
+
+- name: state | Fail when the tailscaled this role started does not answer
+  vars:
+    tailscale_status_said: >-
+      {{ (tailscale_status_raw.stderr | default('') | plain_text | regex_replace('\s+', ' ') | trim)
+         or 'it exited ' ~ tailscale_status_raw.rc | default('?') }}
+  ansible.builtin.assert:
+    that: tailscale_daemon_up | bool
+    fail_msg: >-
+      tailscaled is not running on {{ inventory_hostname }} ({{ tailscale_status_said }}); journalctl -u tailscaled
+      on {{ inventory_hostname }} says why.
+    quiet: true
+  when:
+    - tailscale_ours | bool
+    - not ansible_check_mode
+    - not (tailscale_check_without_package | bool)
+
+- name: state | Read the settings of a running node
+  ansible.builtin.command:
+    argv: [tailscale, debug, prefs]
+  register: tailscale_prefs_raw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: tailscale_backend == 'Running'

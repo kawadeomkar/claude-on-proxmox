@@ -60,6 +60,16 @@ All API calls are delegated to the controller.
 | `proxmox_vm_agent_delay` | int | `5` | Seconds between guest agent polls. |
 | `proxmox_vm_force_update` | bool | `false` | Re-apply the hardware and cloud-init settings to a VM that exists. Off by default because Proxmox reports every update as a change. On, every VM the run covers has its settings re-applied, its tag list replaced with proxmox_vm_tags (tags added by hand are dropped), and is started, whether or not it was shut down on purpose. |
 
+## Entry point `settings_drift`
+
+**Say how a VM's settings differ from what this role would send it, changing nothing**
+
+Compares the VM's config, as the caller read it from Proxmox, with this role's own cores, memory, balloon, onboot, disk size and cloud-init settings, and records the differences in proxmox_vm_settings_drift. Deploy applies these only to a new VM or under proxmox_vm_force_update, so this is how `just status` sees an edited vm_cores that has not reached the VM. Proxmox is asked nothing, and nothing is changed.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `proxmox_vm_drift_config` | dict | `{}` | The VM's config, as /nodes/&lt;node&gt;/qemu/&lt;vmid&gt;/config gives it. Empty gives no difference at all. |
+
 ## Internal values
 
 Set in `roles/proxmox_vm/vars/main.yml`. These are not settings: Ansible ranks a role's vars above `local.yml`, so a value set there has no effect. All 10 are computed during a run, from earlier tasks' results.
@@ -211,6 +221,28 @@ classDef rescue stroke:#665352,stroke-width:2px;
   present___Record_the_VM_s_address12-->|Task| present___Fail_when_no_address_was_reported13[present   fail when no address was reported<br>When: **not  proxmox vm stopped   bool**]:::task
   present___Fail_when_no_address_was_reported13-->|Task| present___Report_that_the_VM_was_left_stopped14[present   report that the vm was left stopped<br>When: **proxmox vm stopped   bool**]:::task
   present___Report_that_the_VM_was_left_stopped14-->End
+```
+
+### `settings_drift.yml` - entry point `settings_drift`
+
+| Task | Module | When |
+|---|---|---|
+| Compare the VM's settings with what this role would send it | `ansible.builtin.set_fact` |  |
+
+```mermaid
+flowchart TD
+Start
+classDef block stroke:#3498db,stroke-width:2px;
+classDef task stroke:#4b76bb,stroke-width:2px;
+classDef includeTasks stroke:#16a085,stroke-width:2px;
+classDef importTasks stroke:#34495e,stroke-width:2px;
+classDef includeRole stroke:#2980b9,stroke-width:2px;
+classDef importRole stroke:#699ba7,stroke-width:2px;
+classDef includeVars stroke:#8e44ad,stroke-width:2px;
+classDef rescue stroke:#665352,stroke-width:2px;
+
+  Start-->|Task| settings_drift___Compare_the_VM_s_settings_with_what_this_role_would_send_it0[settings drift   compare the vm s settings with<br>what this role would send it]:::task
+  settings_drift___Compare_the_VM_s_settings_with_what_this_role_would_send_it0-->End
 ```
 
 <!-- END_GENERATED: role -->

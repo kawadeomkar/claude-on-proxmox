@@ -220,3 +220,18 @@ argument_specs:
           - On, every VM the run covers has its settings re-applied, its tag list
             replaced with proxmox_vm_tags (tags added by hand are dropped), and
             is started, whether or not it was shut down on purpose.
+
+  # tasks_from: settings_drift, which playbooks/status.yml runs for each VM.
+  settings_drift:
+    short_description: Say how a VM's settings differ from what this role would send it, changing nothing
+    description:
+      - Compares the VM's config, as the caller read it from Proxmox, with this role's own cores, memory, balloon,
+        onboot, disk size and cloud-init settings, and records the differences in proxmox_vm_settings_drift. Deploy
+        applies these only to a new VM or under proxmox_vm_force_update, so this is how `just status` sees an
+        edited vm_cores that has not reached the VM. Proxmox is asked nothing, and nothing is changed.
+    options:
+      proxmox_vm_drift_config:
+        type: dict
+        default: {}
+        description:
+          - The VM's config, as /nodes/<node>/qemu/<vmid>/config gives it. Empty gives no difference at all.

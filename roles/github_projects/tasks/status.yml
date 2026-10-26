@@ -1,0 +1,25 @@
+---
+# Entry point for `just status` (playbooks/status.yml): how gh on this VM is signed in to GitHub, read and said as
+# `just login --only github` reads and says it (login_read.yml, login_report.yml), changing nothing - no sign-in,
+# no token written, no clone. gh's own check of its token is a request to GitHub, a read.
+- name: status | Read gh and its login state
+  ansible.builtin.include_tasks: login_read.yml
+
+- name: status | Say how gh is signed in
+  ansible.builtin.include_tasks: login_report.yml
+
+# What the report shows, and nothing else: never the token, which auth_status.yml reads under no_log.
+- name: status | Keep how gh is signed in
+  ansible.builtin.set_fact:
+    github_projects_status_found:
+      installed: "{{ github_projects_gh_found | bool }}"
+      readable: "{{ github_projects_gh_found | bool and github_projects_auth_status.rc | default(1) == 0 }}"
+      signed_in: "{{ github_projects_signed_in | bool }}"
+      unchecked: "{{ github_projects_auth_unchecked | bool }}"
+      error: "{{ github_projects_auth_account.error | default('') if github_projects_auth_unchecked | bool else '' }}"
+      account: "{{ github_projects_auth_account.login | default('') if github_projects_signed_in | bool else '' }}"
+      kind: "{{ github_projects_login_kind }}"
+      managed: "{{ github_projects_auth | bool }}"
+      line: >-
+        {{ github_projects_login_reported.msg | default('') | regex_replace('^' ~ (inventory_hostname | regex_escape) ~ ': ', '') }}
+      left: "{{ github_projects_login_left | bool and not (github_projects_auth_unchecked | bool) }}"

@@ -98,3 +98,6 @@ proxmox_vm_start_existing: false
 # re-applied, its tag list is replaced with proxmox_vm_tags (tags added by
 # hand are dropped), and it is started, stopped or not.
 proxmox_vm_force_update: false
+
+# The settings_drift entry point's input (`just status`): a VM's config as Proxmox gives it.
+proxmox_vm_drift_config: {}

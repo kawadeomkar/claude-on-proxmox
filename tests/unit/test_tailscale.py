@@ -226,7 +226,7 @@ def _role_play() -> dict:
                 "name": f"Run the role's {tasks_from} tasks",
                 "ansible.builtin.include_role": {"name": "tailscale", "tasks_from": tasks_from},
             }
-            for tasks_from in ("ownership", "status", "connect", "settings", "report")
+            for tasks_from in ("ownership", "state", "connect", "settings", "report")
         ],
     }
 
@@ -506,7 +506,7 @@ def test_a_node_still_starting_is_reported_not_changed(configured):
 def test_a_daemon_this_role_started_that_does_not_answer_fails_by_name(configured):
     root, first, first_calls, second = configured
     assert _failures(first)["daemon-down"] == (
-        "tailscale : status | Fail when the tailscaled this role started does not answer: tailscaled is not running"
+        "tailscale : state | Fail when the tailscaled this role started does not answer: tailscaled is not running"
         " on daemon-down (failed to connect to local tailscaled; it doesn't appear to be running); journalctl -u"
         " tailscaled on daemon-down says why."
     )

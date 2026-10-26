@@ -42,7 +42,7 @@ just deploy alpha --only configure   # one stage of it: template, provision, con
 just deploy alpha --tags claude_code # re-run one role, e.g. to push an API key (--tags beside names means --only configure)
 just destroy alpha                   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
 just login alpha                     # Claude, GitHub, Tailscale in deploy's order, one VM after another (--only claude, github or tailscale: one)
-just list                            # read-only: the VMs this project created, and their addresses
+just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed); just list too
 just code alpha [--project repo] [--session <id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
 just logs                            # the run logs, newest first: read these instead of asking for terminal output
 just docs                            # regenerate the wiki's reference pages; serve previews the site, build builds it strictly
@@ -63,7 +63,7 @@ before a refusal. Bash, not sh: Ubuntu's dash dies of a Ctrl-C that the playbook
 (Ansible's `pause`, Ctrl-C then C), and `[continue]` needs the script to live on; and only what macOS's
 bash 3.2 has - no arrays, since `"${a[@]}"` of an empty one is fatal there under `-u`, which every script
 has, so a variable that may be unset is read as `${VAR:-}`. A recipe that includes another's work runs it
-as `{{ self }} <recipe>`, which passes on every setting (a recursive just starts without the command line's
+as `{{ self }} <recipe>`, which passes on every setting (a recursive just begins without the command line's
 `BIN=`). `test_justfile.py` runs every recipe against stand-ins, under `/bin/bash` on macOS.
 
 **A change to behaviour changes the wiki in the same commit.** The page for it is in `docs/`
@@ -256,7 +256,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   its repository back out (an unreachable source fails every apt refresh, `common`'s first), and the role
   has no handlers (one would run outside the rescue). Check mode skips what needs the package: `apt`
   cannot find a package from a repository the same `--check` run adds. Tests reach no Tailscale service
-  and never this machine's real CLI: `tailscale` is among the harness's failing stand-ins, every scenario
+  and never this machine's real CLI: `tailscale`, `gh` and `claude` are among the harness's failing stand-ins, every scenario
   that runs the role installs `fake_tailscale.sh` in `prepare.yml` and turns log upload off, the
   Vagrantfile is keyless with logs off, and a guard holds each - and the role's scenario to `scenario_roles` and
   CI's matrix. The template is never signed in to anything.
@@ -414,6 +414,34 @@ token; `github_auth_method: token` still fails. The status JSON carries
   Every `init_settings.yml` test run has a refusing `ssh` first on PATH, and the offer's a local stand-in
   host (`test_init_settings.py` holds both).
 
+- **`just status` is read-only information, and must never change anything.** Not the VMs (reads over
+  SSH only: no sign-in, no start or stop, no install, never `claude` itself until a real VM shows `claude
+  auth status` refreshes nothing), not Proxmox (GETs only), not GitHub or Tailscale, not this machine: no
+  host key - each VM gets `status_ssh_args` through `add_host`, `ansible.cfg`'s with
+  `StrictHostKeyChecking=yes` and `UpdateHostKeys=no`, as `ansible_ssh_args` since ssh keeps an option's
+  first value - no alias, nothing in `~/.ssh` or `~/.claude`. The roles are read through `status` entry
+  points of their own (`claude_code`, `github_projects`, `tailscale`), which reuse their reads and reports
+  (`login_read.yml`/`login_report.yml`, `ownership.yml`/`state.yml`/`report.yml`), so a line status shows
+  is NEXT STEPS' own. It writes only its run's report into `.cache/status/` (git-ignored, refused by
+  `tests/check_no_local_files.sh`; the recipe removes it once read) and the log. `tests/unit/test_status.py`
+  holds every task in `playbooks/status.yml`, and in every task file and role entry point it reaches, to
+  an allowlist - a `uri` only with `url` (under `{{ proxmox_api_url }}/`), `headers`, `validate_certs`,
+  `ca_path` and `timeout`, `check_mode: false` and `no_log`; the shared listing; `proxmox_vm`'s
+  `settings_drift`; `stat`, `slurp`, `set_fact`, `assert`, `add_host`; the report's `file` and `copy` -
+  and checks that a run against the fake sent nothing but GETs. The recipe runs it as `--check`, which
+  `uri` ignores, hence `check_mode: false` on every GET and the allowlist over everything. Every value a
+  VM or Proxmox supplies is made one line of plain text (`one_line`, `status_clean`) before the model
+  keeps it, so none starts a line of its own in the report or in `--json`; every line of the report fits
+  100 columns. Its stdout callback (`callback_plugins/claude_on_proxmox_status.py`, chosen by the recipe,
+  the run's only callback) draws the report live at a terminal: one write per redraw in synchronized-output
+  marks, up exactly the lines drawn, each cut to the width and the region to the height, a resize pushing
+  the screen into the scrollback; it never hides the cursor, shows task warnings (ansible-core 2.19+
+  carries them on the result), and prints only the finished report piped, in the log, or under `--json`
+  (`STATUS_QUIET`). Every status run in a test pins `status_report_file` and `claude_ssh_config_file`
+  into its own directory and gets a refusing stand-in `ssh` (`status_root`); the reads inside a VM run
+  against stand-in VMs (`tests/unit/test_status_vms.py`), which hold that every file there is unchanged.
+  See docs/architecture/lifecycle.md §4.6.
+
 ## Architecture, and why it looks like this
 
 **Playbooks own inventory; roles do not.** `add_host` sets `BYPASS_HOST_LOOP`, so it runs *once per
@@ -459,7 +487,7 @@ localhost: against the fake, 20 VMs took 168 s that way and take 41 s now. The p
 **`deploy.yml` configures only what provisioning published.** It imports `configure.yml` with
 `claude_vm_discovery: false`. Discovery without `vm_name` means every tagged VM, while provisioning
 without it means the one default VM, so running both made a bare `just deploy` create the default VM
-and then configure the whole fleet. `just deploy --only configure`, `--check` and `--only ssh-config`, `just list`
+and then configure the whole fleet. `just deploy --only configure`, `--check` and `--only ssh-config`, `just status`
 and `just login` stay fleet-wide without names: each runs its own playbook, discovery on.
 
 **A stopped VM is left stopped, and not waited on.** An existing, configured VM is started only
@@ -488,7 +516,8 @@ every run so none can go stale that way: `proxmox_vm_exists` and `proxmox_vm_res
 `main.yml` (`present.yml` re-sets the ID after a clone, the one time it changes), `proxmox_vm_stopped`
 and `proxmox_vm_address` in `present.yml`. They are outputs rather than internals: `provision.yml`'s third play reads
 `proxmox_vm_address`, `proxmox_vm_stopped` and `proxmox_vm_resolved_id` through `hostvars`, and role
-vars are not visible there. The
+vars are not visible there. The `settings_drift` entry point, which only `status.yml` runs, sets a fifth,
+`proxmox_vm_settings_drift`, unconditionally, from the config passed in. The
 same pattern gives `claude_vm_tagged` and `claude_vm_requested` in
 `inventory/group_vars/all/defaults.yml`, which need `claude_vm_all` registered first by
 `playbooks/tasks/cluster_vms.yml`.
@@ -542,7 +571,7 @@ docs/architecture/decisions.md §15.1.
 
 **Fleet listings read `/cluster/resources`, never an unfiltered `proxmox_vm_info`.** Unfiltered, the
 module asks every node that owns a VM for its VM list and fails on any error, so one node that is
-down broke `deploy`, `configure`, `list` and `destroy` for every VM on the others.
+down broke `deploy`, `configure`, the fleet listing and `destroy` for every VM on the others.
 `playbooks/tasks/cluster_vms.yml` fetches the listing with `uri` (`no_log`, since the request
 carries the token); `proxmox_vm_info` is called only with a `name` or a `vmid`. The shared pieces
 live in one place each, so the playbooks cannot drift: `proxmox_api_module_defaults` for
