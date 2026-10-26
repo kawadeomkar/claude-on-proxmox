@@ -59,7 +59,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from harness import ansible_config
+from harness import _drain, ansible_config
 
 REPO = Path(__file__).resolve().parents[2]
 CODE = REPO / "playbooks" / "code.yml"
@@ -256,6 +256,7 @@ def _run_at_a_terminal(tmp_path: Path, keys: bytes, *, after: str, **case) -> tu
                     break
                 output += chunk
             elif process.poll() is not None:
+                output += _drain(master)
                 break
         else:
             pytest.fail(
@@ -1689,10 +1690,21 @@ def _signing_in(tmp_path: Path, helper: str | None, **case):
     marker = tmp_path / "helper.log"
     script = "" if helper is None else f'printf "%s\\n" "$0 $*" >> "{marker}"'
     argv = [*argv[:-5], script, str(tmp_path / "alpha-session.md"), "claude-remote-control", "Asia/Kolkata", ""]
-    result = subprocess.run(argv, env=env, capture_output=True, text=True, check=False, timeout=30)
-    deadline = time.monotonic() + 5
-    while helper is not None and not marker.exists() and time.monotonic() < deadline:
-        time.sleep(0.1)
+    # Every process the script starts inherits the pipe's write end, the helper it backgrounds too, so the pipe
+    # ends only once they all have: the helper's log is whole when it is read, where a file that merely existed
+    # could still be empty, and no helper can start after it.
+    done, holder = os.pipe()
+    try:
+        result = subprocess.run(
+            argv, env=env, capture_output=True, text=True, check=False, timeout=30, pass_fds=(holder,)
+        )
+    finally:
+        os.close(holder)
+    try:
+        if not select.select([done], [], [], 30)[0]:
+            pytest.fail("something the script started was still running 30 seconds after it")
+    finally:
+        os.close(done)
     return result, (marker.read_text().splitlines() if marker.exists() else [])
 
 

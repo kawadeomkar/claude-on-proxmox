@@ -23,7 +23,15 @@ from pathlib import Path
 
 import pytest
 import yaml
-from harness import ANSIBLE_PLAYBOOK, REPO, _end, _env, _fail_if_the_desktop_was_reached, _take_the_terminal
+from harness import (
+    ANSIBLE_PLAYBOOK,
+    REPO,
+    _drain,
+    _end,
+    _env,
+    _fail_if_the_desktop_was_reached,
+    _take_the_terminal,
+)
 from test_status import fake_fleet, status_root
 from vt import VT
 
@@ -117,6 +125,9 @@ def _at_a_terminal(
                 events.append(chunk)
                 output += chunk
             elif process.poll() is not None:
+                rest = _drain(master)
+                events.append(rest)
+                output += rest
                 break
             if not acted and (resize or interrupt) and b"VMID" in output:
                 acted = True

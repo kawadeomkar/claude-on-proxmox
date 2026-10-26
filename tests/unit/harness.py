@@ -319,6 +319,26 @@ def _run(
     return report
 
 
+def _drain(master: int) -> bytes:
+    """What a pseudo-terminal still holds once its process has ended: read until the terminal says it is closed.
+
+    Linux passes a terminal's output to its reader through a buffer it empties asynchronously, so on a loaded
+    machine the last bytes a run wrote - a live region's erase, a final message - can arrive after the run has
+    exited, and a reader that stopped at the first read that found nothing missed them. Two quiet seconds end it
+    too, should something the run started still hold the terminal open.
+    """
+    data = b""
+    while select.select([master], [], [], 2)[0]:
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:  # Linux, once every holder of the other end has closed it and nothing is left
+            break
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
 def _take_the_terminal() -> None:
     """In the child: a session of its own, with its stdin as the controlling terminal.
 
@@ -393,6 +413,7 @@ def _run_at_a_terminal(
                     break
                 output += chunk
             elif process.poll() is not None:
+                output += _drain(master)
                 break
             if typing is None and plan:
                 wanted, keys, delay = plan[0]

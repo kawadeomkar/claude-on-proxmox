@@ -56,10 +56,6 @@ jobs:
           - {of: 3, shard: 1, rep: b}
           - {of: 3, shard: 2, rep: b}
           - {of: 3, shard: 3, rep: b}
-          - {of: 4, shard: 1, rep: a}
-          - {of: 4, shard: 2, rep: a}
-          - {of: 4, shard: 3, rep: a}
-          - {of: 4, shard: 4, rep: a}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The runner's CPUs
@@ -70,15 +66,16 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: junit-whole-1
-          path: whole
+          # Outside the checkout: test_docs.py reads every file in it.
+          path: ${{ runner.temp }}/whole
       # Each test's time in the whole-suite run, by node ID: inflated by the
       # four workers' contention, but in proportion, which is all the split uses.
       - name: Durations from the whole-suite run
         run: |
           python3 - <<'EOF'
-          import json, re, xml.etree.ElementTree as ET
+          import json, os, re, xml.etree.ElementTree as ET
           durations = {}
-          for case in ET.parse("whole/junit.xml").getroot().iter("testcase"):
+          for case in ET.parse(os.environ["RUNNER_TEMP"] + "/whole/junit.xml").getroot().iter("testcase"):
               path = case.get("file")
               module = path[:-3].replace("/", ".")
               classname = case.get("classname", "")
