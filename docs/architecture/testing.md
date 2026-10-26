@@ -78,6 +78,8 @@ pytest over `tests/unit/`: 2064 tests. By file:
   streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
+- **The shards** (`test_shards.py` 4): `--shard` collected as each CI shard collects it - two, three and four
+  shards that between them run every test exactly once, and a module whose tests share a fixture whole in one.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run

@@ -111,7 +111,8 @@ jobs:
   # at a time, 16-22 on one runner's four vCPUs (two cores, two threads each)
   # with a worker on each, and 7.9-8.4 for the slowest of three shards. Each
   # shard keeps every module that shares a fixture whole, and the shards are
-  # balanced by tests/unit/durations.json; CI result checks nothing is left out.
+  # balanced by tests/unit/durations.json; test_shards.py holds that the three
+  # run every test exactly once.
   unit:
     name: Unit tests (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
