@@ -256,7 +256,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   its repository back out (an unreachable source fails every apt refresh, `common`'s first), and the role
   has no handlers (one would run outside the rescue). Check mode skips what needs the package: `apt`
   cannot find a package from a repository the same `--check` run adds. Tests reach no Tailscale service
-  and never this machine's real CLI: `tailscale` is among the harness's failing stand-ins, every scenario
+  and never this machine's real CLI: `tailscale`, `gh` and `claude` are among the harness's failing stand-ins, every scenario
   that runs the role installs `fake_tailscale.sh` in `prepare.yml` and turns log upload off, the
   Vagrantfile is keyless with logs off, and a guard holds each - and the role's scenario to `scenario_roles` and
   CI's matrix. The template is never signed in to anything.

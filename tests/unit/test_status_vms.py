@@ -383,6 +383,13 @@ def test_what_is_down_and_what_was_not_checked_are_said_for_what_they_are(read) 
 # ------------------------------------------------------------------------------------------- host keys ----
 
 
+def test_a_run_never_reaches_this_machines_gh_or_claude() -> None:
+    from harness import GUARDED_TOOLS
+
+    # A VM's `which gh` in a stand-in host without one would find this machine's own, signed in as the developer.
+    assert {"gh", "claude", "tailscale"} <= set(GUARDED_TOOLS)
+
+
 def test_status_ssh_options_are_ansible_cfgs_with_the_host_key_held() -> None:
     import configparser
 
