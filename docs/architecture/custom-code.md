@@ -173,8 +173,8 @@ JSON report (`_left_to_do`), in every state they already run.
 
 ### `just deploy`, drawn live
 
-`CLAUDE_ON_PROXMOX_LIVE`, which the justfile's recipes drawn live export - `deploy`, `login`, `destroy` - set to
-what was run (`deploy --check alpha`, `login alpha beta`, the run's title), hands every event of the run to an engine, `filter_plugins/live_ansible.py`, at
+`CLAUDE_ON_PROXMOX_LIVE`, which the justfile's recipes drawn live export - `deploy`, `login`, `destroy`, `code` -
+set to what was run (`deploy --check alpha`, `login alpha beta`, the run's title), hands every event of the run to an engine, `filter_plugins/live_ansible.py`, at
 verbosity 0 and with a run log to send the stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above.
 The callback then keeps only its classic output, which the engine prints through it too. The engine takes the
 variable out of the environment when the playbook starts, so nothing the run starts - the VS Code whose terminals a
@@ -189,11 +189,17 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   `sign in`, VS Code. A play the declaration does not name - `discover.yml`, which configure and each sign-in
   import, and `deploy.yml`'s first - takes the stage of the play after it, else of the one before, and a test
   holds the declaration to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is the declared step
-  whose `blocks` name a block around it, at any depth and whatever role or file it comes from - destroy's release
-  of each service, where `claude_code`'s entry points fall in two blocks, the save's and the sign-out's - else, in
-  the sign-in stage, the sign-in, for every play of its file, else its role; an include's tasks are counted in the
-  step they will run in, by the same rule, when the playbook starts and when it announces them. A stage's row may
-  say the VMs a fact of the run names (`Info`: destroy's check, `started beta`, from `claude_vm_release_started`). A quiet stage - `finish`, deploy's last play, which only
+  whose `blocks` name a block around it, at any depth and whatever role or file it comes from (destroy's release
+  of each service, where `claude_code`'s entry points fall in two blocks, the save's and the sign-out's); else the
+  declared step whose `files` its task file ends with (`tasks/session_read.yml`: the file the import or include
+  nearest the play names, so a file another includes stays its includer's); else, in the sign-in stage, the
+  sign-in, for every play of its file; else the step the last task a declared step `starts` at began, in this play
+  (`code.yml`'s phases, runs of its own tasks between its imports, a rescue running in the step that failed); else
+  its role. An include's tasks are counted in the step they will run in, by the same rule, when the playbook
+  starts and when it announces them. `VS Code`, `just code`'s one stage and deploy's, is declared so: find the VM,
+  reach it, read the sessions, the folder (here and then on the VM), alias, VS Code here, copy the sessions,
+  workspace, window. A stage's row may say the VMs a fact of the run names (`Info`: destroy's check, `started
+  beta`, from `claude_vm_release_started`). A quiet stage - `finish`, deploy's last play, which only
   raises again what failed after the sign-ins - is counted but never drawn, unless one of its tasks fails; a step
   whose every task was skipped reads `–`, never `✓`. A run of one stage (`--only configure`) is drawn as that
   stage's steps, with no row of its own: the footer says `step 2 of 6`, the summary's table is `STEPS`.
@@ -238,9 +244,10 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   is said once (`Nothing was deleted: the deletion was not confirmed.`), the summary is its head alone,
   `declined`, and so is the title.
 - **What a VM may set.** Only `proxmox_vm`'s tasks give the summary a VM's ID and address: a task on the VM
-  could set any fact. A declaration may also name the playbooks whose `add_host` does (`addresses_from`:
-  discovery, for `just login`), and then only the host's `ansible_host`, kept when it parses as an IPv4 address,
-  and `proxmox_vm_id`. The ID is a number or nothing, and the address goes through `plain_text`, as everything
+  could set any fact. A declaration may also name the playbooks and task files whose `add_host` does
+  (`addresses_from`: discovery, for `just login`), and then only the host's `ansible_host`, kept when it parses as
+  an IPv4 address, and `proxmox_vm_id`; or whose `claude_vm_addressed` does (`vm_addresses.yml`, for `just
+  code`), and then only each entry's `name`, `address` and `vmid`, held to the same rules. The ID is a number or nothing, and the address goes through `plain_text`, as everything
   else a VM said does. The VMs the run was given come from its `vm_name` extra var, each held to a VM name's
   pattern. Each VM's outcome in a declared step comes from the facts its declaration names (`outcomes`:
   `claude_code_login_done`, `claude_code_login_skipped`, `claude_vm_claude_login_failure` and the like), of
@@ -273,8 +280,10 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   again (each report's NEXT STEPS record, the `set_stats` task straight after it, names its matters:
   configure's "not signed in", which records nothing left under `just deploy` since the sign-in follows, goes
   once the sign-in's report on that matter comes), nor one whose line a later record replaced, nor one NEXT
-  STEPS says whole; and a play on this machine's under the one VM it names. SLOWEST lists only tasks of a second
-  or more, never a person's time. NEXT STEPS is wrapped to its block's width with every word whole, so a command
+  STEPS says whole; and a play on this machine's under the one VM it names. A run of one stage, whose table is
+  its steps, names each whole up to 18 characters, says its VM at the header's right when its stage says the VM
+  (`info="vm"`, `just code`'s), and has a row for its stage's own tasks only when they did more than skip.
+  SLOWEST lists only tasks of a second or more, never a person's time. NEXT STEPS is wrapped to its block's width with every word whole, so a command
   or a URL is never split. Ctrl-C has no stats event: the region's `atexit` erases it and the title says
   `stopped`. Without a terminal there is no region: a line as each step ends (`Run.ended_lines`), the reports,
   and the summary.
@@ -501,11 +510,11 @@ each module that needs another loads it by path, once, as `claude_on_proxmox_<st
 callbacks, `status.py`, `run_view.py` and `live_ansible.py` share one copy of each.
 
 **Another recipe, drawn live.** A recipe whose playbook is a run joins `just deploy` without code of its own, as
-`just login` and `just destroy` have: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its title, as `deploy`'s
+`just login`, `just destroy` and `just code` have: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its title, as `deploy`'s
 does, and its declaration in `filter_plugins/live_recipes.py`, named by the title's first word, says what its run is
 made of - its stages, by playbook or by play, a quiet one counted but never drawn (discovery, a last play that only
-raises), and the VMs a fact names on a stage's row (`info`); each stage's steps, by playbook or by the blocks around
-their tasks; each step's `outcomes`, or its stage's, the facts that mark each VM; the tasks that raise again what
+raises), and the VMs a fact names on a stage's row (`info`); each stage's steps, by playbook, by the blocks around
+their tasks, by task file (`files`) or by the task each begins at (`starts`); each step's `outcomes`, or its stage's, the facts that mark each VM; the tasks that raise again what
 rescues took (`raises`, with their causes' blocks, their hosts, and the unreachable VMs a ping ignored); the tasks
 whose failure is a person's answer (`declines`, with the line said instead); how many tasks a window shows; the word for a step of a run of one stage (`noun`: `sign-in 2 of 3`) and the summary's columns;
 the playbooks whose `add_host` gives a VM's address and ID; and the playbook whose first play reports what the run

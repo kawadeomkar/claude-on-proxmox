@@ -647,6 +647,9 @@ def test_deploy_without_options_runs_deploy_yml_with_the_no_terminal_switch(tmp_
         (["login", "alpha", "--only", "github"], "login --only github alpha"),
         (["destroy"], "destroy"),
         (["destroy", "alpha", "beta"], "destroy alpha beta"),
+        (["code", "alpha"], "code alpha"),
+        (["code", "alpha", "--project", "demo"], "code --project demo alpha"),
+        (["code", "alpha", "--session", "0a608ad8-1b2c-4d3e-8f90-123456789abc"], "code alpha"),
         (["list"], "unset"),
     ],
 )

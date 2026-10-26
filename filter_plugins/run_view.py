@@ -450,6 +450,7 @@ class Run:
         self.play_hosts = {}  # play key: the hosts it has started a task on, a serial play's batches so far
         self.batch = 0  # how many plays, and serial plays' batches, have started: a task starts again only in its own
         self.gone = {}  # play key: {host: left or failed}, the hosts no longer in it
+        self.started = {}  # stage key: the step the last task a step starts at began, in the play running
         self.said_info = {}  # stage key: what its row says, from the fact its declaration names
         self.declined = ""  # the line said for an answer that ended the run, not a failure
         self.blamed = []  # the VMs a raise on this machine repeated failures of
@@ -458,37 +459,53 @@ class Run:
     def plays(self, plays):
         """plays, in order as the playbook lists them: (key, playbook file, tasks), or (key, file, tasks, name);
         each task (task key, role or None), or (task key, role, meta), meta saying hidden (counted, never shown)
-        and, for an include whose file is literal, include (its file's task count) and include_role (the role its
-        tasks are in, for an include_role)."""
+        and, for an include whose file is literal, include (its file's task count), include_role (the role its
+        tasks are in, for an include_role) and include_file (the file they come from, for an include_tasks); and
+        blocks, file and name, which the declaration's steps match."""
         plays = [tuple(play) + (None,) * (4 - len(play)) for play in plays]
         stages = stages_for([(path, name) for _, path, _, name in plays], self.recipe)
         for (key, _, tasks, _), (stage, override) in zip(plays, stages, strict=True):
             self.play_stage[key] = (stage, override)
             self.play_tasks[key], self.play_reserved[key] = [], []
+            self.started = {}
             for task in tasks:
                 task_key, role, meta = (tuple(task) + ({},))[:3]
                 meta = meta or {}
-                step = self._stage(stage).step(self._step_of(stage, override, role, meta.get("blocks")))
+                blocks, file = meta.get("blocks"), meta.get("file", "")
+                step = self._stage(stage).step(self._step_of(stage, override, role, blocks, file, meta.get("name")))
                 step.expect(task_key)
                 self.play_tasks[key].append((task_key, step.key))
                 count = meta.get("include") or 0
                 if count:
                     included = meta.get("include_role") or role
-                    target = self._stage(stage).step(self._step_of(stage, override, included, meta.get("blocks")))
+                    file = meta.get("include_file") or file
+                    target = self._stage(stage).step(self._step_of(stage, override, included, blocks, file))
                     target.reserve(task_key, count)
                     self.play_reserved[key].append((task_key, target.key, count))
+        self.started = {}
         if plays:
             self.last_play = plays[-1][0]
 
-    def _step_of(self, stage, override, role, blocks=()):
-        """A task's step: the declared step a block around it names, else its play's file's, else its role."""
+    def _step_of(self, stage, override, role, blocks=(), file="", name=None):
+        """A task's step: the declared step a block around it names, else the one its task file is, else its play's
+        file's, else the one the last task a step starts at began - name, the task's, may begin one - else its
+        role."""
         spec = self.specs.get(stage)
-        if spec is not None and blocks:
-            found = set(blocks)
-            for step in spec.steps:
-                if step.blocks & found:
-                    return step.label
-        return override or role
+        if spec is None:
+            return override or role
+        found = set(blocks or ())
+        for step in spec.steps:
+            if step.blocks & found:
+                return step.label
+        for step in spec.steps:
+            if file and any(file == end or file.endswith("/" + end) for end in step.files):
+                return step.label
+        if override:
+            return override
+        begun = next((step.label for step in spec.steps if name is not None and name in step.starts), None)
+        if begun is not None:
+            self.started[stage] = begun
+        return self.started.get(stage) or role
 
     def _stage(self, key):
         if key not in self.stages:
@@ -514,11 +531,13 @@ class Run:
                     stage.step(step_key).reserve(include_key, count * (batches - 1))
         self.play = key
         self.batch += 1
+        # Every batch runs the play's tasks from its first: no step has begun.
+        self.started = {}
         if key == self.last_play:
             self.reached_last = True
 
     # --- the events -------------------------------------------------------------------------------------------
-    def task(self, key, name, role, now, waits=False, hidden=False, blocks=(), ends=False):
+    def task(self, key, name, role, now, waits=False, hidden=False, blocks=(), ends=False, file=""):
         # Ansible starts a meta task once per host, each just before that host's result: the same task again, not
         # another, until a play or a serial play's next batch starts.
         if self.current is not None and self.current.key == key and self.current.batch == self.batch:
@@ -528,7 +547,7 @@ class Run:
         if self.current is not None:
             self._left(now)
             self.current.close(now)
-        step = self._step_of(stage, override, role, blocks)
+        step = self._step_of(stage, override, role, blocks, file, name)
         task = Task(key, name, stage, step, now, role=role, waits=waits, hidden=hidden, ends=ends)
         task.batch = self.batch
         if not (self.specs.get(stage) and self.specs[stage].quiet):
@@ -548,10 +567,10 @@ class Run:
             task.hosts[host] = [task.start, now, "left"]
             self.gone.setdefault(self.play, {})[host] = "left"
 
-    def include(self, role, count, key=None, blocks=()):
+    def include(self, role, count, key=None, blocks=(), file=""):
         """An include announcing its tasks: counted in the step its tasks will run in, as when the playbook started."""
         stage, override = self.play_stage.get(self.play, ("run", None))
-        self._stage(stage).step(self._step_of(stage, override, role, blocks)).announce(count, key)
+        self._stage(stage).step(self._step_of(stage, override, role, blocks, file)).announce(count, key)
 
     def find(self, key):
         if self.current is not None and self.current.key == key:
@@ -869,6 +888,10 @@ class Run:
         first = [("claude-on-proxmox", "b"), (f"  {self.title} · started {started}", "")]
         if self.check:
             first.append((" · a dry run: nothing is changed", "y"))
+        # A run drawn as its steps has no stage row to say its VM on: the header does, at its right.
+        shown = self._shown()
+        if self._flat() and self._shows_vm(shown[0]) and self._vm_info():
+            first = screen.right(first, [(self._vm_info(), "d")], limit)
         return [first, []]
 
     def _whole(self, stage):
@@ -1166,23 +1189,28 @@ class Run:
         columns = self.recipe.columns
         heads = [("TIME", 6, "time"), ("TASKS", 9, "tasks")]
         title = f"{self.recipe.noun}s".upper() if flat else "STAGES"
-        said_head = f"{title:<14}" + "".join(f"{name:>{width}}" for name, width, key in heads if key in columns)
+        if flat:
+            stage = self._shown()[0]
+            rows = [(key, step) for key, step in stage.steps.items() if key is not None and step.tasks]
+            # The stage's own tasks, a row only when they did something: just code's skips just deploy's fleet.
+            own = stage.steps.get(None)
+            if own is not None and own.tasks and not own.skipped():
+                rows.insert(0, (stage.key, own))
+        else:
+            stage = None
+            rows = [(stage_.key, stage_) for stage_ in self._shown() if stage_.tasks]
+        # Each name whole, up to a step's width in the frame: just code's "read the sessions".
+        label = min(18, max([11, *(len(str(key)) for key, _ in rows)]))
+        said_head = f"{title:<{label + 3}}"
+        said_head += "".join(f"{name:>{width}}" for name, width, key in heads if key in columns)
         if "changed" in columns:
             said_head += f"  {'WOULD CHANGE' if self.check else 'CHANGED'}"
         elif len(vms) >= 2:
             said_head += "    VMS"
         lines.append([(said_head, "h")])
-        if flat:
-            stage = self._shown()[0]
-            rows = [(key, step) for key, step in stage.steps.items() if key is not None and step.tasks]
-            if None in stage.steps and stage.steps[None].tasks:
-                rows.insert(0, (stage.key, stage.steps[None]))
-        else:
-            stage = None
-            rows = [(stage_.key, stage_) for stage_ in self._shown() if stage_.tasks]
         for key, part in rows:
             mark, style = ("✗", "r") if part.failed() else ("–", "d") if part.skipped() else ("✓", "g")
-            head = [(" ", ""), (mark + " ", style), (str(key)[:11].ljust(11), "b")]
+            head = [(" ", ""), (mark + " ", style), (str(key)[:label].ljust(label), "b")]
             counts = f"{screen.duration(part.seconds(now)):>6}" if "time" in columns else ""
             counts += f"{part.reached:>9}" if "tasks" in columns else ""
             counts += f"{(part.changed() or '—'):>9}   " if "changed" in columns else "    "

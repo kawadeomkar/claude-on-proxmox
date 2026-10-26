@@ -12,6 +12,7 @@ variable, so no other run is drawn (docs/architecture/custom-code.md §7.5).
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -530,7 +531,7 @@ def test_no_other_test_or_scenario_draws_a_run():
         if "CLAUDE_ON_PROXMOX_LIVE" in line:
             naming.add(recipe)
     assert naming <= set(_recipes().RECIPES), naming
-    assert {"deploy", "login", "destroy"} <= naming, naming
+    assert {"deploy", "login", "destroy", "code"} <= naming, naming
 
 
 def _recipes():
@@ -637,3 +638,49 @@ def kit_engine():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_a_tasks_file_is_the_one_the_import_nearest_the_play_names(tmp_path):
+    # A file another file imports stays its importer's: destroy's release_pause.yml is release.yml's, Claude's.
+    (tmp_path / "outer.yml").write_text(
+        "- name: outer | Say outer\n  ansible.builtin.debug:\n    msg: outer\n"
+        "- name: outer | Import the inner file\n  ansible.builtin.import_tasks: inner.yml\n"
+    )
+    (tmp_path / "inner.yml").write_text("- name: inner | Say inner\n  ansible.builtin.debug:\n    msg: inner\n")
+    (tmp_path / "play.yml").write_text(
+        "- name: A play\n  hosts: localhost\n  gather_facts: false\n  tasks:\n"
+        "    - name: Its own\n      ansible.builtin.debug:\n        msg: own\n"
+        "    - name: Import the outer file\n      ansible.builtin.import_tasks: outer.yml\n"
+    )
+    script = f"""
+import json, sys
+sys.path.insert(0, {str(REPO / "filter_plugins")!r})
+from ansible import context
+from ansible.module_utils.common.collections import ImmutableDict
+from ansible.plugins.loader import init_plugin_loader
+init_plugin_loader()
+from ansible.inventory.manager import InventoryManager
+from ansible.parsing.dataloader import DataLoader
+from ansible.playbook import Playbook
+from ansible.vars.manager import VariableManager
+import importlib.util
+spec = importlib.util.spec_from_file_location("live_ansible", {str(REPO / "filter_plugins" / "live_ansible.py")!r})
+engine = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(engine)
+context.CLIARGS = ImmutableDict(tags=[], skip_tags=[])
+loader = DataLoader()
+inventory = InventoryManager(loader, sources="localhost,")
+variables = VariableManager(loader=loader, inventory=inventory)
+play = Playbook.load({str(tmp_path / "play.yml")!r}, variables, loader).get_plays()[0]
+tasks = []
+def walk(block):
+    for item in block.block:
+        walk(item) if hasattr(item, "block") else tasks.append(item)
+for block in play.compile():
+    walk(block)
+print(json.dumps({{engine.drawn_name(t): engine.task_file(t) for t in tasks if not t.implicit}}))
+"""
+    ran = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, cwd=tmp_path, check=True)
+    files = json.loads(ran.stdout.strip().splitlines()[-1])
+    outer = str(tmp_path / "outer.yml")
+    assert files == {"Its own": str(tmp_path / "play.yml"), "Say outer": outer, "Say inner": outer}, files

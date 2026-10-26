@@ -428,6 +428,11 @@ code PROJECT='' SESSION='' *NAME:
     set -- "$@" -e "{\"vm_name\": \"$names\"}"
     [ -z "$project" ] || set -- "$@" -e "{\"vm_project\": \"$project\"}"
     [ -z "$session" ] || set -- "$@" -e "{\"vm_session\": \"$session\"}"
+    # Drawn live (callback_plugins/claude_on_proxmox.py, its declaration in filter_plugins/live_recipes.py), under
+    # this title; a session's ID, which its report names, is left out of it. Any -v in ANSIBLE_ARGS streams it as
+    # before.
+    CLAUDE_ON_PROXMOX_LIVE="code${project:+ --project $project} $names"
+    export CLAUDE_ON_PROXMOX_LIVE
     exec {{ run_logged }} code "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/code.yml
 
 # The sign-ins only the person can make, each a page in the browser: Claude's

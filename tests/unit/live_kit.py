@@ -75,6 +75,12 @@ class Ran:
     def transcript(self):
         return "\n".join(line.rstrip() for line in self.screen.transcript())
 
+    @property
+    def frames(self):
+        """Each region drawn, its escapes left out: what the run showed while it went."""
+        frames = re.findall(rb"\x1b\[\?2026h(.*?)\x1b\[\?2026l", self.raw, re.S)
+        return [re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", f.decode(errors="replace")).replace("\r", "") for f in frames]
+
     def assert_drawn_and_gone(self, visible_only=False):
         """A region was drawn, never wrapped, wrote nothing unknown, swallowed nothing, and left nothing of itself:
         no footer and no header, on the screen or above it (visible_only: on the screen, after a resize, which

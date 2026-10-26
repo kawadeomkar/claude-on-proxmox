@@ -29,14 +29,19 @@ class Step:
 
     plays: the playbook files (a file name) every task of whose plays is this step's, as each sign-in is. blocks: the
     named blocks every task inside which is this step's, whatever role or file it comes from, as destroy's release of
-    each service. outcomes: the facts that say each VM's outcome in it, the first that holds winning over what its
-    tasks' results say."""
+    each service. files: the task files (a path's end, tasks/session_read.yml) every task of which is this step's, a
+    file another includes staying its includer's. starts: the tasks (by name) at which the step begins, running until
+    another step's begins - a run of a playbook's own tasks between its imports, as just code's are; never an import,
+    which Ansible never starts as a task. outcomes: the facts that say each VM's outcome in it, the first that holds
+    winning over what its tasks' results say."""
 
-    def __init__(self, label, plays=(), outcomes=(), blocks=()):
+    def __init__(self, label, plays=(), outcomes=(), blocks=(), files=(), starts=()):
         self.label = label
         self.plays = tuple(plays)
         self.outcomes = tuple(outcomes)
         self.blocks = frozenset(blocks)
+        self.files = tuple(files)
+        self.starts = frozenset(starts)
 
 
 class Info:
@@ -80,9 +85,9 @@ class Recipe:
     """A command's run: its stages, in order; the playbook files whose first play reports what the run will do; how
     many of the running step's last tasks are shown; the tasks that raise again failures a rescue took earlier, by
     name, each with where its causes are; the word for a step of a run of one stage (noun, its footer's and its
-    summary's); the summary's columns; the playbook files whose add_host gives the summary a VM's address and ID,
-    read from Proxmox by discovery; and the tasks whose failure is a person's answer, not a failure - each with the
-    line said instead."""
+    summary's); the summary's columns; the playbook and task files whose add_host, or whose claude_vm_addressed,
+    gives the summary a VM's address and ID, read from Proxmox and its guest agent; and the tasks whose failure is a
+    person's answer, not a failure - each with the line said instead."""
 
     def __init__(
         self,
@@ -154,6 +159,23 @@ CONFIGURE_FAILURES = Causes(
 )
 
 
+# The window, as just code and just deploy open it: code.yml's own tasks between its imports, each run starting at a
+# task, and the task files it imports. The folder is looked for here and then on the VM, around the alias: one step.
+VS_CODE = (
+    Step("find the VM", starts=["Refuse anything but one VM"]),
+    Step("reach it", starts=["Reach the VM the way just deploy --only configure does"]),
+    Step("read the sessions", files=["tasks/session_read.yml"]),
+    Step("the folder", starts=["Settle the folder to open", "Look for the folder on the VM"]),
+    Step("alias", files=["tasks/ssh_config.yml"]),
+    Step("VS Code here", starts=["Look for VS Code on this machine"]),
+    Step("copy the sessions", files=["tasks/session_write.yml"]),
+    Step("workspace", starts=["Read the session notes already on the VM"]),
+    Step("window", starts=["Open the folder in VS Code"]),
+)
+# What code.yml's rescue raises again outside just deploy: whatever stopped the window, which the block's rescue took.
+WINDOW_FAILURES = Causes(blocks=["Open the VM in VS Code"])
+
+
 RECIPES = {
     # just deploy, every form of it: the whole of deploy.yml, and each --only stage's playbook alone.
     "deploy": Recipe(
@@ -163,7 +185,7 @@ RECIPES = {
             Stage("configure", plays=["configure.yml"]),
             Stage("SSH aliases", plays=["ssh_config.yml"]),
             Stage("sign in", steps=SIGN_INS),
-            Stage("VS Code", plays=["code.yml"]),
+            Stage("VS Code", plays=["code.yml"], steps=VS_CODE),
             # deploy.yml's last play, which raises what failed after the sign-ins once VS Code has opened.
             Stage("finish", plays=["deploy.yml:Fail each VM whose work after a sign-in failed"], quiet=True),
         ],
@@ -233,6 +255,15 @@ RECIPES = {
             ),
         },
         declines={"Abort unless confirmed": "Nothing was deleted: the deletion was not confirmed."},
+    ),
+    # just code: one stage, so its steps are the rows, and the VM it opens is said in the header - its ID and address
+    # as vm_addresses.yml read them from Proxmox and the guest agent.
+    "code": Recipe(
+        stages=[Stage("VS Code", plays=["code.yml"], steps=VS_CODE, info="vm")],
+        window=1,
+        raises={"Fail as just code does, outside just deploy": WINDOW_FAILURES},
+        columns=("time", "tasks"),
+        addresses_from=["vm_addresses.yml"],
     ),
 }
 
