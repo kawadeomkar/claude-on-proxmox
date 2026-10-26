@@ -84,7 +84,8 @@ the run's failure, by name, and a deletion not confirmed is said as the answer i
 `just code`, a row for each of its steps - finding the VM, reaching it, its sessions read, the folder, the alias,
 VS Code here, the sessions copied, the workspace and the window - with the VM's ID and address at the top, and
 under `just deploy` its `VS Code` stage the same. `just lint` is drawn too, a row for each check, its log for the
-first time every line the checks print. The other recipes print as before. Without a terminal - output piped into a file, CI - it prints a line as each
+first time every line the checks print, and so is `just init`, its questions and then its checks as one run, the
+checks listed as each is made and whole in its summary. The other recipes print as before. Without a terminal - output piped into a file, CI - it prints a line as each
 step ends, the reports, and the summary. For the stream as before, give any `-v` (`just ANSIBLE_ARGS=-v
 deploy alpha`) or put `ANSIBLE_STDOUT_CALLBACK=default` in front; a run without a log (`LOG_DIR=`) streams too,
 since the log is where the stream would go. Either way the run log keeps the whole stream: every task as

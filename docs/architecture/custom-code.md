@@ -489,7 +489,8 @@ good, and runs at exit, Ctrl-C included.
 - **Prompts.** `Display.prompt_until` (a `pause`) prints its prompt through `display` and only then takes
   `Display`'s lock to read the keys (ansible-core 2.21), and a `vars_prompt` reads with `input()`
   (`Display.do_var_prompt`). Both are wrapped: the region erases and pauses itself before the prompt and draws
-  again once it returns, and the spinner draws nothing meanwhile.
+  again once it returns and the run has worked half a second more (`SETTLE_SECONDS`), so questions one after
+  another - `just init`'s - show no frame between them; the spinner draws nothing meanwhile.
 - **The terminal.** Its echo is off while the region is up, and on for a prompt and at the end: an Enter
   typed during a run would move the cursor under the region, and the next redraw would leave a copy of it
   behind. A resize (`SIGWINCH`) pushes the screen into the scrollback and draws afresh, since no count of
@@ -561,9 +562,20 @@ is drawn as one run, its parts in turn:
   playbook that died before its callbacks ran, a line between parts, Ctrl-C, after which the head says `stopped
   after … at` the last part - then removes the state. A run whose parts all passed through has none, and ends with
   nothing said, as it did.
+- **`just init`** is two playbooks in turn, after `just install`, which is never drawn - it would install the
+  engine's own packages from under it. The settings stage's steps are its questions, each `starts` at the include
+  that asks it; the checks stage has a `checklist`, `init_results`, which the engine takes in each time
+  `init_check.yml` records a check - whether it passed, and its text as plain text - and draws under the running
+  stage, a `✗` for each problem, and says whole in the summary. The last task, "Fail when a check found a
+  problem", is a raise whose causes are the checklist's failed checks (`Causes(checklist=True)`); a report line
+  that starts with one of the declaration's `marks` (`ok`, `!!`, `--`, `NOTICE`) takes its style, and the checks'
+  report leaves no line in the summary, whose checklist says it. A part of a run in parts whose declaration has
+  several stages is never drawn as one stage's steps: the next part would draw them otherwise.
 - **`just lint`** is the first: one stage, `lint`, each check a step (`--plan` lists the ones the run will run, to
   come until each starts), its rows with no bar or count (`counts=False`), its summary `CHECKS` and the checks a
   failure left unrun. The syntax check is one command over every playbook, each said as it starts.
+- **NEXT STEPS** is wrapped by its words, and a record of several lines - just init's problems, each under the line
+  that counts them - keeps each line, with its indent.
 - **Nested recipes.** A recipe in parts that runs another runs it as `{{ self }} live_run=<its name> <recipe>`: that
   one exports no title or state of its own, sets no trap and takes the parent's, so its parts are a stage of the
   parent's run. `live_run` is a just setting, which `self` passes on, never the environment, so a variable left

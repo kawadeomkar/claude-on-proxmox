@@ -129,8 +129,12 @@ def say_end(out, display, run, now, failed_hosts, next_steps, width):
         room = min(80, width) - 2
         wrapped = []
         for line in next_steps:
-            pieces = screen.fill(line, room)
-            wrapped += [pieces[0], *(f"  {piece}" for piece in pieces[1:])]
+            # A record of several lines - just init's problems, each under the one that counts them - keeps each, with
+            # its indent; a line wrapped goes on two further in.
+            for number, part in enumerate(line.split("\n")):
+                indent = " " * (len(part) - len(part.lstrip(" ")) if number else 0)
+                pieces = screen.fill(part.strip(), room - len(indent)) or [""]
+                wrapped += [indent + pieces[0], *(f"{indent}  {piece}" for piece in pieces[1:])]
         with out.say():
             display.display(text.banner(wrapped, "NEXT STEPS"), color=_callback().COLOR)
 
@@ -205,6 +209,7 @@ class Part:
     def start(self):
         now = self._now()
         self.run = view.Run(self.title, now, log=_log())
+        self.run.parts = bool(self.state_path)
         state = load_state(self.state_path, self.title) if self.state_path else None
         if state is not None:
             self.run.adopt(state, now)
@@ -299,6 +304,7 @@ def end(title, state_path, rc):
     display = Display()
     now = time.monotonic()
     run = view.Run(title, now, log=_log())
+    run.parts = True
     run.adopt(state, now)
     failed_hosts = list(state.get("failed_hosts") or [])
     run.end(now, failed=rc != 0 or bool(failed_hosts), stopped=rc == INTERRUPTED)

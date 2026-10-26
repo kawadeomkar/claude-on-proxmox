@@ -59,26 +59,30 @@ class Stage:
     stage's own. info "vm" says the run's VM on its row, as the provision stage does, or an Info says what a fact
     names. A quiet stage's tasks are counted but never shown: its row appears only once one of them fails - a last
     play that only raises again what failed earlier. outcomes: as a step's, for each of its steps that has none of
-    its own."""
+    its own. checklist: the fact its playbook keeps its checks in as it makes them, a list of {ok, text, skipped},
+    each drawn as it is recorded and said in the summary - only whether each passed, and its text made one line."""
 
-    def __init__(self, key, plays=(), steps=(), info="", quiet=False, outcomes=()):
+    def __init__(self, key, plays=(), steps=(), info="", quiet=False, outcomes=(), checklist=""):
         self.key = key
         self.plays = tuple(plays) + tuple(play for step in steps for play in step.plays)
         self.steps = tuple(steps)
         self.info = info
         self.quiet = quiet
         self.outcomes = tuple(outcomes)
+        self.checklist = checklist
 
 
 class Causes:
     """Where the failures a re-raise repeats were rescued: inside blocks of these names, on the same host, or with
-    hosts "any" on every host - a last play on this machine that raises what failed on the VMs; and with
-    unreachable, the host's unreachable results a task ignored, as the sign-ins' pings do."""
+    hosts "any" on every host - a last play on this machine that raises what failed on the VMs; with unreachable,
+    the host's unreachable results a task ignored, as the sign-ins' pings do; and with checklist, the checks of its
+    stage's checklist that did not pass."""
 
-    def __init__(self, blocks=(), unreachable=False, hosts="same"):
+    def __init__(self, blocks=(), unreachable=False, hosts="same", checklist=False):
         self.blocks = frozenset(blocks)
         self.unreachable = unreachable
         self.hosts = hosts
+        self.checklist = checklist
 
 
 class Recipe:
@@ -87,8 +91,9 @@ class Recipe:
     name, each with where its causes are; the word for a step of a run of one stage (noun, its footer's and its
     summary's); the summary's columns; the playbook and task files whose add_host, or whose claude_vm_addressed,
     gives the summary a VM's address and ID, read from Proxmox and its guest agent; the tasks whose failure is a
-    person's answer, not a failure - each with the line said instead; and whether a row draws a bar and counts its
-    tasks, which a step that is one command has no use for."""
+    person's answer, not a failure - each with the line said instead; whether a row draws a bar and counts its
+    tasks, which a step that is one command has no use for; and marks, the first words of a report's lines that
+    style the line ("!!" red), the word kept so the plain log reads the same."""
 
     def __init__(
         self,
@@ -101,6 +106,7 @@ class Recipe:
         addresses_from=(),
         declines=None,
         counts=True,
+        marks=None,
     ):
         self.stages = tuple(stages)
         self.plan = frozenset(plan)
@@ -111,6 +117,7 @@ class Recipe:
         self.addresses_from = frozenset(addresses_from)
         self.declines = dict(declines or {})
         self.counts = counts
+        self.marks = dict(marks or {})
 
 
 # Each sign-in, as both just deploy and just login run it: its playbook, and each VM's outcome in it from the facts
@@ -174,6 +181,16 @@ VS_CODE = (
     Step("copy the sessions", files=["tasks/session_write.yml"]),
     Step("workspace", starts=["Read the session notes already on the VM"]),
     Step("window", starts=["Open the folder in VS Code"]),
+)
+# just init's questions, each a step from the include that asks it, and the vault the answers go into.
+INIT_QUESTIONS = (
+    Step("Proxmox host", starts=["Ask for the Proxmox host's address"]),
+    Step("API token", starts=["Ask for the API token's ID"]),
+    Step("GitHub", starts=["Ask for the GitHub username"]),
+    Step("Tailscale", starts=["Write tailscale_enabled into local.yml"]),
+    Step("access offer", starts=["Offer to set up the API access on the Proxmox host"]),
+    Step("secret", starts=["Ask for the API token's secret"]),
+    Step("vault", starts=["Put the answers into the vault's text"]),
 )
 # just lint's checks, as its parts name them.
 LINT = ("lock", "yaml", "ansible", "python", "just", "syntax", "hooks")
@@ -269,6 +286,18 @@ RECIPES = {
         raises={"Fail as just code does, outside just deploy": WINDOW_FAILURES},
         columns=("time", "tasks"),
         addresses_from=["vm_addresses.yml"],
+    ),
+    # just init, after just install: its questions, then its checks of what just deploy will need, two playbooks
+    # drawn as one run in parts. The checks are drawn as init_check.yml records them, and its last task's failure is
+    # theirs.
+    "init": Recipe(
+        stages=[
+            Stage("settings", plays=["init_settings.yml"], steps=INIT_QUESTIONS),
+            Stage("checks", plays=["init_check.yml"], checklist="init_results"),
+        ],
+        window=1,
+        raises={"Fail when a check found a problem": Causes(checklist=True)},
+        marks={"ok": "g", "!!": "r", "--": "d", "NOTICE": "y"},
     ),
     # just lint: its checks, each a command through tools/live, one after another, in the order of their speed.
     "lint": Recipe(

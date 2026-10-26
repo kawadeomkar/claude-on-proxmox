@@ -58,7 +58,7 @@ go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
 justfile upward, so started in a make-era worktree under `.claude/worktrees/` it would run main's, against
 main's inventory and vault), then its own rules with their messages, then what it needs (`tools/env-run
 --bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d - but in a
-recipe drawn in parts (`lint`), which exports its title and its state's path (`live_state`), sets `trap 'live_end
+recipe drawn in parts (`lint`, `init`), which exports its title and its state's path (`live_state`), sets `trap 'live_end
 $?' EXIT` only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`,
 so the trap still runs to say the run's end. No
 assignment starts a program: just evaluates what a recipe uses before any line runs, so it would start
@@ -395,7 +395,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the recipe's trap, says the summary; a nested recipe joins its parent's run through the `live_run` setting, never
   the environment. The region draws one
   write per redraw in synchronized output, up exactly the lines drawn, so no line may wrap (`tests/unit/vt.py`
-  counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`); keeps
+  counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`), back only
+  half a second after it; keeps
   the echo off while it is up; and never hides the cursor. Modules load each other by path, once, as
   `claude_on_proxmox_<stem>`, and every test that runs something at a terminal opens it through
   `harness._at_a_pseudo_terminal`. See docs/architecture/custom-code.md §7.8.

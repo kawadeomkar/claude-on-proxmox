@@ -53,9 +53,11 @@ cannot use are shown with what it lacks. Each check prints `ok`, or `!!` with wh
 fails when one finds a problem, so run it again once it is fixed. While the address or the secret is still
 the example's, nothing is checked.
 
-Each of the two parts ends with a `NEXT STEPS` block of what is left: after the questions, the values still
-to set; after the checks, each problem with its fix or, once there is none, `just deploy alpha` - the
-command below.
+At a terminal, after `just install`'s own output, the questions and the checks are drawn live as one run: the
+questions a row each, with no frame between one and the next, and the checks listed as they are made, a `✗`
+for each problem. It ends with one summary, the checks whole in it, and one `NEXT STEPS` block of what is
+left: the values still to set, each problem with its fix or, once there is none, `just deploy alpha` - the
+command below. Without a terminal each of the two parts prints its own `NEXT STEPS`, as before.
 
 | File | Contents |
 |------|----------|
