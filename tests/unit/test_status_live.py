@@ -76,11 +76,14 @@ def _at_a_terminal(
 ):
     """Run status.yml at a pseudo-terminal of cols x rows: its rc, the VT the bytes went through, the raw bytes and
     the run log. resize, (cols, rows), changes the size once the first frame with the VMs is drawn; interrupt sends
-    Ctrl-C's SIGINT to the run's process group then.
+    Ctrl-C's SIGINT to the run's process group once both running VMs (test_status.fake_fleet) wait in ssh.
 
     Either holds every VM's ssh (test_status.SSH) until it is done: a Linux pty takes the rest of the run's output
     without blocking it, so the run could end before the test reads that frame. A resize lets the run go on once
-    the region has pushed the screen up at the new size; an interrupt never does."""
+    the region has pushed the screen up at the new size; an interrupt never does. The interrupt waits for the held
+    ssh because a SIGINT that lands while Ansible forks a worker is lost: its handler then runs inside logging's
+    after-fork hook, which prints the KeyboardInterrupt as "Exception ignored" and the run goes on. Once each VM's
+    worker waits in ssh, nothing forks."""
     root, status = status_root(tmp_path, base)
     playbook = playbook or status
     log = root / "run.log"
@@ -98,16 +101,18 @@ def _at_a_terminal(
     # The screen pushed up at the new size: a newline (the terminal's \r\n) for each of its rows, then up all but one.
     pushed = re.compile(rb"(\r?\n){%d}\x1b\[%dA" % (resize[1], resize[1] - 1)) if resize else None
 
+    held = root / "ssh.log"
+
     def resize_or_interrupt(chunk, output, master, process):
         vt.feed(chunk)
-        if not acted and (resize or interrupt) and b"VMID" in output:
+        if not acted and resize and b"VMID" in output:
             acted.append(len(output))
-            if resize:
-                _size(master, *resize)
-                os.killpg(process.pid, signal.SIGWINCH)
-                vt.resize(*resize)
-            if interrupt:
-                os.killpg(process.pid, signal.SIGINT)
+            _size(master, *resize)
+            os.killpg(process.pid, signal.SIGWINCH)
+            vt.resize(*resize)
+        if not acted and interrupt and held.exists() and len(held.read_text().splitlines()) >= 2:
+            acted.append(len(output))
+            os.killpg(process.pid, signal.SIGINT)
         if pushed and acted and hold.exists() and pushed.search(output, acted[0]):
             hold.unlink()
 
@@ -193,7 +198,8 @@ def test_a_resize_keeps_every_frame_in_the_scrollback_and_the_finished_report_wh
 
 def test_ctrl_c_erases_the_live_region_and_ends_the_run(tmp_path, fleet) -> None:
     rc, vt, output, log = _at_a_terminal(tmp_path, fleet, 100, 60, interrupt=True)
-    assert rc != 0
+    # 99 is ansible-core's for a run interrupted; any other is a run that ended on its own.
+    assert rc == 99, output.decode(errors="replace")
     shown = "\n".join(_shown(vt))
     assert not any(glyph in shown for glyph in FRAMES), shown
     assert "interrupted" in shown.lower(), shown

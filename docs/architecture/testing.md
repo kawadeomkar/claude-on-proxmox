@@ -26,7 +26,8 @@ pytest over `tests/unit/`: 2064 tests. By file:
   warning between frames, the screen and its scrollback ending in exactly the finished report the log
   holds; the resize and Ctrl-C runs hold the VMs' stand-in `ssh` until the test has acted, since a Linux
   pty takes the rest of a run's output without blocking it, and the run could end before the frame it acts
-  on is read. Inside the VMs (`test_status_vms.py`): `vm_status_info` on fixture trees, in this process; status
+  on is read. The Ctrl-C is sent only once each running VM waits in that `ssh`: a SIGINT that lands while
+  Ansible forks a worker is lost (`CLAUDE.md`, things that have bitten this repo). Inside the VMs (`test_status_vms.py`): `vm_status_info` on fixture trees, in this process; status
   over stand-in VMs with discovery off, each running the three roles' `status` entry points with the gh and
   tailscale fakes, a stand-in `systemctl` and a fixture tree, every file of each VM unchanged after and the
   fakes' logs holding only reads; the host key, `status_ssh_args` held to `ansible.cfg`'s, the options as

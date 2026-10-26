@@ -655,6 +655,13 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   2026-10-12). Never decide from the listing's status what a run itself just changed;
   `test_release.py` runs destroy's first play against the fake with its lag on
   (`PUT /api2/json/fake/listing-lag`).
+- **A Ctrl-C that lands while Ansible forks a worker is lost.** Python runs ansible-core's SIGINT handler
+  inside logging's after-fork hook (`_releaseLock`), which prints its KeyboardInterrupt as "Exception
+  ignored" and goes on; the handler has already killed the workers and set SIGINT back to the default, so
+  the run carries on or hangs, and a second Ctrl-C kills it outright. CI lost `test_status_live.py`'s
+  Ctrl-C this way, sent the moment the VMs were drawn, just as the next task's workers were forked. A test
+  that interrupts a run sends it while the run waits on something held and nothing forks; a Linux pty also
+  buffers about 64 KB without blocking the run, so a run can end before its test reads the frame it acts on.
 - **A skipped task still overwrites its register.** A `when` on destroy's second cluster listing left
   `claude_vm_all` without its listing whenever no VM had been started, and destroy failed before it
   began; register only in a task that always runs, or read it with a `default`.
