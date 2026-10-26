@@ -61,10 +61,11 @@ class LiveRegion:
     """The region. frame(cols, rows, glyph) returns its lines; route(kwargs) returns display()'s keyword arguments;
     more says the lines a frame taller than the screen leaves out, {} their number."""
 
-    def __init__(self, display, frame=None, route=None, stream=None, more="⋮ {} more lines"):
+    def __init__(self, display, frame=None, route=None, stream=None, more="⋮ {} more lines", on_prompt=None):
         self._display = display
         self._frame = frame
         self._route = route
+        self._on_prompt = on_prompt  # told True as a prompt takes the screen, False once it is answered
         self._more = more
         self._stream = stream or sys.stdout
         self._pid = os.getpid()
@@ -181,9 +182,13 @@ class LiveRegion:
                     self._paused = True
                     self.prompting = True
                     self._quiet(False)
+                if self._on_prompt is not None:
+                    self._on_prompt(True)
                 try:
                     return original(*args, **kwargs)
                 finally:
+                    if self._on_prompt is not None:
+                        self._on_prompt(False)
                     with display._lock:
                         self._paused = False
                         self.prompting = False
@@ -240,13 +245,19 @@ class Output:
     goes to the log alone - the stream a drawn run replaces - but what is printed inside say(), and anything on
     stderr, which still reaches the screen."""
 
-    def __init__(self, display, frame=None, live=None, color=False, to_log=False, more="⋮ {} more lines"):
+    def __init__(
+        self, display, frame=None, live=None, color=False, to_log=False, more="⋮ {} more lines", on_prompt=None
+    ):
         self.display = display
         self.live = can_draw() if live is None else live
         self.color = bool(color) and self.live
         self._speaking = threading.local()
         self.region = LiveRegion(
-            display, frame=frame if self.live else None, route=self._route if to_log else None, more=more
+            display,
+            frame=frame if self.live else None,
+            route=self._route if to_log else None,
+            more=more,
+            on_prompt=on_prompt,
         )
 
     # --- the region's life, as LiveRegion's --------------------------------------------------------------------

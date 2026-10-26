@@ -30,19 +30,29 @@ claude-on-proxmox  deploy alpha · started 18:22
   it has reached, skipped ones included, of those it will reach, what it changed, and its time.
 - **Steps**: the running stage's roles, or its sign-ins (Claude, GitHub, Tailscale), the same way, with the
   running step's last five tasks under it: the newest with its timer, a skipped one dim. A task that several
-  VMs run says each VM's state, or how many have finished when they do not fit.
-- **Above it, for good**: what the run reports, whole - each VM's address, a page to approve, a prompt, the
-  diffs of `--check`, a warning, a failure with what it said and where the log has the rest. A prompt has the screen
-  to itself while you answer it; anything else you type during the run is not echoed, so it cannot push the
-  region out of place.
+  VMs run says each VM's state, or how many have finished when they do not fit; with more than one VM, each
+  step's row says where each VM is (`alpha ✓ · beta ⠴`) and each task its VM. A step that only skipped reads
+  `–`. A task that retries while it waits for a machine - the guest agent's address - says its try and how long
+  it may still take. `--only` runs one stage, drawn as that stage's steps.
+- **Above it, for good**: what the run reports, whole, each line of a report as it was written - each VM's
+  address, a page to approve, a prompt, the diffs of `--check`, a warning, a failure with where it happened, what
+  it said and where the log has the rest (`✗ common · alpha: Install baseline packages`). A failure that the run
+  carried on past and raises at its end - Tailscale's, or Remote Control's start after the sign-in - is said under
+  the step it happened in. A prompt has the screen to itself while you answer it, and the time you take is
+  counted as yours; anything else you type during the run is not echoed, so it cannot push the region out of
+  place.
 - **The tab's title** says where the run is (`deploy alpha · configure 59%`, `· waiting for you`, `· done`,
-  `· failed`, `· stopped` after Ctrl-C),
-  and the terminal's bell rings when the run starts to wait for you in the browser - Claude's page, GitHub's
-  code, Tailscale's page - and when it ends.
+  `· failed`, `· stopped` after Ctrl-C); its percentage never goes back. The terminal's bell rings when the run
+  starts to wait for you in the browser - Claude's page, GitHub's code, Tailscale's page - at a prompt when
+  nothing has asked anything of you for ten seconds, and when it ends.
 
-When the run ends, the region gives way to a summary, in place of PLAY RECAP: each stage's time, tasks and
-changes, with its steps' times (your time in the browser said apart); the last word each part of the run
-had on each VM, a line each; the slowest tasks; the totals and the log. NEXT STEPS follows it.
+When the run ends, the region gives way to a summary, in place of PLAY RECAP. Its first line says how the run
+ended: `done in 6 min 12 s`, `done in 6 min 12 s · 1 VM failed: beta` when only some of a fleet failed, or
+`failed after 2 min 4 s at common`, where it went wrong. Then each stage's time, tasks and changes, with its steps'
+times (your time in the browser and at prompts said apart); the last word each part of the run had on each VM, a
+line each - a long report by its first sentence, since it is whole above, and nothing NEXT STEPS is about to say;
+the slowest tasks of a second or more; the totals and the log. NEXT STEPS follows it, each line wrapped with its
+words whole, so a command or a URL in it is never split.
 
 ```
 claude-on-proxmox  deploy alpha · done in 6 min 12 s · 18:28
@@ -59,7 +69,7 @@ ALPHA  192.0.2.51 · VM 104 · new
  alpha is up at 192.0.2.51
  signed in as you@example.com (claude.ai, max plan).
 
-SLOWEST  node | Install Node.js 48 s · present | Wait for the guest agent 45 s
+SLOWEST  Install Node.js 48 s · Wait for the guest agent 45 s
 
 122 tasks · 46 changed · 0 failed · 58 s of it yours · log .logs/20261025-182200-deploy.log
 ```

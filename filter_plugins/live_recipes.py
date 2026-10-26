@@ -25,23 +25,48 @@ class Step:
 
 
 class Stage:
-    """A stage of a run, and the plays that are its: by playbook file (a file name). Without steps of its own, its
-    steps are the roles its tasks are in, and its tasks outside any role are the stage's own. info "vm" says the run's
-    VM on its row, as the provision stage does."""
+    """A stage of a run, and the plays that are its: a playbook file (a file name), or one play of it (file:play
+    name). Without steps of its own, its steps are the roles its tasks are in, and its tasks outside any role are the
+    stage's own. info "vm" says the run's VM on its row, as the provision stage does. A quiet stage's tasks are
+    counted but never shown: its row appears only once one of them fails - a last play that only raises again what
+    failed earlier."""
 
-    def __init__(self, key, plays=(), steps=(), info=""):
+    def __init__(self, key, plays=(), steps=(), info="", quiet=False):
         self.key = key
         self.plays = tuple(plays) + tuple(play for step in steps for play in step.plays)
         self.steps = tuple(steps)
         self.info = info
+        self.quiet = quiet
+
+
+class Causes:
+    """Where the failures a re-raise repeats were rescued: inside blocks of these names, on the same host."""
+
+    def __init__(self, blocks=()):
+        self.blocks = frozenset(blocks)
 
 
 class Recipe:
-    """A command's run: its stages, in order, and the playbook files whose first play reports what the run will do."""
+    """A command's run: its stages, in order; the playbook files whose first play reports what the run will do; how
+    many of the running step's last tasks are shown; and the tasks that raise again failures a rescue took earlier,
+    by name, each with where its causes are."""
 
-    def __init__(self, stages=(), plan=()):
+    def __init__(self, stages=(), plan=(), window=5, raises=None):
         self.stages = tuple(stages)
         self.plan = frozenset(plan)
+        self.window = window
+        self.raises = dict(raises or {})
+
+
+# What configuration and the sign-ins rescue and record in claude_vm_configure_failures, for a last play to raise:
+# Tailscale's role in configure, and the work after a sign-in.
+CONFIGURE_FAILURES = Causes(
+    blocks=[
+        "Install Tailscale and keep it joined",
+        "Start Remote Control as just deploy --only configure would",
+        "Configure the repositories now that gh is signed in",
+    ]
+)
 
 
 RECIPES = {
@@ -61,8 +86,14 @@ RECIPES = {
                 ],
             ),
             Stage("VS Code", plays=["code.yml"]),
+            # deploy.yml's last play, which raises what failed after the sign-ins once VS Code has opened.
+            Stage("finish", plays=["deploy.yml:Fail each VM whose work after a sign-in failed"], quiet=True),
         ],
         plan=["deploy.yml"],
+        raises={
+            "Fail where the work after a sign-in failed": CONFIGURE_FAILURES,
+            "Fail where Tailscale failed": CONFIGURE_FAILURES,
+        },
     ),
 }
 

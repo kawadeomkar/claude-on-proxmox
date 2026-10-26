@@ -381,8 +381,11 @@ token; `github_auth_method: token` still fails. The status JSON carries
 - **Every live output draws through one region and one way of drawing.** `filter_plugins/live_region.py`'s
   `LiveRegion` puts a frame at the bottom of the terminal and `filter_plugins/screen.py` builds its lines
   (segments cut to the width, one palette): `just status`'s callback and every live run's, and each recipe
-  drawn live after them - a playbook run joins through `CLAUDE_ON_PROXMOX_LIVE` and `run_view.STAGE_FILES`,
-  a report hands `LiveRegion` a frame of its own; never a second region, palette or cut. The region draws one
+  drawn live after them - a playbook run joins through `CLAUDE_ON_PROXMOX_LIVE` and its declaration in
+  `filter_plugins/live_recipes.py`, a report hands an `Output` a frame of its own; never a second region, palette
+  or cut. A command's live output is its declaration: the engine (`filter_plugins/live_ansible.py`), the model
+  (`run_view.py`) and the region know no command, and what a declaration cannot say becomes a new field there,
+  never code of one command's own. The region draws one
   write per redraw in synchronized output, up exactly the lines drawn, so no line may wrap (`tests/unit/vt.py`
   counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`); keeps
   the echo off while it is up; and never hides the cursor. Modules load each other by path, once, as
@@ -401,8 +404,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   gives the summary a VM's address. Any `-v` or another stdout callback is the stream. No test or scenario sets
   the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against a stand-in deploy,
   holds the log to the stream's, and fails if a tracked file other than the callback, the engine
-  (`filter_plugins/live_ansible.py`), `run_view.py`, the declarations (`filter_plugins/live_recipes.py`), the
-  deploy recipe and `test_justfile.py`'s recording stand-in names it. See docs/architecture/custom-code.md §7.5.
+  (`filter_plugins/live_ansible.py`), the declarations (`filter_plugins/live_recipes.py`), the deploy recipe, the
+  live tests' kit (`tests/unit/live_kit.py`) and `test_justfile.py`'s recording stand-in names it. A failure is
+  headed by its step and its VM, and one a declared task raises again is drawn under the failure a rescue took. See docs/architecture/custom-code.md §7.5.
 
 - **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`

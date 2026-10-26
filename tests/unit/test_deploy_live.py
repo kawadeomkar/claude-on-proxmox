@@ -394,15 +394,15 @@ def test_a_failure_says_what_failed_whole_wherever_it_is(tmp_path):
     assert ran.rc == 2, ran.text
     text = ran.text
     # A failure in a rescue is the run's: only what the rescue took is not.
-    assert "✗ run on h1: Fail inside the rescue" in text and "the rescue failed too" in text
+    assert "✗ run · h1: Fail inside the rescue" in text and "the rescue failed too" in text
     assert "the block failed and was rescued" not in text
     # A loop's failure is its items'.
-    assert "✗ run on h2: Run each item" in text and "b-says-no" in text
+    assert "✗ run · h2: Run each item" in text and "b-says-no" in text
     # A module that crashed says why.
-    assert "✗ run on h3: Crash" in text and "module went bang" in text
+    assert "✗ run · h3: Crash" in text and "module went bang" in text
     # The end of a long output, where the error is.
     assert "line-30" in text and "line-10\n" not in text
-    assert re.search(r"^\d+ tasks · nothing changed · 4 failed", text, re.M), text
+    assert re.search(r"^\d+ tasks · nothing changed · 4 failed \(4 VMs\)", text, re.M), text
 
 
 RESCUED = """
@@ -482,7 +482,8 @@ def test_a_rescue_the_tags_leave_out_takes_nothing(tmp_path):
     )
     ran = _piped(tmp_path, "--tags", "picked", playbook="tagged.yml")
     assert ran.rc == 2, ran.text
-    assert "✗ run on localhost: fails | Fail in the file" in ran.text and "file-says-no" in ran.text, ran.text
+    # The task without its file's prefix, on this machine, which is no VM of the run's.
+    assert "✗ run · this machine: Fail in the file" in ran.text and "file-says-no" in ran.text, ran.text
 
 
 @pytest.mark.parametrize(
@@ -507,15 +508,15 @@ def test_no_other_test_or_scenario_draws_a_run():
         and (REPO / name).is_file()
         and "CLAUDE_ON_PROXMOX_LIVE" in (REPO / name).read_text(errors="replace")
     )
-    # The callback that hands the run to the engine, the engine that reads it, the model it feeds and the
-    # declarations its title names, the recipe that sets it, and the tests: test_justfile.py reads the title the
-    # recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or config.
+    # The callback that hands the run to the engine, the engine that reads it and the declarations its title names,
+    # the recipe that sets it, and the tests: the live kit sets it for the live tests, and test_justfile.py reads the
+    # title the recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or config.
     assert mentions == [
         "callback_plugins/claude_on_proxmox.py",
         "filter_plugins/live_ansible.py",
         "filter_plugins/live_recipes.py",
-        "filter_plugins/run_view.py",
         "justfile",
+        "tests/unit/live_kit.py",
         "tests/unit/test_deploy_live.py",
         "tests/unit/test_justfile.py",
     ], mentions
@@ -524,3 +525,98 @@ def test_no_other_test_or_scenario_draws_a_run():
     start = next(n for n, line in enumerate(lines) if line.startswith("deploy "))
     end = next(n for n in range(start + 1, len(lines)) if lines[n] and not lines[n].startswith(" "))
     assert all(start < n < end for n, line in enumerate(lines) if "CLAUDE_ON_PROXMOX_LIVE" in line)
+
+
+RAISED = """
+- name: Configure Claude development VMs
+  hosts: alpha
+  gather_facts: false
+  tasks:
+    - name: Install Tailscale and keep it joined
+      block:
+        - name: Run the tailscale role
+          ansible.builtin.import_role:
+            name: tailscale
+      rescue:
+        - name: Remember that Tailscale failed
+          ansible.builtin.set_fact:
+            claude_vm_configure_failures:
+              - "alpha: Tailscale failed. Retry it with: just deploy alpha --tags tailscale"
+    - name: Say what was written
+      ansible.builtin.debug:
+        msg:
+          - "Wrote:"
+          - "  inventory/hosts.yml        ansible_host"
+          - "  local.yml                  proxmox_storage"
+    - name: Keep what is left to do
+      ansible.builtin.set_stats:
+        data:
+          claude_vm_next:
+            alpha:
+              vm: >-
+                alpha: a line far longer than any banner is wide, which names a command to copy whole,
+                just deploy alpha --tags tailscale, and goes on past eighty columns to be wrapped by its words
+- name: Fail each VM whose configuration failed past a rescue
+  hosts: alpha
+  gather_facts: false
+  tasks:
+    - name: Fail where Tailscale failed
+      ansible.builtin.fail:
+        msg: "{{ claude_vm_configure_failures | join(' ') }}"
+"""
+
+
+def test_a_failure_raised_again_is_drawn_under_its_cause_with_its_own_words(tmp_path):
+    (tmp_path / "playbooks").mkdir()
+    (tmp_path / "playbooks" / "configure.yml").write_text(RAISED)
+    (tmp_path / "roles" / "tailscale" / "tasks").mkdir(parents=True)
+    (tmp_path / "roles" / "tailscale" / "tasks" / "main.yml").write_text(
+        "- name: Join the tailnet\n  ansible.builtin.fail:\n    msg: tailscale up timed out\n"
+    )
+    python = f"ansible_connection=local ansible_python_interpreter={sys.executable}"
+    (tmp_path / "hosts").write_text(f"alpha {python}\n")
+    ran = _piped(
+        tmp_path,
+        "-e",
+        '{"vm_name": "alpha"}',
+        title="deploy --only configure alpha",
+        playbook="playbooks/configure.yml",
+    )
+    assert ran.rc == 2, ran.text
+    text = ran.text
+    # The cause, by its step and VM, and the raise's own words; never the raise's task as if it were the failure.
+    assert "✗ tailscale · alpha: Join the tailnet" in text and "tailscale up timed out" in text, text
+    assert "alpha: Tailscale failed. Retry it with: just deploy alpha --tags tailscale" in text
+    assert "Fail where Tailscale failed" not in text.split("claude-on-proxmox  deploy", 1)[0]
+    assert re.search(r"^claude-on-proxmox  deploy --only configure alpha · failed after \d+ s at tailscale", text, re.M)
+    # A report of several lines keeps them, and their indent.
+    wrote = text.split("alpha  Wrote:\n", 1)[1].splitlines()[:2]
+    assert wrote == [
+        " " * 11 + "inventory/hosts.yml        ansible_host",
+        " " * 11 + "local.yml" + " " * 18 + "proxmox_storage",
+    ]
+    # The failure is its cause's step's: tailscale's row is the failed one.
+    assert re.search(r"^ ✗ tailscale ", text, re.M) and re.search(r"^ ✓ configure ", text, re.M), text
+    # NEXT STEPS wrapped by its words, every line inside the block's width, the command whole.
+    steps = text.split("##  NEXT STEPS", 1)[1]
+    assert all(len(line) <= 80 for line in steps.splitlines()), steps
+    assert "just deploy alpha --tags tailscale," in steps
+
+
+def test_the_vms_a_run_was_given_are_read_from_its_extra_vars():
+    engine = kit_engine()
+    assert engine.vm_names(['{"vm_name": "alpha,beta"}', "x=1"]) == ["alpha", "beta"]
+    assert engine.vm_names(["vm_name=gamma"]) == ["gamma"]
+    assert engine.vm_names(['{"vm_name": "alpha\\nProxyCommand x,-bad"}']) == []
+    assert engine.vm_names([]) == []
+
+
+def kit_engine():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "test_live_ansible_module", REPO / "filter_plugins" / "live_ansible.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
