@@ -17,7 +17,7 @@ SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite
 nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
 (`harness._drain`), since on a loaded machine its last bytes arrive late.
 
-pytest over `tests/unit/`: 2064 tests. By file:
+pytest over `tests/unit/`: 2066 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -80,7 +80,8 @@ pytest over `tests/unit/`: 2064 tests. By file:
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
   that reaches for them, no terminal).
-- **The Claude sign-in** (`test_claude_login.py` 42): `browser_login.yml` against the stand-in `claude`,
+- **The Claude sign-in** (`test_claude_login.py` 43): `browser_login.yml` against the stand-in `claude`,
+  the end of an attempt, a TERM and a KILL only for a pid that outlives it by a second, run traced;
   five runs at a pseudo-terminal of the test's own - the page before the prompt, a partly copied code,
   an expired attempt, Ctrl-C then A, and keys typed before the prompt is ready - with the code searched
   for in every run at `-vvv` with module arguments injected; and the browser coming back by itself, a

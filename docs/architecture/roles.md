@@ -383,10 +383,13 @@ refuses anything at that path but a pipe, since `<>` would otherwise create a pl
 code into it; `wait_for` any answer after claude's prompt (`prompted > \s*\S`), not three known ones, so
 a refusal nobody listed (an account on hold, a managed policy) ends the wait at once; on `Invalid code`,
 which a code copied only up to its `#` gets while claude goes on waiting on the same page, ask once more
-for the whole code; then, in an `always`, give claude a moment, kill the recorded pid if the job still
-runs (an attempt nobody completes, or a malformed code it is still waiting on), collect and clean up the
-job, and remove the files. The outcome is `claude auth status` again, not what claude printed. A pasted
-code is never written as a bare newline, which claude would answer `Invalid code` and go on waiting.
+for the whole code; then, in an `always`, give claude a moment, end the recorded pid if the job still
+runs (an attempt nobody completes, or a malformed code it is still waiting on) - a TERM, on which claude
+exits at once, and a KILL only if `kill -0`, asked every tenth of a second, still finds the pid a second
+later, so none goes to a pid claude no longer holds and the attempt ends the moment claude has - collect
+and clean up the job, and remove the files. The outcome is `claude auth status` again, not what claude
+printed. A pasted code is never written as a bare newline, which claude would answer `Invalid code` and
+go on waiting.
 Before any of it, a sign-in of the same VM still waiting - a run left at its prompt, a second `just
 login --only claude` - is refused by name: its pidfile names a live process whose command line `ps` shows as
 `auth login`, and taking over its pipe and pidfile would hand one run's code to the other's claude. What
