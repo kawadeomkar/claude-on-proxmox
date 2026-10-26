@@ -87,7 +87,7 @@ pytest over `tests/unit/`: 2064 tests. By file:
   stand-in `ssh` recording the forward and the test playing the browser at the stand-in's callback: no
   prompt, a forward refused, a page that is not Claude's, a run over SSH or no browser here falling back
   to the paste, and a browser that never comes back skipping the VM's later sign-ins.
-- **The GitHub sign-in** (`test_github_auth.py` 119): the `github_projects` role's `auth.yml`,
+- **The GitHub sign-in** (`test_github_auth.py` 118): the `github_projects` role's `auth.yml`,
   `clone.yml`, `device_flow.yml` and `github_login.yml` for real against the stand-in `gh` and the fake
   GitHub API on a loopback port, one host per sign-in state, twice over for idempotence, with `git
   credential fill` proving that git itself gets the token through the config written, deploy's GitHub
