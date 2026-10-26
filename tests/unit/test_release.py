@@ -923,6 +923,9 @@ def test_the_wait_for_a_started_vm_is_for_the_address_of_its_own_nic():
     assert "get(proxmox_nic, '')" in wait["vars"]["claude_vm_release_mac"]
     assert "net_mac('')" in wait["vars"]["claude_vm_release_mac"]
     assert wait["no_log"] is True and wait["failed_when"] is False
+    # Three minutes for a VM to boot, asked every five seconds; a test asks faster, with -e.
+    assert wait["retries"] == 36 and wait["delay"] == "{{ claude_vm_release_agent_delay }}"
+    assert yaml.safe_load(DESTROY.read_text())[0]["vars"]["claude_vm_release_agent_delay"] == 5
 
 
 def test_destroy_refuses_a_duplicated_name_before_it_starts_anything():
@@ -1064,7 +1067,10 @@ def test_a_vm_destroy_starts_is_released_though_the_listing_still_says_it_is_sto
     # booted within those seconds of destroy's start was listed as stopped
     # after it, not asked for its address, and deleted without its release.
     root, playbook = _head(tmp_path, fake_pve)
-    report = _run(root, playbook, {}, "-e", json.dumps({"vm_name": "parked", "confirm_destroy": "yes"}), timeout=120)
+    # The fake's agent answers on its third ask: asked every fifth of a second
+    # rather than every five, as a VM booting is.
+    extra = {"vm_name": "parked", "confirm_destroy": "yes", "claude_vm_release_agent_delay": 0.2}
+    report = _run(root, playbook, {}, "-e", json.dumps(extra), timeout=120)
     assert report["rc"] == 0, _failures(report)
     said = {
         host: result.get("claude_vm_release_address") for name, host, result in _results_of(report) if name == "Address"
