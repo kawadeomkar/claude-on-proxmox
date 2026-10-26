@@ -315,6 +315,11 @@ def _signed_in(root: Path, host: str) -> bool:
 @pytest.fixture(scope="module")
 def github(tmp_path_factory):
     """The fake GitHub API on a loopback port: molecule/pub, and molecule/gone, which has no repository behind it."""
+    yield from fake_github(tmp_path_factory)
+
+
+def fake_github(tmp_path_factory):
+    """The fake GitHub API's URL while the generator lives, for any module's fixture: see github."""
     git_root = tmp_path_factory.mktemp("git")
     src = git_root / "src"
     src.mkdir()

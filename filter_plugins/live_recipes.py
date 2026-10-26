@@ -14,14 +14,26 @@ name a declaration matches to the playbook it names (tests/unit/test_live_recipe
 from __future__ import annotations
 
 
+class Outcome:
+    """What a VM's fact says of its outcome in a step: where the fact is set and true, the VM is marked state
+    (done, skipped, failed). Only the fact's truth is read, never its text, so a VM can put no words on the screen
+    through one."""
+
+    def __init__(self, fact, state):
+        self.fact = fact
+        self.state = state
+
+
 class Step:
     """A step of a stage, labelled as a person would name it, and what puts a task in it.
 
-    plays: the playbook files (a file name) every task of whose plays is this step's, as each sign-in is."""
+    plays: the playbook files (a file name) every task of whose plays is this step's, as each sign-in is. outcomes:
+    the facts that say each VM's outcome in it, the first that holds winning over what its tasks' results say."""
 
-    def __init__(self, label, plays=()):
+    def __init__(self, label, plays=(), outcomes=()):
         self.label = label
         self.plays = tuple(plays)
+        self.outcomes = tuple(outcomes)
 
 
 class Stage:
@@ -40,23 +52,77 @@ class Stage:
 
 
 class Causes:
-    """Where the failures a re-raise repeats were rescued: inside blocks of these names, on the same host."""
+    """Where the failures a re-raise repeats were rescued: inside blocks of these names, on the same host; and with
+    unreachable, the host's unreachable results a task ignored, as the sign-ins' pings do."""
 
-    def __init__(self, blocks=()):
+    def __init__(self, blocks=(), unreachable=False):
         self.blocks = frozenset(blocks)
+        self.unreachable = unreachable
 
 
 class Recipe:
     """A command's run: its stages, in order; the playbook files whose first play reports what the run will do; how
-    many of the running step's last tasks are shown; and the tasks that raise again failures a rescue took earlier,
-    by name, each with where its causes are."""
+    many of the running step's last tasks are shown; the tasks that raise again failures a rescue took earlier, by
+    name, each with where its causes are; the word for a step of a run of one stage (noun, its footer's and its
+    summary's); the summary's columns; and the playbook files whose add_host gives the summary a VM's address and
+    ID, read from Proxmox by discovery."""
 
-    def __init__(self, stages=(), plan=(), window=5, raises=None):
+    def __init__(
+        self,
+        stages=(),
+        plan=(),
+        window=5,
+        raises=None,
+        noun="step",
+        columns=("time", "tasks", "changed"),
+        addresses_from=(),
+    ):
         self.stages = tuple(stages)
         self.plan = frozenset(plan)
         self.window = window
         self.raises = dict(raises or {})
+        self.noun = noun
+        self.columns = tuple(columns)
+        self.addresses_from = frozenset(addresses_from)
 
+
+# Each sign-in, as both just deploy and just login run it: its playbook, and each VM's outcome in it from the facts
+# its role and play set - signed in now, skipped (Enter at Claude's prompt, a browser that never came back), failed,
+# or the work after it failed.
+SIGN_INS = (
+    Step(
+        "Claude",
+        plays=["claude_login.yml"],
+        outcomes=[
+            Outcome("claude_vm_claude_login_failure", "failed"),
+            Outcome("claude_code_login_skipped", "skipped"),
+            Outcome("claude_code_login_done", "done"),
+        ],
+    ),
+    Step(
+        "GitHub",
+        plays=["github_login.yml"],
+        outcomes=[
+            Outcome("claude_vm_github_login_failure", "failed"),
+            Outcome("github_projects_login_done", "done"),
+        ],
+    ),
+    Step(
+        "Tailscale",
+        plays=["tailscale_login.yml"],
+        outcomes=[Outcome("claude_vm_tailscale_login_failure", "failed")],
+    ),
+)
+# What a sign-in's play rescues, for its last play, or just login's, to raise: the sign-in itself, the work after it,
+# and a VM its ping could not reach.
+SIGN_IN_FAILURES = Causes(
+    blocks=[
+        "Sign this VM in",
+        "Start Remote Control as just deploy --only configure would",
+        "Configure the repositories now that gh is signed in",
+    ],
+    unreachable=True,
+)
 
 # What configuration and the sign-ins rescue and record in claude_vm_configure_failures, for a last play to raise:
 # Tailscale's role in configure, and the work after a sign-in.
@@ -77,14 +143,7 @@ RECIPES = {
             Stage("provision", plays=["provision.yml"], info="vm"),
             Stage("configure", plays=["configure.yml"]),
             Stage("SSH aliases", plays=["ssh_config.yml"]),
-            Stage(
-                "sign in",
-                steps=[
-                    Step("Claude", plays=["claude_login.yml"]),
-                    Step("GitHub", plays=["github_login.yml"]),
-                    Step("Tailscale", plays=["tailscale_login.yml"]),
-                ],
-            ),
+            Stage("sign in", steps=SIGN_INS),
             Stage("VS Code", plays=["code.yml"]),
             # deploy.yml's last play, which raises what failed after the sign-ins once VS Code has opened.
             Stage("finish", plays=["deploy.yml:Fail each VM whose work after a sign-in failed"], quiet=True),
@@ -94,6 +153,25 @@ RECIPES = {
             "Fail where the work after a sign-in failed": CONFIGURE_FAILURES,
             "Fail where Tailscale failed": CONFIGURE_FAILURES,
         },
+    ),
+    # just login: the three sign-ins one VM after another, or each VM's state of them; one stage, so its sign-ins are
+    # the rows. Discovery and each sign-in's own discovery, which login.yml turns off, are counted, never shown.
+    "login": Recipe(
+        stages=[
+            Stage("discover", plays=["discover.yml"], quiet=True),
+            Stage("sign in", steps=SIGN_INS),
+            Stage("finish", plays=["login.yml:Fail each VM whose sign-in, or the work after one, failed"], quiet=True),
+        ],
+        window=3,
+        raises={
+            "Fail where a sign-in, or the work after one, failed": SIGN_IN_FAILURES,
+            # just login --only <sign-in>: that playbook's own last play.
+            "Fail where the sign-in failed": SIGN_IN_FAILURES,
+            "Fail where the work after the sign-in failed": SIGN_IN_FAILURES,
+        },
+        noun="sign-in",
+        columns=("time",),
+        addresses_from=["discover.yml"],
     ),
 }
 

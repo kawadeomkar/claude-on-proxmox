@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import atexit
 import importlib.util
+import ipaddress
 import json
 import os
 import re
@@ -56,6 +57,7 @@ STATS_ACTIONS = frozenset({"set_stats", "ansible.builtin.set_stats", "ansible.le
 INCLUDE_TASKS = frozenset({"include_tasks", "ansible.builtin.include_tasks", "ansible.legacy.include_tasks"})
 INCLUDE_ROLE = frozenset({"include_role", "ansible.builtin.include_role", "ansible.legacy.include_role"})
 ARGUMENT_CHECKS = frozenset({"validate_argument_spec", "ansible.builtin.validate_argument_spec"})
+ADD_HOST = frozenset({"add_host", "ansible.builtin.add_host", "ansible.legacy.add_host"})
 # The facts the provision stage says a VM by.
 VM_FACTS = ("proxmox_vm_resolved_id", "proxmox_vm_address", "proxmox_vm_exists")
 FAILURE_LINES = 20
@@ -196,8 +198,9 @@ def _keeps(items, play):
 def play_batches(play):
     """How many batches a play runs in: one, unless it is serial."""
     try:
+        # Each batch starts with the inventory restricted to it: the play's hosts are all of them.
         inventory = play._variable_manager._inventory
-        hosts = len(inventory.get_hosts(play.hosts, order=play.order))
+        hosts = len(inventory.get_hosts(play.hosts, order=play.order, ignore_restrictions=True))
         return view.batches(hosts, play.serial)
     except Exception:  # noqa: BLE001 - a count is a nicety
         return 1
@@ -226,6 +229,7 @@ class Engine:
         self._failed_items = {}  # (task ID, host): the results of a loop's items that failed, said with the task
         self._rescued = {}  # host: what each failure a rescue took said, for a later raise of it
         self._attended = self._now()  # when the person last had something to answer: the start, a bell, a prompt
+        self._facts = set()  # the facts the declaration reads each VM's outcome from
 
     # --- what the run says, and where it goes ------------------------------------------------------------------
     # The run's own words and anything on stderr - warnings, deprecations, errors - stay on the screen; the rest,
@@ -331,6 +335,7 @@ class Engine:
                 tasks = []
             plays.append((play._uuid, play.get_path(), tasks, play.get_name()))
         self.run.plays(plays)
+        self._facts = {o.fact for stage in self.run.recipe.stages for step in stage.steps for o in step.outcomes}
         first = playbook.get_plays()[:1]
         if first and Path(str(first[0].get_path()).split(":", 1)[0]).name in self.run.recipe.plan:
             self.plan_play = first[0]._uuid
@@ -404,6 +409,10 @@ class Engine:
                 if name in facts:
                     value = facts[name]
                     self.run.fact(host, name, plain_text(str(value)) if name == "proxmox_vm_address" else value)
+            # The declared outcomes' facts: only whether each holds is kept.
+            for name in self._facts & set(result.result.get("ansible_facts") or {}):
+                self.run.outcome(host, name, result.result["ansible_facts"][name])
+            self._discovered(result)
         if result.task.action in STATS_ACTIONS:
             self._records(result)
         msg = result.result.get("msg")
@@ -419,6 +428,30 @@ class Engine:
     def item_ok(self, result):
         if result.task.action in DEBUG_ACTIONS:
             self._report(result)
+
+    def _discovered(self, result):
+        """A VM's address and ID as discovery read them from Proxmox and its guest agent, from the add_host of a
+        playbook the declaration trusts, and only these two: an address that parses as one, an ID that is a number."""
+        if result.task.action not in ADD_HOST:
+            return
+        if os.path.basename(str(result.task.get_path()).split(":", 1)[0]) not in self.run.recipe.addresses_from:
+            return
+        found = [result.result, *(result.result.get("results") or [])]
+        for item in found:
+            added = item.get("add_host") if isinstance(item, dict) else None
+            if not isinstance(added, dict):
+                continue
+            name = plain_text(str(added.get("host_name", ""))).strip()
+            hostvars = added.get("host_vars") or {}
+            if not NAME.match(name):
+                continue
+            try:
+                address = str(ipaddress.IPv4Address(str(hostvars.get("ansible_host", "")).strip()))
+            except ValueError:
+                address = ""
+            if address:
+                self.run.fact(name, "proxmox_vm_address", address)
+            self.run.fact(name, "proxmox_vm_resolved_id", str(hostvars.get("proxmox_vm_id", "")).strip())
 
     def _records(self, result):
         """What a report recorded for NEXT STEPS, as it goes: a report on a matter a later report recorded again is
@@ -474,8 +507,9 @@ class Engine:
         elif outcome == "failed":
             self._failure(result, "failed")
 
-    def _remember(self, result):
-        """A failure a rescue took, kept for the task that may raise it again later."""
+    def _remember(self, result, unreachable=False):
+        """A failure a rescue took, or an unreachable result a task ignored, kept for the task that may raise it again
+        later."""
         with self.display._lock:
             task = self.run.find(result.task._uuid)
             where = (task.step or task.stage) if task is not None else ""
@@ -487,15 +521,21 @@ class Engine:
                 "step": task.step if task is not None else None,
                 "blocks": set(blocks_of(result.task)),
                 "said": self._said(result.result),
+                "unreachable": unreachable,
             }
         )
 
     def _causes(self, result):
-        """The failures a declared raise repeats: those rescued on its host inside the blocks it names."""
+        """The failures a declared raise repeats: those rescued on its host inside the blocks it names, and the
+        unreachable results its tasks ignored, where it says so."""
         declared = self.run.recipe.raises.get(self._name(result.task))
         if declared is None:
             return []
-        return [kept for kept in self._rescued.get(result.host.get_name(), []) if kept["blocks"] & declared.blocks]
+        return [
+            kept
+            for kept in self._rescued.get(result.host.get_name(), [])
+            if kept["blocks"] & declared.blocks or (declared.unreachable and kept.get("unreachable"))
+        ]
 
     def item_failed(self, result):
         with self.display._lock:
@@ -503,8 +543,12 @@ class Engine:
 
     def unreachable(self, result):
         ignored = bool(getattr(result.task, "ignore_unreachable", False))
-        self._result(result, "ignored" if ignored else "unreachable")
-        if not ignored:
+        # An unreachable VM a task ignores (the sign-ins' ping) is lost to the run, and a cause a later task may
+        # raise: the VM is marked so, the run goes on.
+        self._result(result, "lost" if ignored else "unreachable")
+        if ignored:
+            self._remember(result, unreachable=True)
+        else:
             self._failure(result, "could not be reached")
 
     def _block(self, where, who, name, took, how, said):
@@ -543,7 +587,7 @@ class Engine:
             out += self._block(cause["where"], who, cause["name"], "", "", cause["said"])
             repeated |= {line.strip() for line in cause["said"]}
             with self.display._lock:
-                self.run.raised(cause["stage"], cause["step"])
+                self.run.raised(cause["stage"], cause["step"], result.host.get_name())
         own = [line for line in self._said(result.result) if line.strip() and line.strip() not in repeated]
         if own:
             out += self._wrapped([("    ", "")], own)

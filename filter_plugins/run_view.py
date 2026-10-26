@@ -84,6 +84,7 @@ RANK = {
     "changed": 3,
     "ignored": 4,
     "rescued": 4,
+    "lost": 4,
     "raised": 5,
     "failed": 5,
     "unreachable": 5,
@@ -102,6 +103,7 @@ MARKS = {
     "skipped": ("–", "d"),
     "failed": ("✗", "r"),
     "unreachable": ("✗", "r"),
+    "to come": ("○", "d"),
 }
 
 
@@ -264,6 +266,7 @@ class Step:
         self.seen = Counter()
         self.reserved = Counter()  # include task ID: its literal file's tasks, counted when the playbook started
         self.raised = 0  # failures a rescue took here that a later task raised again
+        self.raised_on = set()  # the hosts they were on
         self.budget = 0
         self.included = 0
         self.extra = 0
@@ -325,21 +328,26 @@ class Step:
         """Every task it reached was skipped: a step that did nothing reads so, never done."""
         return bool(self.tasks) and all(task.outcome == "skipped" for task in self.tasks)
 
-    def vm_states(self, now, vms):
-        """Each VM's state in the step, of those given, in their order: running, done, skipped or failed."""
+    def vm_states(self, now, vms, facts=None, spec=None):
+        """Each VM's state in the step, of those given, in their order: running, waiting, done, skipped, failed or
+        unreachable - what the declared step's outcome facts say of it winning over what its tasks' results say."""
         states = OrderedDict()
         for vm in vms:
             entries = [task.hosts[vm] for task in self.tasks if vm in task.hosts]
             if not entries:
                 continue
+            said = (facts or {}).get(vm, {})
+            declared = next((o.state for o in (spec.outcomes if spec else ()) if said.get(o.fact)), None)
             outcomes = [outcome for _, end, outcome in entries if end is not None]
             if any(end is None for _, end, _ in entries):
                 waiting = any(task.wait and task.end is None for task in self.tasks if vm in task.hosts)
                 states[vm] = "waiting" if waiting else "running"
-            elif any(outcome == "unreachable" for outcome in outcomes):
+            elif any(outcome in ("unreachable", "lost") for outcome in outcomes):
                 states[vm] = "unreachable"
-            elif any(outcome == "failed" for outcome in outcomes):
+            elif any(outcome == "failed" for outcome in outcomes) or vm in self.raised_on:
                 states[vm] = "failed"
+            elif declared is not None:
+                states[vm] = declared
             elif outcomes and all(outcome == "skipped" for outcome in outcomes):
                 states[vm] = "skipped"
             else:
@@ -392,9 +400,10 @@ class Stage:
     def skipped(self):
         return bool(self.tasks) and all(task.outcome == "skipped" for task in self.tasks)
 
-    def vm_states(self, now, vms):
+    def vm_states(self, now, vms, facts=None, spec=None):
         merged = Step(None)
         merged.tasks = self.tasks
+        merged.raised_on = set().union(*(step.raised_on for step in self.steps.values()))
         return merged.vm_states(now, vms)
 
 
@@ -405,6 +414,8 @@ class Run:
         self.title, self.check, self.log = title, check, log
         self.recipe = recipe if recipe is not None else recipes.recipe(title)
         self.specs = {stage.key: stage for stage in self.recipe.stages}
+        self.step_specs = {(stage.key, step.label): step for stage in self.recipe.stages for step in stage.steps}
+        self.outcomes = {}  # host: {fact: whether it holds}, for the declared steps' outcomes
         self.begun = now
         self.started_at = started_at if started_at is not None else time.time()
         self.names = [str(vm) for vm in vms]  # the VMs the run was given, by name, in their order
@@ -429,6 +440,8 @@ class Run:
         self.prompted = 0.0  # the person's time at prompts with no task of their own
         self.said = set()  # steps and stages a line was printed for (output that is not a terminal)
         self.best = {}  # what each bar and the title's percentage have shown: none ever falls
+        self.shown_stage = None  # the last stage drawn a task of: a quiet stage's tasks never move where the run is
+        self.play_hosts = {}  # play key: the hosts it has started a task on, a serial play's batches so far
 
     # --- what the playbook is ---------------------------------------------------------------------------------
     def plays(self, plays):
@@ -486,6 +499,8 @@ class Run:
         if self.current is not None:
             self.current.close(now)
         task = Task(key, name, stage, override or role, now, role=role, waits=waits, hidden=hidden)
+        if not (self.specs.get(stage) and self.specs[stage].quiet):
+            self.shown_stage = stage
         self._stage(stage).step(task.step).reach(task)
         self.current = task
         self.order.append(task)
@@ -504,6 +519,7 @@ class Run:
         task = self.find(key)
         if task is not None:
             task.host_start(host, now)
+            self.play_hosts.setdefault(self.play, set()).add(host)
 
     def result(self, key, host, outcome, now):
         task = self.find(key)
@@ -618,10 +634,25 @@ class Run:
         elif name == "proxmox_vm_exists":
             entry.setdefault("new", not value)
 
-    def raised(self, stage, step):
+    def raised(self, stage, step, host=None):
         """A failure a rescue took in stage's step, raised again later: the step's, not the raising task's."""
         if stage in self.stages and step in self.stages[stage].steps:
             self.stages[stage].steps[step].raised += 1
+            if host is not None:
+                self.stages[stage].steps[step].raised_on.add(host)
+
+    def outcome(self, host, fact, holds):
+        """A declared outcome's fact, set on host: whether it holds, never what it says."""
+        self.outcomes.setdefault(host, {})[fact] = bool(holds)
+
+    def turn(self, stage):
+        """Whose turn it is in a serial play of stage: (the VM, its place, of how many), or None."""
+        task = self.current
+        if task is None or task.stage != stage or self.play_batches.get(self.play, 1) < 2 or len(task.hosts) != 1:
+            return None
+        vm = next(iter(task.hosts))
+        names = self.names or self._vms()
+        return (vm, names.index(vm) + 1, len(names)) if vm in names else None
 
     def end(self, now, failed=False):
         if self.current is not None:
@@ -631,7 +662,11 @@ class Run:
 
     # --- where it is ------------------------------------------------------------------------------------------
     def running_stage(self):
-        return self.current.stage if self.current is not None and self.finished is None else None
+        """The stage the run is in: the running task's, or while a quiet stage's tasks run, the last stage shown."""
+        if self.current is None or self.finished is not None:
+            return None
+        spec = self.specs.get(self.current.stage)
+        return self.shown_stage if spec is not None and spec.quiet else self.current.stage
 
     def _quiet(self, stage):
         spec = self.specs.get(stage.key)
@@ -650,8 +685,10 @@ class Run:
         """done, running, waiting, skipped or to come."""
         if not stage.tasks:
             return "to come"
-        if self.finished is None and self.current is not None and self.current.stage == stage.key:
-            return "waiting" if self.current.wait and self.current.end is None else "running"
+        if self.running_stage() == stage.key:
+            current = self.current
+            waiting = current.stage == stage.key and current.wait and current.end is None
+            return "waiting" if waiting else "running"
         return "skipped" if stage.skipped() else "done"
 
     def _step_state(self, stage, step):
@@ -684,12 +721,15 @@ class Run:
     def _fleet(self):
         return len(self._vms()) >= 2
 
-    def _marks(self, states, glyph, room, now=None):
-        """Each VM's mark, as segments: alpha ✓ · beta ⠴; as counts when they do not fit room."""
+    def _marks(self, states, glyph, room, turn=None):
+        """Each VM's mark, as segments: alpha ✓ · beta ⠴ (2 of 3) · gamma ○; as counts when they do not fit room."""
         parts = []
         for vm, state in states.items():
             mark, style = MARKS[state]
-            parts += [(f"{vm} ", ""), (mark or glyph, style), (" · ", "d")]
+            parts += [(f"{vm} ", ""), (mark or glyph, style)]
+            if turn and turn[0] == vm:
+                parts.append((f" ({turn[1]} of {turn[2]})", style))
+            parts.append((" · ", "d"))
         parts = parts[:-1]
         if screen.width(parts) <= room:
             return parts
@@ -699,6 +739,34 @@ class Run:
         if failed:
             said.append((f" {failed} failed", "r"))
         return said
+
+    def _vm_marks(self, stage_key, step, now, glyph, room, state):
+        """A step's VMs, each marked: every VM given, those it has not reached yet to come while it runs, and none it
+        never reached once it ended; empty for a run of fewer than two VMs."""
+        vms = self._vms()
+        if len(vms) < 2 or not step.tasks:
+            return []
+        spec = self.step_specs.get((stage_key, step.key))
+        states = step.vm_states(now, vms, self.outcomes, spec)
+        marked = OrderedDict()
+        for vm in self.names or vms:
+            if vm in states:
+                marked[vm] = states[vm]
+            elif state in ("running", "waiting"):
+                marked[vm] = "to come"
+        for vm, said in states.items():
+            marked.setdefault(vm, said)
+        turn = self.turn(stage_key) if state in ("running", "waiting") else None
+        if turn is not None:
+            # A VM whose batch of this serial play has not begun is still to come, whatever an earlier play of the
+            # step (a ping of every VM) did; and between two of its tasks the VM whose turn it is is still at it.
+            begun = self.play_hosts.get(self.play, set())
+            for vm, said in marked.items():
+                if vm not in begun and said in ("done", "skipped"):
+                    marked[vm] = "to come"
+            if marked.get(turn[0]) in ("done", "skipped", "to come"):
+                marked[turn[0]] = "running"
+        return self._marks(marked, glyph, room, turn)
 
     def _clamped(self, key, fraction):
         best = max(self.best.get(key, 0.0), fraction)
@@ -794,11 +862,13 @@ class Run:
                     "failed": ("✗", "r"),
                     "unreachable": ("✗", "r"),
                     "rescued": ("↺", "d"),
+                    "lost": ("↺", "d"),
                     "raised": ("↑", "d"),
                     "ignored": ("↺", "d"),
                     "included": ("↳", "d"),
                 }.get(task.outcome, ("✓", "g"))
-                name = [(task.name, "d" if task.outcome in ("rescued", "raised", "ignored", "included") else "")]
+                dim = ("rescued", "lost", "raised", "ignored", "included")
+                name = [(task.name, "d" if task.outcome in dim else "")]
                 tail = [*vm, (screen.duration(task.seconds(now)), "d")]
             room = width_ - 2 - screen.width(tail) - 2
             line = [(" " * indent, ""), (mark + " ", style), *screen.cut(name, room)]
@@ -896,7 +966,7 @@ class Run:
             if flat and step_state == "waiting":
                 lines.append(self._waiting_line(1, None, now, limit))
             else:
-                info = self._marks(step.vm_states(now, vms), glyph, 40) if len(vms) >= 2 and step.tasks else []
+                info = self._vm_marks(stage.key, step, now, glyph, 44, step_state)
                 lines.append(self._row(indent, glyph, key, 18, step, step_state, now, tiers, info, limit))
             if step_state in ("running", "waiting"):
                 shown = 1 if fold >= 3 else self.recipe.window
@@ -913,7 +983,7 @@ class Run:
         if self._flat() and self.current is not None and running == stages[0].key:
             steps = [key for key in stages[0].steps if key is not None]
             if self.current.step in steps:
-                where = f"step {steps.index(self.current.step) + 1} of {len(steps)}"
+                where = f"{self.recipe.noun} {steps.index(self.current.step) + 1} of {len(steps)}"
         else:
             keys = [stage.key for stage in stages]
             where = f"stage {keys.index(running) + 1} of {len(keys)}" if running in keys else ""
@@ -960,7 +1030,8 @@ class Run:
                     continue
                 self.said.add((stage.key, key))
                 out.append(self._ended(f"{stage.key} / {key}", step, now))
-            if stage.key not in self.said and self._state(stage) in ("done", "skipped"):
+            # A run of one stage is said by its steps alone.
+            if stage.key not in self.said and self._state(stage) in ("done", "skipped") and not self._flat():
                 self.said.add(stage.key)
                 out.append(self._ended(f"{stage.key} / {only[0]}" if only else stage.key, stage, now))
         return out
@@ -1008,23 +1079,34 @@ class Run:
         lines = [self._head(now, failed_hosts), []]
         flat = self._flat()
         vms = self._vms()
-        changed_head = "WOULD CHANGE" if self.check else "CHANGED"
-        lines.append([(f"{'STEPS' if flat else 'STAGES':<14}{'TIME':>6}{'TASKS':>9}  {changed_head}", "h")])
+        columns = self.recipe.columns
+        heads = [("TIME", 6, "time"), ("TASKS", 9, "tasks")]
+        title = f"{self.recipe.noun}s".upper() if flat else "STAGES"
+        said_head = f"{title:<14}" + "".join(f"{name:>{width}}" for name, width, key in heads if key in columns)
+        if "changed" in columns:
+            said_head += f"  {'WOULD CHANGE' if self.check else 'CHANGED'}"
+        elif len(vms) >= 2:
+            said_head += "    VMS"
+        lines.append([(said_head, "h")])
         if flat:
             stage = self._shown()[0]
             rows = [(key, step) for key, step in stage.steps.items() if key is not None and step.tasks]
             if None in stage.steps and stage.steps[None].tasks:
                 rows.insert(0, (stage.key, stage.steps[None]))
         else:
-            rows = [(stage.key, stage) for stage in self._shown() if stage.tasks]
+            stage = None
+            rows = [(stage_.key, stage_) for stage_ in self._shown() if stage_.tasks]
         for key, part in rows:
             mark, style = ("✗", "r") if part.failed() else ("–", "d") if part.skipped() else ("✓", "g")
             head = [(" ", ""), (mark + " ", style), (str(key)[:11].ljust(11), "b")]
-            counts = f"{screen.duration(part.seconds(now)):>6}{part.reached:>9}{(part.changed() or '—'):>9}   "
+            counts = f"{screen.duration(part.seconds(now)):>6}" if "time" in columns else ""
+            counts += f"{part.reached:>9}" if "tasks" in columns else ""
+            counts += f"{(part.changed() or '—'):>9}   " if "changed" in columns else "    "
             head.append((counts, ""))
             parts = []
             if len(vms) >= 2:
-                states = part.vm_states(now, vms)
+                spec = self.step_specs.get((stage.key, key)) if flat else None
+                states = part.vm_states(now, vms, self.outcomes, spec)
                 if states:
                     parts.append(" · ".join(f"{vm} {MARKS[state][0] or '…'}" for vm, state in states.items()))
             if not flat:
@@ -1057,7 +1139,7 @@ class Run:
         # What NEXT STEPS will say whole is not said here too.
         left_to_do = {one_line(line) for line in next_steps}
         # The same report again, in a later play - configure's repositories, then the sign-in's: its last run holds.
-        last = {(host, note.task.name): note.task for host, note in said if note.task is not None}
+        last = {(host, note.task.role, note.task.name): note.task for host, note in said if note.task is not None}
         notes = OrderedDict()
         for host, note in said:
             text = self._unnamed(host, note.text)
@@ -1065,7 +1147,7 @@ class Run:
                 continue
             if note.text in left_to_do or f"{host}: {text}" in left_to_do or text in left_to_do:
                 continue
-            if note.task is not None and last[(host, note.task.name)] is not note.task:
+            if note.task is not None and last[(host, note.task.role, note.task.name)] is not note.task:
                 continue
             # A report of several lines, or longer than a line, is printed whole above: here, its first sentence.
             if note.lines > 1 or len(text) > limit - 2:
@@ -1089,6 +1171,10 @@ class Run:
             (task for task in self.order if not task.waited(now) and task.seconds(now) >= SLOW),
             key=lambda task: task.seconds(now),
             reverse=True,
+        )
+        # A task run again for each VM of a serial play is listed once, by its slowest run.
+        slowest = sorted(
+            {task.name: task for task in reversed(slowest)}.values(), key=lambda task: task.seconds(now), reverse=True
         )
         if slowest:
             lines.append([])

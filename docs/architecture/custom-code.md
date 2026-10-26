@@ -173,8 +173,8 @@ JSON report (`_left_to_do`), in every state they already run.
 
 ### `just deploy`, drawn live
 
-`CLAUDE_ON_PROXMOX_LIVE`, which the justfile's `deploy` recipe alone exports, set to what was run (`deploy
---check alpha`, the run's title), hands every event of the run to an engine, `filter_plugins/live_ansible.py`, at
+`CLAUDE_ON_PROXMOX_LIVE`, which the justfile's recipes drawn live export - `deploy`, `login` - set to what was run
+(`deploy --check alpha`, `login alpha beta`, the run's title), hands every event of the run to an engine, `filter_plugins/live_ansible.py`, at
 verbosity 0 and with a run log to send the stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above.
 The callback then keeps only its classic output, which the engine prints through it too. The engine takes the
 variable out of the environment when the playbook starts, so nothing the run starts - the VS Code whose terminals a
@@ -229,14 +229,19 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   but those that only repeat a cause's; the cause's step counts the failure, and the raise is `↑` in the window.
   A failing task the declaration does not name is an ordinary failure.
 - **What a VM may set.** Only `proxmox_vm`'s tasks give the summary a VM's ID and address: a task on the VM
-  could set any fact. The ID is a number or nothing, and the address goes through `plain_text`, as everything
+  could set any fact. A declaration may also name the playbooks whose `add_host` does (`addresses_from`:
+  discovery, for `just login`), and then only the host's `ansible_host`, kept when it parses as an IPv4 address,
+  and `proxmox_vm_id`. The ID is a number or nothing, and the address goes through `plain_text`, as everything
   else a VM said does. The VMs the run was given come from its `vm_name` extra var, each held to a VM name's
-  pattern.
+  pattern. Each VM's outcome in a declared step comes from the facts its declaration names (`outcomes`:
+  `claude_code_login_done`, `claude_code_login_skipped`, `claude_vm_claude_login_failure` and the like), of
+  which the engine keeps only whether each holds, never its text; a VM a task could not reach though it ignored
+  that (a sign-in's ping) is marked unreachable, and a failure raised again marks its VM in its cause's step.
 - **The screen.** The region (§7.8) draws the frame, which `run_view` folds to the height before the region
   cuts it, and steps aside for every prompt. The running step's last five tasks show (the declaration's
   `window`), never the check of an included role's arguments, and a `meta` task Ansible starts once per host once.
   A run of two or more VMs says each VM's state on each step's row - `alpha ✓ · beta ⠴` - and the VM on each task
-  line. The tab's title says where the run is, and the bell rings once per wait and at the end. A wait is a task
+  line; in a serial play, whose turn it is (`alpha ⠴ (1 of 3)`), the VMs whose turn has not come `○`. The tab's title says where the run is, and the bell rings once per wait and at the end. A wait is a task
   tagged `attention_browser` that is not a block's `debug`: from its first retry, or once it has run two seconds
   (`WAIT_AFTER`) - a wait that never retries, GitHub's device flow, is known by that, and a skipped one is over
   first. Its time is counted as yours, and so is a prompt's: the region tells the engine when a prompt takes the
@@ -479,12 +484,17 @@ East Asian ambiguous-width characters double-wide (`█`, `●`, `·`) wraps a f
 each module that needs another loads it by path, once, as `claude_on_proxmox_<stem>` (`_sibling`): the
 callbacks, `status.py`, `run_view.py` and `live_ansible.py` share one copy of each.
 
-**Another recipe, drawn live.** A recipe whose playbook is a run - `just login`, `just destroy`, `just code`,
-`just init` - joins `just deploy` without code of its own: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its
-title, as `deploy`'s does; its declaration in `filter_plugins/live_recipes.py`, named by the title's first word,
-names its playbooks' stages (the sign-in playbooks already are deploy's) and the playbook whose first play reports
-what the run will do; its reports, waits and NEXT STEPS records follow §7.5's conventions, which the engine already
-reads. A command that is a report rather than a run, as `just status` is, keeps a model and a frame function of
+**Another recipe, drawn live.** A recipe whose playbook is a run joins `just deploy` without code of its own, as
+`just login` has: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its title, as `deploy`'s does, and its
+declaration in `filter_plugins/live_recipes.py`, named by the title's first word, says what its run is made of -
+its stages, by playbook or by play, a quiet one counted but never drawn (discovery, a last play that only raises);
+each stage's steps, by playbook; each step's `outcomes`, the facts that mark each VM; the tasks that raise again
+what rescues took (`raises`, with their causes' blocks, and the unreachable VMs a ping ignored); how many tasks a
+window shows; the word for a step of a run of one stage (`noun`: `sign-in 2 of 3`) and the summary's columns;
+the playbooks whose `add_host` gives a VM's address and ID; and the playbook whose first play reports what the run
+will do. Its reports, waits and NEXT STEPS records follow §7.5's conventions, which the engine already reads.
+Anything a declaration cannot say becomes a new field and new code in the engine, never code of one command's
+own. A command that is a report rather than a run, as `just status` is, keeps a model and a frame function of
 its own and hands the frame to an `Output`, drawing its lines with `screen.py`. Either way its test runs it through
 `tests/unit/live_kit.py`: at a pseudo-terminal of its own (`harness._at_a_pseudo_terminal`) with a `HOME` of its
 own, read back through `vt.py`, or piped, with the checks every drawn run must pass (`Ran`); and

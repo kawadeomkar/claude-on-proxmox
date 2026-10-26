@@ -520,11 +520,27 @@ def test_no_other_test_or_scenario_draws_a_run():
         "tests/unit/test_deploy_live.py",
         "tests/unit/test_justfile.py",
     ], mentions
-    # In the justfile, deploy's recipe alone.
+    # In the justfile, only the recipes a declaration draws (filter_plugins/live_recipes.py), each its own title.
     lines = (REPO / "justfile").read_text().splitlines()
-    start = next(n for n, line in enumerate(lines) if line.startswith("deploy "))
-    end = next(n for n in range(start + 1, len(lines)) if lines[n] and not lines[n].startswith(" "))
-    assert all(start < n < end for n, line in enumerate(lines) if "CLAUDE_ON_PROXMOX_LIVE" in line)
+    recipe, naming = None, set()
+    for line in lines:
+        if line and not line.startswith((" ", "#", "[")) and ":" in line and not line.startswith(("set ", "alias ")):
+            recipe = line.split()[0].rstrip(":")
+        if "CLAUDE_ON_PROXMOX_LIVE" in line:
+            naming.add(recipe)
+    assert naming <= set(_recipes().RECIPES), naming
+    assert {"deploy", "login"} <= naming, naming
+
+
+def _recipes():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "test_live_recipes_module", REPO / "filter_plugins" / "live_recipes.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 RAISED = """

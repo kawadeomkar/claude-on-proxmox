@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 2099 tests. By file:
+pytest over `tests/unit/`: 2106 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -52,7 +52,7 @@ pytest over `tests/unit/`: 2099 tests. By file:
   reading status's and deploy's streams the same cut anywhere. Every test that runs something at a terminal opens
   it through `harness._at_a_pseudo_terminal`, and every live test through `tests/unit/live_kit.py`, which gives
   each run a `HOME` of its own.
-- **`just deploy`'s live output** (`test_run_view.py` 96, `test_deploy_live.py` 17): the model, fed
+- **`just deploy`'s live output** (`test_run_view.py` 98, `test_deploy_live.py` 17, `test_login_live.py` 3): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
   report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
@@ -69,7 +69,10 @@ pytest over `tests/unit/`: 2099 tests. By file:
   failure a rescue takes through an import or include dim, and one a rescue filtered out by `--tags` said; a
   failure raised again drawn under its cause, a report's lines kept, NEXT STEPS wrapped by its words;
   the log every line the stream logs, in order; a line per step through a pipe; `-v`, no variable and no log
-  streamed; and no other tracked file naming the variable.
+  streamed; and no other tracked file naming the variable. `test_login_live.py` runs the real `login.yml` the same
+  way against `test_sign_in_plays.py`'s stand-in VMs and fake GitHub: each failure under the sign-in it happened
+  in, the raise naming none, the `SIGN-INS` table's marks, the head naming the VMs that failed, and the region
+  gone.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`

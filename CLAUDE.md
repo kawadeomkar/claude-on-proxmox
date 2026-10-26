@@ -393,7 +393,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `harness._at_a_pseudo_terminal`. See docs/architecture/custom-code.md §7.8.
 
 - **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
-  which only the deploy recipe exports (the run's title) and the callback takes out of its environment at once,
+  which only the recipes drawn live export - `deploy`, `login` - (the run's title) and the engine takes out of its
+  environment at once,
   so nothing the run starts inherits it, hands the stdout callback's every event to the engine at verbosity 0 with
   a run log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
   Every line the stream would print still reaches the run log, in order, through `Display`'s `log_only` - so
@@ -401,7 +402,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   print above the region for good, whole - a report is wrapped, never cut, a failure says its output's end and
   each failed loop item, and only a failure among a rescued block's own tasks - at any depth, through imports and
   includes too - is the block's. What a VM said reaches the screen through `plain_text`, and only `proxmox_vm`
-  gives the summary a VM's address. Any `-v` or another stdout callback is the stream. No test or scenario sets
+  gives the summary a VM's address - or, for a recipe whose declaration names discovery (`login`), the address and
+  VM ID discovery's `add_host` read from Proxmox and the guest agent, and nothing else of it. Any `-v` or another
+  stdout callback is the stream. No test or scenario sets
   the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against a stand-in deploy,
   holds the log to the stream's, and fails if a tracked file other than the callback, the engine
   (`filter_plugins/live_ansible.py`), the declarations (`filter_plugins/live_recipes.py`), the deploy recipe, the

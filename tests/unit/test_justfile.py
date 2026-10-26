@@ -642,11 +642,13 @@ def test_deploy_without_options_runs_deploy_yml_with_the_no_terminal_switch(tmp_
         (["deploy", "--only", "configure"], "deploy --only configure"),
         (["deploy", "alpha", "--tags", "claude_code,tailscale"], "deploy --tags claude_code,tailscale alpha"),
         (["deploy", "alpha", "--start"], "deploy --start alpha"),
-        (["login", "alpha"], "unset"),
+        (["login"], "login"),
+        (["login", "alpha", "beta"], "login alpha beta"),
+        (["login", "alpha", "--only", "github"], "login --only github alpha"),
         (["list"], "unset"),
     ],
 )
-def test_deploy_and_only_deploy_is_drawn_live_under_what_was_run(tmp_path: Path, args: list[str], title: str) -> None:
+def test_each_recipe_drawn_live_is_drawn_under_what_was_run(tmp_path: Path, args: list[str], title: str) -> None:
     # The live output's switch and its title (callback_plugins/claude_on_proxmox.py), as the playbook sees it.
     seen = tmp_path / "live"
     body = f'printf "%s\\n" "${{CLAUDE_ON_PROXMOX_LIVE-unset}}" > "{seen}"'

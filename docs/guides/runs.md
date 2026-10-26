@@ -74,8 +74,11 @@ SLOWEST  Install Node.js 48 s · Wait for the guest agent 45 s
 122 tasks · 46 changed · 0 failed · 58 s of it yours · log .logs/20261025-182200-deploy.log
 ```
 
-Every form of `just deploy` is drawn - `--only`, `--tags` and `--check` too - and only `just deploy`: the
-other recipes print as before. Without a terminal - output piped into a file, CI - it prints a line as each
+Every form of `just deploy` is drawn - `--only`, `--tags` and `--check` too - and so is `just login`, as deploy's
+sign-ins on their own: a row for each of Claude, GitHub and Tailscale, each VM's state on it (`alpha ✓ · beta ✗
+· gamma ○`) and whose turn it is (`alpha ⠴ (1 of 3)`), the footer counting the sign-ins; at the end, a `SIGN-INS`
+table of each VM's outcome, and what failed said under the sign-in it failed in. The other recipes print as
+before. Without a terminal - output piped into a file, CI - it prints a line as each
 step ends, the reports, and the summary. For the stream as before, give any `-v` (`just ANSIBLE_ARGS=-v
 deploy alpha`) or put `ANSIBLE_STDOUT_CALLBACK=default` in front; a run without a log (`LOG_DIR=`) streams too,
 since the log is where the stream would go. Either way the run log keeps the whole stream: every task as
