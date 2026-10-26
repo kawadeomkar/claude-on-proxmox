@@ -63,6 +63,22 @@ REPORTS = {
     "roles/github_projects/tasks/clone.yml": ["clone | Say that an organisation gives no git identity"],
     "roles/tailscale/tasks/login.yml": ["login | Say why there is nothing to sign in"],
     "roles/tailscale/tasks/report.yml": ["report | Say how this VM is on Tailscale"],
+    "playbooks/claude_login.yml": [
+        "Say which VM could not be reached",
+        "Say why, and go on with the next VM",
+        "Say why",
+    ],
+    "playbooks/github_login.yml": [
+        "Say which VM could not be reached",
+        "Say why GitHub's sign-in was not started",
+        "Say why, and go on with the next VM",
+        "Say why",
+    ],
+    "playbooks/tailscale_login.yml": [
+        "Say which VM could not be reached",
+        "Say why Tailscale's sign-in was not started",
+        "Say why, and go on with the next VM",
+    ],
     "playbooks/code.yml": ["Say how to open each VM", "Say what was opened", "Say how to open the VM later"],
     "playbooks/provision.yml": ["Show each VM and the address it was given"],
     "playbooks/destroy.yml": [
@@ -386,5 +402,5 @@ def test_every_report_is_followed_by_its_record_under_one_of_the_five_names():
         for task in _tasks(path)
         if "ansible.builtin.set_stats" in task
     ]
-    assert len(stats) == sum(len(names) for names in REPORTS.values()) == 18
+    assert len(stats) == sum(len(names) for names in REPORTS.values()) == 28
     assert all(len(stat["data"]) == 1 and next(iter(stat["data"])) in _callback.NEXT_STATS for stat in stats), stats
