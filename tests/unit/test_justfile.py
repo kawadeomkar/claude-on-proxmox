@@ -41,6 +41,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from harness import _default_signals
 
 REPO = Path(__file__).resolve().parents[2]
 JUSTFILE = REPO / "justfile"
@@ -1097,6 +1098,8 @@ def _interrupted(started: Path, *command: str) -> tuple[int, str]:
             stderr=subprocess.STDOUT,
             text=True,
             start_new_session=True,
+            # SIGINT not ignored, whatever started the suite.
+            preexec_fn=_default_signals,  # noqa: PLW1509 - nothing else runs threads here
         )
         deadline = time.monotonic() + 30
         while not started.exists() and time.monotonic() < deadline:
@@ -1127,14 +1130,17 @@ def test_ctrl_c_that_the_playbook_survives_ends_the_run_well(tmp_path: Path, con
 def test_without_continue_just_ends_a_run_the_playbook_survived(tmp_path: Path) -> None:
     # The control for the test above: [continue] is what makes it pass. Without it just exits 130 for the
     # Ctrl-C though the playbook caught it and finished, as Ansible's pause, Ctrl-C then C, does. Should a
-    # newer just stop doing so, this fails, and [continue] can go.
+    # newer just stop doing so, this fails, and [continue] can go. The child ignores the signal and lives a second
+    # on: a child that ended with it, within a millisecond, raced just's own reading of the signal, which a
+    # loaded machine lost, and just exited 0.
     started = tmp_path / "started"
     (tmp_path / "justfile").write_text(
         "set script-interpreter := ['bash', '-eu']\n"
         "\n"
         "[script]\n"
         "run:\n"
-        f'    exec bash -c \'trap "echo caught" INT; touch "{started}"; sleep 3; echo finished\'\n'
+        '    exec bash -c \'trap "echo caught" INT; '
+        f'( trap "" INT; touch "{started}"; exec sleep 1 ); echo finished\'\n'
     )
     returncode, output = _interrupted(started, "--justfile", str(tmp_path / "justfile"), "run")
     assert "caught" in output and "finished" in output, output
@@ -1897,6 +1903,13 @@ def test_test_runs_lint_and_every_test_or_the_parts_named(tmp_path: Path, args: 
     molecule = _molecule(tmp_path)
     for part in ("role", "integration", "provision"):
         assert bool(molecule[part]) == (part in runs), (part, molecule)
+
+
+def test_unit_runs_the_unit_tests_on_a_worker_per_cpu(tmp_path: Path) -> None:
+    # pytest-xdist's loadgroup, so that conftest.py keeps each module that shares a fixture on one worker.
+    result = _just("test", "unit", settings=_testing(tmp_path))
+    assert result.returncode == 0, _output(result)
+    assert _runs(tmp_path, "pytest") == [["tests/unit", "-n", "auto", "--dist", "loadgroup"]]
 
 
 @pytest.mark.parametrize(

@@ -320,12 +320,47 @@ def _run(
     return report
 
 
+# What a Ctrl-C a test sends must reach. A process starts with the signals its
+# parent ignored still ignored, and a job a shell without job control starts with
+# `&` - under nohup, a CI step's background command, a script - starts with
+# SIGINT and SIGQUIT ignored, nohup adding SIGHUP: a run of the suite started so
+# sat through every Ctrl-C a test sent, and the device-flow test hung for good.
+INTERRUPTS = (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP)
+
+
+def _default_signals() -> None:
+    """In a child, before it starts: the interrupts back to their defaults, whatever the run's launcher ignored."""
+    for signum in INTERRUPTS:
+        signal.signal(signum, signal.SIG_DFL)
+
+
+def _drain(master: int) -> bytes:
+    """What a pseudo-terminal still holds once its process has ended: read until the terminal says it is closed.
+
+    Linux passes a terminal's output to its reader through a buffer it empties asynchronously, so on a loaded
+    machine the last bytes a run wrote - a live region's erase, a final message - can arrive after the run has
+    exited, and a reader that stopped at the first read that found nothing missed them. Two quiet seconds end it
+    too, should something the run started still hold the terminal open.
+    """
+    data = b""
+    while select.select([master], [], [], 2)[0]:
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:  # Linux, once every holder of the other end has closed it and nothing is left
+            break
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
 def _take_the_terminal() -> None:
-    """In the child: a session of its own, with its stdin as the controlling terminal.
+    """In the child: a session of its own, with its stdin as the controlling terminal, and the interrupts live.
 
     pause reads only from the foreground process group of a terminal, which a
     session leader's group is once the terminal is its controlling one.
     """
+    _default_signals()
     os.setsid()
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
@@ -389,6 +424,10 @@ def _at_a_pseudo_terminal(
                     break
                 output += chunk
             elif process.poll() is not None:
+                rest = _drain(master)
+                output += rest
+                if act is not None and rest:
+                    act(rest, output, master, process)
                 break
             if act is not None:
                 act(chunk, output, master, process)

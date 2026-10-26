@@ -8,7 +8,7 @@ What the suite runs, and how to run it. How it is built - the harness, each scen
 just lint                     # every linter: the lock, yamllint, ansible-lint (production), ruff, --syntax-check, the other pre-commit hooks
 just lint syntax              # one of them: lock, yaml, ansible, python, syntax or hooks
 just test                     # just lint, then everything below but the last two: the local quality gate
-just test unit                # pytest: filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the three sign-ins and deploy's sign-in steps, Tailscale, the managed SSH config, the Claude terminal, the justfile's guards, the wiki (no network)
+just test unit                # pytest, a worker per CPU (plain pytest: one test at a time): filters, github_repos module, the tracked-file guard, configure tags, Remote Control, the three sign-ins and deploy's sign-in steps, Tailscale, the managed SSH config, the Claude terminal, the justfile's guards, the wiki (no network)
 just test molecule            # every Molecule (Docker) scenario: the three below
 just test role                # each role's scenario, incl. idempotence; --role common,dev_tools for some of them
 just test integration         # playbooks/configure.yml end to end in a container

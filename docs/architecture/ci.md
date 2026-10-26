@@ -5,7 +5,7 @@
 
 | Job | Contents |
 |---|---|
-| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → `just test unit` → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
+| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → `just test unit`, four workers (`PYTEST_XDIST_AUTO_NUM_WORKERS`, so it never depends on psutil) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
 | `dependency-review` | PRs only, fails on moderate severity |
 | `molecule` | matrix over all eight roles, `just test --role <role>`, `needs: lint` |
 | `playbooks` | matrix over the `configure` and `provision` scenarios, `just test integration` and `provision`, `needs: lint` |

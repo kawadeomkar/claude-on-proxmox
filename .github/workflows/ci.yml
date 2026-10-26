@@ -30,9 +30,9 @@ jobs:
   lint:
     name: Lint and unit tests
     runs-on: ubuntu-latest
-    # The unit suite runs real playbooks: about 15 minutes on a laptop, and
-    # 27 on a hosted runner before just init's questions and checks came in,
-    # whose tests each run one, many at a pseudo-terminal.
+    # The unit suite runs real playbooks: 44 minutes on a hosted runner one test
+    # at a time, 16-22 on its four vCPUs (two cores, two threads each) with a
+    # worker on each, depending on the CPU the runner lands on.
     timeout-minutes: 60
     env:
       # v8.30.0, the same release .pre-commit-config.yaml pins.
@@ -71,6 +71,10 @@ jobs:
 
       - name: Unit tests
         run: just test unit
+        env:
+          # A worker per vCPU, said here: -n auto counts logical CPUs only while
+          # psutil is not installed, and physical cores once it is - two here.
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
 
       # The files as the change leaves them. On its own this misses a token
       # committed in one commit and deleted in the next, which is gone from
