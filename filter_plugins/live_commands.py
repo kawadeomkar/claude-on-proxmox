@@ -68,8 +68,11 @@ ANSIBLE_INTERRUPTED = 99
 SHELLS = frozenset({"bash", "sh", "zsh", "dash"})
 # A line a part that passed may still need read: a warning, said above once the region is gone.
 WARNING = re.compile(r"\bwarn(ing)?s?\b", re.IGNORECASE)
-# A warning a check gives every time, which nobody can act on: a syntax check's plays target groups only a run fills.
-ROUTINE = re.compile(r"Could not match supplied host pattern")
+# What a check says of warnings every time, which nobody can act on: a syntax check's plays target groups only a run
+# fills; ansible-lint runs offline as its config asks, says how to turn deprecations off, and counts "0 warning(s)".
+ROUTINE = re.compile(
+    r"Could not match supplied host pattern|running in offline mode|Deprecation warnings can be disabled|\b0 warning"
+)
 # How long the state of a run that never said its end - a shell that died of a signal - is kept.
 STALE_SECONDS = 24 * 3600
 
