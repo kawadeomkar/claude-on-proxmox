@@ -135,6 +135,26 @@ def _callback():
     return sys.modules[name]
 
 
+def next_steps_lines(next_steps, room):
+    """NEXT STEPS' lines, each wrapped by its words to room, so a command or a URL is never split; a line wrapped goes
+    on two further in. A record of several lines keeps each of its own - just init's problems, each indented under the
+    line that counts them - and a paragraph its template broke mid-sentence reads as one: a line that is not indented
+    goes on from one that ends with no stop."""
+    wrapped = []
+    for record in next_steps:
+        lines = []
+        for part in record.split("\n"):
+            if lines and part and not part.startswith(" ") and not re.search(r"[.:!?]$", lines[-1].rstrip()):
+                lines[-1] = f"{lines[-1].rstrip()} {part.strip()}"
+            else:
+                lines.append(part)
+        for number, line in enumerate(lines):
+            indent = " " * (len(line) - len(line.lstrip(" ")) if number else 0)
+            pieces = screen.fill(line.strip(), room - len(indent)) or [""]
+            wrapped += [indent + pieces[0], *(f"{indent}  {piece}" for piece in pieces[1:])]
+    return wrapped
+
+
 def say_end(out, display, run, now, failed_hosts, next_steps, width):
     """The summary and NEXT STEPS, as every drawn run ends: above where the region was, NEXT STEPS wrapped by its
     words to its block's width, so a command or a URL is never split."""
@@ -142,15 +162,7 @@ def say_end(out, display, run, now, failed_hosts, next_steps, width):
     plain = run.summary(now, width, False, failed_hosts=failed_hosts, next_steps=next_steps)
     out.print([("", ""), *zip(summary, plain, strict=True)])
     if next_steps:
-        room = min(80, width) - 2
-        wrapped = []
-        for line in next_steps:
-            # A record of several lines - just init's problems, each under the one that counts them - keeps each, with
-            # its indent; a line wrapped goes on two further in.
-            for number, part in enumerate(line.split("\n")):
-                indent = " " * (len(part) - len(part.lstrip(" ")) if number else 0)
-                pieces = screen.fill(part.strip(), room - len(indent)) or [""]
-                wrapped += [indent + pieces[0], *(f"{indent}  {piece}" for piece in pieces[1:])]
+        wrapped = next_steps_lines(next_steps, min(80, width) - 2)
         with out.say():
             display.display(text.banner(wrapped, "NEXT STEPS"), color=_callback().COLOR)
 

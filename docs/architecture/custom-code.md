@@ -586,7 +586,8 @@ is drawn as one run, its parts in turn:
   not the commands. Its state's name carries its shell's PID, so two runs started in one second keep two. The
   syntax check is one command over every playbook, each said as it starts.
 - **NEXT STEPS** is wrapped by its words, and a record of several lines - just init's problems, each under the line
-  that counts them - keeps each line, with its indent.
+  that counts them - keeps each line, with its indent; a paragraph its template broke mid-sentence reads as one (a
+  line that is not indented goes on from one that ends with no stop).
 - **Nested recipes.** A recipe in parts that runs another runs it as `{{ self }} live_run=<its name> <recipe>`: that
   one exports no title or state of its own, sets no trap and takes the parent's, so its parts are a stage of the
   parent's run. `live_run` is a just setting, which `self` passes on, never the environment, so a variable left
