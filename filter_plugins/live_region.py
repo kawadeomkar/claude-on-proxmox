@@ -122,7 +122,9 @@ class LiveRegion:
             if rows < MIN_ROWS or cols < MIN_COLS:
                 lines = []
             limit = rows - 1
-            if len(lines) > limit:
+            # A frame taller than the screen keeps its top and its last line; a screen too small has none at all -
+            # a terminal that reports 0 rows, a pseudo-terminal nobody gave a size, among them.
+            if lines and len(lines) > limit:
                 lines = lines[: limit - 2] + [self._more.format(len(lines) - limit + 1)[: cols - 1], lines[-1]]
             up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
             self._write(SYNC_ON + up + "\r" + "\x1b[K\n".join(lines) + "\x1b[K\x1b[J" + SYNC_OFF)
