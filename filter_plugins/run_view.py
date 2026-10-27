@@ -88,6 +88,7 @@ RANK = {
     "left": 1,
     "declined": 1,
     "raised": 5,
+    "stopped": 4,
     "failed": 5,
     "unreachable": 5,
 }
@@ -838,6 +839,7 @@ class Run:
             "first_failure": self.first_failure,
             "prompted": self.prompted + ((now - self.prompting) if self.prompting is not None else 0.0),
             "reached_last": self.reached_last,
+            "best": [[list(key) if isinstance(key, tuple) else key, value] for key, value in self.best.items()],
             "next_records": next_records or {},
             "failed_hosts": sorted(set(failed_hosts)),
         }
@@ -891,6 +893,9 @@ class Run:
         self.first_failure = state["first_failure"]
         self.prompted = float(state["prompted"])
         self.reached_last = bool(state["reached_last"])
+        # No bar and no percentage falls from one part to the next either.
+        best = state.get("best") or []
+        self.best = {tuple(key) if isinstance(key, list) else key: float(value) for key, value in best}
         self.names = self.names or list(state["names"])
 
     # --- where it is ------------------------------------------------------------------------------------------
@@ -1112,8 +1117,9 @@ class Run:
                     "raised": ("↑", "d"),
                     "ignored": ("↺", "d"),
                     "included": ("↳", "d"),
+                    "stopped": ("■", "y"),
                 }.get(task.outcome, ("✓", "g"))
-                dim = ("rescued", "lost", "raised", "ignored", "included")
+                dim = ("rescued", "lost", "raised", "ignored", "included", "stopped")
                 name = [(task.name, "d" if task.outcome in dim else "")]
                 tail = [*vm, (screen.duration(task.seconds(now)), "d")]
             room = width_ - 2 - screen.width(tail) - 2
@@ -1264,8 +1270,15 @@ class Run:
         return f"{self.title} · {where} {percent}%"
 
     # --- output that is not a terminal --------------------------------------------------------------------------
-    def ended_lines(self, now):
-        """A line for each step and stage that has ended since the last call, for output that is not a terminal."""
+    def ended_lines(self, now, final=False):
+        """A line for each step and stage that has ended since the last call, for output that is not a terminal;
+        final, at a part's end, its running step and stage too."""
+        if final:
+            current, self.current = self.current, None
+            try:
+                return self.ended_lines(now)
+            finally:
+                self.current = current
         out = []
         for stage in self.stages.values():
             if not stage.tasks or self._quiet(stage):
@@ -1286,7 +1299,8 @@ class Run:
         return out
 
     def _ended(self, label, step, now):
-        mark = "✗" if step.failed() else "–" if step.skipped() else "✓"
+        stopped = any(task.outcome == "stopped" for task in step.tasks)
+        mark = "✗" if step.failed() else "■" if stopped else "–" if step.skipped() else "✓"
         said = [screen.plural(step.reached, "task")]
         if step.changed():
             said.append(self._changed_said(step.changed()))
@@ -1366,7 +1380,10 @@ class Run:
             said_head += "    VMS"
         lines.append([(said_head, "h")])
         for key, part in rows:
-            mark, style = ("✗", "r") if part.failed() else ("–", "d") if part.skipped() else ("✓", "g")
+            stopped = any(task.outcome == "stopped" for task in part.tasks)
+            mark, style = (
+                ("✗", "r") if part.failed() else ("■", "y") if stopped else ("–", "d") if part.skipped() else ("✓", "g")
+            )
             head = [(" ", ""), (mark + " ", style), (str(key)[:label].ljust(label), "b")]
             counts = f"{screen.duration(part.seconds(now)):>6}" if "time" in columns else ""
             counts += f"{part.reached:>9}" if "tasks" in columns else ""

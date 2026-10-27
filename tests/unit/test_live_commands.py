@@ -15,6 +15,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 
 import live_kit as kit
 import pytest
@@ -25,7 +26,7 @@ STAMP = "20261026-131050"
 # A recipe in parts, as the justfile writes one: the trap at its top, each command behind tools/live.
 RECIPE = """#!/bin/bash
 set -eu
-live() {{ "{python}" "{live}" --log-dir "{logs}" --stamp {stamp} --ansible-args "${{ARGS:-}}" "$@"; }}
+live() {{ "{python}" "{live}" --log-dir="{logs}" --stamp={stamp} --ansible-args="${{ARGS:-}}" "$@"; }}
 live_end() {{ live end "$1"; }}
 trap 'live_end $?' EXIT
 {parts}
@@ -69,7 +70,7 @@ def test_a_command_passed_through_is_exactly_what_it_printed_and_never_sees_the_
 
 @pytest.mark.parametrize(
     ("why", "env"),
-    [("no title", {"CLAUDE_ON_PROXMOX_LIVE": ""}), ("a -v", {"ARGS": "-f 30 -vv"})],
+    [("no title", {"CLAUDE_ON_PROXMOX_LIVE": ""}), ("a -v", {"ARGS": "-f 30 -vv"}), ("a bare -vvv", {"ARGS": "-vvv"})],
 )
 def test_at_a_terminal_a_part_is_passed_through_without_a_title_or_with_a_v(tmp_path, why, env):
     argv, environment, state = _recipe(tmp_path, [_part("says", SAYS)])
@@ -189,3 +190,53 @@ def test_a_playbook_is_a_part_too_and_its_next_steps_wait_for_the_end(tmp_path):
     assert screen.index("claude-on-proxmox  lint · done in") < screen.index("##  NEXT STEPS")
     assert "says" in screen.split("claude-on-proxmox  lint · done in", 1)[1]
     assert stat.S_IMODE(os.stat(tmp_path).st_mode) and not state.exists()
+
+
+def test_a_second_ctrl_c_ends_a_part_whose_childs_group_will_not(tmp_path):
+    # The child ends at the first Ctrl-C, which the part sends its group; a grandchild that ignores it still holds
+    # the pipe, until the second ends the whole group.
+    holds = (
+        "import signal, subprocess, sys; print('waiting', flush=True); "
+        "subprocess.Popen(['sh', '-c', 'trap \\\"\\\" INT; sleep 60']); "
+        "signal.signal(signal.SIGINT, lambda *_: sys.exit(130)); signal.pause()"
+    )
+    argv, environment, state = _recipe(tmp_path, [_part("holds", holds)])
+    sent = []
+
+    def interrupt(chunk, output, master, process, screen):
+        if b"waiting" in output and len(sent) < 2 and time.monotonic() - (sent[-1] if sent else 0) > 1:
+            os.write(master, b"\x03")
+            sent.append(time.monotonic())
+
+    started = time.monotonic()
+    ran = kit.at_a_terminal(argv, tmp_path, environment, act=interrupt, timeout=60)
+    assert ran.rc == 130 and time.monotonic() - started < 30, ran.text
+    assert re.search(r"lint · stopped after", ran.transcript), ran.transcript
+
+
+def test_a_part_that_passed_with_warnings_says_them_above(tmp_path):
+    warns = "print('checked 3 files'); print('WARNING  2 rules were skipped'); print('done')"
+    argv, environment, state = _recipe(tmp_path, [_part("warns", warns)])
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
+    assert ran.rc == 0, ran.text
+    assert re.search(r"^! warns: python\S* passed with warnings$", ran.transcript, re.M), ran.transcript
+    assert "    WARNING  2 rules were skipped" in ran.transcript and "checked 3 files" not in ran.transcript
+
+
+def test_a_command_is_named_by_its_program_past_env(tmp_path):
+    named = _part("named", SAYS).replace("-- ", "-- env NO_PROMPT=1 ", 1)
+    # A shell running the command names nothing: the step does.
+    shelled = _part("fails", FAILS).replace("-- ", '-- bash -c \'exec "$0" "$@"\' ', 1)
+    argv, environment, state = _recipe(tmp_path, [named, shelled])
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
+    table = ran.transcript.split("TIME", 1)[1].split("\n\n", 1)[0]
+    assert "env" not in table and "SLOWEST  env" not in ran.transcript, table
+    assert re.search(r"^✗ fails: fails \(", ran.transcript, re.M), ran.transcript
+
+
+def test_a_playbook_part_ctrl_c_stopped_is_said_stopped(tmp_path):
+    # ansible-playbook exits 99 after Ctrl-C: the run stopped, it did not fail.
+    argv, environment, state = _recipe(tmp_path, [_part("says", SAYS), "exit 99"])
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
+    assert ran.rc == 99, ran.text
+    assert re.search(r"^claude-on-proxmox  lint · stopped after \d+ s at says", ran.transcript, re.M), ran.transcript
