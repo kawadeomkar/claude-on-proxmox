@@ -1,7 +1,7 @@
 """A run in parts, and a command drawn live: what tools/live does once it has decided a command is drawn.
 
-Some recipes are more than one process - just lint runs a check after another, just init two playbooks, just test lint,
-pytest and Molecule - and each is drawn as one run (docs/architecture/custom-code.md §7.8):
+Some recipes are more than one process - lint's checks one after another, init's two playbooks, test's lint, pytest
+and Molecule - and each is drawn as one run (docs/architecture/custom-code.md §7.8):
 
 - The state. Each part takes over the run's model from the parts before it - every task, step, report and record, as
   run_view.Run.dump keeps it - draws them as done, works, and saves it for the next. It is a file in LIVE_DIR named
