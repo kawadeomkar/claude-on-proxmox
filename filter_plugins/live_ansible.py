@@ -20,6 +20,7 @@ Loaded by path as claude_on_proxmox_live_ansible, as every module here loads ano
 from __future__ import annotations
 
 import atexit
+import contextlib
 import importlib.util
 import ipaddress
 import json
@@ -404,6 +405,25 @@ class Engine:
             # Registered after the region's own, so it runs first: a run that ends without its stats, at Ctrl-C,
             # does not leave the tab saying it is still at work.
             atexit.register(self._stopped_title)
+        if self.state:
+            # A part that ends without its stats - Ctrl-C, after which ansible-playbook exits 99 - still saves what it
+            # did, said stopped, for the run's end.
+            atexit.register(self._save_stopped)
+
+    def _save_stopped(self):
+        if self.saved or self.run is None:
+            return
+        now = self._now()
+        with self.display._lock:
+            if self.run.current is not None and self.run.current.end is None:
+                for host, entry in self.run.current.hosts.items():
+                    if entry[1] is None:
+                        self.run.current.host_end(host, "stopped", now)
+            state = self.run.dump(now, self.records, self.failed_hosts)
+        state["stopped"] = True
+        with contextlib.suppress(OSError):
+            commands.save_state(self.state, state)
+        self.saved = True
 
     def _stopped_title(self):
         # A part that saved its state is no stopped run: the next part, or the run's end, goes on with the title.
@@ -785,6 +805,10 @@ class Engine:
         now = self._now()
         failed = sorted(set(stats.failures) | set(stats.dark))
         if self.state:
+            if self.mode == "lines":
+                with self.display._lock:
+                    ended = self.run.ended_lines(now, final=True)
+                self.print([(line, line) for line in ended])
             self.out.finish()
             recap(stats)
             records = commands.merged_records(self.records, self._next_records(stats))

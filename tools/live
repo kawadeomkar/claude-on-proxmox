@@ -21,12 +21,20 @@ removes it; without one it says nothing (docs/architecture/custom-code.md §7.8)
 
 from __future__ import annotations
 
-import argparse
-import importlib.util
-import os
-import re
-import sys
-from pathlib import Path
+import signal
+
+# Ctrl-C from the first moment, never the default that would end this part before it could say so: a part already
+# interrupted runs nothing and says it stopped. Ignored only across the re-run through tools/run-logged, which takes it
+# again at once, and the default again for a command passed through, which takes it as it always did.
+INTERRUPTED = []
+signal.signal(signal.SIGINT, lambda *_: INTERRUPTED.append(1))
+
+import argparse  # noqa: E402 - after the handler
+import importlib.util  # noqa: E402
+import os  # noqa: E402
+import re  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 LIVE_ENV = "CLAUDE_ON_PROXMOX_LIVE"
@@ -94,6 +102,7 @@ def _passed_through(args):
     """The command as it ran before: the run's switch, state and stages out of its environment, nothing else changed
     - through tools/run-logged, with the run's logging settings, where it was logged so before (--log)."""
     env = {name: value for name, value in os.environ.items() if name not in RUN_ENV}
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
     argv = args.argv
     if args.log:
         env.update(LOG_DIR=args.log_dir, LOG_RETENTION_DAYS=args.retention, CLAUDE_ON_PROXMOX_LOG_STAMP=args.stamp)
@@ -111,6 +120,7 @@ def _logged(args, argv):
     env.update(LOG_DIR=args.log_dir, LOG_RETENTION_DAYS=args.retention, CLAUDE_ON_PROXMOX_LOG_STAMP=args.stamp)
     run_logged = str(REPO / "tools" / "run-logged")
     name = args.log or _title().split()[0]
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     os.execve(run_logged, [run_logged, name, sys.executable, str(Path(__file__).resolve()), LOGGED, *argv], env)
 
 
@@ -135,6 +145,8 @@ def main(argv):
         _engine().end(_title(), state, args.status)
         return 0
     if not args.logged:
+        if INTERRUPTED:
+            return 130
         if not _drawn(args):
             return _passed_through(args)
         rest = ["run", args.stage, *(["--step", args.step] if args.step else []), "--read", args.read]
@@ -142,7 +154,8 @@ def main(argv):
         return _logged(args, [*rest, *args.argv])
     stages = [label for label in os.environ.get(STAGES_ENV, "").split() if LABEL.match(label)]
     engine = _engine()
-    return engine.run(_title(), args.stage, args.step or None, args.argv, state, args.plan.split(), args.read, stages)
+    plan, interrupted = args.plan.split(), bool(INTERRUPTED)
+    return engine.run(_title(), args.stage, args.step or None, args.argv, state, plan, args.read, stages, interrupted)
 
 
 if __name__ == "__main__":

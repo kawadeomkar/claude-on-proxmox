@@ -88,6 +88,7 @@ RANK = {
     "left": 1,
     "declined": 1,
     "raised": 5,
+    "stopped": 4,
     "failed": 5,
     "unreachable": 5,
 }
@@ -281,6 +282,7 @@ class Step:
         self.included = 0
         self.extra = 0
         self.tasks = []
+        self.planned = False  # listed by a run in parts before any part reached it: how many tasks it has is unknown
 
     def expect(self, task_key, times=1):
         self.static[task_key] = times
@@ -309,7 +311,9 @@ class Step:
 
     @property
     def expected(self):
-        return max(sum(self.static.values()) + self.included + self.extra, len(self.tasks))
+        # A step a run in parts has only listed is one task until a part reaches it.
+        listed = 1 if self.planned and not self.tasks else 0
+        return max(sum(self.static.values()) + self.included + self.extra, len(self.tasks), listed)
 
     @property
     def reached(self):
@@ -371,6 +375,7 @@ class Stage:
     def __init__(self, key):
         self.key = key
         self.steps = OrderedDict()
+        self.planned = False  # listed by a run in parts before any part reached it: how many tasks it has is unknown
 
     def step(self, key):
         if key not in self.steps:
@@ -383,7 +388,9 @@ class Stage:
 
     @property
     def expected(self):
-        return sum(step.expected for step in self.steps.values())
+        # A stage a run in parts has only listed is one task until a part reaches it.
+        listed = 1 if self.planned and not self.tasks else 0
+        return max(sum(step.expected for step in self.steps.values()), listed)
 
     @property
     def reached(self):
@@ -684,6 +691,27 @@ class Run:
                 note.matters.add((vm, matter))
                 return
 
+    def _ran_steps(self):
+        """The steps a run reached: a run whose steps are commands counts them, not the commands - lint's python is
+        two."""
+        return [
+            step
+            for stage in self.stages.values()
+            for key, step in stage.steps.items()
+            if key is not None and step.tasks
+        ]
+
+    def unrun(self):
+        """The steps a run in parts listed and never reached: a run that ended with none failing but these left was
+        stopped between its parts."""
+        steps = [
+            step.key
+            for stage in self.stages.values()
+            for step in stage.steps.values()
+            if step.planned and not step.tasks
+        ]
+        return steps + [stage.key for stage in self.stages.values() if stage.planned and not stage.tasks]
+
     def _vms(self):
         """The run's VMs: those it was given, then those it learned of, then every host it touched but this one."""
         hosts = [*self.names]
@@ -770,14 +798,18 @@ class Run:
         self.stopped = stopped
 
     def planned_stages(self, stages):
-        """The stages a run in parts will run, in order: each listed to come until a part reaches it."""
-        for stage in stages:
-            self._stage(stage)
+        """The stages a run in parts will run, in order: each listed to come until a part reaches it, and counted as
+        one task till then."""
+        for key in stages:
+            stage = self._stage(key)
+            stage.planned = stage.planned or not stage.tasks
 
     def planned(self, stage, steps):
-        """The steps of stage a run in parts will run, in order: each listed to come until a part reaches it."""
+        """The steps of stage a run in parts will run, in order: each listed to come until a part reaches it, and
+        counted as one task till then, so that no percentage reads whole while one is still to come."""
         for step in steps:
-            self._stage(stage).step(step)
+            planned = self._stage(stage).step(step)
+            planned.planned = planned.planned or not planned.tasks
 
     def part(self, stage, step):
         """A part of a run whose reader makes its tasks - pytest's tests, Molecule's actions - in stage's step."""
@@ -859,10 +891,12 @@ class Run:
             "stages": [
                 {
                     "key": stage.key,
+                    "planned": stage.planned,
                     "steps": [
                         {
                             "key": step.key,
-                            "expected": step.expected,
+                            "expected": step.expected if step.tasks or not step.planned else 0,
+                            "planned": step.planned,
                             "raised_on": sorted(step.raised_on),
                             "tasks": [index[id(task)] for task in step.tasks],
                         }
@@ -892,6 +926,7 @@ class Run:
             "first_failure": self.first_failure,
             "prompted": self.prompted + ((now - self.prompting) if self.prompting is not None else 0.0),
             "reached_last": self.reached_last,
+            "best": [[list(key) if isinstance(key, tuple) else key, value] for key, value in self.best.items()],
             "next_records": next_records or {},
             "failed_hosts": sorted(set(failed_hosts)),
             "checklists": [[stage, [list(item) for item in items]] for stage, items in self.checklists.items()],
@@ -924,11 +959,13 @@ class Run:
             tasks.append(task)
         for saved in state["stages"]:
             stage = self._stage(saved["key"])
+            stage.planned = bool(saved.get("planned"))
             for saved_step in saved["steps"]:
                 step = stage.step(saved_step["key"])
                 step.tasks = [tasks[n] for n in saved_step["tasks"]]
                 # Counted as it was: what a later task of the same step reaches is counted beyond it.
                 step.extra = int(saved_step["expected"])
+                step.planned = bool(saved_step.get("planned"))
                 step.raised_on = set(saved_step["raised_on"])
         self.order = tasks
         for saved in state["notes"]:
@@ -946,6 +983,9 @@ class Run:
         self.first_failure = state["first_failure"]
         self.prompted = float(state["prompted"])
         self.reached_last = bool(state["reached_last"])
+        # No bar and no percentage falls from one part to the next either.
+        best = state.get("best") or []
+        self.best = {tuple(key) if isinstance(key, list) else key: float(value) for key, value in best}
         self.names = self.names or list(state["names"])
         self.checklists = OrderedDict((stage, [tuple(item) for item in items]) for stage, items in state["checklists"])
 
@@ -1118,7 +1158,8 @@ class Run:
         if step.failed() and state != "to come":
             glyph, style = "✗", "r"
         if state == "to come":
-            count = screen.plural(step.expected, "task") if step.expected else ""
+            known = step.expected and not getattr(step, "planned", False)
+            count = screen.plural(step.expected, "task") if known else ""
             said = label.ljust(label_width) + count if count else label
             return screen.cut([(" " * indent, ""), ("○ ", "d"), (said, "d")], limit)
         glyph = {"done": "✓", "waiting": "⏸", "skipped": "–"}.get(state, glyph) if style != "r" else glyph
@@ -1177,8 +1218,9 @@ class Run:
                     "raised": ("↑", "d"),
                     "ignored": ("↺", "d"),
                     "included": ("↳", "d"),
+                    "stopped": ("■", "y"),
                 }.get(task.outcome, ("✓", "g"))
-                dim = ("rescued", "lost", "raised", "ignored", "included")
+                dim = ("rescued", "lost", "raised", "ignored", "included", "stopped")
                 name = [(task.name, "d" if task.outcome in dim else "")]
                 tail = [*vm, (screen.duration(task.seconds(now)), "d")]
             room = width_ - 2 - screen.width(tail) - 2
@@ -1344,8 +1386,15 @@ class Run:
         return f"{self.title} · {where} {percent}%"
 
     # --- output that is not a terminal --------------------------------------------------------------------------
-    def ended_lines(self, now):
-        """A line for each step and stage that has ended since the last call, for output that is not a terminal."""
+    def ended_lines(self, now, final=False):
+        """A line for each step and stage that has ended since the last call, for output that is not a terminal;
+        final, at a part's end, its running step and stage too."""
+        if final:
+            current, self.current = self.current, None
+            try:
+                return self.ended_lines(now)
+            finally:
+                self.current = current
         out = []
         for stage in self.stages.values():
             if not stage.tasks or self._quiet(stage):
@@ -1366,7 +1415,8 @@ class Run:
         return out
 
     def _ended(self, label, step, now):
-        mark = "✗" if step.failed() else "–" if step.skipped() else "✓"
+        stopped = any(task.outcome == "stopped" for task in step.tasks)
+        mark = "✗" if step.failed() else "■" if stopped else "–" if step.skipped() else "✓"
         said = [screen.plural(step.reached, "task")]
         if step.changed():
             said.append(self._changed_said(step.changed()))
@@ -1446,7 +1496,10 @@ class Run:
             said_head += "    VMS"
         lines.append([(said_head, "h")])
         for key, part in rows:
-            mark, style = ("✗", "r") if part.failed() else ("–", "d") if part.skipped() else ("✓", "g")
+            stopped = any(task.outcome == "stopped" for task in part.tasks)
+            mark, style = (
+                ("✗", "r") if part.failed() else ("■", "y") if stopped else ("–", "d") if part.skipped() else ("✓", "g")
+            )
             head = [(" ", ""), (mark + " ", style), (str(key)[:label].ljust(label), "b")]
             counts = f"{screen.duration(part.seconds(now)):>6}" if "time" in columns else ""
             counts += f"{part.reached:>9}" if "tasks" in columns else ""
@@ -1564,7 +1617,10 @@ class Run:
             failed_said += f" ({screen.plural(len(failed_vms), 'VM')})"
         totals = [
             # A run whose steps are commands counts them as its checks, and says nothing of changes it never makes.
-            screen.plural(len(self.order), "task" if self.recipe.counts else self.recipe.noun),
+            screen.plural(
+                len(self.order) if self.recipe.counts else len(self._ran_steps()),
+                "task" if self.recipe.counts else self.recipe.noun,
+            ),
             *([self._changed_said(changed) or "nothing changed"] if "changed" in self.recipe.columns else []),
             failed_said,
         ]

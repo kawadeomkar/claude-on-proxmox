@@ -58,8 +58,9 @@ go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
 justfile upward, so started in a make-era worktree under `.claude/worktrees/` it would run main's, against
 main's inventory and vault), then its own rules with their messages, then what it needs (`tools/env-run
 --bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d - but in a
-recipe drawn in parts (`lint`, `init`, `test`), which exports its title and its state's path (`live_state`), sets `trap 'live_end
-$?' EXIT` only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`,
+recipe drawn in parts (`lint`, `init`, `test`), which exports its title and its state's path (`live_state`, the recipe's
+name and the shell's PID), sets `trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT` - an end that fails changes no exit
+status - only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`,
 so the trap still runs to say the run's end. No
 assignment starts a program: just evaluates what a recipe uses before any line runs, so it would start
 before a refusal. Bash, not sh: Ubuntu's dash dies of a Ctrl-C that the playbook it runs survived
