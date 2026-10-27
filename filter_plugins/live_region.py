@@ -23,7 +23,8 @@ What it does, once started:
 - Sets the terminal's title (OSC 0) when it changes, and rings the bell when asked.
 - Turns the terminal's echo off while it draws, and back on for a prompt and at the end: an Enter typed during the
   run would move the cursor under the region, and the next redraw would leave a copy of it behind.
-- Erases the region at exit, Ctrl-C included.
+- Erases the region at exit, Ctrl-C included, and holds a Ctrl-C off between a write and its count of the lines it
+  drew: a KeyboardInterrupt between the two left the count stale, and the erase that followed missed the region.
 
 Forked workers inherit the wrapped methods: only the process that started the region draws. Without a frame
 function it draws nothing and only routes, for a run whose output is not a terminal.
@@ -37,6 +38,7 @@ import signal
 import sys
 import termios
 import threading
+from contextlib import contextmanager
 
 FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SYNC_ON, SYNC_OFF = "\x1b[?2026h", "\x1b[?2026l"
@@ -84,10 +86,35 @@ class LiveRegion:
         self._stream.write(text)
         self._stream.flush()
 
+    @staticmethod
+    @contextmanager
+    def _uninterrupted():
+        """Ctrl-C held off for one write to the terminal and the count of the lines it drew, then delivered.
+
+        Held at Python's level, where it is raised: a signal mask holds the signal in one thread only, the kernel
+        hands it to another (Ansible's results thread, the spinner), and Python raises it in the main thread all the
+        same. Only the main thread may set a handler, and only it is ever interrupted.
+        """
+        if threading.current_thread() is not threading.main_thread() or signal.getsignal(signal.SIGINT) is None:
+            yield
+            return
+        held = []
+        previous = signal.signal(signal.SIGINT, lambda signum, frame: held.append(frame))
+        try:
+            yield
+        finally:
+            signal.signal(signal.SIGINT, previous)
+            if held:
+                if callable(previous):
+                    previous(signal.SIGINT, held[0])
+                elif previous == signal.SIG_DFL:
+                    signal.raise_signal(signal.SIGINT)
+
     def _erase(self):
         if self._drawn:
-            self._write((f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else "") + "\r\x1b[J")
-            self._drawn = 0
+            with self._uninterrupted():
+                self._write((f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else "") + "\r\x1b[J")
+                self._drawn = 0
 
     def _terminal_size(self):
         return os.get_terminal_size(self._stream.fileno())
@@ -105,8 +132,9 @@ class LiveRegion:
                 # Everything on screen goes up into the scrollback, where nothing is lost, and the region is drawn
                 # again from the top of an empty screen: no count of what was drawn before the resize holds.
                 self._resized = False
-                self._write("\n" * rows + f"\x1b[{rows - 1}A\r")
-                self._drawn = 0
+                with self._uninterrupted():
+                    self._write("\n" * rows + f"\x1b[{rows - 1}A\r")
+                    self._drawn = 0
             self._size = (cols, rows)
             lines = self._frame(cols, rows, FRAMES[self._tick % len(FRAMES)])
             if rows < MIN_ROWS or cols < MIN_COLS:
@@ -114,9 +142,10 @@ class LiveRegion:
             limit = rows - 1
             if len(lines) > limit:
                 lines = lines[: limit - 2] + [self._more.format(len(lines) - limit + 1)[: cols - 1], lines[-1]]
-            up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
-            self._write(SYNC_ON + up + "\r" + "\x1b[K\n".join(lines) + "\x1b[K\x1b[J" + SYNC_OFF)
-            self._drawn = len(lines)
+            with self._uninterrupted():
+                up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
+                self._write(SYNC_ON + up + "\r" + "\x1b[K\n".join(lines) + "\x1b[K\x1b[J" + SYNC_OFF)
+                self._drawn = len(lines)
 
     def title(self, text):
         """The terminal's title, written when it changes."""

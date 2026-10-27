@@ -5,11 +5,12 @@
 
 | Job | Contents |
 |---|---|
-| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → `just test unit` → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
+| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → `just test unit`, four workers (`PYTEST_XDIST_AUTO_NUM_WORKERS`, so it never depends on psutil) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
 | `dependency-review` | PRs only, fails on moderate severity |
 | `molecule` | matrix over all eight roles, `just test --role <role>`, from the start of the run: behind `lint` a run took the unit suite's time plus the slowest scenario's |
 | `playbooks` | matrix over the `configure` and `provision` scenarios, `just test integration` and `provision`, from the start of the run too |
 | `canary` | schedule/dispatch only: checks that the cloud image URL in `roles/proxmox_template/defaults/main.yml` still answers and that Ubuntu's `SHA256SUMS` still lists it, then runs `configure` against the **unpinned** Ubuntu container image (`MOLECULE_IMAGE=...:latest`); allowed to fail — that failure is the notification |
+| `result` | `CI result`: `needs` every job but the canary, `if: always()`, and fails unless each one succeeded or was skipped. The one check branch protection requires: a job added to the gate, or a matrix entry, is held to it without a settings change, and jobs can be split or renamed under it. Required alone it would fail open for a job left out of its `needs` or allowed to fail, so `tests/unit/test_ci.py` holds `needs` to every job but the canary, `if: always()`, no `continue-on-error`, and runs its script on what GitHub hands it |
 
 `.github/actions/setup` is a composite action installing Python 3.12 and uv (at the version
 `uv.lock` pins), making a virtualenv first on `PATH` (`activate-environment`), restoring the uv and Galaxy caches, and

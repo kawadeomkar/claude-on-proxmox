@@ -597,17 +597,20 @@ def test_no_key_reaches_a_report_an_argument_or_a_file(configured):
 LOGIN = REPO / "playbooks" / "tailscale_login.yml"
 SAY_PAGE = "web_login | Say where to sign in"
 
-# One host per way just login --only tailscale meets a VM. The stand-in approves a
-# page `approve-after` seconds after minting it - here, after `up --timeout=5s`
-# has exited, as Phase 0 saw tailscaled finish a login on its own.
+# One host per way just login --only tailscale meets a VM. A page approved
+# after `up --timeout=5s` has exited, as Phase 0 saw tailscaled finish a login on
+# its own, is approved by the stand-in at the first poll after the role read the
+# page (approve-at-read 2), its `up` giving up at once (up-waits 0): approval by
+# the clock, 7 s after the page, once landed before that read on a loaded machine.
+LATE = {"up-waits": "0", "approve-at-read": "2"}
 WEB_CASES = {
-    "approved-late": {"ts": {"approve-after": "7"}},
+    "approved-late": {"ts": LATE},
     "needs-admin": {"ts": {"approve-after": "1", "needs-approval": ""}},
-    "waited-out": {"tailscale_login_timeout": 3},
+    "waited-out": {"ts": {"up-waits": "0"}, "tailscale_login_timeout": 3},
     # Not Tailscale's page: said, with a warning, and never opened - here with
     # the desktop switch on, so that an opener reached would fail the run.
     "foreign-page": {
-        "ts": {"authurl-base": "https://evil.example", "approve-after": "7"},
+        "ts": {"authurl-base": "https://evil.example", **LATE},
         "tailscale_login_desktop": True,
     },
     # Under a control server of the user's own: an older Headscale's page, with
@@ -615,14 +618,14 @@ WEB_CASES = {
     # another host that merely starts with the server's name.
     "headscale-old": {
         "tailscale_login_server": "https://hs.example.test/",
-        "ts": {"authurl-base": "https://hs.example.test/register/nodekey:0a1b", "approve-after": "7"},
+        "ts": {"authurl-base": "https://hs.example.test/register/nodekey:0a1b", **LATE},
     },
     "headscale-elsewhere": {
         "tailscale_login_server": "https://hs.example.test",
-        "ts": {"authurl-base": "https://hs.example.test.evil.example", "approve-after": "7"},
+        "ts": {"authurl-base": "https://hs.example.test.evil.example", **LATE},
     },
     "key-expired": {"ts": {"expired": NODE, "approve-after": "1"}, "marker": NODE},
-    "key-expired-waited-out": {"ts": {"expired": NODE}, "marker": NODE, "tailscale_login_timeout": 2},
+    "key-expired-waited-out": {"ts": {"expired": NODE, "up-waits": "0"}, "marker": NODE, "tailscale_login_timeout": 2},
     # The role's login, replaced since by one made by hand, whose key expired.
     "expired-by-hand": {"ts": {"expired": "f" * 64, "approve-after": "1"}, "marker": NODE},
     "not-installed": {"package": False},
@@ -879,7 +882,7 @@ def _deploy_tailscale(root: Path) -> Path:
 
 
 def _deploy_step(root: Path, **extra) -> dict:
-    cases = {name: {"ts": {"approve-after": "7"}, "tailscale_login_timeout": 30} for name in AFTER_CLAUDE}
+    cases = {name: {"ts": LATE, "tailscale_login_timeout": 30} for name in AFTER_CLAUDE}
     hosts = _hosts(root, cases)
     for name, facts in AFTER_CLAUDE.items():
         hosts[name].update(facts)
@@ -928,7 +931,7 @@ def test_asking_first_signs_in_only_where_someone_is(tmp_path):
 def test_asking_first_at_a_terminal_asks_under_a_block(tmp_path):
     # Enter at a VM that showed no Claude prompt leaves it: the question is the
     # one place this step waits for the person, set apart from the run.
-    hosts = _hosts(tmp_path, {"quiet": {"ts": {"approve-after": "7"}, "tailscale_login_timeout": 30}})
+    hosts = _hosts(tmp_path, {"quiet": {"ts": LATE, "tailscale_login_timeout": 30}})
     hosts["quiet"].update(AFTER_CLAUDE["quiet"])
     settings = {**WEB_EXTRA, "vm_name": "quiet", "deploy_sign_in": True, "tailscale_login_auto_start": False}
     rc, output, _ = _run_at_a_terminal(

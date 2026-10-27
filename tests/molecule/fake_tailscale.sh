@@ -31,6 +31,11 @@
 #   starting        a node that has joined reads Starting (no relay reached)
 #   approve-after   seconds after a web login's URL is minted that it is
 #                   approved, whether `up` is still waiting or long gone
+#   approve-at-read N: approved at the Nth status read after the URL was
+#                   minted, not by the clock, which a loaded machine outruns:
+#                   2 is the first poll after the role has read its page
+#   up-waits        N: a web login's `up` waits at most N seconds, not its
+#                   --timeout, before saying it timed out
 #   needs-approval  a join waits for an admin (NeedsMachineAuth)
 #   name-taken      a join gets <hostname>-1, the name being taken
 #   tailnet         CurrentTailnet.Name; suffix, the MagicDNS suffix; health, one
@@ -81,9 +86,14 @@ fi
 # after its URL was minted - checked whenever the node is asked, as tailscaled
 # finishes a login on its own once it is approved.
 approve_if_due() {
-  [ -e authurl ] && [ -e approve-after ] || return 0
-  [ "$(now)" -ge $(( $(get pending-since 0) + $(get approve-after 0) )) ] || return 0
-  rm -f authurl pending-since loginerror
+  [ -e authurl ] || return 0
+  if [ -e approve-at-read ]; then
+    [ "$(get page-reads 0)" -ge "$(get approve-at-read)" ] || return 0
+  else
+    [ -e approve-after ] || return 0
+    [ "$(now)" -ge $(( $(get pending-since 0) + $(get approve-after 0) )) ] || return 0
+  fi
+  rm -f authurl pending-since loginerror page-reads
   put nodekey "$(hex 32)"
   if [ -e needs-approval ]; then put state NeedsMachineAuth; else put state Running; fi
   put prefs-loggedout false
@@ -300,10 +310,13 @@ web_login() {
   url="$(get authurl-base "$(get prefs-login-server https://login.tailscale.com)")/a/$(hex 7)"
   put authurl "$url"
   put pending-since "$(now)"
+  put page-reads 0
   put state NeedsLogin
   printf '\nTo authenticate, visit:\n\n\t%s\n\n' "$url" >&2
+  limit=${timeout:-1}
+  [ "$(get up-waits "$limit")" -lt "$limit" ] && limit=$(get up-waits)
   waited=0
-  while [ "$waited" -lt "${timeout:-1}" ]; do
+  while [ "$waited" -lt "$limit" ]; do
     approve_if_due
     if [ "$(get state)" = Running ]; then
       echo "Success." >&2
@@ -317,6 +330,8 @@ web_login() {
   timed_out
 }
 
+# A status read while a page waits counts towards approve-at-read.
+if [ "${1:-}" = status ] && [ -e authurl ]; then put page-reads $(( $(get page-reads 0) + 1 )); fi
 approve_if_due
 case "${1:-}" in
   status)
