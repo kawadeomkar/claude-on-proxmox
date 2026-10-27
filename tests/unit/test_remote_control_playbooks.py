@@ -623,7 +623,7 @@ def test_a_run_never_reads_the_terminal_pytest_runs_at(tmp_path):
         stdin=slave,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - nothing else runs threads here
+        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - only signal, setsid and ioctl, safe beside xdist's thread
     )
     os.close(slave)
     os.set_blocking(master, False)

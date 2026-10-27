@@ -1099,7 +1099,7 @@ def _interrupted(started: Path, *command: str) -> tuple[int, str]:
             text=True,
             start_new_session=True,
             # SIGINT not ignored, whatever started the suite.
-            preexec_fn=_default_signals,  # noqa: PLW1509 - nothing else runs threads here
+            preexec_fn=_default_signals,  # noqa: PLW1509 - only signal calls, safe beside xdist's thread
         )
         deadline = time.monotonic() + 30
         while not started.exists() and time.monotonic() < deadline:
