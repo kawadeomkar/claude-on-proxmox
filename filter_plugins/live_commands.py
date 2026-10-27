@@ -68,6 +68,8 @@ ANSIBLE_INTERRUPTED = 99
 SHELLS = frozenset({"bash", "sh", "zsh", "dash"})
 # A line a part that passed may still need read: a warning, said above once the region is gone.
 WARNING = re.compile(r"\bwarn(ing)?s?\b", re.IGNORECASE)
+# A warning a check gives every time, which nobody can act on: a syntax check's plays target groups only a run fills.
+ROUTINE = re.compile(r"Could not match supplied host pattern")
 # How long the state of a run that never said its end - a shell that died of a signal - is kept.
 STALE_SECONDS = 24 * 3600
 
@@ -260,7 +262,7 @@ class Part:
         self.display.display(line, log_only=True)
         self.last.append(line)
         said = view.one_line(text.plain_text(line))
-        if WARNING.search(said) and len(self.warnings) < FAILURE_LINES:
+        if WARNING.search(said) and not ROUTINE.search(said) and len(self.warnings) < FAILURE_LINES:
             self.warnings.append(text.plain_text(line).rstrip())
         if said.strip():
             with self.display._lock:
