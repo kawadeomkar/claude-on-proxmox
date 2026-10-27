@@ -1155,11 +1155,23 @@ def test_the_provision_scenario_never_reads_the_developer_s_vscode_settings():
     runs = [t for t in _tasks(play["tasks"]) if "verify_code_playbook" in str(t.get("ansible.builtin.command", ""))]
     assert len(runs) >= 6
     for task in runs:
-        argv = str(task["ansible.builtin.command"]["argv"])
-        assert "verify_code_vars" in argv, task["name"]
-        for case in (task.get("vars") or {}).get("verify_code_cases", []):
-            if "base" in case:
-                assert "vscode_user_settings_file" in case["base"], case
+        # On the command line, or on the stdin of the task that runs the refusals.
+        assert "verify_code_vars" in str(task["ansible.builtin.command"]), task["name"]
+    # The refusal cases, set on a task or on the block around them.
+    cases = [case for item in _with_vars(play["tasks"]) for case in item["vars"].get("verify_code_cases", [])]
+    assert len(cases) >= 12, cases
+    for case in cases:
+        if "base" in case:
+            assert "vscode_user_settings_file" in case["base"], case
+
+
+def _with_vars(items):
+    """Every task and block with vars of its own, blocks' sections included."""
+    for item in items:
+        if item.get("vars"):
+            yield item
+        for section in ("block", "rescue", "always"):
+            yield from _with_vars(item.get(section) or [])
 
 
 def test_no_window_run_reads_or_writes_the_developer_s_claude_code(tmp_path):
