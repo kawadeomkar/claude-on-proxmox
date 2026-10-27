@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 2164 tests. By file:
+pytest over `tests/unit/`: 2166 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -43,7 +43,7 @@ pytest over `tests/unit/`: 2164 tests. By file:
   the log - and statically, the six tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
-- **What every live output draws with** (`test_live_region.py` 13, `test_screen.py` 17, `test_vt.py` 4): the
+- **What every live output draws with** (`test_live_region.py` 15, `test_screen.py` 17, `test_vt.py` 4): the
   region against a stand-in `Display` - what is printed above it, a frame cut to the screen, a pause and a
   vars prompt each with the screen to themselves, the route, a screen too small, the echo off on a
   pseudo-terminal of the test's own - whose `display`, `prompt_until`, `do_var_prompt` and lock it holds to
