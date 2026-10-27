@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 2201 tests. By file:
+pytest over `tests/unit/`: 2202 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -54,7 +54,7 @@ pytest over `tests/unit/`: 2201 tests. By file:
   each run a `HOME` of its own.
 - **The live output** (`test_run_view.py` 105, `test_deploy_live.py` 18, `test_login_live.py` 3,
   `test_destroy_live.py` 4, `test_code_live.py` 3, `test_lint_live.py` 3, `test_init_live.py` 2,
-  `test_test_live.py` 5, `test_live_recipes.py` 29, `test_live_commands.py` 16): the model, fed
+  `test_test_live.py` 5, `test_live_recipes.py` 29, `test_live_commands.py` 17): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
   report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
@@ -92,8 +92,9 @@ pytest over `tests/unit/`: 2201 tests. By file:
   every line in the log and the switch never in its environment; the state 0600 in a 0700 directory and another
   run's never taken over; a playbook as a part, whose NEXT STEPS wait for the run's end; an end with no state
   saying nothing; a second Ctrl-C ending a part whose child's group would not end; a passing part's warnings
-  above; a command named past `env`, a shell's by its step; ansible-playbook's 99 said stopped; and a run that ended
-  well before the steps it listed said stopped.
+  above; a command named past `env`, a shell's by its step; ansible-playbook's 99 said stopped; a run that ended
+  well before the steps it listed said stopped; and NEXT STEPS keeping a record's lines and joining a paragraph
+  its template broke.
   `test_lint_live.py` runs the real `just lint` at a pseudo-terminal with `test_justfile.py`'s stand-in linters:
   each check to come until it runs, its last line, no counts, the `CHECKS` table, every line in the run's one log;
   and a check that fails, its end whole and the checks it left unrun named.

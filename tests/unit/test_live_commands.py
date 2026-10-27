@@ -9,6 +9,7 @@ state and log in the test's directory (docs/architecture/custom-code.md §7.8).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -215,12 +216,17 @@ def test_a_second_ctrl_c_ends_a_part_whose_childs_group_will_not(tmp_path):
 
 
 def test_a_part_that_passed_with_warnings_says_them_above(tmp_path):
-    warns = "print('checked 3 files'); print('WARNING  2 rules were skipped'); print('done')"
+    warns = (
+        "print('checked 3 files'); print('WARNING  2 rules were skipped'); "
+        "print('[WARNING]: Could not match supplied host pattern, ignoring: claude_vms'); print('done')"
+    )
     argv, environment, state = _recipe(tmp_path, [_part("warns", warns)])
     ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
     assert ran.rc == 0, ran.text
     assert re.search(r"^! warns: python\S* passed with warnings$", ran.transcript, re.M), ran.transcript
     assert "    WARNING  2 rules were skipped" in ran.transcript and "checked 3 files" not in ran.transcript
+    # A syntax check's routine warning, which every lint gives, is left in the log.
+    assert "Could not match" not in ran.transcript
 
 
 def test_a_command_is_named_by_its_program_past_env(tmp_path):
@@ -249,3 +255,32 @@ def test_a_run_that_ends_well_before_its_listed_steps_is_said_stopped(tmp_path):
     ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
     assert ran.rc == 0, ran.text
     assert re.search(r"^claude-on-proxmox  lint · stopped after \d+ s at says", ran.transcript, re.M), ran.transcript
+
+
+def test_next_steps_keeps_a_records_lines_and_joins_a_paragraph_its_template_broke():
+    engine = _engine()
+    problems = "just init found 2 problems: fix them.\n  !!   the token was refused\n  !!   root SSH failed"
+    paragraph = (
+        "Nothing is asked without a terminal: run just init at one, give the values on its\n"
+        "command line, or edit the files and run\njust vault.\nvault.yml is still plaintext."
+    )
+    lines = engine.next_steps_lines([problems, paragraph], 78)
+    assert lines[:3] == [
+        "just init found 2 problems: fix them.",
+        "  !!   the token was refused",
+        "  !!   root SSH failed",
+    ]
+    assert lines[3:] == [
+        "Nothing is asked without a terminal: run just init at one, give the values on",
+        "  its command line, or edit the files and run just vault.",
+        "vault.yml is still plaintext.",
+    ], lines
+
+
+def _engine():
+    spec = importlib.util.spec_from_file_location(
+        "claude_on_proxmox_live_commands", REPO / "filter_plugins" / "live_commands.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
