@@ -609,7 +609,9 @@ lint ALL_HOOKS='' *PARTS:
       trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT
     fi
     plan=
-    for part in lock yaml ansible python just syntax hooks; do
+    # The checks in the order they run, the line broken after "just" so that no line reads as a just command.
+    for part in lock yaml ansible python just \
+      syntax hooks; do
       if runs "$part"; then plan="$plan $part"; fi
     done
     check() {
