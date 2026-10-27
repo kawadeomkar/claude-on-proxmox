@@ -1966,6 +1966,41 @@ def test_role_is_checked_before_anything_runs(tmp_path: Path, args: list[str], e
 
 
 @pytest.mark.parametrize(
+    ("args", "expect"),
+    [
+        (["unit", "--shard", "2/3"], ["tests/unit", "-n", "auto", "--dist", "loadgroup", "--shard", "2/3"]),
+        # On its own it means the unit part, as --role means the role part.
+        (["--shard", "1/2"], ["tests/unit", "-n", "auto", "--dist", "loadgroup", "--shard", "1/2"]),
+    ],
+)
+def test_shard_runs_one_shard_of_the_unit_tests_and_nothing_else(tmp_path: Path, args, expect) -> None:
+    # pytest is given tests/unit, so that the conftest.py there, which adds --shard, is read before the options:
+    # a bare pytest --shard is refused as an option it does not know, never run as the whole suite.
+    result = _just("test", *args, settings=_testing(tmp_path))
+    assert result.returncode == 0, _output(result)
+    assert _runs(tmp_path, "pytest") == [expect]
+    assert not _runs(tmp_path, "yamllint") and not _runs(tmp_path, "molecule")
+
+
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        (["unit", "--shard", "0/3"], NOT_MATCHED),
+        (["unit", "--shard", "2"], NOT_MATCHED),
+        (["unit", "--shard", "1/3/4"], NOT_MATCHED),
+        (["unit", "--shard", "4/3"], "--shard takes I/N with I no more than N (got: [4/3])"),
+        (["role", "--shard", "1/2"], "--shard splits the unit tests, which role is not: just test unit --shard 1/2"),
+        (["--role", "common", "--shard", "1/2"], "--shard splits the unit tests and --role narrows the role scenarios"),
+    ],
+)
+def test_shard_is_checked_before_anything_runs(tmp_path: Path, args: list[str], error: str) -> None:
+    result = _just("test", *args, settings=_testing(tmp_path))
+    assert result.returncode != 0
+    assert error in _output(result)
+    assert not (tmp_path / "order").exists()
+
+
+@pytest.mark.parametrize(
     ("args", "tool", "expect"),
     [
         ([], "python", ["tools/docs.py"]),

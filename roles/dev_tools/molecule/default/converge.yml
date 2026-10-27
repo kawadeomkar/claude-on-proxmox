@@ -2,6 +2,12 @@
 - name: Converge
   hosts: all
   become: true
+  # As configure.yml does: with pipelining (.config/molecule/config.yml) the
+  # NodeSource repository's deb822_repository is the first module run as root
+  # that needs root's remote_tmp, and warned that it made it.
+  pre_tasks:
+    - name: Make root's Ansible temporary directory
+      ansible.builtin.import_tasks: ../../../../playbooks/tasks/remote_tmp.yml
   roles:
     - role: dev_tools
       vars:

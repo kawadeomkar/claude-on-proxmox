@@ -12,7 +12,10 @@ project's with that module's group, so the fixture - a whole playbook run - is m
 other modules go test by test to whichever worker is free. Whole modules, since a test can reach a fixture
 through `request.getfixturevalue`, which no static look finds; and `tryfirst`, since xdist's own hook turns the
 marks into groups and, run first, would see none and rebuild the fixtures test by test. Plain `pytest` runs one
-test at a time, for one test or one file. Every child a test signals or types Ctrl-C at starts with SIGINT,
+test at a time, for one test or one file. `just test unit --shard <i>/<n>` runs one of n shards, each such module
+whole in one, balanced by `tests/unit/durations.json` (`tools/unit_durations.py`); CI runs three, `CI result` fails
+unless all three passed, and `test_shards.py` holds that the shards together collect every test exactly once.
+Every child a test signals or types Ctrl-C at starts with SIGINT,
 SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite started with `&` or under
 nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
 (`harness._drain`), since on a loaded machine its last bytes arrive late, up to the test's deadline. Keys typed
@@ -82,6 +85,11 @@ pytest over `tests/unit/`: 2064 tests. By file:
   streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
+- **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
+  always()`, and no job of the gate may `continue-on-error`; its script, run as GitHub runs it, passes a
+  success or a skip and fails a failure or a cancel.
+- **The shards** (`test_shards.py` 4): `--shard` collected as each CI shard collects it - two, three and four
+  shards that between them run every test exactly once, and a module whose tests share a fixture whole in one.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
@@ -315,8 +323,9 @@ pytest over `tests/unit/`: 2064 tests. By file:
 ## 11.2 Role scenarios — `just test role`
 
 One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting driver and platform
-from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
-side_effect → verify → destroy.
+from `.config/molecule/config.yml`, which turns pipelining on as `ansible.cfg` does: without it each task
+put its module into the container, ran and removed it one `docker exec` at a time, and the ten scenarios
+took 16% longer. Each runs create → prepare → converge → **idempotence** → side_effect → verify → destroy.
 
 `vscode_server`'s side effect takes the forwarding away three ways, each in a drop-in of its own,
 runs the role inside a `block`/`rescue`, and asserts the failure names the setting and the file:
@@ -442,7 +451,11 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file,
   `../etc` and `..` (the playbook's own check), a VM with no projects directory,
   an empty one, `.claude-on-proxmox` (the workspace files' own directory), a relative
-  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The user ssh
+  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The twelve
+  that `code.yml` refuses before it refreshes the alias run at once; the five it refuses after (the
+  project's, the missing and the empty directory) write the shared SSH config, and run one by one beside
+  them - all of them children of one task, so a Ctrl-C ends them with the verify. Every
+  child run gets a 3 s SSH connect timeout, since the fake VMs' `192.0.2.x` drops packets. The user ssh
   config in the ephemeral directory never exists. The workspace files are read back and parsed: one
   folder, the project's path; one task, `folderOpen`, `bash -lc` in that folder; the whole
   directory's hides `.claude-on-proxmox`. With VS Code settings in the ephemeral directory (never the
