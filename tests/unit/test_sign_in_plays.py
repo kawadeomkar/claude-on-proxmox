@@ -390,9 +390,10 @@ def test_a_failed_sign_in_is_said_in_its_turn_and_raised_once_every_vm_had_its_o
 
 
 @pytest.fixture(scope="module")
-def deployed(tmp_path_factory):
+def deployed(tmp_path_factory, github):
     """just deploy </dev/null from its sign-ins on, for a-rejected (a code claude refuses), b-down (unreachable),
-    c-accepted and d-unanswered (no code, and no terminal to ask at)."""
+    c-accepted and d-unanswered (no code, and no terminal to ask at). gh is the stand-in that can sign in, so
+    GitHub's step decides each VM for itself from its Claude sign-in, as a real deploy does."""
     root = tmp_path_factory.mktemp("deployed")
     cases = {
         "a-rejected": {"code": CODE, "reject": True},
@@ -400,7 +401,9 @@ def deployed(tmp_path_factory):
         "c-accepted": {"code": CODE},
         "d-unanswered": {},
     }
-    return root, _deploy(root, _hosts(root, cases))
+    for case in cases.values():
+        case["vars"] = {"github_projects_exclude": ["gone"]}
+    return root, _deploy(root, _hosts(root, cases, github))
 
 
 def test_just_deploy_names_a_vm_it_cannot_reach_in_every_sign_in_and_goes_on(deployed):
@@ -525,7 +528,14 @@ def test_an_unattended_deploy_signs_nothing_in_and_fails_nothing(deployed):
     assert "auth login" in calls and "TERM" in calls and "accepted" not in calls, calls
     assert not _signed_in(root, "d-unanswered")
     assert _said(report, "Say that no code was entered", "d-unanswered")
-    assert not any(call.startswith("auth login") for call in _gh_calls(root, "d-unanswered"))
+    # GitHub's device flow started by itself wherever a code was entered, refused or not, and not here: the
+    # unanswered sign-in's own record, not one set by hand, as test_github_auth.py's deploy tests set it.
+    started = {
+        host
+        for host in ("a-rejected", "b-down", "c-accepted", "d-unanswered")
+        if any(call.startswith("auth login") for call in _gh_calls(root, host))
+    }
+    assert started == {"a-rejected", "c-accepted"}, started
 
 
 def test_deploy_signs_in_by_default():

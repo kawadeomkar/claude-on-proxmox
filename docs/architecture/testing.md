@@ -103,8 +103,9 @@ pytest over `tests/unit/`: 2066 tests. By file:
   `deploy.yml`'s own sign-in steps end to end - a VM whose ssh refuses the connection among VMs that
   sign in (for `claude_login.yml` alone, in `test_claude_login.py`'s run), a failed sign-in said in its
   turn, a failure after a sign-in (Remote Control's start, a clone) told apart from a failed one and
-  raised at the end of `just deploy`, deploy with no terminal, a refused code and
-  `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts; and
+  raised at the end of `just deploy`, deploy with no terminal - GitHub's device flow started by itself for
+  each VM whose Claude code was entered, refused or not, and for none whose sign-in nobody answered - a
+  refused code and `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts; and
   `login.yml` - `just login` - running the three in deploy's order and by its rules, held to deploy.yml's
   own decisions: no device flow for a VM whose Claude sign-in nobody answered, a VM whose code was refused
   or whose Remote Control failed to start still given its GitHub and Tailscale turns and failed at the
