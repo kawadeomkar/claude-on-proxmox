@@ -91,10 +91,12 @@ find_bin := 'bin=' + quote(BIN) + '; [ -n "$bin" ] || bin=$(PYTHON=' + quote(PYT
 # tools/run-logged with the run's logging settings; its first argument is the
 # log's name.
 run_logged := 'env LOG_DIR=' + quote(if LOG_DIR == '' { '' } else { absolute_path(LOG_DIR) }) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' CLAUDE_ON_PROXMOX_LOG_STAMP=' + quote(stamp) + ' ' + quote(justfile_directory() / 'tools/run-logged')
-# tools/live with the environment's Python and the run's logging settings: `run <stage> [--step <label>] --
-# <command>` in front of each command of a recipe drawn in parts, `end "$?"` from its trap.
-live := '"$bin/python" ' + quote(justfile_directory() / 'tools/live') + ' --log-dir ' + quote(if LOG_DIR == '' { '' } else { absolute_path(LOG_DIR) }) + ' --retention ' + quote(LOG_RETENTION_DAYS) + ' --stamp ' + quote(stamp) + ' --ansible-args ' + quote(ANSIBLE_ARGS)
-# Where a run in parts keeps its state, but for the top recipe's name and .json: none without LIVE_DIR.
+# tools/live with the environment's Python and the run's logging settings, each option in its = form so that a
+# value starting with - (ANSIBLE_ARGS=-vvv) is still its value: `run <stage> [--step <label>] -- <command>` in front
+# of each command of a recipe drawn in parts, `end "$?"` from its trap.
+live := '"$bin/python" ' + quote(justfile_directory() / 'tools/live') + ' --log-dir=' + quote(if LOG_DIR == '' { '' } else { absolute_path(LOG_DIR) }) + ' --retention=' + quote(LOG_RETENTION_DAYS) + ' --stamp=' + quote(stamp) + ' --ansible-args=' + quote(ANSIBLE_ARGS)
+# Where a run in parts keeps its state, but for the top recipe's name, its shell's PID - two runs started in one
+# second keep two - and .json: none without LIVE_DIR.
 live_state := if LIVE_DIR == '' { '' } else { absolute_path(LIVE_DIR) / stamp }
 # --vault-password-file .vault_pass, where there is one, decided by the shell
 # when the line runs (init's questions may make it), not when just reads this.
@@ -600,10 +602,11 @@ lint ALL_HOOKS='' *PARTS:
     # check is a command through tools/live, which passes it through unchanged where nothing is drawn.
     if [ -z {{ quote(live_run) }} ]; then
       CLAUDE_ON_PROXMOX_LIVE="lint${all_hooks:+ --all-hooks}${*:+ $*}"
-      CLAUDE_ON_PROXMOX_LIVE_STATE={{ quote(if live_state == '' { '' } else { live_state + '-lint.json' }) }}
+      state={{ quote(live_state) }}
+      CLAUDE_ON_PROXMOX_LIVE_STATE=${state:+$state-lint-$$.json}
       export CLAUDE_ON_PROXMOX_LIVE CLAUDE_ON_PROXMOX_LIVE_STATE
-      live_end() { {{ live }} end "$1"; }
-      trap 'live_end $?' EXIT
+      live_end() { {{ live }} end "$1" || :; }
+      trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT
     fi
     plan=
     for part in lock yaml ansible python just syntax hooks; do
