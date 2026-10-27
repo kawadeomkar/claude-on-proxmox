@@ -425,7 +425,8 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   an empty one, `.claude-on-proxmox` (the workspace files' own directory), a relative
   `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The twelve
   that `code.yml` refuses before it refreshes the alias run at once; the five it refuses after (the
-  project's, the missing and the empty directory) write the shared SSH config, and run one by one. Every
+  project's, the missing and the empty directory) write the shared SSH config, and run one by one beside
+  them - all of them children of one task, so a Ctrl-C ends them with the verify. Every
   child run gets a 3 s SSH connect timeout, since the fake VMs' `192.0.2.x` drops packets. The user ssh
   config in the ephemeral directory never exists. The workspace files are read back and parsed: one
   folder, the project's path; one task, `folderOpen`, `bash -lc` in that folder; the whole

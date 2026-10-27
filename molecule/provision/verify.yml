@@ -1761,75 +1761,79 @@
         verify_code_selected: >-
           {{ verify_code_cases | rejectattr('case_sensitive_only', 'defined') | list
              if verify_fs_folds_case.stat.exists else verify_code_cases }}
-        # The jobs' results, each child run's whole output, in the scenario's
-        # own directory rather than ~/.ansible_async, this machine's home on a
-        # local run; the start and the wait both read it.
-        ansible_async_dir: "{{ verify_ssh_dir }}/async"
+        # The refusals that write nothing start at once, and those that write
+        # the SSH config run one after another beside them. One task runs them
+        # all as its own children, in the run's process group, so a Ctrl-C ends
+        # them with the verify; as async jobs they ran on for up to their 300
+        # seconds, their results left on disk. Fixed text: the cases come on stdin.
+        verify_code_runner: |
+          import json, signal, subprocess, sys, tempfile, time
+
+          job = json.load(sys.stdin)
+          started = []
+
+
+          def start(case):
+              extra = {**case.get("base", job["vars"]), **case["vars"]}
+              out, err = tempfile.TemporaryFile("w+"), tempfile.TemporaryFile("w+")
+              argv = job["cmd"] + ["--extra-vars", json.dumps(extra), job["playbook"]]
+              run = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, text=True)
+              started.append(run)
+              return case, run, out, err, time.monotonic()
+
+
+          def finish(started_run):
+              case, run, out, err, at = started_run
+              try:
+                  rc = run.wait(timeout=max(at + 300 - time.monotonic(), 0))
+              except subprocess.TimeoutExpired:
+                  run.kill()
+                  rc = run.wait()
+              out.seek(0)
+              err.seek(0)
+              return {"verify_case": case, "rc": rc, "stdout": out.read(), "stderr": err.read()}
+
+
+          signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+          try:
+              together = [start(case) for case in job["cases"] if "writes" not in case]
+              one_by_one = [finish(start(case)) for case in job["cases"] if "writes" in case]
+              print(json.dumps([finish(run) for run in together] + one_by_one))
+          finally:
+              for run in started:
+                  if run.poll() is None:
+                      run.kill()
       block:
-        - name: Start the refusals that write nothing, all at once
+        - name: Run the refusals, those that write nothing all at once
           ansible.builtin.command:
-            argv: >-
-              {{ verify_playbook_cmd
-                 + ['--extra-vars', (verify_case.base | default(verify_code_vars)) | combine(verify_case.vars) | to_json,
-                    verify_code_playbook] }}
+            argv: ["{{ ansible_playbook_python }}", -c, "{{ verify_code_runner }}"]
+            stdin: >-
+              {{ {'cmd': verify_playbook_cmd, 'playbook': verify_code_playbook, 'vars': verify_code_vars,
+                  'cases': verify_code_selected} | to_json }}
           environment: "{{ verify_code_env }}"
-          async: 300
-          poll: 0
           changed_when: false
-          register: verify_code_started
-          loop: "{{ verify_code_selected | rejectattr('writes', 'defined') | list }}"
-          loop_control:
-            loop_var: verify_case
-            label: "{{ verify_case.vars }}"
-
-        - name: Run the refusals that write the SSH config, one after another
-          ansible.builtin.command:
-            argv: >-
-              {{ verify_playbook_cmd
-                 + ['--extra-vars', (verify_case.base | default(verify_code_vars)) | combine(verify_case.vars) | to_json,
-                    verify_code_playbook] }}
-          environment: "{{ verify_code_env }}"
-          register: verify_code_written
-          changed_when: false
-          failed_when: false
-          loop: "{{ verify_code_selected | selectattr('writes', 'defined') | list }}"
-          loop_control:
-            loop_var: verify_case
-            label: "{{ verify_case.vars }}"
-
-        - name: Wait for the refusals that started at once
-          ansible.builtin.async_status:
-            jid: "{{ verify_job.ansible_job_id }}"
-          register: verify_code_waited
-          until: verify_code_waited.finished
-          retries: 300
-          delay: 1
-          failed_when: false
-          loop: "{{ verify_code_started.results }}"
-          loop_control:
-            loop_var: verify_job
-            label: "{{ verify_job.verify_case.vars }}"
+          register: verify_code_ran
 
         - name: Assert each refusal said why
           vars:
-            verify_code_case: "{{ verify_code_refusal.verify_case | default(verify_code_refusal.verify_job.verify_case) }}"
-            verify_code_said: "{{ verify_code_refusal.stdout | default('') ~ '\n' ~ verify_code_refusal.stderr | default('') }}"
+            verify_code_case: "{{ verify_code_refusal.verify_case }}"
+            verify_code_said: "{{ verify_code_refusal.stdout ~ '\n' ~ verify_code_refusal.stderr }}"
           ansible.builtin.assert:
             that:
-              - verify_code_refusal.rc | default(0) != 0
+              - verify_code_refusal.rc != 0
               - verify_code_said is search(verify_code_case.expect)
             fail_msg: >-
-              just code {{ verify_code_case.vars }} exited {{ verify_code_refusal.rc | default('?') }}, expected
+              just code {{ verify_code_case.vars }} exited {{ verify_code_refusal.rc }}, expected
               /{{ verify_code_case.expect }}/: {{ verify_code_said | regex_findall('\[ERROR\]: [^\n]*') }}
             quiet: true
-          loop: "{{ verify_code_waited.results + verify_code_written.results }}"
+          loop: "{{ verify_code_ran.stdout | from_json }}"
           loop_control:
             loop_var: verify_code_refusal
-            label: "{{ (verify_code_refusal.verify_case | default(verify_code_refusal.verify_job.verify_case)).vars }}"
+            label: "{{ verify_code_refusal.verify_case.vars }}"
 
         - name: Assert every refusal ran
           ansible.builtin.assert:
-            that: (verify_code_waited.results + verify_code_written.results) | length == verify_code_selected | length
+            that: (verify_code_ran.stdout | from_json) | length == verify_code_selected | length
             quiet: true
 
     # The session notes too: a refusal writes none.
