@@ -340,12 +340,14 @@ def _piped(root, *args, title="deploy alpha", env=None, playbook="deploy.yml", t
 
 def _logged(log: str) -> list[str]:
     """A run log's lines without what changes from run to run: the time and process each starts with, every number
-    (profile_tasks' times, a command's), and profile_tasks' recap, which it sorts by time."""
+    (profile_tasks' times, a command's), and profile_tasks' recap, which it sorts by time. Every line of the recap,
+    however long its task took: one of ten seconds or more reads 00.00s once its digits are zeroed, and a task that
+    took 10 s in one run and 3 in the other - a retried task on a loaded machine - kept its line in one log alone."""
     lines = []
     for line in log.splitlines():
         line = re.sub(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+ p=\d+ u=\S+ n=ansible \w+\| ", "", line)
         line = re.sub(r"\d", "0", line)
-        if not re.search(r" -{3,} 0\.00s$", line):
+        if not re.search(r" -{3,} 0+\.00s$", line):
             lines.append(line)
     return lines
 
