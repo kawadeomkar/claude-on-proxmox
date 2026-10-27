@@ -215,12 +215,17 @@ def test_a_second_ctrl_c_ends_a_part_whose_childs_group_will_not(tmp_path):
 
 
 def test_a_part_that_passed_with_warnings_says_them_above(tmp_path):
-    warns = "print('checked 3 files'); print('WARNING  2 rules were skipped'); print('done')"
+    warns = (
+        "print('checked 3 files'); print('WARNING  2 rules were skipped'); "
+        "print('[WARNING]: Could not match supplied host pattern, ignoring: claude_vms'); print('done')"
+    )
     argv, environment, state = _recipe(tmp_path, [_part("warns", warns)])
     ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
     assert ran.rc == 0, ran.text
     assert re.search(r"^! warns: python\S* passed with warnings$", ran.transcript, re.M), ran.transcript
     assert "    WARNING  2 rules were skipped" in ran.transcript and "checked 3 files" not in ran.transcript
+    # A syntax check's routine warning, which every lint gives, is left in the log.
+    assert "Could not match" not in ran.transcript
 
 
 def test_a_command_is_named_by_its_program_past_env(tmp_path):
