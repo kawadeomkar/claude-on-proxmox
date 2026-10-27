@@ -195,6 +195,8 @@ class Abandoned(Exception):
 class Plain:
     """The plain reader: the part is one task of its step, the child's last line dim after it."""
 
+    warns = True
+
     def __init__(self, part):
         self.part = part
         self.task = None
@@ -223,6 +225,8 @@ class Plain:
 class Pytest:
     """The pytest reader: each test a task of the step as live_pytest.py reports it - several running at once under
     xdist - the count once collected, and each failure's words above the moment it fails."""
+
+    warns = True
 
     def __init__(self, part):
         self.part = part
@@ -293,13 +297,16 @@ class Pytest:
 
 
 class Molecule:
-    """The Molecule reader: the scenario a step, its actions its tasks from Molecule's own lines - "[default >
-    converge] Executing", then "Executed: Successful" - the Ansible task running said after the action, and a failed
-    action's lines above as it fails, while Molecule goes on through its cleanup and destroy."""
+    """The Molecule reader: the scenario a step, its actions its tasks from Molecule's own lines - its "scenario test
+    matrix" the count, "[default > converge] Executing", then "Executed: Successful" - the Ansible task running said
+    after the action, and a failed action's lines above as it fails, while Molecule goes on through its cleanup and
+    destroy. Its warnings - a requirements file or a playbook a scenario has no need of - are Molecule's routine, and
+    stay in the log."""
 
     ACTION = re.compile(r"\[(?P<scenario>[^\]>]+?) > (?P<action>[\w-]+)\] (?P<what>Executing|Executed: (?P<how>.+))$")
     TASK = re.compile(r"^(?:TASK|RUNNING HANDLER) \[(?P<task>.+?)\]")
-    MATRIX = re.compile(r"^\s*[├└]─+\s*(?P<action>[\w-]+)")
+    MATRIX = re.compile(r"\] scenario test matrix: (?P<actions>[\w, -]+)$")
+    warns = False
 
     def __init__(self, part):
         self.part = part
@@ -318,10 +325,9 @@ class Molecule:
     def line(self, line, said, now):
         run = self.part.run
         self.lines.append(line)
-        if said.strip().endswith("matrix") and self.matrix is None:
-            self.matrix = 0
-        elif self.matrix is not None and self.MATRIX.match(said):
-            self.matrix += 1
+        matrix = self.MATRIX.search(said)
+        if matrix and self.matrix is None:
+            self.matrix = len([action for action in matrix.group("actions").split(",") if action.strip()])
             run.expect(self.part.stage, self.part.step, self.matrix)
         found = self.ACTION.search(said)
         if found and found.group("what") == "Executing":
@@ -445,7 +451,7 @@ class Part:
         self.display.display(line, log_only=True)
         self.last.append(line)
         said = view.one_line(text.plain_text(line))
-        if WARNING.search(said) and len(self.warnings) < FAILURE_LINES:
+        if self.reader.warns and WARNING.search(said) and len(self.warnings) < FAILURE_LINES:
             self.warnings.append(text.plain_text(line).rstrip())
         with self.display._lock:
             self.reader.line(line, said, self._now())

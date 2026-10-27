@@ -593,9 +593,10 @@ is drawn as one run, its parts in turn:
   the count once collected, from the first xdist worker's collection when there are workers, each test's start and
   end, several running at once under xdist, and a failure's words above as it fails - the plugin writing nothing
   without that file, so a run piped, in CI or by hand is pytest's own; and **molecule**, from Molecule's own lines -
-  its matrix the count, `[scenario > action] Executing` and `Executed: …` each action, the Ansible `TASK [...]` the
-  running action's last line, and a failed action's lines above while Molecule goes on through its cleanup and
-  destroy. The summary lists what failed by name (`failures=True`). The count is the tests' own: a test that runs
+  its one `scenario test matrix: …` line the count, `[scenario > action] Executing` and `Executed: …` each action,
+  the Ansible `TASK [...]` the running action's last line, and a failed action's lines above while Molecule goes on
+  through its cleanup and destroy. Molecule's own warnings - a requirements file or a playbook a scenario has no
+  need of - are its routine and stay in the log, where a passing check's would print above. The summary lists what failed by name (`failures=True`). The count is the tests' own: a test that runs
   for minutes counts as one. A stage the recipe lists is one task until a part reaches it, as a listed step is; a
   test or an action Ctrl-C ended is stopped, not failed; and the roles' parts, which run in their directories,
   find every tool by its absolute path.

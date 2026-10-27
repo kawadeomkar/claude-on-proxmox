@@ -42,12 +42,8 @@ def test_three():
 MOLECULE = """
 scenario=default
 case "$*" in *"-s configure"*) scenario=configure ;; *"-s provision"*) scenario=provision ;; esac
-echo
-echo "Test matrix"
-echo "-----------"
-echo "$scenario"
-for action in create converge verify; do echo "├─ $action"; done
-echo "└─ destroy"
+echo "INFO     [$scenario > discovery] scenario test matrix: create, converge, verify, destroy" >&2
+echo "WARNING  [$scenario > dependency] Missing roles requirements file: requirements.yml" >&2
 for action in create converge verify destroy; do
   echo "INFO     [$scenario > $action] Executing" >&2
   echo "TASK [$action the instance] ***"
@@ -114,6 +110,9 @@ def test_the_gate_is_one_run_lint_its_first_stage_and_every_stage_to_come_listed
         assert re.search(rf"^ ○ {stage}\b", first, re.M), (stage, first)
     assert any(re.search(r"^ \S unit .* \d/3 ", frame, re.M) for frame in passed.frames), "pytest's count"
     assert any(re.search(r"^     \S common ", frame, re.M) for frame in passed.frames), "a scenario a step"
+    # The matrix the count, from the start of the scenario; Molecule's own warnings in the log alone.
+    assert any(re.search(r"^     \S common .* 1/4 ", frame, re.M) for frame in passed.frames), passed.frames[-1]
+    assert "passed with warnings" not in passed.transcript
     screen = passed.transcript
     assert re.search(r"^claude-on-proxmox  test · done in .*$", screen, re.M), screen
     table = screen.split("STAGES", 1)[1].split("\n\n", 1)[0]
