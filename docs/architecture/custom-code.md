@@ -574,6 +574,18 @@ is drawn as one run, its parts in turn:
 - **`just lint`** is the first: one stage, `lint`, each check a step (`--plan` lists the ones the run will run, to
   come until each starts), its rows with no bar or count (`counts=False`), its summary `CHECKS` and the checks a
   failure left unrun. The syntax check is one command over every playbook, each said as it starts.
+- **`just test`** is lint, nested (`{{ self }} live_run=test lint`), then pytest and each Molecule scenario, each a
+  command through `tools/live --log <name>`, which passes it through `tools/run-logged` as it was logged before. The
+  recipe exports the stages it will run (`CLAUDE_ON_PROXMOX_LIVE_STAGES`), so each is listed to come from the first
+  part, lint's. Two readers make the parts' tasks: **pytest**, from the events `tests/unit/live_pytest.py` writes
+  (`-p live_pytest`, which pytest finds on its `pythonpath`) to the file `CLAUDE_ON_PROXMOX_LIVE_PYTEST` names -
+  the count once collected, from the first xdist worker's collection when there are workers, each test's start and
+  end, several running at once under xdist, and a failure's words above as it fails - the plugin writing nothing
+  without that file, so a run piped, in CI or by hand is pytest's own; and **molecule**, from Molecule's own lines -
+  its matrix the count, `[scenario > action] Executing` and `Executed: …` each action, the Ansible `TASK [...]` the
+  running action's last line, and a failed action's lines above while Molecule goes on through its cleanup and
+  destroy. The summary lists what failed by name (`failures=True`). The count is the tests' own: a test that runs
+  for minutes counts as one.
 - **NEXT STEPS** is wrapped by its words, and a record of several lines - just init's problems, each under the line
   that counts them - keeps each line, with its indent.
 - **Nested recipes.** A recipe in parts that runs another runs it as `{{ self }} live_run=<its name> <recipe>`: that

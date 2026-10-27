@@ -7,16 +7,17 @@
 # word narrows one to a single part of it (just deploy --only configure, just
 # test integration). Options go after the recipe's name.
 #
-# How every recipe runs (docs/architecture/decisions.md §15.3): a bash script with
-# no dependencies. Its first lines refuse a run started in another checkout
-# (tools/check checkout), then check its own arguments, then what it needs -
-# the environment (tools/env-run --bin), the vault, the collections - and only
-# then does it work, its last command exec'd - but in a recipe drawn in parts
-# (lint, init), whose trap must still run to say the run's end (tools/live). Nothing
-# is a dependency, which JUST_NO_DEPS or --no-deps would skip, and no
-# assignment here starts a program, which just would do before any line ran. A value a person typed
-# reaches a script as an argument ("$1"), never as its text: just holds it to
-# its [arg] pattern first, and what goes into JSON is checked again there.
+# How every recipe runs (docs/architecture/decisions.md §15.3): a bash script
+# with no dependencies. Its first lines refuse a run started in another
+# checkout (tools/check checkout), then check its own arguments, then what it
+# needs - the environment (tools/env-run --bin), the vault, the collections -
+# and only then does it work, its last command exec'd - but in a recipe drawn
+# in parts (lint, init, test), whose trap must still run to say the run's end
+# (tools/live). Nothing is a dependency, which JUST_NO_DEPS or --no-deps would
+# skip, and no assignment here starts a program, which just would do before
+# any line ran. A value a person typed reaches a script as an argument ("$1"),
+# never as its text: just holds it to its [arg] pattern first, and what goes
+# into JSON is checked again there.
 # A recipe's words are a * parameter even where it takes one: a parameter with
 # a default lists as NAME='', make's spelling, which just refuses after the
 # recipe, and leaves the word after it to run as a second recipe (just help
@@ -684,6 +685,7 @@ test ROLES='' *PARTS:
       done
       set -- role
     fi
+    asked=$*
     if [ "$#" -eq 0 ]; then name=test lint=yes; set -- unit role integration provision; else name="test-$(IFS=-; printf %s "$*")" lint=; fi
     parts=" $* "
     case "$parts" in *" molecule "*) parts="$parts role integration provision " ;; esac
@@ -691,18 +693,40 @@ test ROLES='' *PARTS:
     {{ find_bin }}
     tools/check collections "$bin"
     absbin=$(cd "$bin" && pwd -P)
-    [ -z "$lint" ] || {{ self }} lint
-    if runs unit; then {{ run_logged }} "$name" "$bin/pytest"; fi
+    # Drawn live, as a run in parts (tools/live), unless it is a stage of another recipe's run (live_run): its title,
+    # the state its parts share, the stages it will run, and a trap that says the run's end however it ends, so no
+    # part is exec'd. Each part is a command through tools/live, which passes it through as it ran before - logged
+    # under the run's name - where nothing is drawn; lint draws into the run as its first stage.
+    if [ -z {{ quote(live_run) }} ]; then
+      stages=
+      [ -z "$lint" ] || stages=lint
+      for part in unit role integration provision; do
+        if runs "$part"; then stages="$stages $part"; fi
+      done
+      CLAUDE_ON_PROXMOX_LIVE="test${roles:+ --role $roles}${asked:+ $asked}"
+      CLAUDE_ON_PROXMOX_LIVE_STATE={{ quote(if live_state == '' { '' } else { live_state + '-test.json' }) }}
+      CLAUDE_ON_PROXMOX_LIVE_STAGES=$stages
+      export CLAUDE_ON_PROXMOX_LIVE CLAUDE_ON_PROXMOX_LIVE_STATE CLAUDE_ON_PROXMOX_LIVE_STAGES
+      live_end() { {{ live }} --log "$name" end "$1"; }
+      trap 'live_end $?' EXIT
+    fi
+    part() { {{ live }} --log "$name" run "$@"; }
+    [ -z "$lint" ] || {{ self }} live_run=test lint
+    if runs unit; then part unit --read pytest -- "$bin/pytest" -p live_pytest; fi
     if runs role; then
       list={{ quote(scenario_roles) }}
       [ -z "$roles" ] || list=$(printf %s "$roles" | tr , ' ')
       for role in $list; do
         echo "===== molecule: $role"
-        (cd "roles/$role" && PATH="$absbin:$PATH" {{ run_logged }} "$name" "$absbin/molecule" test)
+        (cd "roles/$role" && part role --step "$role" --read molecule -- env PATH="$absbin:$PATH" "$absbin/molecule" test)
       done
     fi
-    if runs integration; then PATH="$absbin:$PATH" {{ run_logged }} "$name" "$absbin/molecule" test -s configure; fi
-    if runs provision; then PATH="$absbin:$PATH" {{ run_logged }} "$name" "$absbin/molecule" test -s provision; fi
+    if runs integration; then
+      part integration --step configure --read molecule -- env PATH="$absbin:$PATH" "$absbin/molecule" test -s configure
+    fi
+    if runs provision; then
+      part provision --step provision --read molecule -- env PATH="$absbin:$PATH" "$absbin/molecule" test -s provision
+    fi
 
 # The wiki in docs/ (docs/development/docs.md). Its reference pages are
 # generated from the files they describe - this justfile's recipes among them,

@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """A part of a recipe's run that is a command, drawn live, or passed through as it ran before.
 
-    tools/live [--log-dir D] [--retention N] [--stamp S] [--ansible-args A] \
-        run <stage> [--step <label>] [--plan "<label>..."] -- <command>...
+    tools/live [--log-dir D] [--retention N] [--stamp S] [--ansible-args A] [--log NAME] \
+        run <stage> [--step <label>] [--read plain|pytest|molecule] [--plan "<label>..."] -- <command>...
     tools/live [...] end <exit status>
 
 The justfile's `live` runs it with the environment's Python and the run's logging settings: `run` in front of each
-command of a recipe drawn in parts (just lint's checks), `end` from the recipe's trap. It decides first, with the
-standard library alone, whether to draw: a fresh virtualenv's first command must work before `just install` has put
-the engine's own packages there. It passes the command through - exec'd unchanged, the live switch and the state's
-path taken out of its environment, nothing else changed - when there is no terminal, no title
-(CLAUDE_ON_PROXMOX_LIVE), a -v in ANSIBLE_ARGS, no run log (LOG_DIR=), or no PyYAML and ansible-core to draw with.
-Otherwise it runs itself again through tools/run-logged, under the title's recipe, and hands the command to
-filter_plugins/live_commands.py, which draws it and keeps the run's state (CLAUDE_ON_PROXMOX_LIVE_STATE) for the next
-part. `end` says the summary from that state, and removes it; without one it says nothing
-(docs/architecture/custom-code.md §7.8).
+command of a recipe drawn in parts (just lint's checks, just test's parts), `end` from the recipe's trap. It decides
+first, with the standard library alone, whether to draw: a fresh virtualenv's first command must work before `just
+install` has put the engine's own packages there. It passes the command through - exec'd unchanged, the live switch
+and the state's path taken out of its environment, nothing else changed - when there is no terminal, no title
+(CLAUDE_ON_PROXMOX_LIVE), a -v in ANSIBLE_ARGS, no run log (LOG_DIR=), or no PyYAML and ansible-core to draw with -
+through tools/run-logged under --log's name where it was logged so before, just test's parts. Otherwise it runs itself
+again through tools/run-logged, under --log's name or the title's recipe, and hands the command to
+filter_plugins/live_commands.py, which draws it with its reader - plain, pytest (tests/unit/live_pytest.py's events)
+or molecule (its action lines) - and keeps the run's state (CLAUDE_ON_PROXMOX_LIVE_STATE) for the next part, the run's
+stages to come (CLAUDE_ON_PROXMOX_LIVE_STAGES) listed from its first. `end` says the summary from that state, and
+removes it; without one it says nothing (docs/architecture/custom-code.md §7.8).
 """
 
 from __future__ import annotations
@@ -29,10 +31,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 LIVE_ENV = "CLAUDE_ON_PROXMOX_LIVE"
 STATE_ENV = "CLAUDE_ON_PROXMOX_LIVE_STATE"
+STAGES_ENV = "CLAUDE_ON_PROXMOX_LIVE_STAGES"
+# What a command never inherits of the run: its switch, its state, its stages.
+RUN_ENV = (LIVE_ENV, STATE_ENV, STAGES_ENV)
 LOGGED = "--logged"
 # A stage's or step's label as a declaration writes one; a recipe's name as the title's first word.
 LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$")
 RECIPE = re.compile(r"^[a-z][a-z-]{0,19}$")
+# A log's name as the justfile builds one: a recipe's, and the parts its patterns checked (test-unit-provision).
+LOG_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,79}$")
 VERBOSE = re.compile(r"(^|\s)(-v+|--verbose)(?=\s|$)")
 
 
@@ -46,16 +53,19 @@ def _arguments(argv):
     parser.add_argument("--retention", default=os.environ.get("LOG_RETENTION_DAYS", "14"))
     parser.add_argument("--stamp", default=os.environ.get("CLAUDE_ON_PROXMOX_LOG_STAMP", ""))
     parser.add_argument("--ansible-args", default="")
+    parser.add_argument("--log", default="", help="the log's name, as the recipe logged the command before")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")
     run.add_argument("stage")
     run.add_argument("--step", default="")
-    run.add_argument("--read", choices=["plain"], default="plain")
+    run.add_argument("--read", choices=["plain", "pytest", "molecule"], default="plain")
     run.add_argument("--plan", default="", help="the stage's steps the run will run, in order, each to come till then")
     end = commands.add_parser("end")
     end.add_argument("status", type=int)
     args = parser.parse_args(argv)
     args.argv = command
+    if args.log and not LOG_NAME.match(args.log):
+        parser.error(f"not a log's name: {args.log!r}")
     if args.command == "run":
         if not args.argv:
             parser.error("run needs a command after --")
@@ -80,9 +90,14 @@ def _drawn(args):
     return all(importlib.util.find_spec(name) is not None for name in ("yaml", "ansible"))
 
 
-def _passed_through(argv):
-    """The command as it ran before: the run's switch and state out of its environment, nothing else changed."""
-    env = {name: value for name, value in os.environ.items() if name not in (LIVE_ENV, STATE_ENV)}
+def _passed_through(args):
+    """The command as it ran before: the run's switch, state and stages out of its environment, nothing else changed
+    - through tools/run-logged, with the run's logging settings, where it was logged so before (--log)."""
+    env = {name: value for name, value in os.environ.items() if name not in RUN_ENV}
+    argv = args.argv
+    if args.log:
+        env.update(LOG_DIR=args.log_dir, LOG_RETENTION_DAYS=args.retention, CLAUDE_ON_PROXMOX_LOG_STAMP=args.stamp)
+        argv = [str(REPO / "tools" / "run-logged"), args.log, *argv]
     try:
         os.execvpe(argv[0], argv, env)
     except OSError as error:
@@ -95,8 +110,8 @@ def _logged(args, argv):
     env = dict(os.environ)
     env.update(LOG_DIR=args.log_dir, LOG_RETENTION_DAYS=args.retention, CLAUDE_ON_PROXMOX_LOG_STAMP=args.stamp)
     run_logged = str(REPO / "tools" / "run-logged")
-    recipe = _title().split()[0]
-    os.execve(run_logged, [run_logged, recipe, sys.executable, str(Path(__file__).resolve()), LOGGED, *argv], env)
+    name = args.log or _title().split()[0]
+    os.execve(run_logged, [run_logged, name, sys.executable, str(Path(__file__).resolve()), LOGGED, *argv], env)
 
 
 def _engine():
@@ -121,11 +136,13 @@ def main(argv):
         return 0
     if not args.logged:
         if not _drawn(args):
-            return _passed_through(args.argv)
+            return _passed_through(args)
         rest = ["run", args.stage, *(["--step", args.step] if args.step else []), "--read", args.read]
         rest += ["--plan", args.plan, "--"]
         return _logged(args, [*rest, *args.argv])
-    return _engine().run(_title(), args.stage, args.step or None, args.argv, state, args.plan.split())
+    stages = [label for label in os.environ.get(STAGES_ENV, "").split() if LABEL.match(label)]
+    engine = _engine()
+    return engine.run(_title(), args.stage, args.step or None, args.argv, state, args.plan.split(), args.read, stages)
 
 
 if __name__ == "__main__":

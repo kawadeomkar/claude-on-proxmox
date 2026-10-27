@@ -97,6 +97,8 @@ BAR = 20
 WAIT_AFTER = 2.0
 # SLOWEST lists only tasks that took this long.
 SLOW = 1.0
+# How many failures a summary that lists them names before it counts the rest.
+FAILURES_LISTED = 10
 # The state a run in parts keeps between its parts: a part never takes over one of another version.
 STATE_VERSION = 1
 # How a VM is marked in a step's row and in the summary.
@@ -230,6 +232,7 @@ class Task:
         self.prompted = 0.0  # seconds a prompt of this task had the person's attention
         self.prompting = None  # since when a prompt of this task has been up
         self.detail = ""  # a command's last line, said dim after its name while it runs
+        self.parallel = False  # one of several running at once - pytest's tests under xdist: never closed by another
 
     def host_start(self, host, now):
         self.hosts.setdefault(host, [now, None, ""])
@@ -550,7 +553,7 @@ class Run:
             self.current.end = None
             return self.current
         stage, override = self.play_stage.get(self.play, ("run", None))
-        if self.current is not None:
+        if self.current is not None and not self.current.parallel:
             self._left(now)
             self.current.close(now)
         step = self._step_of(stage, override, role, blocks, file, name)
@@ -766,10 +769,42 @@ class Run:
         self.failed = failed or stopped
         self.stopped = stopped
 
+    def planned_stages(self, stages):
+        """The stages a run in parts will run, in order: each listed to come until a part reaches it."""
+        for stage in stages:
+            self._stage(stage)
+
     def planned(self, stage, steps):
         """The steps of stage a run in parts will run, in order: each listed to come until a part reaches it."""
         for step in steps:
             self._stage(stage).step(step)
+
+    def part(self, stage, step):
+        """A part of a run whose reader makes its tasks - pytest's tests, Molecule's actions - in stage's step."""
+        key = f"part:{stage}:{step}:{len(self.order)}"
+        self.play = key
+        self.play_stage[key] = (stage, step)
+        self.batch += 1
+        self.started = {}
+
+    def expect(self, stage, step, count):
+        """How many tasks a part's step will reach, once its reader knows - pytest's tests, once collected - each it
+        reaches from then on counted against it."""
+        target = self._stage(stage).step(step)
+        target.included, target.extra = max(0, int(count)), 0
+        target.budget = max(0, target.included - len(target.tasks))
+
+    def parallel(self, key, name, now):
+        """A task that runs beside others - a test under xdist - started without ending the one running."""
+        stage, override = self.play_stage.get(self.play, ("run", None))
+        task = Task(key, name, stage, override, now)
+        task.batch, task.parallel = self.batch, True
+        self.shown_stage = stage
+        self._stage(stage).step(task.step).reach(task)
+        task.host_start("localhost", now)
+        self.current = task
+        self.order.append(task)
+        return task
 
     def command(self, stage, step, name, now):
         """A command a run runs as a part of its own - one of just lint's checks, just test's pytest - as one task in
@@ -1111,10 +1146,14 @@ class Run:
         its VM when the run has several."""
         lines = []
         shown = [task for task in tasks if not task.hidden][-self.recipe.window :]
+        # Tasks running side by side - pytest's under xdist - are the window while they run, the longest running first.
+        running = [task for task in tasks if task.parallel and task.end is None]
+        if running and self.finished is None:
+            shown = sorted(running, key=lambda task: task.start)[: self.recipe.window]
         width_ = min(limit, 88) - indent
         fleet = self._fleet()
         for task in shown:
-            running = task.end is None and self.finished is None and task is self.current
+            running = task.end is None and self.finished is None and (task is self.current or task.parallel)
             vm = [(f"{next(iter(task.hosts))}  ", "d")] if fleet and len(task.hosts) == 1 else []
             if running:
                 mark, style = ("⏸", "y") if task.wait else (glyph, "c")
@@ -1445,6 +1484,14 @@ class Run:
                 never = [stage_.key for stage_ in self._shown() if not stage_.tasks]
             if never:
                 lines += self._flow([(" not run  ", "d")], never, limit, style="d")
+        # What failed, by name, where the declaration lists them: just test's tests, which scroll away above.
+        failures = [task for task in self.order if task.outcome in ("failed", "unreachable")]
+        if self.recipe.failures and failures:
+            lines += [[], [("FAILED", "h")]]
+            for task in failures[:FAILURES_LISTED]:
+                lines.append(screen.cut([(" ✗ ", "r"), (f"{task.step or task.stage}  ", "d"), (task.name, "")], limit))
+            if len(failures) > FAILURES_LISTED:
+                lines.append([(f" and {len(failures) - FAILURES_LISTED} more", "d")])
         # Each checklist whole: a check a person must fix is never only in the window.
         for stage_key, items in self.checklists.items():
             if items:

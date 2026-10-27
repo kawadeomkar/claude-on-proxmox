@@ -510,10 +510,10 @@ def test_no_other_test_or_scenario_draws_a_run():
         and "CLAUDE_ON_PROXMOX_LIVE" in (REPO / name).read_text(errors="replace")
     )
     # The callback that hands the run to the engine, the engines that read it - a playbook's, a command's and the
-    # tool that decides whether a command is drawn - and the declarations its title names, the recipes that set it,
-    # and the tests: the live kit sets it for the live tests, each live test (tests/unit/test_<recipe>_live.py) and
-    # the command engine's names it, and test_justfile.py reads the title the recipe exports, from an
-    # ansible-playbook stand-in that runs nothing. No scenario or config.
+    # tool that decides whether a command is drawn, and pytest's plugin, whose file it names - and the declarations
+    # its title names, the recipes that set it, and the tests: the live kit sets it for the live tests, each live test
+    # (tests/unit/test_<recipe>_live.py) and the command engine's names it, and test_justfile.py reads the title the
+    # recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario or config.
     live_tests = [name for name in mentions if re.fullmatch(r"tests/unit/test_\w+_live\.py", name)]
     assert [name for name in mentions if name not in live_tests] == [
         "callback_plugins/claude_on_proxmox.py",
@@ -522,6 +522,7 @@ def test_no_other_test_or_scenario_draws_a_run():
         "filter_plugins/live_recipes.py",
         "justfile",
         "tests/unit/live_kit.py",
+        "tests/unit/live_pytest.py",
         "tests/unit/test_justfile.py",
         "tests/unit/test_live_commands.py",
         "tools/live",
@@ -535,7 +536,7 @@ def test_no_other_test_or_scenario_draws_a_run():
         if "CLAUDE_ON_PROXMOX_LIVE" in line:
             naming.add(recipe)
     assert naming <= set(_recipes().RECIPES), naming
-    assert {"deploy", "login", "destroy", "code"} <= naming, naming
+    assert {"deploy", "login", "destroy", "code", "lint", "init", "test"} <= naming, naming
 
 
 def _recipes():
