@@ -26,13 +26,13 @@ system picks and prints it (`harness._start`), so no port is probed, freed and t
 and starts with `socket.getfqdn` answering at once (`harness.FAKE_START`): for the fake Proxmox's `0.0.0.0`, macOS
 spent five seconds on it.
 
-pytest over `tests/unit/`: 2066 tests. By file:
+pytest over `tests/unit/`: 2065 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
   does not parse as one IPv4 address, the managed SSH config's blocks, the VS Code settings reader, the
   sign-ins' `page_opener`, `plain_text`, and `banner`'s block.
-- **`just status`** (`test_status.py` 50, `test_status_live.py` 10, `test_status_vms.py` 13,
+- **`just status`** (`test_status.py` 50, `test_status_live.py` 10, `test_status_vms.py` 14,
   `test_status_work.py` 3): the report's filters on canned
   reads - every value one line of plain text over a corpus of hostile ones, the drift between a VM and
   `local.yml`, the twelve buckets of a day at Proxmox VE 9's resolution and 8's, the ranking and exit code,
@@ -63,7 +63,7 @@ pytest over `tests/unit/`: 2066 tests. By file:
   the log - and statically, the six tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
   and every report followed by its record. Each role's own tests then assert what it records, in every
   state they run.
-- **What every live output draws with** (`test_live_region.py` 10, `test_screen.py` 17, `test_vt.py` 4): the
+- **What every live output draws with** (`test_live_region.py` 12, `test_screen.py` 17, `test_vt.py` 4): the
   region against a stand-in `Display` - what is printed above it, a frame cut to the screen, a pause and a
   vars prompt each with the screen to themselves, the route, a screen too small, the echo off on a
   pseudo-terminal of the test's own - whose `display`, `prompt_until`, `do_var_prompt` and lock it holds to
@@ -84,7 +84,7 @@ pytest over `tests/unit/`: 2066 tests. By file:
   the log every line the stream logs, in order; a line per step through a pipe; `-v`, no variable and no log
   streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
-  96), both ways.
+  97), both ways.
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
   always()`, and no job of the gate may `continue-on-error`; its script, run as GitHub runs it, passes a
   success or a skip and fails a failure or a cancel.
@@ -277,7 +277,7 @@ pytest over `tests/unit/`: 2066 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The justfile** (`test_justfile.py` 456): the real `just`, at least the pinned version, run against
+- **The justfile** (`test_justfile.py` 479): the real `just`, at least the pinned version, run against
   stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
   --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
   nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its
