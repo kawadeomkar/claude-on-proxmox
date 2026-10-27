@@ -109,6 +109,40 @@ def test_what_is_printed_goes_above_the_region_which_is_drawn_again_below_it():
     assert stream.getvalue().endswith("\x1b[1A\r\x1b[J")
 
 
+@pytest.mark.parametrize("step", ["redraw", "finish"])
+def test_a_ctrl_c_between_a_write_and_its_count_leaves_the_count_right(step):
+    # A Ctrl-C after a frame (or its erase) reached the terminal and before its lines were counted left the count
+    # stale: the erase that followed missed the region, which stayed on the screen above the run's last words. Here
+    # the signal comes at that very moment, from the write itself, with a second thread alive as Ansible's results
+    # thread is: the kernel may hand the signal to it, which is why a signal mask in the main thread held nothing off.
+    region, display, stream = _region(frame=lambda cols, rows, glyph: ["one", "two", "three"])
+    region.start()
+    if step == "finish":
+        region.redraw()
+    written = region._write
+
+    def write_then_interrupt(text):
+        written(text)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    # Python's own handler, whatever started the suite: under nohup SIGINT is ignored.
+    held = signal.signal(signal.SIGINT, signal.default_int_handler)
+    idle = threading.Event()
+    other = threading.Thread(target=idle.wait, daemon=True)
+    other.start()
+    region._write = write_then_interrupt
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            getattr(region, step)()
+    finally:
+        region._write = written
+        idle.set()
+        other.join()
+        signal.signal(signal.SIGINT, held)
+    assert region._drawn == (3 if step == "redraw" else 0)
+    region.finish()
+
+
 def test_a_frame_taller_than_the_screen_is_cut_and_says_how_much():
     region, _, stream = _region(frame=lambda cols, rows, glyph: [f"line {n}" for n in range(20)])
     region.start()

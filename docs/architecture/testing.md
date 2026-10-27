@@ -316,8 +316,9 @@ pytest over `tests/unit/`: 2064 tests. By file:
 ## 11.2 Role scenarios — `just test role`
 
 One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting driver and platform
-from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
-side_effect → verify → destroy.
+from `.config/molecule/config.yml`, which turns pipelining on as `ansible.cfg` does: without it each task
+put its module into the container, ran and removed it one `docker exec` at a time, and the ten scenarios
+took 16% longer. Each runs create → prepare → converge → **idempotence** → side_effect → verify → destroy.
 
 `vscode_server`'s side effect takes the forwarding away three ways, each in a drop-in of its own,
 runs the role inside a `block`/`rescue`, and asserts the failure names the setting and the file:
@@ -443,7 +444,11 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file,
   `../etc` and `..` (the playbook's own check), a VM with no projects directory,
   an empty one, `.claude-on-proxmox` (the workspace files' own directory), a relative
-  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The user ssh
+  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The twelve
+  that `code.yml` refuses before it refreshes the alias run at once; the five it refuses after (the
+  project's, the missing and the empty directory) write the shared SSH config, and run one by one beside
+  them - all of them children of one task, so a Ctrl-C ends them with the verify. Every
+  child run gets a 3 s SSH connect timeout, since the fake VMs' `192.0.2.x` drops packets. The user ssh
   config in the ephemeral directory never exists. The workspace files are read back and parsed: one
   folder, the project's path; one task, `folderOpen`, `bash -lc` in that folder; the whole
   directory's hides `.claude-on-proxmox`. With VS Code settings in the ephemeral directory (never the

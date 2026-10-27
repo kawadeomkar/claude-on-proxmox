@@ -25,5 +25,9 @@ provisioner:
       interpreter_python: auto_silent
       # As ansible.cfg: gathered facts only under ansible_facts.
       inject_facts_as_vars: false
+      # As ansible.cfg too, and as every real run has it: a module goes over
+      # the connection's stdin, not as files put, run and removed one docker
+      # exec at a time. 16% off the ten scenarios, configure 20%.
+      pipelining: true
 verifier:
   name: ansible
