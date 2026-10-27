@@ -78,6 +78,9 @@ pytest over `tests/unit/`: 2064 tests. By file:
   streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
+- **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
+  always()`, and no job of the gate may `continue-on-error`; its script, run as GitHub runs it, passes a
+  success or a skip and fails a failure or a cancel.
 - **The shards** (`test_shards.py` 4): `--shard` collected as each CI shard collects it - two, three and four
   shards that between them run every test exactly once, and a module whose tests share a fixture whole in one.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
