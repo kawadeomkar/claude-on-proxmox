@@ -258,7 +258,7 @@ def _run_at_a_terminal(tmp_path: Path, keys: bytes, *, after: str, **case) -> tu
                     break
                 output += chunk
             elif process.poll() is not None:
-                output += _drain(master)
+                output += _drain(master, deadline)
                 break
         else:
             pytest.fail(
