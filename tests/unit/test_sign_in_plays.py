@@ -51,15 +51,12 @@ import json
 import os
 import pwd
 import re
-import socket
 import subprocess
-import sys
-import time
 from pathlib import Path
 
 import pytest
 import yaml
-from harness import LOGINS, REPO, STAND_INS, _results, _run, _stand_in_hosts
+from harness import LOGINS, REPO, STAND_INS, _results, _run, _serve, _stand_in_hosts
 
 CLAUDE_LOGIN = REPO / "playbooks" / "claude_login.yml"
 GITHUB_LOGIN = REPO / "playbooks" / "github_login.yml"
@@ -329,31 +326,7 @@ def github(tmp_path_factory):
         ["git", "clone", "-q", "--bare", str(src), str(git_root / "pub.git")],
     ):
         subprocess.run(argv, check=True, env=env, capture_output=True)
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    server = subprocess.Popen(
-        [sys.executable, str(FAKE_API), str(port), USERNAME, str(git_root), "pub", "gone"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        deadline = time.monotonic() + 10
-        while True:
-            if server.poll() is not None:
-                pytest.fail(f"fake GitHub API exited: {server.stderr.read()}")
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    break
-            except OSError:
-                if time.monotonic() > deadline:
-                    pytest.fail("fake GitHub API did not start")
-                time.sleep(0.05)
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.terminate()
-        server.wait(timeout=10)
+    yield from _serve(FAKE_API, USERNAME, str(git_root), "pub", "gone")
 
 
 # ------------------------------------------------ a VM that cannot be reached

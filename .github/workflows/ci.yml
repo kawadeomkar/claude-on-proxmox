@@ -30,9 +30,9 @@ jobs:
   lint:
     name: Lint and unit tests
     runs-on: ubuntu-latest
-    # The unit suite runs real playbooks: about 15 minutes on a laptop, and
-    # 27 on a hosted runner before just init's questions and checks came in,
-    # whose tests each run one, many at a pseudo-terminal.
+    # The unit suite runs real playbooks: 44 minutes on a hosted runner one test
+    # at a time, 16-22 on its four vCPUs (two cores, two threads each) with a
+    # worker on each, depending on the CPU the runner lands on.
     timeout-minutes: 60
     env:
       # v8.30.0, the same release .pre-commit-config.yaml pins.
@@ -71,6 +71,10 @@ jobs:
 
       - name: Unit tests
         run: just test unit
+        env:
+          # A worker per vCPU, said here: -n auto counts logical CPUs only while
+          # psutil is not installed, and physical cores once it is - two here.
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
 
       # The files as the change leaves them. On its own this misses a token
       # committed in one commit and deleted in the next, which is gone from
@@ -127,10 +131,12 @@ jobs:
         with:
           fail-on-severity: moderate
 
+  # Not behind lint and the unit tests: nothing here waits for their results,
+  # and behind them a run took the unit suite's time plus the slowest
+  # scenario's. A lint failure still fails the run through CI result.
   molecule:
     name: Molecule (${{ matrix.role }})
     runs-on: ubuntu-latest
-    needs: lint
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -180,7 +186,6 @@ jobs:
   playbooks:
     name: Molecule (${{ matrix.scenario }} playbook)
     runs-on: ubuntu-latest
-    needs: lint
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -197,3 +202,22 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Molecule test
         run: just test ${{ matrix.type }}
+
+  # The one check branch protection is to require: every job of the gate passed
+  # or was skipped (dependency review is, on a push). Required alone, in place of
+  # each job by name, it holds every job to the gate - a matrix entry added later
+  # included - and lets jobs be split or renamed without a settings change. Not
+  # the canary, which may fail on purpose. A cancelled or failed job fails it.
+  result:
+    name: CI result
+    needs: [lint, dependency-review, molecule, playbooks]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Every job of the gate passed or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null

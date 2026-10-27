@@ -320,12 +320,52 @@ def _run(
     return report
 
 
+# What a Ctrl-C a test sends must reach. A process starts with the signals its
+# parent ignored still ignored, and a job a shell without job control starts with
+# `&` - under nohup, a CI step's background command, a script - starts with
+# SIGINT and SIGQUIT ignored, nohup adding SIGHUP: a run of the suite started so
+# sat through every Ctrl-C a test sent, and the device-flow test hung for good.
+INTERRUPTS = (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP)
+
+
+def _default_signals() -> None:
+    """In a child, before it starts: the interrupts back to their defaults, whatever the run's launcher ignored."""
+    for signum in INTERRUPTS:
+        signal.signal(signum, signal.SIG_DFL)
+
+
+def _drain(master: int, deadline: float) -> bytes:
+    """What a pseudo-terminal still holds once its process has ended: read until the terminal says it is closed.
+
+    Linux passes a terminal's output to its reader through a buffer it empties asynchronously, so on a loaded
+    machine the last bytes a run wrote - a live region's erase, a final message - can arrive after the run has
+    exited, and a reader that stopped at the first read that found nothing missed them. Two quiet seconds end it
+    too, should something the run started still hold the terminal open; and the test's own deadline, should it
+    still be writing there, fails the test rather than hang it.
+    """
+    data = b""
+    while select.select([master], [], [], 2)[0]:
+        if time.monotonic() > deadline:
+            pytest.fail(
+                "the terminal was still being written to after its run ended:\n" + data.decode(errors="replace")
+            )
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:  # Linux, once every holder of the other end has closed it and nothing is left
+            break
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
 def _take_the_terminal() -> None:
-    """In the child: a session of its own, with its stdin as the controlling terminal.
+    """In the child: a session of its own, with its stdin as the controlling terminal, and the interrupts live.
 
     pause reads only from the foreground process group of a terminal, which a
     session leader's group is once the terminal is its controlling one.
     """
+    _default_signals()
     os.setsid()
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
@@ -370,7 +410,7 @@ def _at_a_pseudo_terminal(
         stdin=slave,
         stdout=slave,
         stderr=slave,
-        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - nothing else runs threads here
+        preexec_fn=_take_the_terminal,  # noqa: PLW1509 - only signal, setsid and ioctl, safe beside xdist's thread
     )
     os.close(slave)
     output, deadline = b"", time.monotonic() + timeout
@@ -389,6 +429,10 @@ def _at_a_pseudo_terminal(
                     break
                 output += chunk
             elif process.poll() is not None:
+                rest = _drain(master, deadline)
+                output += rest
+                if act is not None and rest:
+                    act(rest, output, master, process)
                 break
             if act is not None:
                 act(chunk, output, master, process)
@@ -526,27 +570,18 @@ def _free_port() -> int:
 
 
 def _start(script: Path, *args: str) -> tuple[subprocess.Popen, int]:
-    """A fake API on a free port, once it answers. A port can still be taken between the probe and the fake's bind
-    - the runs' own connections take local ports too - so a fake that lost it is started again on another."""
-    for _ in range(5):
-        port = _free_port()
-        server = subprocess.Popen([sys.executable, str(script), str(port), *args], stderr=subprocess.PIPE, text=True)
-        for _ in range(100):
-            if server.poll() is not None:
-                said = server.stderr.read()
-                if "Address already in use" in said:
-                    break
-                pytest.fail(f"{script.name} exited: {said}")
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    return server, port
-            except OSError:
-                time.sleep(0.05)
-        else:
-            server.terminate()
-            server.wait(timeout=10)
-            pytest.fail(f"{script.name} did not start")
-    pytest.fail(f"{script.name} found no free port in five tries")
+    """A fake API on a port the system picked, listening once it says which. Given port 0 the fake binds a free one
+    and prints it: a port probed here and freed could be taken before the fake bound it - by the runs' own
+    connections, or by another xdist worker's fake, which a test would then talk to."""
+    server = subprocess.Popen(
+        [sys.executable, str(script), "0", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    said = server.stdout.readline() if select.select([server.stdout], [], [], 30)[0] else ""
+    if not said.strip().isdigit():
+        server.kill()
+        server.wait(timeout=10)
+        pytest.fail(f"{script.name} did not start: {said}{server.stderr.read()}")
+    return server, int(said)
 
 
 def _serve(script: Path, *args: str):
