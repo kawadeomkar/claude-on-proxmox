@@ -27,6 +27,7 @@ import contextlib
 import importlib.util
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -61,6 +62,14 @@ CHILD_ENV = {"NO_COLOR": "1", "PYTHONUNBUFFERED": "1", "PRE_COMMIT_COLOR": "neve
 # How much of a failed part's output is printed above: the end, where its error is.
 FAILURE_LINES = 40
 INTERRUPTED = 130
+# ansible-playbook's exit code after Ctrl-C (its ExitCode.KEYBOARD_INTERRUPT): a part that stopped, not one that failed.
+ANSIBLE_INTERRUPTED = 99
+# A program that runs a script, which names nothing on the screen.
+SHELLS = frozenset({"bash", "sh", "zsh", "dash"})
+# A line a part that passed may still need read: a warning, said above once the region is gone.
+WARNING = re.compile(r"\bwarn(ing)?s?\b", re.IGNORECASE)
+# How long the state of a run that never said its end - a shell that died of a signal - is kept.
+STALE_SECONDS = 24 * 3600
 
 
 # --- the state ---------------------------------------------------------------------------------------------------
@@ -81,6 +90,11 @@ def save_state(path, state):
     path = Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
+    # A run whose shell died of a signal never said its end, and left its state: gone a day later.
+    for stale in path.parent.glob("*.json"):
+        with contextlib.suppress(OSError):
+            if stale != path and time.time() - stale.stat().st_mtime > STALE_SECONDS:
+                stale.unlink()
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".state-")
     try:
         with os.fdopen(descriptor, "w") as handle:
@@ -155,11 +169,27 @@ def _log():
 
 
 # --- a command, as a part ------------------------------------------------------------------------------------------
+def command_name(argv):
+    """What a command is called on the screen: its program, past env and its settings - a shell running a script is
+    no name at all."""
+    words = list(argv)
+    if words and os.path.basename(words[0]) == "env":
+        words = words[1:]
+        while words and ("=" in words[0] or words[0].startswith("-")):
+            words = words[1:]
+    name = os.path.basename(words[0]) if words else ""
+    return "" if name in SHELLS else name
+
+
+class Abandoned(Exception):
+    """A second Ctrl-C: the part stops reading what its child's group still writes."""
+
+
 class Part:
     """One command of a run, drawn: its step's task, the child's lines to the log and the last of them on the
     screen, and the state saved for the next part, or the summary when the run is this one command."""
 
-    def __init__(self, title, stage, step, argv, state_path="", plan=()):
+    def __init__(self, title, stage, step, argv, state_path="", plan=(), interrupted=False):
         self.title, self.stage, self.step, self.argv, self.state_path = title, stage, step, list(argv), state_path
         self.plan = list(plan)
         self.display = Display()
@@ -171,8 +201,10 @@ class Part:
         self.run = None
         self.task = None
         self.last = collections.deque(maxlen=FAILURE_LINES)
-        self.interrupted = 0
+        self.warnings = []
+        self.interrupted = int(bool(interrupted))
         self.child = None
+        self.reading = False
         self.records = {}
         self.failed_hosts = []
 
@@ -186,9 +218,11 @@ class Part:
             self.out.title(self.run.title_text(self._now()))
             return self.run.frame(self._now(), cols, rows, glyph, self.color)
 
-    def _after(self):
+    def _after(self, final=False):
+        """In lines mode, a line for each step that ended - at the part's end, its own too; live, a redraw."""
         if self.mode == "lines":
-            ended = self.run.ended_lines(self._now())
+            with self.display._lock:
+                ended = self.run.ended_lines(self._now(), final=final)
             if ended:
                 self.out.print([(line, line) for line in ended])
         else:
@@ -200,11 +234,15 @@ class Part:
         return env
 
     def _interrupt(self, *_):
-        # The child is in the terminal's process group, so the Ctrl-C reached it too: it says its last and ends. A
-        # second one ends a child that would not.
+        # The child runs in a process group of its own, which the terminal's Ctrl-C does not reach: it is sent there,
+        # and the child says its last and ends. A second one ends the group, and what it still writes goes unread.
         self.interrupted += 1
-        if self.interrupted > 1 and self.child is not None:
-            self.child.kill()
+        if self.child is None:
+            return
+        with contextlib.suppress(OSError):
+            os.killpg(self.child.pid, signal.SIGKILL if self.interrupted > 1 else signal.SIGINT)
+        if self.interrupted > 1 and self.reading:
+            raise Abandoned
 
     def start(self):
         now = self._now()
@@ -216,7 +254,7 @@ class Part:
             self.records = state.get("next_records") or {}
             self.failed_hosts = list(state.get("failed_hosts") or [])
         self.out.start()
-        name = os.path.basename(self.argv[0])
+        name = command_name(self.argv) or self.step or self.stage
         with self.display._lock:
             self.run.planned(self.stage, self.plan)
             self.task = self.run.command(self.stage, self.step, name, now)
@@ -228,6 +266,8 @@ class Part:
         self.display.display(line, log_only=True)
         self.last.append(line)
         said = view.one_line(text.plain_text(line))
+        if WARNING.search(said) and len(self.warnings) < FAILURE_LINES:
+            self.warnings.append(text.plain_text(line).rstrip())
         if said.strip():
             with self.display._lock:
                 self.task.detail = said[:200]
@@ -243,33 +283,50 @@ class Part:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=self._child_env(),
+                process_group=0,
             )
         except OSError as error:
             self._line(f"{self.argv[0]}: {error.strerror}".encode())
             return self._ended(127)
-        for raw in iter(child.stdout.readline, b""):
-            self._line(raw)
-        rc = child.wait()
+        try:
+            self.reading = True
+            for raw in iter(child.stdout.readline, b""):
+                self._line(raw)
+            self.reading = False
+            rc = child.wait()
+        except Abandoned:
+            self.reading = False
+            rc = INTERRUPTED
+            with contextlib.suppress(Exception):
+                child.wait(timeout=5)
+        # Killed by a signal, as the shell says it: 128 and the signal's number.
+        rc = 128 - rc if rc < 0 else rc
         return self._ended(INTERRUPTED if self.interrupted else rc)
 
     def _ended(self, rc):
         now = self._now()
-        outcome = "ok" if rc == 0 else "failed"
+        outcome = "ok" if rc == 0 else "stopped" if rc == INTERRUPTED else "failed"
         with self.display._lock:
             self.run.result(self.task.key, "localhost", outcome, now)
             self.task.detail = ""
-        self._after()
+        self._after(final=True)
         if rc not in (0, INTERRUPTED):
             self._failure(now, rc)
+        elif rc == 0 and self.warnings:
+            self._warned()
         self.out.finish()
         if self.state_path:
-            failed = self.failed_hosts + (["localhost"] if rc != 0 else [])
-            save_state(self.state_path, self.run.dump(now, self.records, failed))
+            failed = self.failed_hosts + (["localhost"] if rc not in (0, INTERRUPTED) else [])
+            state = self.run.dump(now, self.records, failed)
+            state["stopped"] = rc == INTERRUPTED
+            save_state(self.state_path, state)
         else:
             self.run.end(now, failed=rc != 0, stopped=rc == INTERRUPTED)
             self.out.title(self.run.title_text(now))
-            say_end(self.out, self.display, self.run, now, ["localhost"] if rc else [], [], _width())
-        return rc
+            failed = ["localhost"] if rc not in (0, INTERRUPTED) else []
+            say_end(self.out, self.display, self.run, now, failed, [], _width())
+        # A Ctrl-C that came while the part was ending ends the run all the same.
+        return INTERRUPTED if self.interrupted else rc
 
     def _failure(self, now, rc):
         """The failed part's end, whole above: where, what it ran, its last lines and where the log has the rest."""
@@ -282,9 +339,21 @@ class Part:
             lines.append((screen.render([(said, "d")], self.color), said))
         self.out.print([*lines, ("", "")])
 
+    def _warned(self):
+        """A part that passed with warnings says them above, whole: once the region is gone they would be in the log
+        alone."""
+        where = self.task.step or self.task.stage
+        head = f"! {where}: {self.task.name} passed with warnings"
+        lines = [("", ""), (screen.render([(head, "y")], self.color), head)]
+        lines += [(f"    {line}", f"    {line}") for line in self.warnings]
+        if self.run.log:
+            said = f"    the whole output: {self.run.log}"
+            lines.append((screen.render([(said, "d")], self.color), said))
+        self.out.print([*lines, ("", "")])
 
-def run(title, stage, step, argv, state_path="", plan=()):
-    part = Part(title, stage, step, argv, state_path, plan)
+
+def run(title, stage, step, argv, state_path="", plan=(), interrupted=False):
+    part = Part(title, stage, step, argv, state_path, plan, interrupted)
     # Ctrl-C from the first moment: a handler, never SIG_IGN, which the child would inherit.
     previous = signal.signal(signal.SIGINT, part._interrupt)
     try:
@@ -297,7 +366,8 @@ def run(title, stage, step, argv, state_path="", plan=()):
 # --- the end of a run in parts -------------------------------------------------------------------------------------
 def end(title, state_path, rc):
     """The end of a run in parts, whatever ended it: its summary and NEXT STEPS from the state, then the state gone.
-    rc is the recipe's exit status: 130 after Ctrl-C, which says the run stopped."""
+    rc is the recipe's exit status: 130 after Ctrl-C, or ansible-playbook's 99, says the run stopped, as a part that
+    saved itself stopped does."""
     state = load_state(state_path, title)
     if state is None:
         return
@@ -307,7 +377,10 @@ def end(title, state_path, rc):
     run.parts = True
     run.adopt(state, now)
     failed_hosts = list(state.get("failed_hosts") or [])
-    run.end(now, failed=rc != 0 or bool(failed_hosts), stopped=rc == INTERRUPTED)
+    # Stopped: Ctrl-C at the recipe (130), at a playbook (ansible-playbook's 99), a part that says it stopped, or a
+    # run that ended well with steps it listed never reached - a Ctrl-C between its parts, which bash may say as 0.
+    stopped = rc in (INTERRUPTED, ANSIBLE_INTERRUPTED) or bool(state.get("stopped")) or (rc == 0 and bool(run.unrun()))
+    run.end(now, failed=rc != 0 or bool(failed_hosts), stopped=stopped)
     out = live.Output(display, frame=None, live=live.can_draw(), color=not C.ANSIBLE_NOCOLOR, to_log=True)
     if out.live:
         # The tab says how the run ended: drawn here as the region would, the region itself long gone.

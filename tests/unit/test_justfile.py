@@ -2083,7 +2083,9 @@ def test_lint_on_its_own_is_a_run_in_parts_whose_trap_says_its_end(tmp_path: Pat
     assert asked == [["run", "lint", "--step", "yaml"]] + [["run", "lint", "--step", "python"]] * 2, runs
     assert all(run[run.index("--plan") + 1] == " yaml python" for run in runs[:-1]), runs
     assert runs[-1][-2:] == ["end", "0"], runs
-    state = re.fullmatch(rf"lint yaml python\|{re.escape(str(tmp_path / 'live'))}/\d{{8}}-\d{{6}}-lint\.json", env[0])
+    state = re.fullmatch(
+        rf"lint yaml python\|{re.escape(str(tmp_path / 'live'))}/\d{{8}}-\d{{6}}-lint-\d+\.json", env[0]
+    )
     assert state and len(set(env)) == 1, env
 
 
@@ -2099,7 +2101,7 @@ def test_init_draws_its_two_playbooks_as_one_run_whose_trap_says_its_end(tmp_pat
     settings = _init_settings(tmp_path, f'echo "{said}" >> "{seen}"')
     result = _just("init", settings=settings)
     assert result.returncode == 0, _output(result)
-    state = rf"{re.escape(str(tmp_path / 'live'))}/\d{{8}}-\d{{6}}-init\.json"
+    state = rf"{re.escape(str(tmp_path / 'live'))}/\d{{8}}-\d{{6}}-init-\d+\.json"
     title = re.fullmatch(rf"init\|{state}", seen.read_text().split()[0])
     assert title and len(set(seen.read_text().split())) == 1, seen.read_text()
     nested = tmp_path / "nested"
