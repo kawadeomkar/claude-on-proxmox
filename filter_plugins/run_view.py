@@ -1377,12 +1377,16 @@ class Run:
         if stage is None:
             return self.title
         stages = self.stages.values()
-        expected = sum(self._whole(s) for s in stages)
-        reached = sum(s.reached for s in stages)
-        percent = round(100 * self._clamped("title", reached / expected if expected else 0))
         where = stage
         if self._flat() and self.current is not None and self.current.step is not None:
             where = self.current.step
+        # A stage a run in parts has listed and not begun has no size yet - just test's unit, its tests uncounted - and
+        # a percentage that could not fall would read whole by its first stage's end: none until each has begun.
+        if any(listed.planned and not listed.tasks for listed in stages):
+            return f"{self.title} · {where}"
+        expected = sum(self._whole(s) for s in stages)
+        reached = sum(s.reached for s in stages)
+        percent = round(100 * self._clamped("title", reached / expected if expected else 0))
         return f"{self.title} · {where} {percent}%"
 
     # --- output that is not a terminal --------------------------------------------------------------------------

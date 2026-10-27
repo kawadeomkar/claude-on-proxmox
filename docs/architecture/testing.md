@@ -6,7 +6,7 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
-pytest over `tests/unit/`: 2202 tests. By file:
+pytest over `tests/unit/`: 2203 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 32): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -52,7 +52,7 @@ pytest over `tests/unit/`: 2202 tests. By file:
   reading status's and deploy's streams the same cut anywhere. Every test that runs something at a terminal opens
   it through `harness._at_a_pseudo_terminal`, and every live test through `tests/unit/live_kit.py`, which gives
   each run a `HOME` of its own.
-- **The live output** (`test_run_view.py` 105, `test_deploy_live.py` 18, `test_login_live.py` 3,
+- **The live output** (`test_run_view.py` 106, `test_deploy_live.py` 18, `test_login_live.py` 3,
   `test_destroy_live.py` 4, `test_code_live.py` 3, `test_lint_live.py` 3, `test_init_live.py` 2,
   `test_test_live.py` 5, `test_live_recipes.py` 29, `test_live_commands.py` 17): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known

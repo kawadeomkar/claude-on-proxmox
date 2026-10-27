@@ -597,7 +597,8 @@ is drawn as one run, its parts in turn:
   the Ansible `TASK [...]` the running action's last line, and a failed action's lines above while Molecule goes on
   through its cleanup and destroy. Molecule's own warnings - a requirements file or a playbook a scenario has no
   need of - are its routine and stay in the log, where a passing check's would print above. The summary lists what failed by name (`failures=True`). The count is the tests' own: a test that runs
-  for minutes counts as one. A stage the recipe lists is one task until a part reaches it, as a listed step is; a
+  for minutes counts as one. A stage the recipe lists is one task until a part reaches it, as a listed step is, and
+  the tab shows where the run is with no percentage while one is still to come, since its size is unknown; a
   test or an action Ctrl-C ended is stopped, not failed; and the roles' parts, which run in their directories,
   find every tool by its absolute path.
 - **NEXT STEPS** is wrapped by its words, and a record of several lines - just init's problems, each under the line
