@@ -118,6 +118,12 @@
       GIT_CONFIG_GLOBAL: /dev/null
     side_effect_handoff_claude: /home/dev/.local/bin/claude
   tasks:
+    # With pipelining (.config/molecule/config.yml) the lineinfile below is the
+    # first module run as dev that needs dev's remote_tmp, and warned that it
+    # made it: made first, as configure.yml makes root's.
+    - name: Make dev's Ansible temporary directory
+      ansible.builtin.import_tasks: ../../playbooks/tasks/remote_tmp.yml
+
     - name: Make the laptop's checkout with a worktree folder, and the VM's
       ansible.builtin.file:
         path: "{{ item }}"

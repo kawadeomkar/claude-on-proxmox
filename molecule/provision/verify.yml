@@ -1761,6 +1761,10 @@
         verify_code_selected: >-
           {{ verify_code_cases | rejectattr('case_sensitive_only', 'defined') | list
              if verify_fs_folds_case.stat.exists else verify_code_cases }}
+        # The jobs' results, each child run's whole output, in the scenario's
+        # own directory rather than ~/.ansible_async, this machine's home on a
+        # local run; the start and the wait both read it.
+        ansible_async_dir: "{{ verify_ssh_dir }}/async"
       block:
         - name: Start the refusals that write nothing, all at once
           ansible.builtin.command:
