@@ -60,16 +60,14 @@ import hashlib
 import json
 import os
 import re
-import socket
 import subprocess
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 import yaml
-from harness import STAND_INS, _failures, _left_to_do, _messages, _results, _run, _run_at_a_terminal
+from harness import STAND_INS, _failures, _left_to_do, _messages, _results, _run, _run_at_a_terminal, _serve
 
 REPO = Path(__file__).resolve().parents[2]
 ROLE = REPO / "roles" / "github_projects"
@@ -214,12 +212,6 @@ def _marker(root: Path, host: str) -> Path:
     return root / host / ".config" / "claude-on-proxmox" / "gh-login"
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 def _bare_repos(git_root: Path) -> None:
     """One bare repository per listed name, with a commit on main, as the Molecule prepare makes them."""
     env = {
@@ -249,28 +241,7 @@ def fake_github(tmp_path_factory):
     """The fake GitHub API on a loopback port, listing bare repositories made here; yields its base URL."""
     git_root = tmp_path_factory.mktemp("git")
     _bare_repos(git_root)
-    port = _free_port()
-    server = subprocess.Popen(
-        [sys.executable, str(FAKE_API), str(port), USERNAME, str(git_root), *REPOS],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        for _ in range(100):
-            if server.poll() is not None:
-                pytest.fail(f"fake GitHub API exited: {server.stderr.read()}")
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    break
-            except OSError:
-                time.sleep(0.05)
-        else:
-            pytest.fail("fake GitHub API did not start")
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.terminate()
-        server.wait(timeout=10)
+    yield from _serve(FAKE_API, USERNAME, str(git_root), *REPOS)
 
 
 # What `getent passwd <user>` answers on the stand-in hosts: the user's home is
