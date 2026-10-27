@@ -4,10 +4,10 @@ With pipelining (ansible.cfg) a module that transfers no file gets no per-task
 temporary directory, so the first one running as root that needs one makes
 root's remote_tmp itself and warns "did not exist and was created": get_url
 building the template on a new Proxmox host, deb822_repository in dev_tools on
-a new VM. template.yml and configure.yml make it first. Molecule runs without
-pipelining, so a temporary directory made for its first task makes remote_tmp
-there and the task is always ok; only these runs show what it is for. Each is
-a stand-in host whose HOME is a directory of its own, with no remote_tmp yet,
+a new VM. template.yml and configure.yml make it first, and so do the Molecule
+scenarios that reach such a module, pipelined as well: dev_tools' converge, and
+configure's side effect for dev. These runs hold it on its own: each is a
+stand-in host whose HOME is a directory of its own, with no remote_tmp yet,
 and get_url, fetching a file:// URL, stands in for the module that needs one.
 """
 

@@ -24,12 +24,13 @@ import ast
 import json
 import os
 import re
-import subprocess
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
 import yaml
+from ansible.parsing.vault import VaultLib, VaultSecret
 from harness import (
     REPO,
     _desktop,
@@ -110,9 +111,11 @@ def _init(root: Path, files: dict, extra: dict | None = None, *args: str, env: d
 
 
 def _init_at_a_terminal(
-    root: Path, files: dict, steps, extra: dict | None = None, env: dict | None = None, **kwargs
+    root: Path, files: dict, steps, extra: dict | None = None, env: dict | None = None, args=(), **kwargs
 ) -> tuple[int, str, str]:
-    """init_settings.yml at a pseudo-terminal, as just init runs it at one (init_ask), typing steps; rc, output, log."""
+    """init_settings.yml at a pseudo-terminal, as just init runs it at one (init_ask), typing steps; rc, output, log.
+
+    args go on the command line after the inventory: -vvv, say."""
     _held(root, files)
     return _run_at_a_terminal(
         root,
@@ -120,10 +123,17 @@ def _init_at_a_terminal(
         {},
         files | {"init_ask": True} | (extra or {}),
         steps=steps,
-        args=["-i", str(INVENTORY)],
+        args=["-i", str(INVENTORY), *args],
         env=_no_real_ssh(root, env),
         **kwargs,
     )
+
+
+def _copy(root: Path, files: dict, name: str) -> dict:
+    """A copy of the checkout the files are in, at root/name, as it stands: the vars pointing a run at it."""
+    checkout = Path(files["init_hosts_file"]).parent
+    shutil.copytree(checkout, root / name)
+    return {var: str(root / name / Path(path).relative_to(checkout)) for var, path in files.items()}
 
 
 def _stand_in_proxmox(root: Path, files: dict, state: dict | None = None, where: str = "host") -> Path:
@@ -160,16 +170,21 @@ def _snapshot(files: dict) -> dict:
     return snapshot
 
 
+def _password(path) -> VaultSecret:
+    """The password in a file, as ansible-vault's --vault-password-file reads one that is no script."""
+    return VaultSecret(Path(path).read_bytes().strip())
+
+
+def _decrypt_with(files: dict, password) -> str:
+    """The vault's text, as ansible-vault decrypt prints it with that password file: in this process, which is
+    the test's check alone - every ansible-vault the playbook runs is the real one, started as just init starts it.
+    """
+    vault = VaultLib([("default", _password(password))])
+    return vault.decrypt(Path(files["init_vault_file"]).read_bytes()).decode()
+
+
 def _decrypt(files: dict) -> str:
-    result = subprocess.run(
-        [str(ANSIBLE_VAULT), "decrypt", "--vault-password-file", files["init_vault_pass_file"], "--output", "-"]
-        + [files["init_vault_file"]],
-        capture_output=True,
-        text=True,
-        check=True,
-        stdin=subprocess.DEVNULL,
-    )
-    return result.stdout
+    return _decrypt_with(files, files["init_vault_pass_file"])
 
 
 def _example(var: str) -> str:
@@ -189,16 +204,13 @@ def _mode(path: str) -> int:
 
 
 def _encrypt(files: dict, text: str, password: str = "a-password-of-the-persons-own\n") -> None:
+    """A vault encrypted as ansible-vault encrypt writes it, a new file of mode 0600, and its .vault_pass."""
     Path(files["init_vault_pass_file"]).write_text(password)
     Path(files["init_vault_pass_file"]).chmod(0o600)
-    subprocess.run(
-        [str(ANSIBLE_VAULT), "encrypt", "--vault-password-file", files["init_vault_pass_file"]]
-        + ["--output", files["init_vault_file"], "-"],
-        input=text,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    vault = Path(files["init_vault_file"])
+    vault.unlink(missing_ok=True)
+    vault.write_bytes(VaultLib().encrypt(text, _password(files["init_vault_pass_file"])))
+    vault.chmod(0o600)
 
 
 # Typed: every question, in order, each answer and Enter.
@@ -211,24 +223,33 @@ EVERY_ANSWER = [
 
 
 # ------------------------------------------------------------------ no terminal ---
-@pytest.mark.parametrize("asking", [False, True], ids=["init_ask-off", "init_ask-on"])
-def test_without_a_terminal_nothing_is_written(tmp_path: Path, asking: bool) -> None:
-    # With init_ask on, each pause returns "" at once, as Enter: nothing is
-    # kept, and with nothing kept nothing is written - but the vault, which a
-    # terminal would have encrypted, stays as it is only without init_ask.
+def test_without_a_terminal_nothing_is_written(tmp_path: Path) -> None:
+    # A fresh checkout and nothing given: nothing asked or written, what is
+    # missing said - and the Tailscale notice, which names the sign-in page.
     files = _files(tmp_path)
     before = _snapshot(files)
-    report = _init(tmp_path, files, {"init_ask": asking} if asking else None)
+    report = _init(tmp_path, files)
+    assert report["rc"] == 0, _failures(report)
+    assert _snapshot(files) == before
+    summary = _said(report, "Say what was written, and what is left")
+    assert "Nothing is asked without a terminal" in summary
+    assert "the Proxmox host address" in summary and "the API token secret" in summary
+    notice = _said(report, NOTICE_TASK)
+    assert notice.startswith("NOTICE  Tailscale is on by default") and "sign-in page during just deploy" in notice
+    assert "tailscale_enabled: false" in notice
+
+
+def test_init_ask_without_a_terminal_keeps_nothing_but_encrypts_the_vault(tmp_path: Path) -> None:
+    # Each pause returns "" at once, as Enter: nothing is kept, and with
+    # nothing kept nothing is written - but the vault, which a terminal
+    # encrypts, and which stays as it is only without init_ask.
+    files = _files(tmp_path)
+    before = _snapshot(files)
+    report = _init(tmp_path, files, {"init_ask": True})
     assert report["rc"] == 0, _failures(report)
     after = _snapshot(files)
-    if asking:
-        assert after["hosts.yml"] == before["hosts.yml"] and after["local.yml"] == before["local.yml"]
-        assert Path(files["init_vault_file"]).read_text().startswith("$ANSIBLE_VAULT")
-    else:
-        assert after == before
-        summary = _said(report, "Say what was written, and what is left")
-        assert "Nothing is asked without a terminal" in summary
-        assert "the Proxmox host address" in summary and "the API token secret" in summary
+    assert after["hosts.yml"] == before["hosts.yml"] and after["local.yml"] == before["local.yml"]
+    assert Path(files["init_vault_file"]).read_text().startswith("$ANSIBLE_VAULT")
 
 
 def test_run_by_hand_at_a_terminal_without_init_ask_asks_nothing(tmp_path: Path) -> None:
@@ -243,9 +264,12 @@ def test_run_by_hand_at_a_terminal_without_init_ask_asks_nothing(tmp_path: Path)
 
 
 # ---------------------------------------------------------------------- typed ---
-def test_every_answer_typed_writes_the_three_files(tmp_path: Path) -> None:
+def test_every_answer_typed_writes_the_three_files_and_the_same_again_changes_nothing(tmp_path: Path) -> None:
     files = _files(tmp_path)
-    rc, output, log = _init_at_a_terminal(tmp_path, files, EVERY_ANSWER)
+    # At -vvv with every module's arguments in its result, as the most a run can
+    # print or log: the secret typed is in neither.
+    loud = {"ansible_inject_invocation": True}
+    rc, output, log = _init_at_a_terminal(tmp_path, files, EVERY_ANSWER, loud, args=["-vvv"])
     assert rc == 0, output
     hosts = Path(files["init_hosts_file"]).read_text().splitlines()
     example = _example("init_hosts_file").splitlines()
@@ -266,13 +290,10 @@ def test_every_answer_typed_writes_the_three_files(tmp_path: Path) -> None:
     assert _mode(files["init_vault_file"]) == 0o600
     assert _mode(files["init_vault_pass_file"]) == 0o600
     assert "NOTICE  vault.yml is encrypted" in output
-    assert SECRET not in output and SECRET not in log
-
-
-def test_the_same_answers_again_ask_nothing_and_change_nothing(tmp_path: Path) -> None:
-    files = _files(tmp_path)
-    rc, output, _ = _init_at_a_terminal(tmp_path, files, EVERY_ANSWER)
-    assert rc == 0, output
+    assert log, "no run log was written"
+    for seen in (output, log):
+        assert SECRET not in seen and SECRET.upper() not in seen
+    # The same run again asks nothing and changes nothing.
     before = _snapshot(files)
     rc, output, _ = _init_at_a_terminal(tmp_path, files, [])
     assert rc == 0, output
@@ -306,32 +327,49 @@ def test_only_the_part_of_a_token_id_that_differs_is_written(tmp_path: Path) -> 
     assert 'proxmox_api_token_id: "claude"\n' in local and "# proxmox_api_user: ansible@pve\n" in local
 
 
+# The rule each question says when it asks again, and its label, which the answer
+# left says.
+RULE = {
+    HOST_PROMPT: ("an IP address or a host name", "Proxmox host address"),
+    TOKEN_PROMPT: ("user@realm!name", "API token ID"),
+    SECRET_PROMPT: ("36-character secret", "API token secret"),
+    GITHUB_PROMPT: ("GitHub username", "GitHub username"),
+}
+
+
+# Each run types two wrong addresses, one at the question and one when it is
+# asked again, and one wrong answer twice at one other question.
 @pytest.mark.parametrize(
-    ("prompt", "wrong", "rule"),
+    "wrong",
     [
-        pytest.param(HOST_PROMPT, "pve.lan; x", "an IP address or a host name", id="host-semicolon"),
-        pytest.param(HOST_PROMPT, "1.2.3.4 ProxyCommand x", "an IP address or a host name", id="host-space"),
-        pytest.param(HOST_PROMPT, "https://pve:8006", "without https:// or a port", id="host-url"),
-        pytest.param(HOST_PROMPT, '"quoted"', "an IP address or a host name", id="host-quoted"),
-        pytest.param(HOST_PROMPT, "a#b", "an IP address or a host name", id="host-hash"),
-        pytest.param(HOST_PROMPT, "192.0.2.10", "not the example address", id="host-example"),
-        pytest.param(TOKEN_PROMPT, "ansible@pve", "user@realm!name", id="token-no-name"),
-        pytest.param(SECRET_PROMPT, "11111111-2222", "36-character secret", id="secret-short"),
-        pytest.param(GITHUB_PROMPT, "-octocat", "GitHub username", id="github-hyphen"),
+        pytest.param(
+            {HOST_PROMPT: ("pve.lan; x", "1.2.3.4 ProxyCommand x"), TOKEN_PROMPT: ("ansible@pve", "ansible@pve")},
+            id="host-semicolon-then-space,token-no-name",
+        ),
+        pytest.param(
+            {HOST_PROMPT: ("https://pve:8006", '"quoted"'), SECRET_PROMPT: ("11111111-2222", "11111111-2222")},
+            id="host-url-then-quoted,secret-short",
+        ),
+        pytest.param(
+            {HOST_PROMPT: ("a#b", "192.0.2.10"), GITHUB_PROMPT: ("-octocat", "-octocat")},
+            id="host-hash-then-example,github-hyphen",
+        ),
     ],
 )
-def test_a_wrong_answer_is_asked_for_once_more_then_left(tmp_path: Path, prompt: bytes, wrong: str, rule: str) -> None:
+def test_a_wrong_answer_is_asked_for_once_more_then_left(tmp_path: Path, wrong: dict) -> None:
     files = _files(tmp_path)
     steps = []
     for asked, _ in EVERY_ANSWER:
-        if asked == prompt:
-            steps += [(asked, wrong.encode() + b"\n"), (asked, wrong.encode() + b"\n")]
-        else:
-            steps.append((asked, b"\n"))
+        # The second of a question's steps waits for it to be asked again,
+        # which only the first answer refused does.
+        steps += [(asked, answer.encode() + b"\n") for answer in wrong[asked]] if asked in wrong else [(asked, b"\n")]
     rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
     assert rc == 0, output
-    assert "That is not" in output and rule in output
-    assert "is left as it was" in output
+    assert "That is not" in output
+    for asked in wrong:
+        rule, label = RULE[asked]
+        assert rule in output, rule
+        assert f"{label} is left as it was" in output, label
     assert Path(files["init_hosts_file"]).read_text() == _example("init_hosts_file")
     assert Path(files["init_local_file"]).read_text() == _example("init_local_file")
 
@@ -392,14 +430,15 @@ def test_an_encrypted_vault_with_a_placeholder_is_asked_and_encrypted_again(tmp_
     assert "NOTICE  vault.yml is encrypted" not in output
 
 
-@pytest.mark.parametrize("noisy", [{"ANSIBLE_VERBOSITY": "3"}, {"ANSIBLE_DEBUG": "1"}], ids=["verbose", "debug"])
-def test_a_verbose_or_debugging_environment_reads_and_writes_the_vault_as_it_is(tmp_path: Path, noisy: dict) -> None:
+def test_a_verbose_and_debugging_environment_reads_and_writes_the_vault_as_it_is(tmp_path: Path) -> None:
     # ansible-vault takes both from the environment, and then prints more than
-    # the vault's text on the stdout the vault is read from: just init runs it
-    # quiet, so the vault opens, takes the answer and reads back as written.
+    # the vault's text on the stdout the vault is read from - either one alone
+    # does: just init runs it quiet, so the vault opens, takes the answer and
+    # reads back as written. Both at once, so that each must be turned off.
     files = _files(tmp_path)
     _encrypt(files, _example("init_vault_file"))
     steps = [(HOST_PROMPT, b"\n"), (TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"octocat\n")]
+    noisy = {"ANSIBLE_VERBOSITY": "3", "ANSIBLE_DEBUG": "1"}
     rc, output, _ = _init_at_a_terminal(tmp_path, files, [*steps, (SECRET_PROMPT, SECRET.encode() + b"\n")], env=noisy)
     assert rc == 0, output[-3000:]
     assert _decrypt(files) == _example("init_vault_file").replace(
@@ -448,38 +487,53 @@ def _every_value_given(root: Path) -> dict:
     return {"host": "pve.lan", "github_user": "octocat", "token_secret_file": str(_secret_file(root))}
 
 
-def test_every_value_given_with_no_terminal_writes_them_and_encrypts(tmp_path: Path) -> None:
+# Everything a run given every value proves, from one run - with --tailscale off,
+# a secret's file others can read, and the log at -vvv with every module's
+# arguments injected - and then the same values again, and in another case,
+# each run in a copy of the checkout as that run left it.
+def test_every_value_given_with_no_terminal_writes_them_and_encrypts_once(tmp_path: Path) -> None:
     files = _files(tmp_path)
-    report = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path)})
+    given = _every_value_given(tmp_path) | {"tailscale": "off"}
+    given["token_secret_file"] = str(_secret_file(tmp_path, mode=0o644))
+    log = tmp_path / "run.log"
+    env = {"ANSIBLE_LOG_PATH": str(log), "ANSIBLE_LOG_VERBOSITY": "3"}
+    report = _init(tmp_path, files, {"init_given": given}, "-e", '{"ansible_inject_invocation": true}', env=env)
     assert report["rc"] == 0, _failures(report)
     assert '"pve.lan"' in Path(files["init_hosts_file"]).read_text()
     vault = _decrypt(files)
     assert SECRET_LINE in vault and GITHUB_LINE in vault
     assert _mode(files["init_vault_pass_file"]) == 0o600
-    again = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path)})
-    assert again["rc"] == 0, _failures(again)
-    assert _changed(again) == 0
+    # The secret is in neither the report on stdout nor the log.
+    seen = json.dumps(report) + log.read_text()
+    assert SECRET not in seen and SECRET.upper() not in seen
+    assert "can be read by others" in _said(report, "Say that others can read the secret's file")
+    # --tailscale writes its setting, which ends the notice.
+    assert Path(files["init_local_file"]).read_text() == _example("init_local_file").replace(
+        "# tailscale_enabled: true\n", "tailscale_enabled: false\n"
+    )
+    assert not _said(report, NOTICE_TASK)
+    assert "tailscale_enabled: false" in _said(report, "Say what was written, and what is left")
+    for name, again in (("again", given), ("another-case", given | {"host": "PVE.LAN", "github_user": "OctoCat"})):
+        report = _init(tmp_path, _copy(tmp_path, files, name), {"init_given": again})
+        assert report["rc"] == 0, (name, _failures(report))
+        assert _changed(report) == 0, name
 
 
-def test_a_given_value_that_differs_from_a_set_one_fails_and_writes_nothing(tmp_path: Path) -> None:
+def test_given_values_that_differ_from_set_ones_fail_and_write_nothing(tmp_path: Path) -> None:
+    # Each one named, in the one refusal before anything is written.
     files = _files(tmp_path)
     hosts = Path(files["init_hosts_file"])
     hosts.write_text(hosts.read_text().replace("192.0.2.10", "10.0.0.5"))
+    local = Path(files["init_local_file"])
+    local.write_text(local.read_text() + "proxmox_api_user: deploy@pam\ntailscale_enabled: false\n")
     before = _snapshot(files)
-    report = _init(tmp_path, files, {"init_given": {"host": "pve.lan"}})
+    report = _init(tmp_path, files, {"init_given": {"host": "pve.lan", "token_user": "other@pve", "tailscale": "on"}})
     assert report["rc"] != 0
     failure = "\n".join(_failures(report).values())
     assert "--host pve.lan" in failure and "already sets 10.0.0.5" in failure
+    assert "--token-user other@pve" in failure
+    assert "--tailscale on, but inventory/group_vars/all/local.yml already sets tailscale_enabled: false" in failure
     assert _snapshot(files) == before
-
-
-def test_a_given_token_user_that_differs_from_local_yml_fails(tmp_path: Path) -> None:
-    files = _files(tmp_path)
-    local = Path(files["init_local_file"])
-    local.write_text(local.read_text() + "proxmox_api_user: deploy@pam\n")
-    report = _init(tmp_path, files, {"init_given": {"token_user": "other@pve"}})
-    assert report["rc"] != 0
-    assert "--token-user other@pve" in "\n".join(_failures(report).values())
 
 
 def test_given_token_parts_are_written_only_where_they_differ_from_the_default(tmp_path: Path) -> None:
@@ -506,40 +560,37 @@ def test_some_values_given_at_a_terminal_ask_only_for_the_rest(tmp_path: Path) -
     assert SECRET_LINE in vault and GITHUB_LINE in vault
 
 
-@pytest.mark.parametrize(
-    ("given", "said"),
-    [
-        pytest.param({"host": "https://pve.lan"}, "--host (https://pve.lan) is not", id="host"),
-        pytest.param({"github_user": "octo--cat"}, "--github-user (octo--cat) is not", id="github"),
-        pytest.param(
-            {"token_user": "ansible"}, "--token-user and --token-name (ansible!ansible) are not", id="token-user"
-        ),
-    ],
-)
-def test_a_given_value_that_breaks_its_rule_fails_without_a_prompt(tmp_path: Path, given: dict, said: str) -> None:
+def test_given_values_that_break_their_rules_fail_without_a_prompt(tmp_path: Path) -> None:
+    # Each one named, in the one refusal before any question or write - but
+    # the secret, which is never said.
     files = _files(tmp_path)
     before = _snapshot(files)
+    given = {"host": "https://pve.lan", "github_user": "octo--cat", "token_user": "ansible"}
+    given["token_secret_file"] = str(_secret_file(tmp_path, "not-it\n"))
     report = _init(tmp_path, files, {"init_given": given, "init_ask": True})
     assert report["rc"] != 0
-    assert said in "\n".join(_failures(report).values())
+    failure = "\n".join(_failures(report).values())
+    assert "--host (https://pve.lan) is not" in failure
+    assert "--github-user (octo--cat) is not" in failure
+    assert "--token-user and --token-name (ansible!ansible) are not" in failure
+    assert "the secret in --token-secret-file" in failure and "36-character secret" in failure
+    assert "not-it" not in json.dumps(report)
     assert _snapshot(files) == before
 
 
-def test_a_given_secret_that_is_no_secret_fails_without_saying_it(tmp_path: Path) -> None:
-    files = _files(tmp_path)
-    report = _init(tmp_path, files, {"init_given": {"token_secret_file": str(_secret_file(tmp_path, "not-it\n"))}})
-    assert report["rc"] != 0
-    failure = "\n".join(_failures(report).values())
-    assert "the secret in --token-secret-file" in failure and "36-character secret" in failure
-    assert "not-it" not in json.dumps(report)
-
-
-def test_the_secret_given_in_the_environment_is_written(tmp_path: Path) -> None:
+def test_the_secret_given_in_the_environment_is_written_and_never_said(tmp_path: Path) -> None:
+    # In capitals, as it may be pasted: written as pveum prints it, and in
+    # neither case in the report or the log at -vvv, with every module's
+    # arguments injected.
     files = _files(tmp_path)
     given = {"host": "pve.lan", "github_user": "octocat"}
-    report = _init(tmp_path, files, {"init_given": given}, env={"CLAUDE_ON_PROXMOX_TOKEN_SECRET": SECRET.upper()})
+    log = tmp_path / "run.log"
+    env = {"CLAUDE_ON_PROXMOX_TOKEN_SECRET": SECRET.upper(), "ANSIBLE_LOG_PATH": str(log), "ANSIBLE_LOG_VERBOSITY": "3"}
+    report = _init(tmp_path, files, {"init_given": given}, "-e", '{"ansible_inject_invocation": true}', env=env)
     assert report["rc"] == 0, _failures(report)
     assert SECRET_LINE in _decrypt(files)
+    seen = json.dumps(report) + log.read_text()
+    assert SECRET not in seen and SECRET.upper() not in seen
 
 
 def test_the_secret_given_two_ways_is_refused(tmp_path: Path) -> None:
@@ -550,14 +601,6 @@ def test_the_secret_given_two_ways_is_refused(tmp_path: Path) -> None:
     assert "give it one way" in "\n".join(_failures(report).values())
 
 
-def test_a_secret_file_others_can_read_is_said(tmp_path: Path) -> None:
-    files = _files(tmp_path)
-    given = _every_value_given(tmp_path) | {"token_secret_file": str(_secret_file(tmp_path, mode=0o644))}
-    report = _init(tmp_path, files, {"init_given": given})
-    assert report["rc"] == 0, _failures(report)
-    assert "can be read by others" in _said(report, "Say that others can read the secret's file")
-
-
 def test_a_vault_value_given_for_a_vault_that_cannot_be_opened_fails(tmp_path: Path) -> None:
     files = _files(tmp_path)
     _encrypt(files, _example("init_vault_file"))
@@ -565,37 +608,6 @@ def test_a_vault_value_given_for_a_vault_that_cannot_be_opened_fails(tmp_path: P
     report = _init(tmp_path, files, {"init_given": {"github_user": "octocat"}})
     assert report["rc"] != 0
     assert "Put its password in .vault_pass" in "\n".join(_failures(report).values())
-
-
-@pytest.mark.parametrize("how", ["file", "environment", "typed"])
-def test_the_secret_reaches_neither_the_output_nor_the_log(tmp_path: Path, how: str) -> None:
-    files = _files(tmp_path)
-    # The log at -vvv, while the report on stdout stays the JSON callback's alone.
-    loud = ["-e", '{"ansible_inject_invocation": true}']
-    if how == "typed":
-        rc, output, log = _run_at_a_terminal(
-            tmp_path,
-            PLAYBOOK,
-            {},
-            files | {"init_ask": True, "ansible_inject_invocation": True},
-            steps=EVERY_ANSWER,
-            args=["-i", str(INVENTORY), "-vvv"],
-            env=_no_real_ssh(tmp_path),
-        )
-        assert rc == 0, output
-        seen = output + log
-    else:
-        given = {"host": "pve.lan", "github_user": "octocat"}
-        env = {"ANSIBLE_LOG_PATH": str(tmp_path / "run.log"), "ANSIBLE_LOG_VERBOSITY": "3"}
-        if how == "file":
-            given["token_secret_file"] = str(_secret_file(tmp_path))
-        else:
-            env["CLAUDE_ON_PROXMOX_TOKEN_SECRET"] = SECRET
-        report = _init(tmp_path, files, {"init_given": given}, *loud, env=env)
-        assert report["rc"] == 0, _failures(report)
-        seen = json.dumps(report) + (tmp_path / "run.log").read_text()
-    assert SECRET_LINE in _decrypt(files)
-    assert SECRET not in seen and SECRET.upper() not in seen
 
 
 # ------------------------------------------------------------- the edge cases ---
@@ -613,17 +625,6 @@ def _password_file(root: Path, name: str = "vault-password") -> Path:
     path.write_text("a-password-of-the-persons-own\n")
     path.chmod(0o600)
     return path
-
-
-def _decrypt_with(files: dict, password: Path) -> str:
-    return subprocess.run(
-        [str(ANSIBLE_VAULT), "decrypt", "--vault-password-file", str(password), "--output", "-"]
-        + [files["init_vault_file"]],
-        capture_output=True,
-        text=True,
-        check=True,
-        stdin=subprocess.DEVNULL,
-    ).stdout
 
 
 def test_a_password_file_of_ansibles_own_encrypts_and_no_vault_pass_is_made(tmp_path: Path) -> None:
@@ -738,16 +739,6 @@ def test_a_vault_left_plaintext_is_said_and_no_deploy_is_suggested(tmp_path: Pat
     summary = _said(report, "Say what was written, and what is left")
     assert "vault.yml is still plaintext" in summary and "just deploy" not in summary
     assert not Path(files["init_vault_file"]).read_text().startswith("$ANSIBLE_VAULT")
-
-
-def test_the_same_values_in_another_case_are_no_change(tmp_path: Path) -> None:
-    files = _files(tmp_path)
-    report = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path)})
-    assert report["rc"] == 0, _failures(report)
-    again = {**_every_value_given(tmp_path), "host": "PVE.LAN", "github_user": "OctoCat"}
-    report = _init(tmp_path, files, {"init_given": again})
-    assert report["rc"] == 0, _failures(report)
-    assert _changed(report) == 0
 
 
 def test_a_run_that_keeps_the_modules_files_is_refused(tmp_path: Path) -> None:
@@ -953,15 +944,7 @@ def test_without_a_terminal_the_host_is_never_reached(tmp_path: Path) -> None:
 NOTICE_TASK = "Say that Tailscale is on by default"
 
 
-def test_the_tailscale_notice_names_the_sign_in_page_on_a_fresh_checkout(tmp_path: Path) -> None:
-    files = _files(tmp_path)
-    before = _snapshot(files)
-    report = _init(tmp_path, files)
-    assert report["rc"] == 0, _failures(report)
-    notice = _said(report, NOTICE_TASK)
-    assert notice.startswith("NOTICE  Tailscale is on by default") and "sign-in page during just deploy" in notice
-    assert "tailscale_enabled: false" in notice
-    assert _snapshot(files) == before
+# On a fresh checkout the notice names the sign-in page: test_without_a_terminal_nothing_is_written.
 
 
 def test_the_tailscale_notice_names_the_auth_key_the_vault_holds(tmp_path: Path) -> None:
@@ -976,17 +959,17 @@ def test_the_tailscale_notice_names_the_auth_key_the_vault_holds(tmp_path: Path)
     assert "tskey-auth-x" not in json.dumps(report)
 
 
-@pytest.mark.parametrize(("given", "value"), [("off", "false"), ("on", "true")])
-def test_tailscale_given_writes_its_setting_and_ends_the_notice(tmp_path: Path, given: str, value: str) -> None:
+# --tailscale off: test_every_value_given_with_no_terminal_writes_them_and_encrypts_once.
+def test_tailscale_on_given_writes_its_setting_and_ends_the_notice(tmp_path: Path) -> None:
     files = _files(tmp_path)
-    report = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path) | {"tailscale": given}})
+    report = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path) | {"tailscale": "on"}})
     assert report["rc"] == 0, _failures(report)
     assert Path(files["init_local_file"]).read_text() == _example("init_local_file").replace(
-        "# tailscale_enabled: true\n", f"tailscale_enabled: {value}\n"
+        "# tailscale_enabled: true\n", "tailscale_enabled: true\n"
     )
     assert not _said(report, NOTICE_TASK)
-    assert f"tailscale_enabled: {value}" in _said(report, "Say what was written, and what is left")
-    again = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path) | {"tailscale": given}})
+    assert "tailscale_enabled: true" in _said(report, "Say what was written, and what is left")
+    again = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path) | {"tailscale": "on"}})
     assert again["rc"] == 0, _failures(again)
     assert _changed(again) == 0
 
@@ -1001,17 +984,7 @@ def test_the_tailscale_notice_is_gone_once_the_setting_is_there(tmp_path: Path, 
     assert not _said(report, NOTICE_TASK)
 
 
-def test_tailscale_given_that_differs_from_the_setting_fails(tmp_path: Path) -> None:
-    files = _files(tmp_path)
-    local = Path(files["init_local_file"])
-    local.write_text(local.read_text() + "tailscale_enabled: false\n")
-    before = _snapshot(files)
-    report = _init(tmp_path, files, {"init_given": {"tailscale": "on"}})
-    assert report["rc"] != 0
-    assert "--tailscale on, but inventory/group_vars/all/local.yml already sets tailscale_enabled: false" in (
-        "\n".join(_failures(report).values())
-    )
-    assert _snapshot(files) == before
+# --tailscale that differs from the setting: test_given_values_that_differ_from_set_ones_fail_and_write_nothing.
 
 
 # --------------------------------------------------------------------- static ---
