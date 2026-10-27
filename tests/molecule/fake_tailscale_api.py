@@ -93,4 +93,9 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+server = HTTPServer(("127.0.0.1", PORT), Handler)
+# Given port 0 the system picks a free one, said on stdout: tests/unit/harness.py starts fakes so,
+# never on a port it probed and freed, which another xdist worker's fake could take first.
+if PORT == 0:
+    print(server.server_address[1], flush=True)
+server.serve_forever()

@@ -18,7 +18,9 @@ unless all three passed, and `test_shards.py` holds that the shards together col
 Every child a test signals or types Ctrl-C at starts with SIGINT,
 SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite started with `&` or under
 nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
-(`harness._drain`), since on a loaded machine its last bytes arrive late.
+(`harness._drain`), since on a loaded machine its last bytes arrive late, up to the test's deadline. Every fake
+API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
+and then taken by another worker's fake.
 
 pytest over `tests/unit/`: 2064 tests. By file:
 

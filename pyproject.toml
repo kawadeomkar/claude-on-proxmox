@@ -63,6 +63,8 @@ testpaths = ["tests/unit"]
 # The test modules share tests/unit/harness.py, imported by name in any import mode.
 pythonpath = ["tests/unit"]
 addopts = "-ra -q"
+# Registered here too, so a run without xdist (-p no:xdist) knows the mark tests/unit/conftest.py sets.
+markers = ["xdist_group(name): run every test of the group on one xdist worker"]
 
 [tool.ruff]
 line-length = 120
