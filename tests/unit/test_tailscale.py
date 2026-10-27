@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -158,11 +159,13 @@ CASES = {
 }
 # What a run is told, beyond each host's own: short waits, become off - the
 # controller has no sudo to give - and a Tailscale outside dpkg looked for in
-# each host's own directory, never this machine's.
+# each host's own directory, never this machine's. Two seconds to settle is three
+# reads, the last one after nostate's two NoState ones; a join's one second is
+# what the stand-in's slow and late keys, and a join waiting for an admin, sleep.
 EXTRA = {
     "ansible_become": False,
-    "tailscale_settle_seconds": 3,
-    "tailscale_join_timeout": 2,
+    "tailscale_settle_seconds": 2,
+    "tailscale_join_timeout": 1,
     "tailscale_foreign_paths": ["~/foreign/tailscaled"],
 }
 
@@ -267,7 +270,7 @@ def test_a_fresh_node_joins_once_with_the_key_on_stdin(configured):
     root, first, first_calls, second = configured
     ups = _ups(first_calls["fresh-key"])
     assert ups == [
-        "up --auth-key=file:/dev/stdin --timeout=2s --reset --hostname=fresh-key --ssh=false"
+        "up --auth-key=file:/dev/stdin --timeout=1s --reset --hostname=fresh-key --ssh=false"
         " --accept-routes=false --accept-dns=false"
     ], first_calls["fresh-key"]
     assert "[key on stdin]" in first_calls["fresh-key"]
@@ -498,7 +501,7 @@ def test_a_node_still_starting_is_reported_not_changed(configured):
     root, first, first_calls, second = configured
     assert [call for call in _calls(root, "starting") if call.startswith(("set ", "up "))] == []
     assert _said(first)["starting"] == (
-        "starting: Tailscale is still connecting (Starting) after 3 seconds, so nothing was changed. just deploy"
+        "starting: Tailscale is still connecting (Starting) after 2 seconds, so nothing was changed. just deploy"
         " starting --tags tailscale reads it again."
     )
 
@@ -602,11 +605,16 @@ SAY_PAGE = "web_login | Say where to sign in"
 # its own, is approved by the stand-in at the first poll after the role read the
 # page (approve-at-read 2), its `up` giving up at once (up-waits 0): approval by
 # the clock, 7 s after the page, once landed before that read on a loaded machine.
+# Where the case is only that the wait runs out, `up` gives up at once too and
+# the wait is a second.
 LATE = {"up-waits": "0", "approve-at-read": "2"}
 WEB_CASES = {
     "approved-late": {"ts": LATE},
-    "needs-admin": {"ts": {"approve-after": "1", "needs-approval": ""}},
-    "waited-out": {"ts": {"up-waits": "0"}, "tailscale_login_timeout": 3},
+    # Approved by the first status read, the one for the page: it finds NeedsMachineAuth, and no page.
+    "needs-admin": {"ts": {"up-waits": "0", "approve-at-read": "1", "needs-approval": ""}},
+    # Approved as approved-late is, after the page, into NeedsMachineAuth: that ends the wait, not its 30 seconds.
+    "admin-late": {"ts": {**LATE, "needs-approval": ""}},
+    "waited-out": {"ts": {"up-waits": "0"}, "tailscale_login_timeout": 1},
     # Not Tailscale's page: said, with a warning, and never opened - here with
     # the desktop switch on, so that an opener reached would fail the run.
     "foreign-page": {
@@ -624,8 +632,9 @@ WEB_CASES = {
         "tailscale_login_server": "https://hs.example.test",
         "ts": {"authurl-base": "https://hs.example.test.evil.example", **LATE},
     },
-    "key-expired": {"ts": {"expired": NODE, "approve-after": "1"}, "marker": NODE},
-    "key-expired-waited-out": {"ts": {"expired": NODE, "up-waits": "0"}, "marker": NODE, "tailscale_login_timeout": 2},
+    # Approved as soon as the page is made: `up` itself ends with "Success." and rc 0.
+    "key-expired": {"ts": {"expired": NODE, "approve-after": "0"}, "marker": NODE},
+    "key-expired-waited-out": {"ts": {"expired": NODE, "up-waits": "0"}, "marker": NODE, "tailscale_login_timeout": 1},
     # The role's login, replaced since by one made by hand, whose key expired.
     "expired-by-hand": {"ts": {"expired": "f" * 64, "approve-after": "1"}, "marker": NODE},
     "not-installed": {"package": False},
@@ -637,6 +646,17 @@ WEB_CASES = {
     "signed-in": {"ts": _joined("signed-in"), "marker": NODE},
 }
 WEB_EXTRA = {**EXTRA, "claude_vm_discovery": False, "tailscale_login_poll_seconds": 1}
+
+
+def _seconds(report: dict, task: str, host: str) -> float:
+    """How long the task whose name ends with `task` ran for the host: the sign-in runs one VM per batch."""
+    for play in report["plays"]:
+        for entry in play["tasks"]:
+            if entry["task"]["name"].endswith(task) and host in entry["hosts"]:
+                duration = entry["task"]["duration"]
+                start, end = (datetime.fromisoformat(duration[key].replace("Z", "+00:00")) for key in ("start", "end"))
+                return (end - start).total_seconds()
+    raise AssertionError(f"no task {task!r} ran for {host}")
 
 
 @pytest.fixture(scope="module")
@@ -677,10 +697,23 @@ def test_the_page_is_said_before_the_wait(web_logins):
     )
 
 
-def test_waiting_for_an_admin_ends_the_wait_and_is_said(web_logins):
+def test_a_login_already_waiting_for_an_admin_shows_no_page_and_is_said(web_logins):
     root, report = web_logins
+    assert "needs-admin" not in _messages(report, SAY_PAGE)
     assert _said(report)["needs-admin"] == (
         "needs-admin: signed in to Tailscale and waiting for an admin to approve it at"
+        " https://login.tailscale.com/admin/machines; it connects by itself once approved."
+    )
+
+
+def test_an_approval_that_waits_for_an_admin_ends_the_wait_and_is_said(web_logins):
+    root, report = web_logins
+    assert "admin-late" in _messages(report, SAY_PAGE)
+    # NeedsMachineAuth ends the wait at the poll that sees it, never the
+    # 30 seconds this run waits for an approval.
+    assert _seconds(report, "Wait for the page to be approved", "admin-late") < 15
+    assert _said(report)["admin-late"] == (
+        "admin-late: signed in to Tailscale and waiting for an admin to approve it at"
         " https://login.tailscale.com/admin/machines; it connects by itself once approved."
     )
 
@@ -708,7 +741,7 @@ def test_an_expired_node_s_wait_that_runs_out_says_the_page_and_keeps_no_old_key
 
 
 def test_a_page_approved_after_the_run_is_the_role_s_login_and_keeps_its_settings(tmp_path):
-    hosts = _hosts(tmp_path, {"late": {"tailscale_login_timeout": 2}})
+    hosts = _hosts(tmp_path, {"late": {"ts": {"up-waits": "0"}, "tailscale_login_timeout": 1}})
     login = _run(tmp_path, LOGIN, hosts, "-e", json.dumps({**WEB_EXTRA, "vm_name": "late"}))
     assert login["rc"] == 0, _failures(login)
     state = tmp_path / "late" / ".tailscale-fake"
@@ -728,34 +761,44 @@ def test_a_page_approved_after_the_run_is_the_role_s_login_and_keeps_its_setting
     assert [name for name, host, result in _results(second) if result.get("changed")] == []
 
 
-def test_just_deploy_says_a_page_left_waiting_after_its_configure_play_refused_the_key(tmp_path):
-    # The configure play's refused join is still registered in the sign-in play.
-    hosts = _hosts(tmp_path, {"deployed": {"key": "expired", "tailscale_login_timeout": 2}})
-    playbook = tmp_path / "configure_then_sign_in.yml"
+@pytest.fixture(scope="module")
+def configured_then_signed_in(tmp_path_factory):
+    """just deploy's configure play, then its sign-in step, for three VMs: the report, and each VM's reports."""
+    root = tmp_path_factory.mktemp("tailscale-configure-then-sign-in")
+    hosts = _hosts(
+        root,
+        {
+            # A refused key, then a page nobody approves: `up` gives up at once, the wait is a second.
+            "deployed": {"key": "expired", "ts": {"up-waits": "0"}, "tailscale_login_timeout": 1},
+            "by-key": {"key": "good"},
+            "drifted": {"ts": _joined("drifted", hostname="old"), "marker": NODE},
+        },
+    )
+    playbook = root / "configure_then_sign_in.yml"
     playbook.write_text(json.dumps([_role_play(), {"ansible.builtin.import_playbook": str(LOGIN)}]))
-    report = _run(tmp_path, playbook, hosts, "-e", json.dumps({**WEB_EXTRA, "vm_name": "deployed"}))
+    report = _run(root, playbook, hosts, "-e", json.dumps({**WEB_EXTRA, "vm_name": ",".join(hosts)}))
+    said = {host: [] for host in hosts}
+    for name, host, result in _results(report):
+        if name.endswith(REPORT) and "msg" in result:
+            said[host].append(result["msg"])
+    return report, said
+
+
+def test_just_deploy_says_a_page_left_waiting_after_its_configure_play_refused_the_key(configured_then_signed_in):
+    # The configure play's refused join is still registered in the sign-in play.
+    report, said = configured_then_signed_in
     assert report["rc"] == 0, _failures(report)
-    said = [result["msg"] for name, host, result in _results(report) if name.endswith(REPORT) and "msg" in result]
+    said = said["deployed"]
     assert len(said) == 2, said
     assert said[0].startswith("deployed: Tailscale refused vault_tailscale_auth_key (invalid key: "), said
     assert said[1].startswith("deployed: not signed in to Tailscale yet - the page stays valid for 7 days"), said
 
 
-def test_just_deploy_s_sign_in_step_never_says_again_what_its_configure_play_did(tmp_path):
+def test_just_deploy_s_sign_in_step_never_says_again_what_its_configure_play_did(configured_then_signed_in):
     # Its configure play's join and set are still registered in the sign-in
     # play, which did neither.
-    hosts = _hosts(
-        tmp_path,
-        {"by-key": {"key": "good"}, "drifted": {"ts": _joined("drifted", hostname="old"), "marker": NODE}},
-    )
-    playbook = tmp_path / "configure_then_sign_in.yml"
-    playbook.write_text(json.dumps([_role_play(), {"ansible.builtin.import_playbook": str(LOGIN)}]))
-    report = _run(tmp_path, playbook, hosts, "-e", json.dumps({**WEB_EXTRA, "vm_name": "by-key,drifted"}))
+    report, said = configured_then_signed_in
     assert report["rc"] == 0, _failures(report)
-    said = {host: [] for host in hosts}
-    for name, host, result in _results(report):
-        if name.endswith(REPORT) and "msg" in result:
-            said[host].append(result["msg"])
     configured, signed_in = said["by-key"]
     assert configured.startswith("by-key: joined Tailscale "), configured
     assert signed_in.startswith("by-key: on Tailscale "), signed_in

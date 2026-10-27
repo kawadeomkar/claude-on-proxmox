@@ -53,6 +53,7 @@ What these guard:
 
 from __future__ import annotations
 
+import base64
 import getpass
 import grp
 import hashlib
@@ -289,10 +290,13 @@ def _hosts(root: Path, cases: dict, api_url: str, *, home_given: bool = True) ->
             (state / "fake-hang").touch()
         if case.get("said"):
             (state / "fake-said").write_text(case["said"] + "\n")
+        # The device flow's timing: a code approved as soon as gh has shown it,
+        # or after approve_after seconds, and an expiring one expired as soon.
+        # Always written, 0 included: without the file the stand-in waits
+        # seconds of its own.
         if case.get("expire"):
-            (state / "fake-expire").touch()
-        if case.get("approve_after"):
-            (state / "fake-approve-after").write_text(str(case["approve_after"]))
+            (state / "fake-expire").write_text("0")
+        (state / "fake-approve-after").write_text(str(case.get("approve_after", 0)))
         # What the user set by hand in ~/.gitconfig on the VM.
         for key, value in case.get("gitconfig", {}).items():
             _git_config_set(home / ".gitconfig", key, value)
@@ -848,7 +852,8 @@ def test_github_login_says_the_role_signs_a_pending_vault_token_in_next(pending_
 # ------------------------------------------------------- the device flow ----
 # `just login <one> --only github`: github_login.yml with vm_name set, against
 # a signed-out host. The stand-in gh prints the code and the page as gh does
-# with no terminal, then approves itself after two seconds, or expires.
+# with no terminal, then approves itself (at once, or after approve_after
+# seconds), or expires.
 # github_projects_user is this user: after the sign-in the playbook runs the
 # whole role, whose directory task sets owner and group to that user, and on a
 # machine without a group of that name (macOS) that task fails after the
@@ -911,7 +916,11 @@ def _device_flow(tmp_path_factory, fake_github, name: str, case: dict, extra: di
 
 @pytest.fixture(scope="module")
 def approved(tmp_path_factory, fake_github):
-    return _device_flow(tmp_path_factory, fake_github, "approved", {})
+    """An approval after which gh says something other than "Logged in as", as a later gh may.
+
+    gh's own wording is the other device flows' (two, deployed, deployed_asking).
+    """
+    return _device_flow(tmp_path_factory, fake_github, "approved", {"said": "✓ Authentication complete."})
 
 
 @pytest.fixture(scope="module")
@@ -946,13 +955,19 @@ def hang(tmp_path_factory, fake_github):
 
 @pytest.fixture(scope="module")
 def timed_out(tmp_path_factory, fake_github):
-    """A code nobody approves, with Ansible's async limit (scaled down) ending gh before the wait ends."""
+    """A code nobody approves, with Ansible's async limit (scaled down) ending gh before the wait ends.
+
+    The watchdog kills the job 3 seconds after it started (two steps of 1.5)
+    and writes its job file a second later; the wait, begun after the job,
+    lasts 5, and the moment given gh after it 3 more. Three seconds is also
+    the time gh has to show its code, as before.
+    """
     return _device_flow(
         tmp_path_factory,
         fake_github,
         "timed-out",
         {"approve_after": 60},
-        {"github_projects_login_async_seconds": 3, "github_projects_login_wait_seconds": 8},
+        {"github_projects_login_async_seconds": 3, "github_projects_login_wait_seconds": 5},
     )
 
 
@@ -962,12 +977,6 @@ def abandoned(tmp_path_factory, fake_github):
     return _device_flow(
         tmp_path_factory, fake_github, "abandoned", {"approve_after": 60}, {"github_projects_login_wait_seconds": 2}
     )
-
-
-@pytest.fixture(scope="module")
-def reworded(tmp_path_factory, fake_github):
-    """An approval after which gh says something other than "Logged in as", as a later gh may."""
-    return _device_flow(tmp_path_factory, fake_github, "reworded", {"said": "✓ Authentication complete."})
 
 
 @pytest.fixture(scope="module")
@@ -1137,14 +1146,18 @@ def test_a_gh_that_exits_ends_the_wait_at_once(nocode):
     assert _seconds(report, "Wait for gh to show the code", "nocode") < 15
 
 
-def test_the_outcome_is_gh_s_login_state_not_its_wording(reworded):
+def test_the_outcome_is_gh_s_login_state_not_its_wording(approved):
     # Read from `gh auth status`, as everywhere else: a gh that words its
     # success otherwise still signs the VM in.
-    root, report = reworded
+    root, report = approved
+    # What gh said last, read by the role once it had finished: not "Logged in as".
+    printed = _task(report, "Read what gh printed, now it has finished", "approved")
+    printed = base64.b64decode(printed["content"]).decode()
+    assert "Authentication complete" in printed and "Logged in as" not in printed, printed
     assert not {host: text for host, text in _failures(report).items() if "sign-in did not complete" in text}
-    assert (root / "reworded" / ".config" / "gh" / "fake-token").read_text().strip() == DEVICE_TOKEN
-    said = _messages(report, "Report the login state and what to do about it")["reworded"]
-    assert said.startswith("reworded: signed in to GitHub"), said
+    assert (root / "approved" / ".config" / "gh" / "fake-token").read_text().strip() == DEVICE_TOKEN
+    said = _messages(report, "Report the login state and what to do about it")["approved"]
+    assert said.startswith("approved: signed in to GitHub"), said
 
 
 def test_the_flow_s_limits_outlast_the_code_in_order():
@@ -1189,6 +1202,10 @@ def test_a_code_the_async_limit_ended_is_said_to_have_expired(timed_out):
     failure = _failures(report)["timed-out"]
     assert "the code expired after fifteen minutes without an approval." in failure, failure
     assert "Open this URL" not in failure
+    # Ended by the async limit, as the job file says, and not by the flow
+    # itself once its wait was over, as abandoned is.
+    collected = _task(report, "Collect gh's result", "timed-out")
+    assert "Timeout exceeded" in collected.get("msg", ""), collected
     _flow_files_are_gone(root, "timed-out")
 
 
@@ -1284,7 +1301,6 @@ REPORT_FIXTURES = [
     "login_run",
     "pending_named",
     "approved",
-    "reworded",
     "expired",
     "stale",
     "nocode",
@@ -1445,6 +1461,10 @@ def test_deploy_starts_gh_s_sign_in_by_itself_for_every_vm_but_one_whose_claude_
     started = {name for name in AFTER_CLAUDE if DEVICE_LOGIN in _calls(root, name)}
     assert started == {"typed", "quiet"}, started
     assert _asked(report) == set()
+    # Signed in after gh's own last word, "Logged in as" (approved's gh words it otherwise).
+    said = _messages(report, "Report the login state and what to do about it")
+    for host in started:
+        assert said[host].startswith(f"{host}: signed in to GitHub as {USERNAME} through a device-flow login."), said
 
 
 def test_github_login_auto_start_defaults_to_on():

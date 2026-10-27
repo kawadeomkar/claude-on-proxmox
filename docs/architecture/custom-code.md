@@ -405,6 +405,11 @@ good, and runs at exit, Ctrl-C included.
   exactly the lines drawn and nothing else, so no line may wrap: a frame taller than the screen keeps its
   top and its last line, with `more` saying how many it leaves out. A screen under 4 rows or 20 columns
   gets no region, since one as tall as the screen would scroll each redraw. The cursor is never hidden.
+  Each write and its count of the lines it drew hold a Ctrl-C off between them, by a SIGINT handler of their
+  own that hands the signal to the one in place right after: a `KeyboardInterrupt` in that gap left the count
+  stale, so the erase that followed missed the region, which stayed on the screen above the run's last words.
+  A signal mask would not do: it holds the signal in one thread, the kernel hands it to another, and Python
+  raises it in the main thread all the same.
 - **Everything else above it.** It wraps `Display.display`: each call erases the region, prints, and draws
   it again, under `Display`'s lock, so every write to the log takes the locks in one order. A route, given
   the call's keyword arguments, may send it to the log alone (`log_only`), which a live run does with the

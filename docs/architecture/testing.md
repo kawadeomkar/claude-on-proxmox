@@ -12,12 +12,19 @@ project's with that module's group, so the fixture - a whole playbook run - is m
 other modules go test by test to whichever worker is free. Whole modules, since a test can reach a fixture
 through `request.getfixturevalue`, which no static look finds; and `tryfirst`, since xdist's own hook turns the
 marks into groups and, run first, would see none and rebuild the fixtures test by test. Plain `pytest` runs one
-test at a time, for one test or one file. Every child a test signals or types Ctrl-C at starts with SIGINT,
+test at a time, for one test or one file. `just test unit --shard <i>/<n>` runs one of n shards, each such module
+whole in one, balanced by `tests/unit/durations.json` (`tools/unit_durations.py`); CI runs three, `CI result` fails
+unless all three passed, and `test_shards.py` holds that the shards together collect every test exactly once.
+Every child a test signals or types Ctrl-C at starts with SIGINT,
 SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite started with `&` or under
 nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
-(`harness._drain`), since on a loaded machine its last bytes arrive late, up to the test's deadline. Every fake
-API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
-and then taken by another worker's fake.
+(`harness._drain`), since on a loaded machine its last bytes arrive late, up to the test's deadline. Keys typed
+at a pause go in once it has held the terminal in raw mode for 10 ms, looked at every 20 ms while they wait, since
+pause flushes the input just after it sets raw mode and then waits in silence; a `vars_prompt`'s, read by `input()`
+in canonical mode (a step marked `canonical`), as soon as it asks. Every fake API a test starts binds a port the
+system picks and prints it (`harness._start`), so no port is probed, freed and then taken by another worker's fake;
+and starts with `socket.getfqdn` answering at once (`harness.FAKE_START`): for the fake Proxmox's `0.0.0.0`, macOS
+spent five seconds on it.
 
 pytest over `tests/unit/`: 2066 tests. By file:
 
@@ -78,6 +85,11 @@ pytest over `tests/unit/`: 2066 tests. By file:
   streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
+- **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
+  always()`, and no job of the gate may `continue-on-error`; its script, run as GitHub runs it, passes a
+  success or a skip and fails a failure or a cancel.
+- **The shards** (`test_shards.py` 4): `--shard` collected as each CI shard collects it - two, three and four
+  shards that between them run every test exactly once, and a module whose tests share a fixture whole in one.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
@@ -93,7 +105,7 @@ pytest over `tests/unit/`: 2066 tests. By file:
   stand-in `ssh` recording the forward and the test playing the browser at the stand-in's callback: no
   prompt, a forward refused, a page that is not Claude's, a run over SSH or no browser here falling back
   to the paste, and a browser that never comes back skipping the VM's later sign-ins.
-- **The GitHub sign-in** (`test_github_auth.py` 119): the `github_projects` role's `auth.yml`,
+- **The GitHub sign-in** (`test_github_auth.py` 118): the `github_projects` role's `auth.yml`,
   `clone.yml`, `device_flow.yml` and `github_login.yml` for real against the stand-in `gh` and the fake
   GitHub API on a loopback port, one host per sign-in state, twice over for idempotence, with `git
   credential fill` proving that git itself gets the token through the config written, deploy's GitHub
@@ -110,14 +122,15 @@ pytest over `tests/unit/`: 2066 tests. By file:
   own decisions: no device flow for a VM whose Claude sign-in nobody answered, a VM whose code was refused
   or whose Remote Control failed to start still given its GitHub and Tailscale turns and failed at the
   end, and a report without names.
-- **Tailscale** (`test_tailscale.py` 67): the role's files from `ownership.yml` on, and
+- **Tailscale** (`test_tailscale.py` 68): the role's files from `ownership.yml` on, and
   `tailscale_login.yml` whole, against the stand-in `tailscale`, with stand-ins for `dpkg-query` and
   `getent`: a first join once, with the key on stdin and in no report, argument or file; no key for a node
   whose key expired, and a node logged out by hand joined again; a refused key and an OAuth secret without
   tags as reports; one `set` for drift; a login or a Tailscale made by hand only read; tags compared only
   when configured; `NoState` reads, `Starting` and a silent daemon; check mode; the web login's one `up`,
-  its page said before the wait and opened only when it is Tailscale's, an approval after `up` exited, a
-  wait that runs out; a page approved after the run, recorded as the role's login by the next configure,
+  its page said before the wait and opened only when it is Tailscale's, an approval after `up` exited, one
+  that waits for an admin ending the wait at once, a login already waiting for one shown no page, a wait that
+  runs out; a page approved after the run, recorded as the role's login by the next configure,
   and a join still under way marked pending - an earlier key's refusal still in Health included - a refused
   key or refused tags leaving nothing; a control server's page trusted however its address ends, and never
   one on another host; just deploy's sign-in step saying nothing its configure play did again; an expired
@@ -184,7 +197,7 @@ pytest over `tests/unit/`: 2066 tests. By file:
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
-- **`just init`'s questions** (`test_init_settings.py` 77, `test_settings_filter.py` 73):
+- **`just init`'s questions** (`test_init_settings.py` 57, `test_settings_filter.py` 73):
   `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
   which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
   a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
@@ -198,9 +211,12 @@ pytest over `tests/unit/`: 2066 tests. By file:
   Tailscale notice, naming the auth key or the sign-in page, gone once `tailscale_enabled` is set, and
   `--tailscale` writing it; the vault decrypted to the example with the answered lines replaced,
   `0600`, and the secret in neither the output nor the log, typed or given, with module arguments injected
-  and the log at `-vvv`; a vault read and written as it is with `ANSIBLE_VERBOSITY` or `ANSIBLE_DEBUG` in the
+  and the log at `-vvv`; a vault read and written as it is with `ANSIBLE_VERBOSITY` and `ANSIBLE_DEBUG` both in the
   environment, every `ansible-vault` run quiet; statically, every write under `init_ask` and every task that renders the secret
-  or the vault's text `no_log`. The offer to make the token, against a stand-in Proxmox host (the local
+  or the vault's text `no_log`. Cases one run can show share it: two wrong answers to a run, every value given
+  in one, and the values that break their rules, or differ from what is set, each refused together; the tests
+  read and write the vault themselves in process (`VaultLib`), and only the playbook starts `ansible-vault`.
+  The offer to make the token, against a stand-in Proxmox host (the local
   connection, `fake_pve_cli.py` first on its `PATH`): `y` running `tools/proxmox-access.sh` and the vault
   taking the secret it made, never asked for, said or logged at `-vvv`; `n` changing nothing and saying how
   to run it by hand; root SSH that fails said, with `ssh-copy-id`; a storage the host has asked for by
@@ -223,7 +239,7 @@ pytest over `tests/unit/`: 2066 tests. By file:
   `pveum` required; a value that is not one plain word refused before anything runs; a refused write stopping
   it before the token. Statically: its privileges the ones `init_check.yml` checks, the commands
   `docs/getting-started/proxmox-access.md` shows the ones its dry run prints, and stdout carrying data alone.
-- **`just init`'s checks** (`test_init_check.py` 50): `init_check.yml` against the fake Proxmox on a
+- **`just init`'s checks** (`test_init_check.py` 47): `init_check.yml` against the fake Proxmox on a
   loopback port, in an inventory of the test's own with the project's `defaults.yml`: nothing asked of
   Proxmox while a value is the example's; every check `ok` on a host with its template, on 8.x and on 9.x,
   and no SSH then; a wrong secret, a closed port (an IPv6 address said bracketed), a missing privilege on
@@ -314,8 +330,9 @@ pytest over `tests/unit/`: 2066 tests. By file:
 ## 11.2 Role scenarios — `just test role`
 
 One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting driver and platform
-from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
-side_effect → verify → destroy.
+from `.config/molecule/config.yml`, which turns pipelining on as `ansible.cfg` does: without it each task
+put its module into the container, ran and removed it one `docker exec` at a time, and the ten scenarios
+took 16% longer. Each runs create → prepare → converge → **idempotence** → side_effect → verify → destroy.
 
 `vscode_server`'s side effect takes the forwarding away three ways, each in a drop-in of its own,
 runs the role inside a `block`/`rescue`, and asserts the failure names the setting and the file:
@@ -441,7 +458,11 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file,
   `../etc` and `..` (the playbook's own check), a VM with no projects directory,
   an empty one, `.claude-on-proxmox` (the workspace files' own directory), a relative
-  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The user ssh
+  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The twelve
+  that `code.yml` refuses before it refreshes the alias run at once; the five it refuses after (the
+  project's, the missing and the empty directory) write the shared SSH config, and run one by one beside
+  them - all of them children of one task, so a Ctrl-C ends them with the verify. Every
+  child run gets a 3 s SSH connect timeout, since the fake VMs' `192.0.2.x` drops packets. The user ssh
   config in the ephemeral directory never exists. The workspace files are read back and parsed: one
   folder, the project's path; one task, `folderOpen`, `bash -lc` in that folder; the whole
   directory's hides `.claude-on-proxmox`. With VS Code settings in the ephemeral directory (never the
