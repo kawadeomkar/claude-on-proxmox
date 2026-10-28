@@ -36,6 +36,19 @@
     per_host: false
   when: not (tailscale_enabled | bool) or not (tailscale_installed | bool)
 
+# Whether the web login is what would sign this VM in (tailscale_login_possible).
+# The question and the login below go on it, and playbooks/tailscale_login.yml
+# reads it after the role, to say why a sign-in it left out was not started -
+# so the two cannot disagree. And whether the VM is merely signed out, as the
+# report below will say it (its NeedsLogin case): no page still waiting, no
+# login expired, no key refused, each of which the report says more of than
+# "not started", so tailscale_login.yml's line takes the place of the report's
+# in NEXT STEPS only then. Both set every time this entry point runs.
+- name: login | Record whether the web login would sign this VM in
+  ansible.builtin.set_fact:
+    tailscale_login_due: "{{ tailscale_login_possible | bool }}"
+    tailscale_login_signed_out: "{{ tailscale_login_possible | bool and tailscale_report_case == 'NeedsLogin' }}"
+
 # just deploy, for every VM but one whose Claude prompt got Enter: the web
 # login waits up to tailscale_login_timeout for a browser, so it can always be
 # left for later. Where a Claude code was entered someone is here, and Enter
@@ -59,13 +72,13 @@
   register: tailscale_login_asked
   when:
     - tailscale_login_ask | bool
-    - tailscale_login_possible | bool
+    - tailscale_login_due | bool
 
 - name: login | Sign in by Tailscale's web login
   ansible.builtin.include_tasks: web_login.yml
   when:
     - tailscale_login_go | bool
-    - tailscale_login_possible | bool
+    - tailscale_login_due | bool
 
 # The report configuration gives - which, for a page still waiting for its
 # approval, says so: the node's state holds the page.

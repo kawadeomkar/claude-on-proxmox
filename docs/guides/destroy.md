@@ -57,7 +57,8 @@ stay until you delete them. They are the VM's writing, saved as it sent them: wh
 resuming it here asks to run, deserves the trust you give the VM, no more.
 
 The save is not best effort. A save that fails - this machine's disk full, the folder not writable, the
-connection lost part way - keeps that VM, neither released nor deleted, and the run fails saying why.
+connection lost part way - keeps that VM, neither released nor deleted, and the run fails saying why; its
+line at the end, and its kept SSH alias, say it was kept for that, its deletion never tried.
 `destroy_save_sessions: false` deletes the sessions with the VM. A VM that could not be reached is deleted
 as before, its sessions with it, and the run says so.
 
@@ -74,9 +75,22 @@ as they are deleted:
 | Tailscale | logs the node out, then deletes its device with the API credential in the vault (see [Removing devices for you](tailscale.md#removing-devices-for-you)) | nothing with a credential; without one, the device, logged out, until you delete it |
 
 Each step is best effort: one that fails is said, and the VM is deleted anyway, as you asked. The run ends
-with one line per VM saying what it was released from and what is left of it - and for a VM that could not
-be reached (stopped and not starting, or not answering over SSH), or whose sudo failed, what to remove by
-hand and where.
+with one line for every VM you named, saying what became of it:
+
+- deleted and released: what it was released from, and what is left, such as a GitHub token still valid;
+- deleted without being released, and why - it had no address to reach it at (stopped and not starting,
+  or its guest agent reporting none), it could not be reached over SSH, or its sudo failed - with what to
+  remove by hand and where;
+- not deleted, its deletion having failed (protection on, a stop that timed out), with why, and how far it
+  was released first;
+- kept, neither released nor deleted, because its sessions could not be saved, with why.
+
+A VM that is still there keeps its SSH alias, which its line says, as does a line of the run's own that
+names every alias kept and why; run `just destroy` for it again once the cause is fixed, and the run fails
+while any VM was not deleted, naming each. At a terminal the run is drawn live once you have answered, a row
+for each VM's release from each service and each VM's state on it ([During a run](runs.md)); the lines above
+print whole above it. Each VM's line is in NEXT STEPS too, once, except a VM deleted and released with nothing
+left to do by hand.
 `destroy_release: false` deletes the VMs without releasing them, and says the same; their sessions are
 still saved first, a stopped VM started for it, unless `destroy_save_sessions` is off too.
 

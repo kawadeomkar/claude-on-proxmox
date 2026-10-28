@@ -18,9 +18,10 @@ import sys
 import termios
 from pathlib import Path
 
+import live_kit as kit
 import pytest
 import yaml
-from harness import ANSIBLE_PLAYBOOK, REPO, _at_a_pseudo_terminal, _env, _fail_if_the_desktop_was_reached
+from harness import ANSIBLE_PLAYBOOK, REPO, _env, _fail_if_the_desktop_was_reached
 from test_status import fake_fleet, status_root
 from vt import VT
 
@@ -86,47 +87,41 @@ def _at_a_terminal(
     worker waits in ssh, nothing forks."""
     root, status = status_root(tmp_path, base)
     playbook = playbook or status
-    log = root / "run.log"
     hold = root / "ssh-holds"
     if resize or interrupt:
         hold.touch()
     # The test's own module beside the project's, which the harness names alone.
     library = f"{tmp_path / 'library'}{os.pathsep}{REPO / 'playbooks' / 'library'}"
-    env = _env(root, ANSIBLE_LOG_PATH=str(log), TERM=term, ANSIBLE_LIBRARY=library, **LIVE)
-    if colour:
-        # The harness turns colour off for every run; this one is at a colour terminal, as a person's is.
-        env["ANSIBLE_NOCOLOR"] = "0"
-    vt = VT(cols, rows)
+    # The harness turns colour off for every run; with colour, this one is at a colour terminal, as a person's is.
+    env = kit.environment(
+        root, config="", TERM=term, ANSIBLE_LIBRARY=library, ANSIBLE_NOCOLOR="0" if colour else "1", **LIVE
+    )
     acted = []
     # The screen pushed up at the new size: a newline (the terminal's \r\n) for each of its rows, then up all but one.
     pushed = re.compile(rb"(\r?\n){%d}\x1b\[%dA" % (resize[1], resize[1] - 1)) if resize else None
 
     held = root / "ssh.log"
 
-    def resize_or_interrupt(chunk, output, master, process):
-        vt.feed(chunk)
+    def resize_or_interrupt(chunk, output, master, process, vt):
         if not acted and resize and b"VMID" in output:
             acted.append(len(output))
-            _size(master, *resize)
+            kit.resize(master, vt, *resize)
             os.killpg(process.pid, signal.SIGWINCH)
-            vt.resize(*resize)
         if not acted and interrupt and held.exists() and len(held.read_text().splitlines()) >= 2:
             acted.append(len(output))
             os.killpg(process.pid, signal.SIGINT)
         if pushed and acted and hold.exists() and pushed.search(output, acted[0]):
             hold.unlink()
 
-    rc, output = _at_a_pseudo_terminal(
-        [str(ANSIBLE_PLAYBOOK), "-i", str(_inventory(root)), "--check", str(playbook)],
+    ran = kit.at_a_terminal(
+        [ANSIBLE_PLAYBOOK, "-i", _inventory(root), "--check", playbook],
         root,
         env,
-        size=(cols, rows),
+        cols=cols,
+        rows=rows,
         act=resize_or_interrupt,
-        timeout=120,
-        poll=0.05,
     )
-    _fail_if_the_desktop_was_reached(root)
-    return rc, vt, output, log.read_text() if log.exists() else ""
+    return ran.rc, ran.screen, ran.raw, ran.log
 
 
 def _report(log: str) -> list[str]:

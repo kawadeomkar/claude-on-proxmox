@@ -23,7 +23,9 @@ to a browser), and `web` is the web login only, with a key in the vault left unu
 - **The web login**, with no secret at all. `just login alpha --only tailscale` - and `just deploy`'s
   step, which starts by itself (`tailscale_login_auto_start`; `false` asks first) - opens Tailscale's
   sign-in page here and waits up to five minutes (`tailscale_login_timeout`) for you to sign in and
-  approve the VM. A VM you approve later joins by itself: the page stays valid for 7 days.
+  approve the VM. A VM you approve later joins by itself: the page stays valid for 7 days. `just deploy`
+  leaves out a VM whose Claude sign-in nobody answered, and says so, with
+  `just login alpha --only tailscale` to sign it in later.
 
 Each run says each VM's name and address on the tailnet, and the tailnet itself - so a VM that someone
 else's approval put in their tailnet shows:

@@ -6,6 +6,17 @@
 - name: login | Read gh and its login state
   ansible.builtin.include_tasks: login_read.yml
 
+# Whether the device flow is what would sign gh in here: gh the role's to sign
+# in, able to say its state, signed out, and the device flow the way in. The
+# question and the flow below go on it, and playbooks/github_login.yml reads it
+# after the role, to say why a sign-in it left out was not started - so the two
+# cannot disagree. Set every time this entry point runs.
+- name: login | Record whether the device flow would sign gh in
+  ansible.builtin.set_fact:
+    github_projects_login_due: >-
+      {{ github_projects_auth_wanted | bool and github_projects_web_wanted | bool
+         and github_projects_auth_status.rc | default(1) == 0 and not github_projects_signed_in | bool }}
+
 # just deploy, for every VM but one whose Claude prompt got Enter: the flow
 # waits up to fifteen minutes for a browser, so it can always be left for
 # later. Where a Claude code was entered someone is here, and Enter goes; a
@@ -28,10 +39,7 @@
   register: github_projects_login_asked
   when:
     - github_projects_login_ask | bool
-    - github_projects_auth_wanted | bool
-    - github_projects_web_wanted | bool
-    - github_projects_auth_status.rc | default(1) == 0
-    - not github_projects_signed_in | bool
+    - github_projects_login_due | bool
 
 # The device flow, for the VMs just login --only github was given, and just deploy's
 # by the answer above: nothing to run by hand. playbooks/github_login.yml sets
@@ -40,10 +48,7 @@
   ansible.builtin.include_tasks: device_flow.yml
   when:
     - github_projects_login_go | bool
-    - github_projects_auth_wanted | bool
-    - github_projects_web_wanted | bool
-    - github_projects_auth_status.rc | default(1) == 0
-    - not github_projects_signed_in | bool
+    - github_projects_login_due | bool
 
 - name: login | Report the login state and what to do about it
   ansible.builtin.include_tasks: login_report.yml
