@@ -55,6 +55,7 @@ WAITING_TAG = "attention_browser"
 DEBUG_ACTIONS = frozenset({"debug", "ansible.builtin.debug", "ansible.legacy.debug"})
 STATS_ACTIONS = frozenset({"set_stats", "ansible.builtin.set_stats", "ansible.legacy.set_stats"})
 INCLUDE_TASKS = frozenset({"include_tasks", "ansible.builtin.include_tasks", "ansible.legacy.include_tasks"})
+IMPORT_TASKS = frozenset({"import_tasks", "ansible.builtin.import_tasks", "ansible.legacy.import_tasks"})
 INCLUDE_ROLE = frozenset({"include_role", "ansible.builtin.include_role", "ansible.legacy.include_role"})
 ARGUMENT_CHECKS = frozenset({"validate_argument_spec", "ansible.builtin.validate_argument_spec"})
 ADD_HOST = frozenset({"add_host", "ansible.builtin.add_host", "ansible.legacy.add_host"})
@@ -112,7 +113,8 @@ def tasks_of(blocks, out, play=None, search=()):
                 if hasattr(item, "block"):
                     tasks_of([item], out, play, search)
                 elif not getattr(item, "implicit", False) and tagged_in(item, play):
-                    out.append((item._uuid, role_of(item), {**_include_meta(item, search), "blocks": blocks_of(item)}))
+                    meta = {"blocks": blocks_of(item), "file": task_file(item), "name": drawn_name(item)}
+                    out.append((item._uuid, role_of(item), {**_include_meta(item, search), **meta}))
     return out
 
 
@@ -126,7 +128,9 @@ def _include_meta(task, search):
                 return {}
             base = os.path.dirname(str(task.get_path()).split(":", 1)[0])
             path = target if os.path.isabs(target) else os.path.join(base, target)
-            return {"include": view.count_tasks(path)} if os.path.isfile(path) else {}
+            if not os.path.isfile(path):
+                return {}
+            return {"include": view.count_tasks(path), "include_file": _included_file(task, path)}
         if task.action in INCLUDE_ROLE:
             name, tasks_from = args.get("name"), args.get("tasks_from")
             if not isinstance(name, str) or "{{" in name or "{{" in str(tasks_from or ""):
@@ -149,6 +153,42 @@ def tagged_in(task, play):
 
 def role_of(task):
     return task._role.get_name(include_role_fqcn=False) if getattr(task, "_role", None) else None
+
+
+def drawn_name(task):
+    """A task's name as drawn: without its role's prefix, which its step says, nor its file's."""
+    name = task.get_name().strip()
+    role = role_of(task)
+    if role and name.startswith(role + " : "):
+        name = name[len(role) + 3 :]
+    return FILE_PREFIX.sub("", name)
+
+
+def task_file(task):
+    """The task file a task comes from as its play reaches it, without a line: the file the import or include nearest
+    the play names - a file another file includes stays its includer's - else the task's own file."""
+    own = str(task.get_path() or "").split(":", 1)[0]
+    outer, node = None, getattr(task, "_parent", None)
+    while node is not None:
+        if getattr(node, "action", None) in INCLUDE_TASKS | IMPORT_TASKS:
+            outer = node
+        node = getattr(node, "_parent", None)
+    if outer is None:
+        return own
+    args = getattr(outer, "args", None) or {}
+    target = args.get("file") or args.get("_raw_params")
+    if not isinstance(target, str) or "{{" in target:
+        return own
+    base = os.path.dirname(str(outer.get_path() or "").split(":", 1)[0])
+    return os.path.normpath(os.path.join(base, target))
+
+
+def _included_file(task, target):
+    """The task file an include's tasks come from, as task_file says it of each: the import the include is in, else
+    its target."""
+    own = str(task.get_path() or "").split(":", 1)[0]
+    outer = task_file(task)
+    return outer if outer != own else os.path.normpath(target)
 
 
 def blocks_of(task):
@@ -311,12 +351,7 @@ class Engine:
 
     @staticmethod
     def _name(task):
-        """A task's name as drawn: without its role's prefix, which its step says, nor its file's."""
-        name = task.get_name().strip()
-        role = role_of(task)
-        if role and name.startswith(role + " : "):
-            name = name[len(role) + 3 :]
-        return FILE_PREFIX.sub("", name)
+        return drawn_name(task)
 
     # --- the playbook ------------------------------------------------------------------------------------------
     def start(self, playbook):
@@ -375,6 +410,7 @@ class Engine:
                 hidden=hidden,
                 blocks=blocks_of(task),
                 ends=ends,
+                file=task_file(task),
             )
             self._after()
 
@@ -386,9 +422,12 @@ class Engine:
                 search = [os.path.join(os.getcwd(), "roles"), *C.DEFAULT_ROLES_PATH]
                 tasks_from = (getattr(task, "_from_files", None) or {}).get("tasks", "main")
                 path = view.role_tasks_file(role, tasks_from, search)
+                file = ""
             else:
                 role, path = role_of(task), str(included_file._filename)
-            self.run.include(role, view.count_tasks(path) if path else 0, key=task._uuid, blocks=blocks_of(task))
+                file = _included_file(task, path)
+            count = view.count_tasks(path) if path else 0
+            self.run.include(role, count, key=task._uuid, blocks=blocks_of(task), file=file)
 
     def prompt(self, up):
         """A prompt took the screen (up) or was answered: the person's time; and the bell, when they have had nothing
@@ -459,28 +498,33 @@ class Engine:
         return names
 
     def _discovered(self, result):
-        """A VM's address and ID as discovery read them from Proxmox and its guest agent, from the add_host of a
-        playbook the declaration trusts, and only these two: an address that parses as one, an ID that is a number."""
-        if result.task.action not in ADD_HOST:
-            return
+        """A VM's address and ID as Proxmox and its guest agent gave them, from a file the declaration trusts - the
+        add_host of discovery, the claude_vm_addressed of vm_addresses.yml - and only these two: an address that
+        parses as one, an ID that is a number."""
         if os.path.basename(str(result.task.get_path()).split(":", 1)[0]) not in self.run.recipe.addresses_from:
             return
-        found = [result.result, *(result.result.get("results") or [])]
-        for item in found:
-            added = item.get("add_host") if isinstance(item, dict) else None
-            if not isinstance(added, dict):
-                continue
-            name = plain_text(str(added.get("host_name", ""))).strip()
-            hostvars = added.get("host_vars") or {}
+        found = []
+        if result.task.action in ADD_HOST:
+            for item in [result.result, *(result.result.get("results") or [])]:
+                added = item.get("add_host") if isinstance(item, dict) else None
+                if isinstance(added, dict):
+                    hostvars = added.get("host_vars") or {}
+                    found.append((added.get("host_name"), hostvars.get("ansible_host"), hostvars.get("proxmox_vm_id")))
+        addressed = (result.result.get("ansible_facts") or {}).get("claude_vm_addressed")
+        for entry in addressed if isinstance(addressed, list) else []:
+            if isinstance(entry, dict):
+                found.append((entry.get("name"), entry.get("address"), entry.get("vmid")))
+        for name, address, vmid in found:
+            name = plain_text(str(name or "")).strip()
             if not NAME.match(name):
                 continue
             try:
-                address = str(ipaddress.IPv4Address(str(hostvars.get("ansible_host", "")).strip()))
+                address = str(ipaddress.IPv4Address(str(address or "").strip()))
             except ValueError:
                 address = ""
             if address:
                 self.run.fact(name, "proxmox_vm_address", address)
-            self.run.fact(name, "proxmox_vm_resolved_id", str(hostvars.get("proxmox_vm_id", "")).strip())
+            self.run.fact(name, "proxmox_vm_resolved_id", str(vmid or "").strip())
 
     def _records(self, result):
         """What a report recorded for NEXT STEPS, as it goes: a report on a matter a later report recorded again is

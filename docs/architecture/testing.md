@@ -19,7 +19,7 @@ nohup has them ignored; and a pseudo-terminal's reader reads to its end after th
 API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
 and then taken by another worker's fake.
 
-pytest over `tests/unit/`: 2139 tests. By file:
+pytest over `tests/unit/`: 2155 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 33): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -65,8 +65,8 @@ pytest over `tests/unit/`: 2139 tests. By file:
   reading status's and deploy's streams the same cut anywhere. Every test that runs something at a terminal opens
   it through `harness._at_a_pseudo_terminal`, and every live test through `tests/unit/live_kit.py`, which gives
   each run a `HOME` of its own.
-- **The live output** (`test_run_view.py` 105, `test_deploy_live.py` 17, `test_login_live.py` 3,
-  `test_destroy_live.py` 4, `test_live_recipes.py` 11): the model, fed
+- **The live output** (`test_run_view.py` 107, `test_deploy_live.py` 18, `test_login_live.py` 3,
+  `test_destroy_live.py` 4, `test_code_live.py` 3, `test_live_recipes.py` 18): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
   report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
@@ -76,7 +76,8 @@ pytest over `tests/unit/`: 2139 tests. By file:
   the three heads, a long report by its first sentence, a task never shown, a step by the blocks around its
   tasks and an include counted there, a `meta` task started for each host as one and the VMs an `end_host` left,
   every VM still in a play at its running step, a stage's row naming the VMs a fact names, a raise on this
-  machine naming the VMs it repeats, an answer said as one - and the stage table against
+  machine naming the VMs it repeats, an answer said as one, a step from the task it starts at and by its task
+  file, a run of one stage's VM in its header and its steps' whole names - and the stage table against
   `deploy.yml`'s imports and `--only`'s playbooks. Then the callback for real: a stand-in
   deploy, its playbooks named as the real ones, at a pseudo-terminal of the test's own, read back through
   `vt.py` (which counts a frame's wrapped lines, the titles and the bells): the region drawn and
@@ -84,7 +85,8 @@ pytest over `tests/unit/`: 2139 tests. By file:
   the switch not inherited, the prompt whole and answered, the diffs of `--check`, 50 by 12, 200 by 60 and a
   resize, Ctrl-C; a failure in a rescue, a loop's failed item, a crashed module and a long output's end said; a
   failure a rescue takes through an import or include dim, and one a rescue filtered out by `--tags` said; a
-  failure raised again drawn under its cause, a report's lines kept, NEXT STEPS line for line the stream's;
+  failure raised again drawn under its cause, a report's lines kept, NEXT STEPS line for line the stream's; a
+  task's file the one the import nearest the play names;
   the log every line the stream logs, in order; a line per step through a pipe; `-v`, no variable and no log
   streamed; and no other tracked file naming the variable. `test_login_live.py` runs the real `login.yml` once, at
   a pseudo-terminal, against `test_sign_in_plays.py`'s stand-in VMs and fake GitHub: each failure under the
@@ -93,9 +95,12 @@ pytest over `tests/unit/`: 2139 tests. By file:
   fakes and stand-in VMs, every path it writes pinned: the question answered, the four stages, each VM's release
   by service and no step of a role's own, the VM it started, each VM's outcome; a VM Proxmox would not delete the
   one that failed, under its step, and the raise naming none; and a deletion not confirmed said as the answer,
-  the title `declined`. `test_live_recipes.py` holds every declaration to the playbooks it names - each play,
-  block and task it matches is there, each fact it reads is set by a task - and every live test that runs a real
-  playbook to the paths its own tests pin, read from its code, so a pin in a comment is none.
+  the title `declined`. `test_code_live.py` runs the real `code.yml` against the fake Proxmox and
+  `test_code_session.py`'s world and pins: the nine steps, the VM in the header, the window opened, the
+  summary's steps whole and no row of the fleet's skipped tasks; and a VM that is not there said under the step
+  it failed in. `test_live_recipes.py` holds every declaration to the playbooks it names - each play, block and
+  task it matches is there, each fact it reads is set by a task - and every live test that runs a real playbook
+  to the paths its own tests pin, read from its code, so a pin in a comment is none.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   97), both ways.
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
@@ -280,7 +285,7 @@ pytest over `tests/unit/`: 2139 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The justfile** (`test_justfile.py` 474): the real `just`, at least the pinned version, run against
+- **The justfile** (`test_justfile.py` 477): the real `just`, at least the pinned version, run against
   stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
   --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
   nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its

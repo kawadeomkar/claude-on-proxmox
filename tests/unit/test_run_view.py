@@ -911,3 +911,77 @@ def test_an_answer_that_ends_the_run_is_said_as_itself_never_as_a_failure():
     summary = script.run.summary(script.now, 100, color=False, failed_hosts=["localhost"])
     assert len(summary) == 1 and re.match(r"claude-on-proxmox  destroy alpha beta · declined · 1 s · ", summary[0])
     assert script.run.title_text(script.now) == "destroy alpha beta · declined"
+
+
+def _code(names=("alpha",)):
+    plays = [
+        (
+            "code",
+            "/r/playbooks/code.yml:61",
+            [
+                ("f1", None, {"name": "Say how to open each VM"}),
+                ("o1", None, {"name": "Refuse anything but one VM"}),
+                ("o2", None, {"name": "List every VM in the cluster", "file": "/r/playbooks/tasks/cluster_vms.yml"}),
+                ("o3", None, {"name": "Reach the VM the way just deploy --only configure does"}),
+                ("s1", None, {"name": "Read the sessions", "file": "/r/playbooks/tasks/session_read.yml"}),
+                ("s2", None, {"name": "Read the checkouts", "file": "/r/playbooks/tasks/session_read.yml"}),
+                ("o4", None, {"name": "Settle the folder to open"}),
+                ("a1", None, {"name": "Write the alias", "file": "/r/playbooks/tasks/ssh_config.yml"}),
+                ("o5", None, {"name": "Look for the folder on the VM"}),
+                ("o6", None, {"name": "Fail when the folder is not there"}),
+                ("w1", None, {"name": "Open the folder in VS Code"}),
+                ("r1", None, {"name": "Fail as just code does, outside just deploy"}),
+            ],
+        )
+    ]
+    script = Script(plays=plays, title="code " + " ".join(names))
+    script.run.names = list(names)
+    return script
+
+
+def _ran(script, key, name, file="", outcome="ok"):
+    # The play starts once: a step a task started stays begun until another's starts.
+    if script.run.play != "code":
+        script.run.play_start("code")
+    script.run.task(key, name, None, script.now, file=file)
+    script.run.host_start(key, "localhost", script.now)
+    script.now += 1
+    if outcome is not None:
+        script.run.result(key, "localhost", outcome, script.now)
+
+
+def test_a_step_runs_from_a_task_it_starts_at_until_another_begins_and_a_task_file_is_its_steps():
+    script = _code()
+    steps = script.run.stages["VS Code"].steps
+    # Counted when the playbook starts, as each step's tasks will run: the folder's both runs, around the alias.
+    assert list(steps) == [None, "find the VM", "reach it", "read the sessions", "the folder", "alias", "window"]
+    assert steps["find the VM"].expected == 2 and steps["the folder"].expected == 3
+    assert steps["window"].expected == 2, "the rescue's raise counted where it stands"
+    _ran(script, "f1", "Say how to open each VM", outcome="skipped")
+    _ran(script, "o1", "Refuse anything but one VM")
+    _ran(script, "o2", "List every VM in the cluster", "/r/playbooks/tasks/cluster_vms.yml")
+    _ran(script, "s1", "Read the sessions", "/r/playbooks/tasks/session_read.yml")
+    assert script.run.current.step == "read the sessions"
+    # A failure the rescue takes runs the rescue in the step that failed, never in the window's.
+    _ran(script, "o4", "Settle the folder to open", outcome="rescued")
+    _ran(script, "r1", "Fail as just code does, outside just deploy", outcome="raised")
+    assert script.run.current.step == "the folder"
+    assert not steps["window"].tasks
+
+
+def test_a_run_drawn_as_its_steps_says_its_vm_in_the_header_and_each_steps_whole_name():
+    script = _code()
+    script.run.fact("alpha", "proxmox_vm_resolved_id", "101")
+    script.run.fact("alpha", "proxmox_vm_address", "192.0.2.151")
+    _ran(script, "f1", "Say how to open each VM", outcome="skipped")
+    _ran(script, "o1", "Refuse anything but one VM")
+    _ran(script, "s1", "Read the sessions", "/r/playbooks/tasks/session_read.yml", outcome=None)
+    head = script.run.frame(script.now, 100, 30, "⠋", color=False)[0]
+    assert head.startswith("claude-on-proxmox  code alpha · started ") and head.endswith(" VM 101 · 192.0.2.151")
+    assert len(head) == 99
+    script.run.result("s1", "localhost", "ok", script.now)
+    script.run.end(script.now)
+    summary = script.run.summary(script.now, 100, color=False)
+    # The stage's own tasks, only skipped, have no row; each step its whole name.
+    assert summary[3].startswith(" ✓ find the VM ") and summary[4].startswith(" ✓ read the sessions ")
+    assert summary[2].index("TIME") + 4 == summary[3].index(" s ") + 2

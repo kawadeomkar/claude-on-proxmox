@@ -80,8 +80,10 @@ sign-ins on their own: a row for each of Claude, GitHub and Tailscale, each VM's
 table of each VM's outcome, and what failed said under the sign-in it failed in. `just destroy` is drawn too, after
 its question: its check (and the VMs it started to release them), each VM's release by service - its sessions,
 Claude, GitHub, Tailscale - its deletion and the aliases, each VM's state on each; a VM that was not deleted is
-the run's failure, by name, and a deletion not confirmed is said as the answer it is, not as a failure. The other
-recipes print as before. Without a terminal - output piped into a file, CI - it prints a line as each
+the run's failure, by name, and a deletion not confirmed is said as the answer it is, not as a failure. So is
+`just code`, a row for each of its steps - finding the VM, reaching it, its sessions read, the folder, the alias,
+VS Code here, the sessions copied, the workspace and the window - with the VM's ID and address at the top, and
+under `just deploy` its `VS Code` stage the same. The other recipes print as before. Without a terminal - output piped into a file, CI - it prints a line as each
 step ends, the reports, and the summary. For the stream as before, give any `-v` (`just ANSIBLE_ARGS=-v
 deploy alpha`) or put `ANSIBLE_STDOUT_CALLBACK=default` in front; a run without a log (`LOG_DIR=`) streams too,
 since the log is where the stream would go. Either way the run log keeps the whole stream: every task as

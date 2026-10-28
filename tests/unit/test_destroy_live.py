@@ -139,16 +139,10 @@ def declined(tmp_path_factory):
     return _destroy(tmp_path_factory.mktemp("destroy_declined"), b"\r")
 
 
-def _frames(ran):
-    """Each region drawn, its escapes left out: what the run showed while it went."""
-    frames = re.findall(rb"\x1b\[\?2026h(.*?)\x1b\[\?2026l", ran.raw, re.S)
-    return [re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", f.decode(errors="replace")).replace("\r", "") for f in frames]
-
-
 def test_a_destroy_is_drawn_by_its_four_stages_and_each_vms_release_by_its_blocks(confirmed):
     assert confirmed.rc == 0, confirmed.text
     confirmed.assert_drawn_and_gone()
-    seen = "\n".join(_frames(confirmed))
+    seen = "\n".join(confirmed.frames)
     for stage in ("check", "release", "delete", "aliases"):
         assert re.search(rf"^ \S {stage} ", seen, re.M), stage
     # The release's steps are its blocks, in their order; claude_code's pause before the save is the sessions', and

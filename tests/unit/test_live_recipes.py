@@ -19,6 +19,8 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 SET_FACT = {"set_fact", "ansible.builtin.set_fact", "ansible.legacy.set_fact"}
+# What Ansible never starts as a task of its own: a step that starts at one never begins.
+IMPORTS = {f"{prefix}import_{kind}" for prefix in ("", "ansible.builtin.") for kind in ("tasks", "role", "playbook")}
 
 
 def _load(name):
@@ -124,6 +126,21 @@ def test_every_block_and_task_a_declaration_names_is_one(name):
 
 
 @pytest.mark.parametrize("name", RECIPES)
+def test_every_task_a_step_starts_at_is_one_ansible_starts_and_every_task_file_is_there(name):
+    recipe = recipes.RECIPES[name]
+    files = [path.as_posix() for path in _yaml_files()]
+    for stage in recipe.stages:
+        items = [item for play in stage.plays for item in _items(_load_yaml(_playbook(play.partition(":")[0])))]
+        tasks = {item["name"]: item for item in items if isinstance(item.get("name"), str) and "block" not in item}
+        for step in stage.steps:
+            for task in getattr(step, "starts", ()):
+                assert task in tasks, f"{name}: {step.label}: no task {task!r} in {stage.key}'s playbooks"
+                assert not IMPORTS & set(tasks[task]), f"{name}: {step.label}: {task!r} is an import"
+            for end in getattr(step, "files", ()):
+                assert any(path.endswith("/" + end) for path in files), f"{name}: {step.label}: no {end}"
+
+
+@pytest.mark.parametrize("name", RECIPES)
 def test_every_fact_a_declaration_reads_is_set_by_a_task(name):
     recipe = recipes.RECIPES[name]
     set_facts = set()
@@ -159,6 +176,15 @@ LIVE_TESTS = {
         '"claude_ssh_config_file"',
         '"claude_ssh_user_config"',
         '"claude_ssh_config_include": False',
+    ),
+    # code.yml as test_code_session.py runs it: its pins, never the developer's VS Code settings, time zone or
+    # ~/.claude, and both SSH configs in the test's own directory.
+    "test_code_live.py": (
+        "tcs._window_extra(",
+        '"code_session_source_dir"',
+        '"code_session_dest_dir"',
+        '"claude_ssh_config_file"',
+        '"claude_ssh_user_config"',
     ),
     "test_status_live.py": ("status_root",),
 }
