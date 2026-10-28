@@ -248,7 +248,7 @@ pytest over `tests/unit/`: 2229 tests. By file:
 - **The session notes** (`test_session_notes.py` 14): `vm_session.md.j2` rendered as `code.yml`
   renders it - the placeholder, a live section carried over, the parts switched off, the same file
   from every window, and no time, template marker or token shape in it.
-- **`just init`'s questions** (`test_init_settings.py` 82, `test_settings_filter.py` 73):
+- **`just init`'s questions** (`test_init_settings.py` 62, `test_settings_filter.py` 73):
   `init_settings.yml` against copies of the example files in the test's directory - never the checkout's,
   which a static test holds - with no terminal (nothing asked; nothing written but the values given) and at
   a pseudo-terminal of the test's own: each answer typed, Enter at every question, an answer that breaks
@@ -294,7 +294,7 @@ pytest over `tests/unit/`: 2229 tests. By file:
   `pveum` required; a value that is not one plain word refused before anything runs; a refused write stopping
   it before the token. Statically: its privileges the ones `init_check.yml` checks, the commands
   `docs/getting-started/proxmox-access.md` shows the ones its dry run prints, and stdout carrying data alone.
-- **`just init`'s checks** (`test_init_check.py` 53): `init_check.yml` against the fake Proxmox on a
+- **`just init`'s checks** (`test_init_check.py` 50): `init_check.yml` against the fake Proxmox on a
   loopback port, in an inventory of the test's own with the project's `defaults.yml`: nothing asked of
   Proxmox while a value is the example's; every check `ok` on a host with its template, on 8.x and on 9.x,
   and no SSH then; a wrong secret, a closed port (an IPv6 address said bracketed), a missing privilege on
