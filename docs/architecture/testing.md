@@ -19,7 +19,7 @@ nohup has them ignored; and a pseudo-terminal's reader reads to its end after th
 API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
 and then taken by another worker's fake.
 
-pytest over `tests/unit/`: 2212 tests. By file:
+pytest over `tests/unit/`: 2229 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 33): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -65,9 +65,9 @@ pytest over `tests/unit/`: 2212 tests. By file:
   reading status's and deploy's streams the same cut anywhere. Every test that runs something at a terminal opens
   it through `harness._at_a_pseudo_terminal`, and every live test through `tests/unit/live_kit.py`, which gives
   each run a `HOME` of its own.
-- **The live output** (`test_run_view.py` 107, `test_deploy_live.py` 18, `test_login_live.py` 3,
+- **The live output** (`test_run_view.py` 108, `test_deploy_live.py` 18, `test_login_live.py` 3,
   `test_destroy_live.py` 4, `test_code_live.py` 3, `test_lint_live.py` 5, `test_init_live.py` 2,
-  `test_live_recipes.py` 27, `test_live_commands.py` 28): the model, fed
+  `test_test_live.py` 11, `test_live_recipes.py` 31, `test_live_commands.py` 29): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
   report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
@@ -119,10 +119,19 @@ pytest over `tests/unit/`: 2212 tests. By file:
   first as `test_init_settings.py` runs it at a terminal with its questions typed, the second as
   `test_init_check.py` runs it against the fake Proxmox: the questions as steps, the checks drawn as they are
   recorded and whole in the summary, one NEXT STEPS; and a check that fails drawn as the failure, NEXT STEPS keeping
-  its record's lines. `test_live_recipes.py` holds every declaration to the playbooks it names - each play, block
-  and task it matches is there, each fact it reads, a stage's checklist among them, is set by a task, and a VM's
-  address and ID are where the engine reads them - and every live test that runs a real playbook to the paths its
-  own tests pin, read from its code, so a pin in a comment is none.
+  its record's lines. `test_test_live.py` runs the real `just test` with `test_justfile.py`'s stand-ins, but for the
+  real pytest with `tests/unit/live_pytest.py` over a few tests of its own and a stand-in Molecule that says its
+  matrix and actions: lint as the run's first stage, every stage to come listed, pytest's count, each scenario a
+  step, every line in the run's log, each role's scenario named there and its run titled with the words typed; a
+  test that fails, above as it fails by its whole ID and listed, and the stage it left unrun named; a converge that
+  fails, its task and Ansible's words above while Molecule cleans up, and why it failed at the end, and an
+  idempotence test that fails, the task that changed at the end, each in Molecule 26's order; a deprecation said and
+  Molecule's routine notices left in the log; a part whose lines no reader knows ended by its exit code; the lines
+  Molecule's own logger writes, which the reader must know; and the plugin writing nothing without its file, and
+  ending a test whose xdist worker crashed. `test_live_recipes.py` holds every declaration to the playbooks it
+  names - each play, block and task it matches is there, each fact it reads, a stage's checklist among them, is set
+  by a task, and a VM's address and ID are where the engine reads them - and every live test that runs a real
+  playbook to the paths its own tests pin, read from its code, so a pin in a comment is none.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   98), both ways.
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:

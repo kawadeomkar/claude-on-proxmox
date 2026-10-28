@@ -985,3 +985,19 @@ def test_a_run_drawn_as_its_steps_says_its_vm_in_the_header_and_each_steps_whole
     # The stage's own tasks, only skipped, have no row; each step its whole name.
     assert summary[3].startswith(" ✓ find the VM ") and summary[4].startswith(" ✓ read the sessions ")
     assert summary[2].index("TIME") + 4 == summary[3].index(" s ") + 2
+
+
+def test_a_run_in_parts_shows_no_percentage_while_a_listed_stage_has_no_size():
+    run = view.Run("test", 0.0, recipe=view.recipes.RECIPES["test"])
+    run.parts = True
+    run.planned_stages(["lint", "unit"])
+    run.planned("lint", ["lock", "yaml"])
+    task = run.command("lint", "lock", "uv", 0.0)
+    run.result(task.key, "localhost", "ok", 1.0)
+    run.command("lint", "yaml", "yamllint", 1.0)
+    # unit, listed, has no size yet: where the run is, and no percentage that would read whole at lint's end.
+    assert run.title_text(1.5) == "test · lint"
+    run.part("unit", None)
+    run.expect("unit", None, 2000)
+    run.parallel("test:a", "test_a", 2.0)
+    assert re.fullmatch(r"test · unit \d+%", run.title_text(2.5)), run.title_text(2.5)

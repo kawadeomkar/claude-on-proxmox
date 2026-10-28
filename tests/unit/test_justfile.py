@@ -1926,10 +1926,11 @@ def test_test_runs_lint_and_every_test_or_the_parts_named(tmp_path: Path, args: 
 
 
 def test_unit_runs_the_unit_tests_on_a_worker_per_cpu(tmp_path: Path) -> None:
-    # pytest-xdist's loadgroup, so that conftest.py keeps each module that shares a fixture on one worker.
+    # pytest-xdist's loadgroup, so that conftest.py keeps each module that shares a fixture on one worker; the
+    # project's plugin first, which reports each test to the drawn run and does nothing without one.
     result = _just("test", "unit", settings=_testing(tmp_path))
     assert result.returncode == 0, _output(result)
-    assert _runs(tmp_path, "pytest") == [["tests/unit", "-n", "auto", "--dist", "loadgroup"]]
+    assert _runs(tmp_path, "pytest") == [["-p", "live_pytest", "tests/unit", "-n", "auto", "--dist", "loadgroup"]]
 
 
 @pytest.mark.parametrize(
@@ -1965,6 +1966,9 @@ def test_role_narrows_the_role_scenarios(tmp_path: Path, roles: str, expect: lis
     result = _just("test", "--role", roles, settings=_testing(tmp_path))
     assert result.returncode == 0, _output(result)
     assert _molecule(tmp_path)["role"] == expect
+    # Passed through, each scenario says which role it is before it runs.
+    said = [line for line in result.stdout.splitlines() if line.startswith("===== molecule:")]
+    assert said == [f"===== molecule: {role}" for role in expect], _output(result)
 
 
 @pytest.mark.parametrize(

@@ -92,8 +92,9 @@ class Recipe:
     summary's); the summary's columns; the playbook and task files whose add_host, or whose claude_vm_addressed,
     gives the summary a VM's address and ID, read from Proxmox and its guest agent; the tasks whose failure is a
     person's answer, not a failure - each with the line said instead; whether a row draws a bar and counts its
-    tasks, which a step that is one command has no use for; and marks, the first words of a report's lines that
-    style the line ("!!" red), the word kept so the plain log reads the same."""
+    tasks, which a step that is one command has no use for; marks, the first words of a report's lines that style
+    the line ("!!" red), the word kept so the plain log reads the same; and whether the summary lists what failed by
+    name, for a run of many tasks whose failures scroll away above."""
 
     def __init__(
         self,
@@ -107,6 +108,7 @@ class Recipe:
         declines=None,
         counts=True,
         marks=None,
+        failures=False,
     ):
         self.stages = tuple(stages)
         self.plan = frozenset(plan)
@@ -118,6 +120,7 @@ class Recipe:
         self.declines = dict(declines or {})
         self.counts = counts
         self.marks = dict(marks or {})
+        self.failures = failures
 
 
 # Each sign-in, as both just deploy and just login run it: its playbook, and each VM's outcome in it from the facts
@@ -298,6 +301,20 @@ RECIPES = {
         window=1,
         raises={"Fail when a check found a problem": Causes(checklist=True)},
         marks={"ok": "g", "!!": "r", "--": "d", "NOTICE": "y"},
+    ),
+    # just test: lint, nested; pytest, each test a task as live_pytest.py reports it; then each Molecule scenario a
+    # step, its actions its tasks. Every part a command through tools/live.
+    "test": Recipe(
+        stages=[
+            Stage("lint", steps=[Step(check) for check in LINT]),
+            Stage("unit"),
+            Stage("role"),
+            Stage("integration"),
+            Stage("provision"),
+        ],
+        window=3,
+        columns=("time", "tasks"),
+        failures=True,
     ),
     # just lint: its checks, each a command through tools/live, one after another, in the order of their speed.
     "lint": Recipe(

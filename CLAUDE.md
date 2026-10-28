@@ -58,11 +58,11 @@ go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
 justfile upward, so started in a make-era worktree under `.claude/worktrees/` it would run main's, against
 main's inventory and vault), then its own rules with their messages, then what it needs (`tools/env-run
 --bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d - but in a
-recipe drawn in parts (`lint`, `init`), which exports its title and its state's path (`live_state`, the recipe's
+recipe drawn in parts (`lint`, `init`, `test`), which exports its title and its state's path (`live_state`, the recipe's
 name and the shell's PID), sets `trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT` - an end that fails changes no exit
 status - only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`
-(lint's checks) or each playbook as it is, joining the run through the exported title and state (init's two), so
-the trap still runs to say the run's end. No
+(lint's checks, test's parts) or each playbook as it is, joining the run through the exported title and state
+(init's two), so the trap still runs to say the run's end. No
 assignment starts a program: just evaluates what a recipe uses before any line runs, so it would start
 before a refusal. Bash, not sh: Ubuntu's dash dies of a Ctrl-C that the playbook it runs survived
 (Ansible's `pause`, Ctrl-C then C), and `[continue]` needs the script to live on; and only what macOS's
@@ -405,8 +405,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `harness._at_a_pseudo_terminal`. See docs/architecture/custom-code.md §7.8.
 
 - **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
-  which only the recipes drawn live export - `deploy`, `login`, `destroy`, `code`, and `lint` and `init` for their
-  parts - (the run's title) and the engine takes out of its environment at once, so nothing the run starts
+  which only the recipes drawn live export - `deploy`, `login`, `destroy`, `code`, and `lint`, `init` and `test`
+  for their parts - (the run's title) and the engine takes out of its environment at once, so nothing the run starts
   inherits it, hands the stdout callback's every event to the engine at verbosity 0 with
   a run log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
   Every line the stream would print still reaches the run log, in order, through `Display`'s `log_only` - so
@@ -421,10 +421,11 @@ token; `github_auth_method: token` still fails. The status JSON carries
   the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against a stand-in deploy,
   holds the log to the stream's, and fails if a tracked file other than the callback, the engines
   (`filter_plugins/live_ansible.py`, `filter_plugins/live_commands.py` and `tools/live`), the declarations
-  (`filter_plugins/live_recipes.py`), the recipes drawn live, the live tests' kit (`tests/unit/live_kit.py`), the
-  live tests that draw a playbook through the engine or a command through `tools/live`, each listed by name, and
-  `test_justfile.py`'s recording stand-in names it; `tools/live` takes it, and the state's path, out of every
-  command's environment, passed through or drawn. A failure is headed by its step and its VM, and one a declared
+  (`filter_plugins/live_recipes.py`), the recipes drawn live, the live tests' kit (`tests/unit/live_kit.py`) and
+  pytest's plugin (`tests/unit/live_pytest.py`), the live tests that draw a playbook through the engine or a
+  command through `tools/live`, each listed by name, and `test_justfile.py`'s recording stand-in names it;
+  `tools/live` takes it, and the state's path, out of every command's environment, passed through or drawn. A
+  failure is headed by its step and its VM, and one a declared
   task raises again is drawn under the failure a rescue took; a declared refusal (destroy's unconfirmed deletion)
   is said as the person's answer, never as a failure. See docs/architecture/custom-code.md §7.5.
 

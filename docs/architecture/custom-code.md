@@ -581,12 +581,13 @@ is drawn as one run, its parts in turn:
   draws them done above its own, works and saves it again. It is a file in `LIVE_DIR` (`.cache/live/`: git-ignored,
   refused by `tests/check_no_local_files.sh`) named for the run's stamp and its top recipe, which the recipe exports
   as `CLAUDE_ON_PROXMOX_LIVE_STATE`: made by the run's first part, written whole, 0600 in a 0700 directory, and
-  taken over only when it is of this version and this run's title; one a run that never said its end left behind
-  is removed a day later - a state by its name, or a temporary of one, and nothing else: `LIVE_DIR` is whatever the
-  environment names. A playbook that is a part does the same in the engine: it draws the parts before it, and
-  at its end saves its state, PLAY RECAP to the log, instead of saying the summary; its NEXT STEPS records join the
-  earlier parts', the later winning for a VM and matter. One that Ctrl-C ends before its stats saves what it did,
-  said stopped, at exit. No bar or percentage falls from one part to the next: the highest each has shown is kept.
+  taken over only when it is of this version and this run's title; one a run that never said its end left behind is
+  removed a day later - a state by its name, the pytest reader's events beside it, or a temporary of one, and
+  nothing else: `LIVE_DIR` is whatever the environment names. A playbook that is a part does the same in the engine:
+  it draws the parts before it, and at its end saves its state, PLAY RECAP to the log, instead of saying the
+  summary; its NEXT STEPS records join the earlier parts', the later winning for a VM and matter. One that Ctrl-C
+  ends before its stats saves what it did, said stopped, at exit. No bar or percentage falls from one part to the
+  next: the highest each has shown is kept.
 - **The end.** `end` says the summary and NEXT STEPS from the state, whatever ended the run - a part that failed, a
   playbook that died before its callbacks ran, a line between parts, Ctrl-C (130, ansible-playbook's 99, or a part
   that saved itself stopped), after which the head says `stopped after … at` the last part - then removes the
@@ -608,6 +609,32 @@ is drawn as one run, its parts in turn:
   count (`counts=False`), its summary `CHECKS` and the checks a failure left unrun; its totals count the checks,
   not the commands. Its state's name carries its shell's PID, so two runs started in one second keep two. The
   syntax check is one command over every playbook, each said as it starts.
+- **`just test`** is lint, nested (`{{ self }} live_run=test lint`), then pytest and each Molecule scenario, each a
+  command through `tools/live --log <name>`, which passes it through `tools/run-logged` as it was logged before. The
+  recipe exports the stages it will run (`CLAUDE_ON_PROXMOX_LIVE_STAGES`), so each is listed to come from the first
+  part, lint's. Two readers make the parts' tasks: **pytest**, from the events `tests/unit/live_pytest.py` writes
+  (`-p live_pytest`, which pytest finds on its `pythonpath`) to the file `CLAUDE_ON_PROXMOX_LIVE_PYTEST` names,
+  beside the run's state, 0600 in its 0700 directory and never the system's temporary one, which the end removes -
+  the count once collected, from the first xdist worker's collection when there are workers, each test's start and
+  end, several running at once under xdist, a test whose worker crashed ended as failed, each named by its file and
+  the rest of its ID (a parameter's `/` is its own), and a failure's words above as it fails - the plugin writing
+  nothing without that file, so a run piped, in CI or by hand is pytest's own; and **molecule**, from Molecule's own
+  lines - its one `scenario test matrix: …` line the count, `[scenario > action] Executing` and `Executed: …` each
+  action, the Ansible `TASK [...]` the running action's last line, and a failed action above as it fails, while
+  Molecule goes on through its cleanup and destroy: the task that failed in its head and what Ansible said of it
+  from its `fatal:` on, or the action's last lines where no task failed. Molecule says why a scenario failed - an
+  idempotence test's changed tasks, a playbook's exit code - only after its cleanup and destroy, so the part's
+  failure prints what it said after the action that failed. A warning is a line at Molecule's `WARNING` level or
+  Ansible's `[WARNING]` or `[DEPRECATION WARNING]`, never a task that names one, said above once the scenario passed
+  but for Molecule's routine - a requirements file or a playbook a scenario has no need of, the temporary directory
+  a fresh container makes, a prompt that takes its default - which stays in the log. A reader that made no task for
+  its part - a Molecule whose lines it no longer knows, a pytest that never loaded the plugin - makes one for the
+  command, its outcome its exit code's, never a stage not run. The summary lists what failed by name
+  (`failures=True`). The count is the tests' own: a test that runs for minutes counts as one. A stage the recipe
+  lists is one task until a part reaches it, as a listed step is, and the tab shows where the run is with no
+  percentage while one is still to come, since its size is unknown; a test or an action Ctrl-C ended is stopped, not
+  failed; and the roles' parts, which run in their directories, find every tool by its absolute path, each saying
+  which role it is as the first line of its own output, so that the log names it where the screen's row does.
 - **NEXT STEPS** prints each record's lines as they are, as the stream does: a record of several lines - just
   init's problems, each under the line that counts them - keeps each line with its indent, and each paragraph is one
   line, which the terminal wraps, never the run.

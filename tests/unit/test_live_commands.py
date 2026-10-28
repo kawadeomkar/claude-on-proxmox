@@ -21,6 +21,7 @@ import subprocess
 import sys
 import termios
 import time
+from pathlib import Path
 
 import live_kit as kit
 import pytest
@@ -191,22 +192,35 @@ def test_a_save_prunes_only_the_states_a_run_left_behind(tmp_path):
     live = tmp_path / "live"
     live.mkdir()
     left = live / "20261020-101010-lint-4242.json"
+    events = live / "20261020-101010-test-4243-pytest-a1b2c3d4.jsonl"
     temporary = live / ".state-k2j3h4g5"
     fresh = live / "20261026-101010-test-77.json"
     theirs = [live / "settings.json", live / "20261020-101010-lint.json", live / "notes.state-x", live / "cache"]
-    for path in (left, temporary, fresh, *theirs[:-1]):
+    for path in (left, events, temporary, fresh, *theirs[:-1]):
         path.write_text("{}")
     theirs[-1].mkdir()
     (live / "20261020-101011-lint-5.json").symlink_to(theirs[0])
     two_days_ago = time.time() - 2 * 24 * 3600
-    for path in (left, temporary, *theirs):
+    for path in (left, events, temporary, *theirs):
         os.utime(path, (two_days_ago, two_days_ago))
     _commands().save_state(live / "20261027-090000-lint-1.json", {"version": 1})
-    assert not left.exists() and not temporary.exists()
+    assert not left.exists() and not events.exists() and not temporary.exists()
     assert (
         fresh.exists() and all(path.exists() for path in theirs) and (live / "20261020-101011-lint-5.json").is_symlink()
     )
     assert json.loads((live / "20261027-090000-lint-1.json").read_text()) == {"version": 1}
+
+
+def test_the_pytest_reader_keeps_its_events_beside_the_run_s_state(tmp_path):
+    # Every test's ID and each failure's words: in the run's own 0700 directory, named so the prune knows them, never
+    # in the system's temporary directory.
+    commands = _commands()
+    state = tmp_path / "live" / "20261027-090000-test-77.json"
+    part = type("Part", (), {"state_path": str(state)})()
+    reader = commands.Pytest(part)
+    events = Path(reader.env()["CLAUDE_ON_PROXMOX_LIVE_PYTEST"])
+    assert events.parent == state.parent and commands.OWN.fullmatch(events.name), events
+    assert stat.S_IMODE(events.stat().st_mode) == 0o600 and stat.S_IMODE(state.parent.stat().st_mode) == 0o700
 
 
 def test_ctrl_c_ends_the_part_with_the_child_s_last_words_logged_and_the_run_said_stopped(tmp_path):

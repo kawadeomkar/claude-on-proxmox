@@ -208,6 +208,8 @@ LIVE_TESTS = {
     # init_settings.yml as test_init_settings.py runs it, its files copies in the test's own directory, and
     # init_check.yml as test_init_check.py does, with its own inventory; a refusing ssh for both.
     "test_init_live.py": ("tis._files(", "tic._inventory_of(", '"ssh"'),
+    # just test as test_justfile.py runs it: its stand-in tools, its log and its state in the test's own directory.
+    "test_test_live.py": ("_testing(",),
     # just lint as test_justfile.py runs it: its stand-in linters, its log and its state in the test's own directory.
     "test_lint_live.py": ("_linters(",),
     # code.yml as test_code_session.py runs it: its pins, never the developer's VS Code settings, time zone or
