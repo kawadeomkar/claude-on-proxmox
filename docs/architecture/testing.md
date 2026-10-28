@@ -24,9 +24,10 @@ is ended whole (`harness._end`): its process group, and every process found unde
 behind, reparented to PID 1 and idle for good - 46 of them after a suite that hung. And every pytest process, the
 controller's and each worker's, takes SIGTERM and SIGHUP as a Ctrl-C (`tests/unit/interrupts.py`, installed by
 `conftest.py`): `tools/live` sends its part's group one when `just test` is killed or its terminal closes, CI's
-cancel sends one, and Python's default ended the worker at once, its run and that run's tree left behind.
+cancel sends one, and Python's default ended the worker at once, its run and that run's tree left behind. One
+ignored on the way in stays ignored, so a suite under nohup still survives its terminal closing.
 
-pytest over `tests/unit/`: 2236 tests. By file:
+pytest over `tests/unit/`: 2240 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 33): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -140,11 +141,14 @@ pytest over `tests/unit/`: 2236 tests. By file:
   names - each play, block and task it matches is there, each fact it reads, a stage's checklist among them, is set
   by a task, and a VM's address and ID are where the engine reads them - and every live test that runs a real
   playbook to the paths its own tests pin, read from its code, so a pin in a comment is none.
-- **Processes** (`test_processes.py` 7): `filter_plugins/processes.py` listing a grandchild in a session of its own
+- **Processes** (`test_processes.py` 11): `filter_plugins/processes.py` listing a grandchild in a session of its own
   and ending it with its parent, where a kill of the group left it under PID 1; a child of pytest's own group
-  ended alone, never the group; `harness._end` on a real playbook with a task in flight, its detached worker gone
-  with it; and a pytest run with `interrupts.py`'s conftest sent SIGTERM and SIGHUP mid-task, ending as
-  interrupted with its playbook and that task's worker gone.
+  ended alone, never the group; a pid remembered from before the tree broke up signalled only while it is an
+  orphan, never once another process has it; `harness._end` on a real playbook with a task in flight, its
+  detached worker gone with it; `interrupts.install` leaving a SIGHUP ignored on the way in, nohup's, as it is;
+  and a pytest run with `interrupts.py`'s conftest sent SIGTERM and SIGHUP to its whole group mid-task - one
+  process, and a controller with two xdist workers each holding a playbook - ending as interrupted with every
+  playbook and its task's worker gone.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   98), both ways.
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:

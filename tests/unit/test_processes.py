@@ -167,26 +167,64 @@ def test_the_harness_end_leaves_no_task_worker_of_a_killed_playbook_behind(tmp_p
     assert not _by_argv(str(tmp_path / "waits.yml"))
 
 
+def test_install_takes_a_signal_as_a_ctrl_c_but_leaves_one_ignored_on_the_way_in(tmp_path):
+    # nohup's SIGHUP: a suite started under it must still survive its terminal closing.
+    import interrupts
+
+    before = {signum: signal.getsignal(signum) for signum in interrupts.ENDINGS}
+    try:
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        interrupts.install()
+        assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+        assert signal.getsignal(signal.SIGTERM) is interrupts._as_a_ctrl_c
+    finally:
+        for signum, handler in before.items():
+            signal.signal(signum, handler)
+
+
+def test_a_remembered_pid_is_signalled_only_while_it_is_an_orphan(tmp_path):
+    # What a part remembered of its child's tree: a pid under PID 1 is ended; one another process has by now - any
+    # other parent - is left alone, this process's own child standing in for it.
+    child, grandchild = _child_and_grandchild(tmp_path)
+    os.killpg(child.pid, signal.SIGKILL)
+    child.wait()
+    bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    try:
+        signalled = processes.end(child.pid, grandchild, bystander.pid)
+        assert grandchild in signalled and bystander.pid not in signalled
+        _until(lambda: not _alive(grandchild), "the orphaned grandchild gone")
+        assert bystander.poll() is None
+    finally:
+        bystander.kill()
+        bystander.wait()
+
+
 SUITE_CONFTEST = "import interrupts\n\n\ndef pytest_configure(config):\n    interrupts.install()\n"
 SUITE_TEST = """from pathlib import Path
 
+import pytest
 from harness import _run
 
 
-def test_waits(tmp_path):
-    _run(tmp_path, Path(__file__).with_name("waits.yml"), {"alpha": {"ansible_connection": "local"}}, timeout=120)
+@pytest.mark.parametrize("n", [1, 2])
+def test_waits(tmp_path, n):
+    _run(tmp_path, Path(__file__).with_name(f"waits{n}.yml"), {"alpha": {"ansible_connection": "local"}}, timeout=120)
 """
 
 
+@pytest.mark.parametrize("workers", [0, 2], ids=["one process", "xdist, two workers"])
 @pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP], ids=["SIGTERM", "SIGHUP"])
-def test_a_pytest_process_ended_by_a_kill_or_a_hangup_ends_its_run_whole(tmp_path, signum):
-    # pytest with a conftest that takes the signal as interrupts.install() has it: the test's playbook, mid-task, and
-    # that task's detached worker are both gone once pytest has ended, as interrupted.
+def test_a_pytest_process_ended_by_a_kill_or_a_hangup_ends_its_run_whole(tmp_path, signum, workers):
+    # pytest with a conftest that takes the signal as interrupts.install() has it, sent to its whole group as
+    # tools/live sends it: each test's playbook, mid-task, and that task's detached worker are gone once pytest has
+    # ended, as interrupted - one process running the tests, or a controller and two workers each holding one.
     suite = tmp_path / "suite"
     suite.mkdir()
     (suite / "conftest.py").write_text(SUITE_CONFTEST)
     (suite / "test_waits.py").write_text(SUITE_TEST)
-    (suite / "waits.yml").write_text(WAITS.format(marker=suite / "started"))
+    for n in (1, 2):
+        (suite / f"waits{n}.yml").write_text(WAITS.format(marker=suite / f"started{n}"))
     env = dict(os.environ, PYTHONPATH=str(REPO / "tests" / "unit"))
     process = subprocess.Popen(
         [
@@ -200,6 +238,7 @@ def test_a_pytest_process_ended_by_a_kill_or_a_hangup_ends_its_run_whole(tmp_pat
             "--rootdir",
             str(REPO),
             "-q",
+            *(["-n", str(workers)] if workers else []),
             str(suite),
         ],
         cwd=tmp_path,
@@ -210,17 +249,21 @@ def test_a_pytest_process_ended_by_a_kill_or_a_hangup_ends_its_run_whole(tmp_pat
         start_new_session=True,
         preexec_fn=_default_signals,  # noqa: PLW1509 - only signal, safe beside xdist's thread
     )
+    held = []
     try:
-        _until(lambda: _by_argv(str(suite / "waits.yml")), "the playbook started")
-        playbook = _by_argv(str(suite / "waits.yml"))[0]
-        worker = _in_flight(playbook, suite / "started")
-        os.kill(process.pid, signum)
-        output, _ = process.communicate(timeout=60)
+        # Both playbooks mid-task under xdist, where each worker holds one; the first alone in one process.
+        for n in (1, 2) if workers else (1,):
+            name = str(suite / f"waits{n}.yml")
+            _until(lambda name=name: _by_argv(name), f"playbook {n} started")
+            playbook = _by_argv(name)[0]
+            held += [playbook, _in_flight(playbook, suite / f"started{n}")]
+        os.killpg(process.pid, signum)
+        output, _ = process.communicate(timeout=90)
     finally:
         if process.poll() is None:
             processes.end(process.pid)
             process.wait()
     text = output.decode(errors="replace")
     assert process.returncode == 2 and "KeyboardInterrupt" in text, text
-    _until(lambda: not _alive(playbook) and not _alive(worker), "the playbook and its task's worker gone")
-    assert not _by_argv(str(suite / "waits.yml"))
+    _until(lambda: not any(_alive(pid) for pid in held), "every playbook and its task's worker gone")
+    assert not _by_argv(str(suite / "waits"))

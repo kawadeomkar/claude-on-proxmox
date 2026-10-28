@@ -702,8 +702,9 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   (`filter_plugins/live_commands.py`) end the whole tree, found by `ps` before anything is signalled
   (`filter_plugins/processes.py`; a part remembers its child's tree at the first Ctrl-C, since a child that ends
   there leaves it under PID 1); and every pytest process takes SIGTERM and SIGHUP as a Ctrl-C
-  (`tests/unit/interrupts.py`), since `tools/live` and CI's cancel send them and the default ended a worker at once,
-  its run and that run's tree left behind. `test_processes.py` holds all three.
+  (`tests/unit/interrupts.py`; one ignored on the way in, nohup's SIGHUP, stays so), since `tools/live` and CI's
+  cancel send them and the default ended a worker at once, its run and that run's tree left behind.
+  `test_processes.py` holds all three, under xdist too.
 - **A skipped task still overwrites its register.** A `when` on destroy's second cluster listing left
   `claude_vm_all` without its listing whenever no VM had been started, and destroy failed before it
   began; register only in a task that always runs, or read it with a `default`.
