@@ -157,7 +157,7 @@ pytest over `tests/unit/`: 2229 tests. By file:
   stand-in `ssh` recording the forward and the test playing the browser at the stand-in's callback: no
   prompt, a forward refused, a page that is not Claude's, a run over SSH or no browser here falling back
   to the paste, and a browser that never comes back skipping the VM's later sign-ins.
-- **The GitHub sign-in** (`test_github_auth.py` 121): the `github_projects` role's `auth.yml`,
+- **The GitHub sign-in** (`test_github_auth.py` 120): the `github_projects` role's `auth.yml`,
   `clone.yml`, `device_flow.yml` and `github_login.yml` for real against the stand-in `gh` and the fake
   GitHub API on a loopback port, one host per sign-in state, twice over for idempotence, with `git
   credential fill` proving that git itself gets the token through the config written, deploy's GitHub
@@ -173,7 +173,7 @@ pytest over `tests/unit/`: 2229 tests. By file:
   no report, a VM whose code was refused or whose Remote Control failed to start still given its GitHub
   and Tailscale turns and failed at the end, and a report without names; and NEXT STEPS holding each
   failed sign-in, unreachable VM and failure after a sign-in, with the command that retries it.
-- **Tailscale** (`test_tailscale.py` 69): the role's files from `ownership.yml` on, and
+- **Tailscale** (`test_tailscale.py` 70): the role's files from `ownership.yml` on, and
   `tailscale_login.yml` whole, against the stand-in `tailscale`, with stand-ins for `dpkg-query` and
   `getent`: a first join once, with the key on stdin and in no report, argument or file; no key for a node
   whose key expired, and a node logged out by hand joined again; a refused key and an OAuth secret without
