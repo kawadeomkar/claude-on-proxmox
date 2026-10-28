@@ -59,7 +59,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from harness import ansible_config
+from harness import _default_signals, _drain, ansible_config
 
 REPO = Path(__file__).resolve().parents[2]
 CODE = REPO / "playbooks" / "code.yml"
@@ -205,6 +205,28 @@ def _run(tmp_path: Path, **case):
     return result, _asked(tmp_path)
 
 
+def _session(sid: int) -> str:
+    """Each process left in a session, with its group, its terminal's foreground group and its signal masks.
+
+    What a hang leaves running, from /proc (Linux): the evidence for why a Ctrl-C ended nothing.
+    """
+    lines = []
+    for status in sorted(Path("/proc").glob("[0-9]*/status")):
+        try:
+            stat_text = (status.parent / "stat").read_text()
+            # state ppid pgrp session tty_nr tpgid, after the parenthesised command name
+            state, ppid, pgrp, session, _, tpgid = stat_text[stat_text.rindex(")") + 2 :].split()[:6]
+            if int(session) != sid:
+                continue
+            fields = dict(line.split(":\t", 1) for line in status.read_text().splitlines() if ":\t" in line)
+            command = (status.parent / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+        except (OSError, ValueError):
+            continue
+        masks = " ".join(f"{name} {fields.get(name, '?').strip()}" for name in ("SigIgn", "SigBlk", "SigCgt", "SigPnd"))
+        lines.append(f"pid {status.parent.name} ppid {ppid} pgrp {pgrp} tpgid {tpgid} {state} {masks}: {command}")
+    return "\n".join(lines) or "(nothing, or no /proc)"
+
+
 def _run_at_a_terminal(tmp_path: Path, keys: bytes, *, after: str, **case) -> tuple[int, str, list[str]]:
     """Run the script at a pseudo-terminal of its own; type `keys` once the stand-ins have logged `after`."""
     argv, env = _terminal(tmp_path, **case)
@@ -212,7 +234,9 @@ def _run_at_a_terminal(tmp_path: Path, keys: bytes, *, after: str, **case) -> tu
 
     def take_the_terminal() -> None:
         # A session of its own, with this terminal as its controlling one, so
-        # that Ctrl-C reaches bash and everything it started, as in VS Code.
+        # that Ctrl-C reaches bash and everything it started, as in VS Code;
+        # and SIGINT not ignored, whatever started the suite.
+        _default_signals()
         os.setsid()
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
@@ -234,9 +258,16 @@ def _run_at_a_terminal(tmp_path: Path, keys: bytes, *, after: str, **case) -> tu
                     break
                 output += chunk
             elif process.poll() is not None:
+                output += _drain(master, deadline)
                 break
         else:
-            pytest.fail("the script did not finish within 30 seconds:\n" + output.decode(errors="replace"))
+            pytest.fail(
+                "the script did not finish within 30 seconds:\n"
+                + output.decode(errors="replace")
+                + f"\nthe terminal's ISIG is {'on' if termios.tcgetattr(master)[3] & termios.ISIG else 'off'};"
+                + " what is left of its session:\n"
+                + _session(process.pid)
+            )
         rc = process.wait(timeout=10)
     finally:
         if process.poll() is None:
@@ -1155,11 +1186,23 @@ def test_the_provision_scenario_never_reads_the_developer_s_vscode_settings():
     runs = [t for t in _tasks(play["tasks"]) if "verify_code_playbook" in str(t.get("ansible.builtin.command", ""))]
     assert len(runs) >= 6
     for task in runs:
-        argv = str(task["ansible.builtin.command"]["argv"])
-        assert "verify_code_vars" in argv, task["name"]
-        for case in (task.get("vars") or {}).get("verify_code_cases", []):
-            if "base" in case:
-                assert "vscode_user_settings_file" in case["base"], case
+        # On the command line, or on the stdin of the task that runs the refusals.
+        assert "verify_code_vars" in str(task["ansible.builtin.command"]), task["name"]
+    # The refusal cases, set on a task or on the block around them.
+    cases = [case for item in _with_vars(play["tasks"]) for case in item["vars"].get("verify_code_cases", [])]
+    assert len(cases) >= 12, cases
+    for case in cases:
+        if "base" in case:
+            assert "vscode_user_settings_file" in case["base"], case
+
+
+def _with_vars(items):
+    """Every task and block with vars of its own, blocks' sections included."""
+    for item in items:
+        if item.get("vars"):
+            yield item
+        for section in ("block", "rescue", "always"):
+            yield from _with_vars(item.get(section) or [])
 
 
 def test_no_window_run_reads_or_writes_the_developer_s_claude_code(tmp_path):
@@ -1661,10 +1704,21 @@ def _signing_in(tmp_path: Path, helper: str | None, **case):
     marker = tmp_path / "helper.log"
     script = "" if helper is None else f'printf "%s\\n" "$0 $*" >> "{marker}"'
     argv = [*argv[:-5], script, str(tmp_path / "alpha-session.md"), "claude-remote-control", "Asia/Kolkata", ""]
-    result = subprocess.run(argv, env=env, capture_output=True, text=True, check=False, timeout=30)
-    deadline = time.monotonic() + 5
-    while helper is not None and not marker.exists() and time.monotonic() < deadline:
-        time.sleep(0.1)
+    # Every process the script starts inherits the pipe's write end, the helper it backgrounds too, so the pipe
+    # ends only once they all have: the helper's log is whole when it is read, where a file that merely existed
+    # could still be empty, and no helper can start after it.
+    done, holder = os.pipe()
+    try:
+        result = subprocess.run(
+            argv, env=env, capture_output=True, text=True, check=False, timeout=30, pass_fds=(holder,)
+        )
+    finally:
+        os.close(holder)
+    try:
+        if not select.select([done], [], [], 30)[0]:
+            pytest.fail("something the script started was still running 30 seconds after it")
+    finally:
+        os.close(done)
     return result, (marker.read_text().splitlines() if marker.exists() else [])
 
 

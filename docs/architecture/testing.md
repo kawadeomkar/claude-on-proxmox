@@ -6,6 +6,19 @@ fails the test if it is called.
 
 ## 11.1 Unit — `just test unit`
 
+`just test unit` runs it on pytest-xdist, a worker per CPU (`-n auto`; CI says 4, its vCPUs), with `--dist
+loadgroup`. `tests/unit/conftest.py` marks every test of a module that has a module-scoped fixture of this
+project's with that module's group, so the fixture - a whole playbook run - is made once, on one worker, and the
+other modules go test by test to whichever worker is free. Whole modules, since a test can reach a fixture
+through `request.getfixturevalue`, which no static look finds; and `tryfirst`, since xdist's own hook turns the
+marks into groups and, run first, would see none and rebuild the fixtures test by test. Plain `pytest` runs one
+test at a time, for one test or one file. Every child a test signals or types Ctrl-C at starts with SIGINT,
+SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite started with `&` or under
+nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
+(`harness._drain`), since on a loaded machine its last bytes arrive late, up to the test's deadline. Every fake
+API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
+and then taken by another worker's fake.
+
 pytest over `tests/unit/`: 2064 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
@@ -65,6 +78,9 @@ pytest over `tests/unit/`: 2064 tests. By file:
   streamed; and no other tracked file naming the variable.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
+- **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
+  always()`, and no job of the gate may `continue-on-error`; its script, run as GitHub runs it, passes a
+  success or a skip and fails a failure or a cancel.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
@@ -295,8 +311,9 @@ pytest over `tests/unit/`: 2064 tests. By file:
 ## 11.2 Role scenarios — `just test role`
 
 One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting driver and platform
-from `.config/molecule/config.yml`. Each runs create → prepare → converge → **idempotence** →
-side_effect → verify → destroy.
+from `.config/molecule/config.yml`, which turns pipelining on as `ansible.cfg` does: without it each task
+put its module into the container, ran and removed it one `docker exec` at a time, and the ten scenarios
+took 16% longer. Each runs create → prepare → converge → **idempotence** → side_effect → verify → destroy.
 
 `vscode_server`'s side effect takes the forwarding away three ways, each in a drop-in of its own,
 runs the role inside a `block`/`rescue`, and asserts the failure names the setting and the file:
@@ -422,7 +439,11 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   (suggested; only where the filesystem is case-sensitive, as on CI, since macOS's is not), a file,
   `../etc` and `..` (the playbook's own check), a VM with no projects directory,
   an empty one, `.claude-on-proxmox` (the workspace files' own directory), a relative
-  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The user ssh
+  `vscode_workspaces_dir`, and one case over real SSH to an address nothing answers on. The twelve
+  that `code.yml` refuses before it refreshes the alias run at once; the five it refuses after (the
+  project's, the missing and the empty directory) write the shared SSH config, and run one by one beside
+  them - all of them children of one task, so a Ctrl-C ends them with the verify. Every
+  child run gets a 3 s SSH connect timeout, since the fake VMs' `192.0.2.x` drops packets. The user ssh
   config in the ephemeral directory never exists. The workspace files are read back and parsed: one
   folder, the project's path; one task, `folderOpen`, `bash -lc` in that folder; the whole
   directory's hides `.claude-on-proxmox`. With VS Code settings in the ephemeral directory (never the
@@ -442,7 +463,7 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
 | `fake_github_api.py` | the GitHub REST API | serves local bare repositories, in paginated responses; `/user` and `/user/repos` answer a token, private repositories included; `POST /credentials/revoke` takes credentials unauthenticated and refuses an authenticated call, as GitHub does, and `/fake/revoked` lists what it took, so a test can hold that nothing reaches it |
 | `fake_tailscale_api.py` | Tailscale's API | the OAuth client exchange, and a device looked up and deleted by node ID, each device with the name it was started with; 403 and 404 on cue, and `/fake/deleted` lists what went |
 | `fake_gh.sh` | `gh` | the auth commands only, installed ahead of the real one on PATH; one login per user, in a file under HOME, with every call logged; a login whose check never reached GitHub, and one GitHub refused, as gh 2.103.0 reports them |
-| `fake_tailscale.sh` | `tailscale` | output that is Tailscale's own, as the research and a Headscale run recorded it, for the commands the role runs, against a node whose state is files under HOME: `status --json` and `debug prefs` shaped as a Running and a signed-out node really print, a join with a canned key on stdin, a refused or slow key, the web login's page and an approval that lands after `up` has exited, `NeedsMachineAuth`, a taken name, `NoState` reads after a start, logout resetting the prefs, a node ID (`node-id`), and with `real-daemon` an answer only while the real daemon's socket exists; a key is never written, and `calls.log` shows `KEY` in its place |
+| `fake_tailscale.sh` | `tailscale` | output that is Tailscale's own, as the research and a Headscale run recorded it, for the commands the role runs, against a node whose state is files under HOME: `status --json` and `debug prefs` shaped as a Running and a signed-out node really print, a join with a canned key on stdin, a refused or slow key, the web login's page and an approval that lands after `up` has exited (by the clock, `approve-after`, or at the Nth status read after the page, `approve-at-read`, which no loaded machine can outrun; `up-waits` shortens `up`'s own wait), `NeedsMachineAuth`, a taken name, `NoState` reads after a start, logout resetting the prefs, a node ID (`node-id`), and with `real-daemon` an answer only while the real daemon's socket exists; a key is never written, and `calls.log` shows `KEY` in its place |
 | `fake_anthropic_api.py` | the Anthropic Messages API | for the real `claude` in the `configure` scenario: one short answer to every request, streamed or not, on 127.0.0.1 only, with each request's body logged, so a test reads the system prompt and the history a resume sent |
 | `fake_claude.sh` | `claude` | `auth status` and `auth login` as probed against Claude Code: the page, the `Paste code here if prompted >` prompt, then `Login successful.`, `Login failed: ...` or `Invalid code` for the line read from stdin, writing `~/.claude/.credentials.json` on success; given `BROWSER`, it hands it the page that redirects to its own callback on `127.0.0.1` and takes a code from there as from stdin; `auth logout`; `fake-refusal`, `fake-no-page`, `fake-gone` and `fake-foreign-page` in its state directory make it refuse in other words, print an error in place of the page, exit before reading a code, or hand its browser a page that is not Claude's |
 

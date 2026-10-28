@@ -34,7 +34,7 @@ just vault                           # encrypt the vault while it is plaintext, 
 just lint                            # uv lock --check, yamllint --strict, ansible-lint (production), ruff, just --fmt --check, --syntax-check, the other pre-commit hooks
 just lint syntax                     # some of them: lock, yaml, ansible, python, just, syntax, hooks
 just test                            # lint, then every test: unit and every Molecule scenario — the CI gate
-just test unit                       # pytest, tests/unit/
+just test unit                       # pytest over tests/unit/, a worker per CPU (pytest-xdist loadgroup)
 just test --role proxmox_vm          # one role scenario (role: every role; molecule: every scenario)
 just test provision                  # one playbook scenario (integration is the configure scenario)
 just deploy                          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (just deploy alpha: that VM)
@@ -662,6 +662,13 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   Ctrl-C this way, sent the moment the VMs were drawn, just as the next task's workers were forked. A test
   that interrupts a run sends it while the run waits on something held and nothing forks; a Linux pty also
   buffers about 64 KB without blocking the run, so a run can end before its test reads the frame it acts on.
+- **pytest-xdist's groups are made in xdist's own `pytest_collection_modifyitems`.** The hook in
+  `tests/unit/conftest.py` that marks them is `tryfirst`; run after xdist's, it marked nothing and loadgroup
+  quietly became plain load, rebuilding every module-scoped fixture test by test (37.5 minutes against 9.8). It
+  marks whole modules, since a test can reach a fixture through `request.getfixturevalue`, which a look at its
+  arguments misses. And a suite started with `&` or under nohup has SIGINT, SIGQUIT and SIGHUP ignored in every
+  child: a test that sends Ctrl-C starts its child through `harness._default_signals`, or the Ctrl-C reaches
+  nothing (the device-flow test hung that way on a VM, never on CI).
 - **A skipped task still overwrites its register.** A `when` on destroy's second cluster listing left
   `claude_vm_all` without its listing whenever no VM had been started, and destroy failed before it
   began; register only in a task that always runs, or read it with a `default`.

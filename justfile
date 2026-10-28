@@ -608,7 +608,7 @@ lint ALL_HOOKS='' *PARTS:
 # index alone. The Molecule scenarios each run a Docker container and build
 # images into one small disk, so they run one after another.
 [arg('ROLES', long='role', pattern='[a-z_,]*', help="Only these roles' scenarios, comma-separated: on its own it means the role part (just test --role common,claude_code)")]
-[arg('PARTS', pattern='unit|molecule|role|integration|provision', help="unit (pytest over tests/unit/, no network), molecule (every Molecule scenario: role, integration, provision), role (the roles' own scenarios), integration (the full configure playbook against a Docker container), provision (provision.yml and discover.yml against a fake Proxmox API)")]
+[arg('PARTS', pattern='unit|molecule|role|integration|provision', help="unit (pytest over tests/unit/, a worker per CPU, no network), molecule (every Molecule scenario: role, integration, provision), role (the roles' own scenarios), integration (the full configure playbook against a Docker container), provision (provision.yml and discover.yml against a fake Proxmox API)")]
 [doc('Lint, then every test: unit and Molecule (the local quality gate)')]
 [group('develop')]
 [no-exit-message]
@@ -639,7 +639,9 @@ test ROLES='' *PARTS:
     tools/check collections "$bin"
     absbin=$(cd "$bin" && pwd -P)
     [ -z "$lint" ] || {{ self }} lint
-    if runs unit; then {{ run_logged }} "$name" "$bin/pytest"; fi
+    # A worker per CPU, each module whose tests share a fixture kept on one (tests/unit/conftest.py); tests/unit
+    # named, so that conftest.py is read before the options are.
+    if runs unit; then {{ run_logged }} "$name" "$bin/pytest" tests/unit -n auto --dist loadgroup; fi
     if runs role; then
       list={{ quote(scenario_roles) }}
       [ -z "$roles" ] || list=$(printf %s "$roles" | tr , ' ')

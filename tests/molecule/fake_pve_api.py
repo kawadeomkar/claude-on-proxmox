@@ -727,4 +727,8 @@ server = HTTPServer(("0.0.0.0", PORT), Handler)
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ctx.load_cert_chain(CERT, KEY)
 server.socket = ctx.wrap_socket(server.socket, server_side=True)
+# Given port 0 the system picks a free one, said on stdout: tests/unit/harness.py starts fakes so,
+# never on a port it probed and freed, which another xdist worker's fake could take first.
+if PORT == 0:
+    print(server.server_address[1], flush=True)
 server.serve_forever()
