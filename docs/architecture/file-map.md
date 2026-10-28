@@ -18,6 +18,8 @@ tools/docs.py                     just docs: the generated reference sections; t
 tools/env-run                     run a tool from the project's virtualenv (the git hooks), or --bin: its bin (the justfile)
 tools/check                       the justfile's checks: the checkout, the vault, the collections, names, a project
 tools/run-logged                  run a command with its Ansible output logged to .logs/ (every recipe that runs Ansible)
+tools/live                        a recipe's command drawn as a part of one run, or passed through as it ran; the run's end
+                                  from the recipe's trap (§7.8)
 tools/status-exit                 just status's last step: the report's exit code, the report under --json, then no report
 tools/stale_scripts.py            just install: the locked packages whose commands start another Python, to reinstall
 tools/proxmox-access.sh           on the Proxmox host, as root: the API role, user, grants and token, what is missing of them
@@ -92,6 +94,10 @@ filter_plugins/settings.py        init_answer, the rule each just init answer fo
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
 filter_plugins/run_view.py        a live run as stages, steps and tasks (just deploy's first): its frame, a line per step,
                                   the summary (§7.5)
+filter_plugins/live_ansible.py    the engine that draws a playbook run live: Ansible's events in, the region, the run's own
+                                  words and the summary out; the stdout callback hands it every event (§7.5)
+filter_plugins/live_commands.py   a run in parts: a command drawn as a part, the state between parts, the run's end (§7.8)
+filter_plugins/live_recipes.py    every command drawn live, declared: its stages and steps, named by its title (§7.8)
 filter_plugins/live_region.py     every live output's region: drawn in place at the bottom of a terminal, all else above (§7.8)
 filter_plugins/screen.py          every live output's lines: styled segments, cut, aligned, coloured in one palette (§7.8)
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
@@ -109,9 +115,10 @@ tests/
   check_no_local_files.sh         tracked-file guard (also runs in CI)
   unit/                           pytest: filters, github_repos, the guard, configure tags, Remote Control, the three
                                   sign-ins and deploy's sign-in steps, Tailscale, destroy's release, the managed SSH
-                                  config, the Claude terminal's script, the justfile, just status and just deploy's
-                                  live output (vt.py, a small terminal their live tests read back through), the wiki
-                                  (test_docs.py)
+                                  config, the Claude terminal's script, the justfile, just status and every live
+                                  output - the model, each recipe drawn, tools/live's runs in parts (live_kit.py runs
+                                  each at a terminal of its own; vt.py, a small terminal they read back through) -
+                                  and the wiki (test_docs.py)
   molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh, claude, tailscale,
                                   Tailscale API, the Anthropic Messages API (for the real claude in configure)
 molecule/

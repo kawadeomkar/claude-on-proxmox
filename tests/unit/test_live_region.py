@@ -17,6 +17,7 @@ import os
 import signal
 import termios
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -168,10 +169,15 @@ def test_a_prompt_has_the_screen_to_itself_and_the_region_comes_back_after():
     region.redraw()
     try:
         assert display.prompt_until("Code:") == b"typed"
+        # Back only once the run has worked half a second: the next question, at once, finds nothing drawn.
+        region.redraw()
+        settled = stream.getvalue()
+        time.sleep(live.SETTLE_SECONDS)
+        region.redraw()
     finally:
         region.finish()
     (before, prompting), during = seen
-    assert prompting and before.endswith("\r\x1b[J") and during == before
+    assert prompting and before.endswith("\r\x1b[J") and during == before and settled == before
     assert stream.getvalue()[len(before) :].startswith(f"{live.SYNC_ON}\rregion")
 
 
@@ -188,9 +194,11 @@ def test_the_route_sends_to_the_log_alone_and_never_a_prompt():
     assert display.logged[-1] == "after the end" and "after the end" not in stream.getvalue()
 
 
-def test_a_region_on_a_screen_too_small_for_one_draws_nothing():
+# 0 by 0: a pseudo-terminal nobody gave a size, as script(1) makes one without a terminal of its own.
+@pytest.mark.parametrize("size", [(40, 3), (40, 1), (0, 0)])
+def test_a_region_on_a_screen_too_small_for_one_draws_nothing(size):
     region, _, stream = _region(frame=lambda cols, rows, glyph: ["one", "two"])
-    region._terminal_size = lambda: (40, 3)
+    region._terminal_size = lambda: size
     region.start()
     region.redraw()
     region.finish()
@@ -260,3 +268,43 @@ def test_the_display_the_region_wraps_is_the_one_it_was_built_against():
     assert "do_prompt = self.prompt" in inspect.getsource(Display.do_var_prompt)
     assert "input(msg)" in inspect.getsource(Display.prompt)
     assert isinstance(Display()._lock, type(threading.RLock()))
+
+
+def _output(**kwargs):
+    stream = Screen()
+    display = Display(stream)
+    out = live.Output(display, live=False, **kwargs)
+    return out, display, stream
+
+
+def test_an_outputs_own_words_go_coloured_to_the_screen_and_plain_to_the_log():
+    out, display, stream = _output(color=True, to_log=True)
+    out.start()
+    # Without a region there is no colour: a pipe gets the plain words, once, on the screen and in the log.
+    assert out.color is False
+    out.print([("\x1b[1msaid\x1b[0m", "said")])
+    assert stream.getvalue() == "said\n" and display.logged == ["said"]
+    out.finish()
+    coloured = live.Output(Display(Screen()), frame=lambda cols, rows, glyph: [], live=True, color=True)
+    assert coloured.color is True and coloured.region._frame is not None
+
+
+def test_with_to_log_only_the_outputs_own_words_and_stderr_reach_the_screen():
+    out, display, stream = _output(to_log=True)
+    out.start()
+    display.display("a task's line")
+    display.display("a warning", stderr=True)
+    out.print([("the run's own", "the run's own")])
+    with out.say():
+        display.display("said inside")
+    out.finish()
+    assert stream.getvalue() == "a warning\nthe run's own\nsaid inside\n"
+    assert display.logged == ["a task's line", "a warning", "the run's own", "said inside"]
+
+
+def test_without_to_log_everything_reaches_the_screen():
+    out, display, stream = _output()
+    out.start()
+    display.display("a line")
+    out.finish()
+    assert stream.getvalue() == "a line\n" and display.logged == ["a line"]

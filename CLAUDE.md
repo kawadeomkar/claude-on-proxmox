@@ -57,14 +57,19 @@ go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
 `--no-deps` would skip one - whose first line is the checkout guard (`tools/check checkout`: just looks for a
 justfile upward, so started in a make-era worktree under `.claude/worktrees/` it would run main's, against
 main's inventory and vault), then its own rules with their messages, then what it needs (`tools/env-run
---bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d. No
+--bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d - but in a
+recipe drawn in parts (`lint`, `init`, `test`), which exports its title and its state's path (`live_state`, the recipe's
+name and the shell's PID), sets `trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT` - an end that fails changes no exit
+status - only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`
+(lint's checks, test's parts) or each playbook as it is, joining the run through the exported title and state
+(init's two), so the trap still runs to say the run's end. No
 assignment starts a program: just evaluates what a recipe uses before any line runs, so it would start
 before a refusal. Bash, not sh: Ubuntu's dash dies of a Ctrl-C that the playbook it runs survived
 (Ansible's `pause`, Ctrl-C then C), and `[continue]` needs the script to live on; and only what macOS's
 bash 3.2 has - no arrays, since `"${a[@]}"` of an empty one is fatal there under `-u`, which every script
 has, so a variable that may be unset is read as `${VAR:-}`. A recipe that includes another's work runs it
 as `{{ self }} <recipe>`, which passes on every setting (a recursive just begins without the command line's
-`BIN=`). `test_justfile.py` runs every recipe against stand-ins, under `/bin/bash` on macOS.
+`BIN=`), and, to make it a stage of its own run, `{{ self }} live_run=<its name> <recipe>`. `test_justfile.py` runs every recipe against stand-ins, under `/bin/bash` on macOS.
 
 **A change to behaviour changes the wiki in the same commit.** The page for it is in `docs/`
 (`docs/README.md` maps them; `docs/architecture/` for the design, cited by section number). The
@@ -381,27 +386,48 @@ token; `github_auth_method: token` still fails. The status JSON carries
 - **Every live output draws through one region and one way of drawing.** `filter_plugins/live_region.py`'s
   `LiveRegion` puts a frame at the bottom of the terminal and `filter_plugins/screen.py` builds its lines
   (segments cut to the width, one palette): `just status`'s callback and every live run's, and each recipe
-  drawn live after them - a playbook run joins through `CLAUDE_ON_PROXMOX_LIVE` and `run_view.STAGE_FILES`,
-  a report hands `LiveRegion` a frame of its own; never a second region, palette or cut. The region draws one
+  drawn live after them - a playbook run joins through `CLAUDE_ON_PROXMOX_LIVE` and its declaration in
+  `filter_plugins/live_recipes.py`, a report hands an `Output` a frame of its own; never a second region, palette
+  or cut. A command's live output is its declaration: the engine (`filter_plugins/live_ansible.py`), the model
+  (`run_view.py`) and the region know no command, and what a declaration cannot say becomes a new field there,
+  never code of one command's own. A recipe of several processes is one run in parts: each command goes through
+  `tools/live`, which passes it through unchanged, without the variable or the state's path, unless it can draw -
+  a terminal, a title, no `-v`, a log, a state, the engine's packages, decided with the standard library alone -
+  while a playbook part (init's) joins through the exported variable itself, drawn a line per step without a
+  terminal; each part takes over the run's state in `LIVE_DIR` (`.cache/live/`, refused by
+  `tests/check_no_local_files.sh`), whose end, the recipe's trap, says the summary; a nested recipe joins its
+  parent's run through the `live_run` setting, never the environment. The region draws one
   write per redraw in synchronized output, up exactly the lines drawn, so no line may wrap (`tests/unit/vt.py`
-  counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`); keeps
+  counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`), back only
+  half a second after it; keeps
   the echo off while it is up; and never hides the cursor. Modules load each other by path, once, as
   `claude_on_proxmox_<stem>`, and every test that runs something at a terminal opens it through
   `harness._at_a_pseudo_terminal`. See docs/architecture/custom-code.md §7.8.
 
 - **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
-  which only the deploy recipe exports (the run's title) and the callback takes out of its environment at once,
-  so nothing the run starts inherits it, turns the stdout callback's live mode on at verbosity 0 with a run
-  log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
+  which only the recipes drawn live export - `deploy`, `login`, `destroy`, `code`, and `lint`, `init` and `test`
+  for their parts - (the run's title) and the engine takes out of its environment at once, so nothing the run starts
+  inherits it, hands the stdout callback's every event to the engine at verbosity 0 with
+  a run log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
   Every line the stream would print still reaches the run log, in order, through `Display`'s `log_only` - so
   without a log (`LOG_DIR=`) the run is the stream; the reports, browser blocks, diffs, warnings and failures
   print above the region for good, whole - a report is wrapped, never cut, a failure says its output's end and
-  each failed loop item, and only a failure among a rescued block's own tasks is the block's. What a VM said
-  reaches the screen through `plain_text`, and only `proxmox_vm` gives the summary a VM's address. Any `-v` or
-  another stdout callback is the stream. No test or scenario sets the variable: `test_deploy_live.py` runs the
-  callback at a pseudo-terminal of its own against a stand-in deploy, holds the log to the stream's, and fails
-  if a tracked file other than the callback, `run_view.py`, the deploy recipe and `test_justfile.py`'s
-  recording stand-in names it. See docs/architecture/custom-code.md §7.5.
+  each failed loop item, and only a failure among a rescued block's own tasks - at any depth, through imports and
+  includes too - is the block's. What a VM said reaches the screen through `plain_text`, and only `proxmox_vm`
+  gives the summary a VM's address - or, for a recipe whose declaration names discovery (`login`) or
+  `vm_addresses.yml` (`code`), the address and VM ID discovery's `add_host` or `claude_vm_addressed` read from
+  Proxmox and the guest agent, and nothing else of them. Any `-v` or another
+  stdout callback is the stream. No test or scenario sets
+  the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against a stand-in deploy,
+  holds the log to the stream's, and fails if a tracked file other than the callback, the engines
+  (`filter_plugins/live_ansible.py`, `filter_plugins/live_commands.py` and `tools/live`), the declarations
+  (`filter_plugins/live_recipes.py`), the recipes drawn live, the live tests' kit (`tests/unit/live_kit.py`) and
+  pytest's plugin (`tests/unit/live_pytest.py`), the live tests that draw a playbook through the engine or a
+  command through `tools/live`, each listed by name, and `test_justfile.py`'s recording stand-in names it;
+  `tools/live` takes it, and the state's path, out of every command's environment, passed through or drawn. A
+  failure is headed by its step and its VM, and one a declared
+  task raises again is drawn under the failure a rescue took; a declared refusal (destroy's unconfirmed deletion)
+  is said as the person's answer, never as a failure. See docs/architecture/custom-code.md §7.5.
 
 - **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`

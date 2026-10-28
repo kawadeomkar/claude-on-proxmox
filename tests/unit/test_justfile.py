@@ -167,6 +167,7 @@ def _safe(tmp_path: Path, galaxy_rc: int = 0) -> list[str]:
         f"VAULT_FILE={_vault(tmp_path)}",
         f"LOG_DIR={tmp_path / 'logs'}",
         f"STATUS_DIR={tmp_path / 'status'}",
+        f"LIVE_DIR={tmp_path / 'live'}",
     ]
 
 
@@ -289,7 +290,7 @@ def test_no_parameter_shares_its_name_with_an_assignment() -> None:
 def test_self_passes_on_every_setting() -> None:
     # A recipe that runs another (test lints, init installs) runs it through self, which would otherwise drop the
     # command line's BIN= and the rest.
-    settings = {name for name in _json()["assignments"] if name.isupper()} | {"stamp"}
+    settings = {name for name in _json()["assignments"] if name.isupper()} | {"stamp", "live_run"}
     passed = set(re.findall(r" ([A-Za-z_]+)=", _evaluate("self")))
     assert passed == settings, (passed, settings)
 
@@ -643,11 +644,18 @@ def test_deploy_without_options_runs_deploy_yml_with_the_no_terminal_switch(tmp_
         (["deploy", "--only", "configure"], "deploy --only configure"),
         (["deploy", "alpha", "--tags", "claude_code,tailscale"], "deploy --tags claude_code,tailscale alpha"),
         (["deploy", "alpha", "--start"], "deploy --start alpha"),
-        (["login", "alpha"], "unset"),
+        (["login"], "login"),
+        (["login", "alpha", "beta"], "login alpha beta"),
+        (["login", "alpha", "--only", "github"], "login --only github alpha"),
+        (["destroy"], "destroy"),
+        (["destroy", "alpha", "beta"], "destroy alpha beta"),
+        (["code", "alpha"], "code alpha"),
+        (["code", "alpha", "--project", "demo"], "code --project demo alpha"),
+        (["code", "alpha", "--session", "0a608ad8-1b2c-4d3e-8f90-123456789abc"], "code alpha"),
         (["list"], "unset"),
     ],
 )
-def test_deploy_and_only_deploy_is_drawn_live_under_what_was_run(tmp_path: Path, args: list[str], title: str) -> None:
+def test_each_recipe_drawn_live_is_drawn_under_what_was_run(tmp_path: Path, args: list[str], title: str) -> None:
     # The live output's switch and its title (callback_plugins/claude_on_proxmox.py), as the playbook sees it.
     seen = tmp_path / "live"
     body = f'printf "%s\\n" "${{CLAUDE_ON_PROXMOX_LIVE-unset}}" > "{seen}"'
@@ -1459,6 +1467,9 @@ def _init_settings(tmp_path: Path, settings_body: str = "") -> list[str]:
     _stand_in(bin_dir, "pre-commit")
     _stand_in(bin_dir, "ansible-galaxy")
     _stand_in(bin_dir, "uv")
+    # The environment's Python, which runs the trap's tools/live end.
+    if not (bin_dir / "python").exists():
+        (bin_dir / "python").symlink_to(sys.executable)
     copies = []
     for name in ("hosts.yml", "local.yml", "vault.yml"):
         (tmp_path / f"{name}.example").write_text(f"# {name}\n")
@@ -1468,6 +1479,7 @@ def _init_settings(tmp_path: Path, settings_body: str = "") -> list[str]:
         f"VAULT_FILE={tmp_path / 'vault.yml'}",
         f"VAULT_PASS={tmp_path / '.vault_pass'}",
         f"LOG_DIR={tmp_path / 'logs'}",
+        f"LIVE_DIR={tmp_path / 'live'}",
     ]
     return settings
 
@@ -1793,7 +1805,15 @@ def _linters(tmp_path: Path) -> list[str]:
     for tool in ("yamllint", "ansible-lint", "ruff", "ansible-playbook", "pre-commit"):
         _stand_in(tmp_path / "bin", tool, f'[ "{tool}" != pre-commit ] || printf "%s" "$SKIP" > "{tmp_path / "skip"}"')
     _stand_in(tmp_path / "uv-bin", "uv")
-    return [f"BIN={tmp_path / 'bin'}", f"UV={tmp_path / 'uv-bin' / 'uv'}"]
+    # The environment's Python, which runs tools/live in front of every check.
+    if not (tmp_path / "bin" / "python").exists():
+        (tmp_path / "bin" / "python").symlink_to(sys.executable)
+    return [
+        f"BIN={tmp_path / 'bin'}",
+        f"UV={tmp_path / 'uv-bin' / 'uv'}",
+        f"LOG_DIR={tmp_path / 'logs'}",
+        f"LIVE_DIR={tmp_path / 'live'}",
+    ]
 
 
 @pytest.mark.parametrize("part", ["", *LINTERS])
@@ -1906,10 +1926,11 @@ def test_test_runs_lint_and_every_test_or_the_parts_named(tmp_path: Path, args: 
 
 
 def test_unit_runs_the_unit_tests_on_a_worker_per_cpu(tmp_path: Path) -> None:
-    # pytest-xdist's loadgroup, so that conftest.py keeps each module that shares a fixture on one worker.
+    # pytest-xdist's loadgroup, so that conftest.py keeps each module that shares a fixture on one worker; the
+    # project's plugin first, which reports each test to the drawn run and does nothing without one.
     result = _just("test", "unit", settings=_testing(tmp_path))
     assert result.returncode == 0, _output(result)
-    assert _runs(tmp_path, "pytest") == [["tests/unit", "-n", "auto", "--dist", "loadgroup"]]
+    assert _runs(tmp_path, "pytest") == [["-p", "live_pytest", "tests/unit", "-n", "auto", "--dist", "loadgroup"]]
 
 
 @pytest.mark.parametrize(
@@ -1945,6 +1966,9 @@ def test_role_narrows_the_role_scenarios(tmp_path: Path, roles: str, expect: lis
     result = _just("test", "--role", roles, settings=_testing(tmp_path))
     assert result.returncode == 0, _output(result)
     assert _molecule(tmp_path)["role"] == expect
+    # Passed through, each scenario says which role it is before it runs.
+    said = [line for line in result.stdout.splitlines() if line.startswith("===== molecule:")]
+    assert said == [f"===== molecule: {role}" for role in expect], _output(result)
 
 
 @pytest.mark.parametrize(
@@ -2054,3 +2078,60 @@ def test_list_is_status_by_the_name_it_had_before(tmp_path: Path) -> None:
     run = _playbook(tmp_path, "list", "alpha")
     assert run[-1] == "playbooks/status.yml", run
     assert run[run.index('{"vm_name": "alpha"}') - 1] == "-e", run
+
+
+def _live_recorded(tmp_path: Path, *args: str) -> tuple[list[list[str]], list[str]]:
+    """just lint with a python that records what tools/live is asked and what it is handed in its environment: the
+    title and the state's path."""
+    settings = _linters(tmp_path)
+    (tmp_path / "bin" / "python").unlink()
+    seen = tmp_path / "live-env"
+    said = "${CLAUDE_ON_PROXMOX_LIVE-unset}|${CLAUDE_ON_PROXMOX_LIVE_STATE-unset}"
+    _stand_in(tmp_path / "bin", "python", f'echo "{said}" >> "{seen}"')
+    result = _just(*args, settings=settings)
+    assert result.returncode == 0, _output(result)
+    return [run[1:] for run in _runs(tmp_path, "python")], seen.read_text().splitlines()
+
+
+def test_lint_on_its_own_is_a_run_in_parts_whose_trap_says_its_end(tmp_path: Path) -> None:
+    runs, env = _live_recorded(tmp_path, "lint", "yaml", "python")
+    # Each check behind tools/live, its step and the steps the run will run; the trap's end last, with the status.
+    asked = [run[run.index("run") :][:4] for run in runs[:-1]]
+    assert asked == [["run", "lint", "--step", "yaml"]] + [["run", "lint", "--step", "python"]] * 2, runs
+    assert all(run[run.index("--plan") + 1] == " yaml python" for run in runs[:-1]), runs
+    assert runs[-1][-2:] == ["end", "0"], runs
+    state = re.fullmatch(
+        rf"lint yaml python\|{re.escape(str(tmp_path / 'live'))}/\d{{8}}-\d{{6}}-lint-\d+\.json", env[0]
+    )
+    assert state and len(set(env)) == 1, env
+
+
+def test_lint_as_a_stage_of_another_run_draws_into_it_and_says_no_end_of_its_own(tmp_path: Path) -> None:
+    runs, env = _live_recorded(tmp_path, "live_run=test", "lint", "yaml")
+    assert [run[-1] for run in runs if "end" in run] == [], runs
+    assert env == ["unset|unset"], "the parent's title and state, here none, never lint's own"
+
+
+def test_init_draws_its_two_playbooks_as_one_run_whose_trap_says_its_end(tmp_path: Path) -> None:
+    seen = tmp_path / "live-env"
+    said = "${CLAUDE_ON_PROXMOX_LIVE-unset}|${CLAUDE_ON_PROXMOX_LIVE_STATE-unset}"
+    settings = _init_settings(tmp_path, f'echo "{said}" >> "{seen}"')
+    result = _just("init", settings=settings)
+    assert result.returncode == 0, _output(result)
+    state = rf"{re.escape(str(tmp_path / 'live'))}/\d{{8}}-\d{{6}}-init-\d+\.json"
+    title = re.fullmatch(rf"init\|{state}", seen.read_text().split()[0])
+    assert title and len(set(seen.read_text().split())) == 1, seen.read_text()
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    seen_nested = nested / "live-env"
+    result = _just("live_run=test", "init", settings=_init_settings(nested, f'echo "{said}" >> "{seen_nested}"'))
+    assert result.returncode == 0, _output(result)
+    assert set(seen_nested.read_text().split()) == {"unset|unset"}
+    # LIVE_DIR= keeps no state to carry the run between its playbooks: each prints as it did, nothing joined.
+    stateless = tmp_path / "stateless"
+    stateless.mkdir()
+    seen_stateless = stateless / "live-env"
+    settings = [*_init_settings(stateless, f'echo "{said}" >> "{seen_stateless}"'), "LIVE_DIR="]
+    result = _just("init", settings=settings)
+    assert result.returncode == 0, _output(result)
+    assert set(seen_stateless.read_text().split()) == {"unset|unset"}

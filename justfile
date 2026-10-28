@@ -7,15 +7,17 @@
 # word narrows one to a single part of it (just deploy --only configure, just
 # test integration). Options go after the recipe's name.
 #
-# How every recipe runs (docs/architecture/decisions.md §15.3): a bash script with
-# no dependencies. Its first lines refuse a run started in another checkout
-# (tools/check checkout), then check its own arguments, then what it needs -
-# the environment (tools/env-run --bin), the vault, the collections - and only
-# then does it work, its last command exec'd. Nothing is a dependency, which
-# JUST_NO_DEPS or --no-deps would skip, and no assignment here starts a
-# program, which just would do before any line ran. A value a person typed
-# reaches a script as an argument ("$1"), never as its text: just holds it to
-# its [arg] pattern first, and what goes into JSON is checked again there.
+# How every recipe runs (docs/architecture/decisions.md §15.3): a bash script
+# with no dependencies. Its first lines refuse a run started in another
+# checkout (tools/check checkout), then check its own arguments, then what it
+# needs - the environment (tools/env-run --bin), the vault, the collections -
+# and only then does it work, its last command exec'd - but in a recipe drawn
+# in parts (lint, init, test), whose trap must still run to say the run's end
+# (tools/live). Nothing is a dependency, which JUST_NO_DEPS or --no-deps would
+# skip, and no assignment here starts a program, which just would do before
+# any line ran. A value a person typed reaches a script as an argument ("$1"),
+# never as its text: just holds it to its [arg] pattern first, and what goes
+# into JSON is checked again there.
 # A recipe's words are a * parameter even where it takes one: a parameter with
 # a default lists as NAME='', make's spelling, which just refuses after the
 # recipe, and leaves the word after it to run as a second recipe (just help
@@ -59,6 +61,10 @@ LOG_RETENTION_DAYS := env('LOG_RETENTION_DAYS', '14')
 # Where just status's run writes its report, which the recipe reads and then
 # removes: git-ignored, and refused by tests/check_no_local_files.sh.
 STATUS_DIR := env('STATUS_DIR', justfile_directory() / '.cache' / 'status')
+# Where a run drawn in parts keeps its model between its parts (tools/live), a file named for the run's stamp and its
+# top recipe that its end removes: git-ignored, and refused by tests/check_no_local_files.sh. LIVE_DIR= keeps none, and
+# a run in parts is then not drawn: each part is passed through.
+LIVE_DIR := env('LIVE_DIR', justfile_directory() / '.cache' / 'live')
 # From the command line only (just BIN=<dir> ...): the tools of another
 # directory, which the unit tests point at stand-ins. A BIN in the
 # environment, a name many shells use for ~/bin, is never read.
@@ -70,11 +76,15 @@ INIT_FILES := 'inventory/hosts.yml inventory/group_vars/all/local.yml ' + VAULT_
 
 # One run, one moment: every log of the run is named after it.
 stamp := datetime('%Y%m%d-%H%M%S')
+# The top recipe of a run drawn in parts, which a recipe sets on another it runs as a stage of its own run
+# ({{ self }} live_run=test lint): that one then draws into the parent's run, under its title. A setting, never the
+# environment, so a variable left exported joins no run.
+live_run := ''
 # The same just on the same justfile, with every setting of this run: what a
 # recipe that includes another's work (test lints, init installs) runs it by.
 # A recursive just would otherwise start without the command line's BIN= and
 # the rest; tests/unit/test_justfile.py holds this to every setting above.
-self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' INIT_FILES=' + quote(INIT_FILES) + ' stamp=' + quote(stamp)
+self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' INIT_FILES=' + quote(INIT_FILES) + ' LIVE_DIR=' + quote(LIVE_DIR) + ' stamp=' + quote(stamp) + ' live_run=' + quote(live_run)
 # The first line of every recipe but help.
 guard := quote(justfile_directory() / 'tools/check') + ' checkout ' + quote(invocation_directory())
 # The scripts directory of PYTHON's environment, or BIN: refused, with how to
@@ -83,6 +93,13 @@ find_bin := 'bin=' + quote(BIN) + '; [ -n "$bin" ] || bin=$(PYTHON=' + quote(PYT
 # tools/run-logged with the run's logging settings; its first argument is the
 # log's name.
 run_logged := 'env LOG_DIR=' + quote(if LOG_DIR == '' { '' } else { absolute_path(LOG_DIR) }) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' CLAUDE_ON_PROXMOX_LOG_STAMP=' + quote(stamp) + ' ' + quote(justfile_directory() / 'tools/run-logged')
+# tools/live with the environment's Python and the run's logging settings, each option in its = form so that a
+# value starting with - (ANSIBLE_ARGS=-vvv) is still its value: `run <stage> [--step <label>] -- <command>` in front
+# of each command of a recipe drawn in parts, `end "$?"` from its trap.
+live := '"$bin/python" ' + quote(justfile_directory() / 'tools/live') + ' --log-dir=' + quote(if LOG_DIR == '' { '' } else { absolute_path(LOG_DIR) }) + ' --retention=' + quote(LOG_RETENTION_DAYS) + ' --stamp=' + quote(stamp) + ' --ansible-args=' + quote(ANSIBLE_ARGS)
+# Where a run in parts keeps its state, but for the top recipe's name, its shell's PID - two runs started in one
+# second keep two - and .json: none without LIVE_DIR.
+live_state := if LIVE_DIR == '' { '' } else { absolute_path(LIVE_DIR) / stamp }
 # --vault-password-file .vault_pass, where there is one, decided by the shell
 # when the line runs (init's questions may make it), not when just reads this.
 vault_args := '[ ! -f ' + quote(VAULT_PASS) + ' ] || set -- "$@" --vault-password-file ' + quote(VAULT_PASS)
@@ -203,6 +220,17 @@ init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STO
       test -f "$file" || { cp "$file.example" "$file"; copied="$copied $file"; }
     done
     [ -z "$copied" ] || echo "Created$copied from their .example files (git-ignored)."
+    # Drawn live from here, after just install, as one run in two parts - the questions, then the checks - unless it
+    # is a stage of another recipe's run (live_run), or there is no state to carry the run between them (LIVE_DIR=,
+    # when each playbook prints as it did): its title, which no value given goes into, the state the two playbooks
+    # share, and a trap that says the run's end however it ends, so neither is exec'd.
+    if [ -z {{ quote(live_run) }} ] && [ -n {{ quote(live_state) }} ]; then
+      CLAUDE_ON_PROXMOX_LIVE=init
+      CLAUDE_ON_PROXMOX_LIVE_STATE={{ quote(live_state) }}-init-$$.json
+      export CLAUDE_ON_PROXMOX_LIVE CLAUDE_ON_PROXMOX_LIVE_STATE
+      live_end() { {{ live }} end "$1" || :; }
+      trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT
+    fi
     {{ run_logged }} init "$bin/ansible-playbook" -i playbooks/inventory/init.yml "$@" {{ ANSIBLE_ARGS }} playbooks/init_settings.yml
     # The checks run with the project's inventory and the vault, whose password
     # is looked for now: the questions may have just made .vault_pass.
@@ -211,7 +239,7 @@ init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STO
       exit 0
     fi
     [ ! -f {{ quote(VAULT_PASS) }} ] || set -- --vault-password-file {{ quote(VAULT_PASS) }} "$@"
-    exec {{ run_logged }} init "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/init_check.yml
+    {{ run_logged }} init "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/init_check.yml
 
 # uv's sync installs the versions the lock pins into PYTHON's environment,
 # after checking the lock still matches pyproject.toml. --inexact: the
@@ -428,6 +456,11 @@ code PROJECT='' SESSION='' *NAME:
     set -- "$@" -e "{\"vm_name\": \"$names\"}"
     [ -z "$project" ] || set -- "$@" -e "{\"vm_project\": \"$project\"}"
     [ -z "$session" ] || set -- "$@" -e "{\"vm_session\": \"$session\"}"
+    # Drawn live (callback_plugins/claude_on_proxmox.py, its declaration in filter_plugins/live_recipes.py), under
+    # this title; a session's ID, which its report names, is left out of it. Any -v in ANSIBLE_ARGS streams it as
+    # before.
+    CLAUDE_ON_PROXMOX_LIVE="code${project:+ --project $project} $names"
+    export CLAUDE_ON_PROXMOX_LIVE
     exec {{ run_logged }} code "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/code.yml
 
 # The sign-ins only the person can make, each a page in the browser: Claude's
@@ -461,6 +494,10 @@ login SIGN_IN='' *NAMES:
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
     {{ no_tty_args }}
+    # Drawn live (callback_plugins/claude_on_proxmox.py, its declaration in filter_plugins/live_recipes.py), under
+    # this title. Any -v in ANSIBLE_ARGS streams it as before.
+    CLAUDE_ON_PROXMOX_LIVE="login${only:+ --only $only}${names:+ $(printf %s "$names" | tr , ' ')}"
+    export CLAUDE_ON_PROXMOX_LIVE
     exec {{ run_logged }} "login${only:+-$only}" "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} "playbooks/${only:+${only}_}login.yml"
 
 # What every VM this project created is doing, and what needs doing next,
@@ -533,6 +570,10 @@ destroy *NAMES:
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
+    # Drawn live (callback_plugins/claude_on_proxmox.py, its declaration in filter_plugins/live_recipes.py), under
+    # this title. Any -v in ANSIBLE_ARGS streams it as before.
+    CLAUDE_ON_PROXMOX_LIVE="destroy${names:+ $(printf %s "$names" | tr , ' ')}"
+    export CLAUDE_ON_PROXMOX_LIVE
     exec {{ run_logged }} destroy "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/destroy.yml
 
 # Only files named the way tools/run-logged names its logs, and only in
@@ -569,31 +610,53 @@ lint ALL_HOOKS='' *PARTS:
     parts=" $* "
     runs() { [ "$parts" = "  " ] || case "$parts" in *" $1 "*) ;; *) return 1 ;; esac; }
     {{ find_bin }}
-    if runs lock; then UV_PYTHON_DOWNLOADS=never {{ quote(UV) }} lock --check; fi
-    if runs yaml; then "$bin/yamllint" --strict .; fi
-    if runs ansible; then "$bin/ansible-lint"; fi
+    # Drawn live, as a run in parts (tools/live), unless it is a stage of another recipe's run (live_run): its title,
+    # the state its checks share, and a trap that says the run's end however it ends, so no check is exec'd. Each
+    # check is a command through tools/live, which passes it through unchanged where nothing is drawn.
+    if [ -z {{ quote(live_run) }} ]; then
+      CLAUDE_ON_PROXMOX_LIVE="lint${all_hooks:+ --all-hooks}${*:+ $*}"
+      state={{ quote(live_state) }}
+      CLAUDE_ON_PROXMOX_LIVE_STATE=${state:+$state-lint-$$.json}
+      export CLAUDE_ON_PROXMOX_LIVE CLAUDE_ON_PROXMOX_LIVE_STATE
+      live_end() { {{ live }} end "$1" || :; }
+      trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT
+    fi
+    plan=
+    # The checks in the order they run, the line broken after "just" so that no line reads as a just command; the
+    # justfile's format only where it is checked, by the just CI pins - a step listed and never run reads as a stop.
+    for part in lock yaml ansible python just \
+      syntax hooks; do
+      if [ "$part" = just ] && [ {{ quote(just_version()) }} != {{ quote(just_pin) }} ]; then continue; fi
+      if runs "$part"; then plan="$plan $part"; fi
+    done
+    check() {
+      step=$1
+      shift
+      {{ live }} run lint --step "$step" --plan "$plan" -- "$@"
+    }
+    if runs lock; then check lock env UV_PYTHON_DOWNLOADS=never {{ quote(UV) }} lock --check; fi
+    if runs yaml; then check yaml "$bin/yamllint" --strict .; fi
+    if runs ansible; then check ansible "$bin/ansible-lint"; fi
     if runs python; then
-      "$bin/ruff" check .
-      "$bin/ruff" format --check .
+      check python "$bin/ruff" check .
+      check python "$bin/ruff" format --check .
     fi
     if runs just; then
       if [ {{ quote(just_version()) }} = {{ quote(just_pin) }} ]; then
-        {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --fmt --check
+        check just {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} --fmt --check
       else
         echo "just: not checked: the justfile's format is checked only by just {{ just_pin }}, the one CI runs, and this is {{ just_version() }}"
       fi
     fi
     if runs syntax; then
-      for pb in deploy.yml playbooks/*.yml; do
-        echo "== $pb"
-        "$bin/ansible-playbook" --syntax-check "$pb"
-      done
+      # One check over every playbook, each said as it starts: the first that fails ends it.
+      check syntax bash -c 'for pb in deploy.yml playbooks/*.yml; do echo "== $pb"; "$1/ansible-playbook" --syntax-check "$pb" || exit; done' syntax "$bin"
     fi
     if runs hooks; then
       absbin=$(cd "$bin" && pwd -P)
       SKIP={{ quote(pre_commit_skip) }}
       [ -z "$all_hooks" ] || SKIP=
-      SKIP=$SKIP PATH="$absbin:$PATH" "$bin/pre-commit" run --all-files
+      check hooks env SKIP="$SKIP" PATH="$absbin:$PATH" "$bin/pre-commit" run --all-files
     fi
 
 # Molecule resolves ansible-playbook from PATH (and only appends the
@@ -618,6 +681,8 @@ test ROLES='' *PARTS:
     {{ guard }}
     roles=$1
     shift
+    # The words as typed, for the run's title: --role below stands for the role part.
+    asked=$*
     if [ -n "$roles" ]; then
       case ",$roles," in *,,*) echo "error: --role names roles separated by single commas (got: [$roles])" >&2; exit 1 ;; esac
       for role in $(printf %s "$roles" | tr , ' '); do
@@ -638,20 +703,47 @@ test ROLES='' *PARTS:
     {{ find_bin }}
     tools/check collections "$bin"
     absbin=$(cd "$bin" && pwd -P)
-    [ -z "$lint" ] || {{ self }} lint
+    # The roles' parts run in their directories: every tool, and tools/live's Python, by its absolute path.
+    bin=$absbin
+    # Drawn live, as a run in parts (tools/live), unless it is a stage of another recipe's run (live_run): its title,
+    # the state its parts share, the stages it will run, and a trap that says the run's end however it ends, so no
+    # part is exec'd. Each part is a command through tools/live, which passes it through as it ran before - logged
+    # under the run's name - where nothing is drawn; lint draws into the run as its first stage.
+    if [ -z {{ quote(live_run) }} ]; then
+      stages=
+      [ -z "$lint" ] || stages=lint
+      for part in unit role integration provision; do
+        if runs "$part"; then stages="$stages $part"; fi
+      done
+      CLAUDE_ON_PROXMOX_LIVE="test${roles:+ --role $roles}${asked:+ $asked}"
+      state={{ quote(live_state) }}
+      CLAUDE_ON_PROXMOX_LIVE_STATE=${state:+$state-test-$$.json}
+      CLAUDE_ON_PROXMOX_LIVE_STAGES=$stages
+      export CLAUDE_ON_PROXMOX_LIVE CLAUDE_ON_PROXMOX_LIVE_STATE CLAUDE_ON_PROXMOX_LIVE_STAGES
+      live_end() { {{ live }} --log="$name" end "$1" || :; }
+      trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT
+    fi
+    part() { {{ live }} --log="$name" run "$@"; }
+    [ -z "$lint" ] || {{ self }} live_run=test lint
     # A worker per CPU, each module whose tests share a fixture kept on one (tests/unit/conftest.py); tests/unit
     # named, so that conftest.py is read before the options are.
-    if runs unit; then {{ run_logged }} "$name" "$bin/pytest" tests/unit -n auto --dist loadgroup; fi
+    if runs unit; then part unit --read pytest -- "$bin/pytest" -p live_pytest tests/unit -n auto --dist loadgroup; fi
     if runs role; then
       list={{ quote(scenario_roles) }}
       [ -z "$roles" ] || list=$(printf %s "$roles" | tr , ' ')
+      # Each role's scenario says which it is first, as a line of its own output: on the screen as it runs where it is
+      # passed through, in the log beside the row that names it where it is drawn.
       for role in $list; do
-        echo "===== molecule: $role"
-        (cd "roles/$role" && PATH="$absbin:$PATH" {{ run_logged }} "$name" "$absbin/molecule" test)
+        (cd "roles/$role" && part role --step "$role" --read molecule -- bash -c 'echo "===== molecule: $1" && shift && exec "$@"' \
+          molecule "$role" env PATH="$absbin:$PATH" "$absbin/molecule" test)
       done
     fi
-    if runs integration; then PATH="$absbin:$PATH" {{ run_logged }} "$name" "$absbin/molecule" test -s configure; fi
-    if runs provision; then PATH="$absbin:$PATH" {{ run_logged }} "$name" "$absbin/molecule" test -s provision; fi
+    if runs integration; then
+      part integration --step configure --read molecule -- env PATH="$absbin:$PATH" "$absbin/molecule" test -s configure
+    fi
+    if runs provision; then
+      part provision --step provision --read molecule -- env PATH="$absbin:$PATH" "$absbin/molecule" test -s provision
+    fi
 
 # The wiki in docs/ (docs/development/docs.md). Its reference pages are
 # generated from the files they describe - this justfile's recipes among them,
