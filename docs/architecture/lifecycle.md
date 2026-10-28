@@ -255,9 +255,9 @@ transcript's path, Claude Code resumes it where it lies and writes to it there, 
 holds of the same ID (the `configure` scenario holds that against the real claude). Not best effort like
 the releases: a failed save - SSH or tar failing, an archive cut short, a name asked for that did not
 arrive, or the VM no longer answering, which its VM tasks take with `ignore_unreachable` and an assert,
-never leaving the run unseen - sets `claude_vm_delete_failure`, starts Remote Control again
-(`release_resume`) and ends the host, so the VM is neither released nor deleted and the last play fails
-the run with why. Its VM tasks run as the VM user, never through sudo, whose files they read. With
+never leaving the run unseen - sets `claude_vm_delete_failure`, and `claude_vm_save_error` with the
+failed task and its message alone, starts Remote Control again (`release_resume`) and ends the host, so
+the VM is neither released nor deleted and the last play fails the run with why. Its VM tasks run as the VM user, never through sudo, whose files they read. With
 `destroy_release: false` the host ends there, saved and not released. Then the `release` entry
 point of `claude_code` (stop Remote Control's path unit and service, `claude auth logout`), `github_projects`
 (`gh auth logout`, and no token revoked: revoking the one this project's device flow made, through
@@ -275,21 +275,35 @@ set on every run of its file.
 (`ansible_playbook_python`), since its hosts now carry SSH settings for the release. A VM the release
 kept, its sessions unsaved, ends first. The role with `proxmox_vm_state: absent` across the
 placeholders, fanning out over `forks`; it looks each VM up again and applies the ownership check per
-VM. Its `known_hosts` task is `throttle: 1`, because parallel deletes would otherwise each rewrite
+VM. It runs in a block: `claude_vm_deleted` after it marks a VM gone, and a deletion that fails is
+rescued - a play in which every VM fails ends the run - into `claude_vm_delete_failure` and
+`claude_vm_delete_error`, its reason alone, raised by the last play. Its `known_hosts` task is `throttle: 1`, because parallel deletes would otherwise each rewrite
 the same file and restore a key another had just removed.
 
 **Play 3 — forget the alias (localhost).** `tasks/ssh_config.yml` with `state: absent` for the VMs
-that are actually gone: play 2 ends with a `post_tasks` fact, `claude_vm_deleted`, which a host that
-failed in the role never reaches, and play 3 removes only the aliases of hosts that have it. A VM
-whose deletion failed - a stop that timed out, protection on, an API error - keeps its alias,
-because it is still there to connect to, and the run names it. A run refused in play 1 never
+that are actually gone: the delete play sets `claude_vm_deleted` only after the role, which a host that
+failed in it never reaches, and play 3 removes only the aliases of hosts that have it. A VM still there
+keeps its alias, because it is there to connect to, and the line that says so names its reason: its
+deletion failed - a stop that timed out, protection on, an API error (`claude_vm_delete_error`) - or a
+save that failed kept it, its deletion never tried (`claude_vm_save_error`), or the run lost it before
+its deletion, a task failing on it or the VM no longer answering. Said "its deletion failed" for every
+VM kept, as it once was, it was wrong for a VM kept by its save. A run refused in play 1 never
 reaches play 3; removing a block that is not there is a no-op. A localhost play rather than a task in the role, so the role stays free of the controller's
-ssh config and the one writer per run needs no throttle. The same play says, for every VM it deleted,
-what the release did - joining the three clauses, and where its sessions were saved and how many entries
-of the VM's were left out - or, for a VM it could not reach or with `destroy_release: false`, what is left
-of it to remove by hand and where: the Tailscale device (which keeps its name, so a VM built again under
-it would join as `<name>-1`), a GitHub token its sign-in made, and a Claude Code login, which Anthropic
-offers no way to revoke from outside - and where its sessions were saved, or that they were not.
+ssh config and the one writer per run needs no throttle. The same play says, in one line for every VM
+of `claude_vm_doomed` and never two, what became of it. A VM deleted and released: what the release did -
+joining the three clauses, and where its sessions were saved and how many entries of the VM's were left
+out. A VM deleted unreleased: why - no address to reach it at, not answering, its sudo failing, or
+`destroy_release: false` - and what is left of it to remove by hand and where: the Tailscale device
+(which keeps its name, so a VM built again under it would join as `<name>-1`), a GitHub token its sign-in
+made, and a Claude Code login, which Anthropic offers no way to revoke from outside - and where its
+sessions were saved, or that they were not. A VM not deleted: "not deleted" and why, from the facts
+above, never from a message's text, its SSH alias kept with it, then how far it was released first; and a
+VM kept by its save, "kept, its SSH alias with it, neither released nor deleted" with the save's error.
+Each line is recorded for NEXT STEPS straight after (`claude_vm_next`, matter `destroy`), `''` only for a
+VM deleted and released with no GitHub token or Tailscale device left. The kept aliases' line is
+recorded `''` while every VM it names has a line of its own there, which every VM still there has: it
+named each VM and its rerun a second time. The report once looped over the deleted VMs alone, so a VM
+released and then refused its deletion, or kept by its save, had no line of its own.
 
 ## 4.6 `playbooks/status.yml` — read-only, drawn live
 
