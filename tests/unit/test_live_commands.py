@@ -405,10 +405,14 @@ def test_a_playbook_is_a_part_too_and_its_next_steps_wait_for_the_end(tmp_path):
 
 def test_a_second_ctrl_c_ends_a_part_whose_childs_group_will_not(tmp_path):
     # The child ends at the first Ctrl-C, which the part sends its group; a grandchild that ignores it still holds
-    # the pipe, until the second ends the whole group.
+    # the pipe, until the second ends everything the child started: its group, and a grandchild in a session of its
+    # own - ansible-core's task worker, a nested run's part - which outlives the group.
+    detached = tmp_path / "detached"
     holds = (
         "import signal, subprocess, sys; print('waiting', flush=True); "
         "subprocess.Popen(['sh', '-c', 'trap \\\"\\\" INT; sleep 60']); "
+        "apart = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True); "
+        f"open('{detached}', 'w').write(str(apart.pid)); "
         "signal.signal(signal.SIGINT, lambda *_: sys.exit(130)); signal.pause()"
     )
     argv, environment, state = _recipe(tmp_path, [_part("holds", holds)])
@@ -423,6 +427,17 @@ def test_a_second_ctrl_c_ends_a_part_whose_childs_group_will_not(tmp_path):
     ran = kit.at_a_terminal(argv, tmp_path, environment, act=interrupt, timeout=60)
     assert ran.rc == 130 and time.monotonic() - started < 30, ran.text
     assert re.search(r"lint · stopped after", ran.transcript), ran.transcript
+    apart = int(detached.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(apart, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(apart, signal.SIGKILL)
+        pytest.fail("the grandchild in a session of its own outlived the second Ctrl-C")
 
 
 def test_a_command_that_asks_at_the_terminal_fails_at_once_rather_than_stopping(tmp_path):

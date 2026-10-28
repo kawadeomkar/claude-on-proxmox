@@ -98,6 +98,8 @@ filter_plugins/live_ansible.py    the engine that draws a playbook run live: Ans
                                   words and the summary out; the stdout callback hands it every event (§7.5)
 filter_plugins/live_commands.py   a run in parts: a command drawn as a part, the state between parts, the run's end (§7.8)
 filter_plugins/live_recipes.py    every command drawn live, declared: its stages and steps, named by its title (§7.8)
+filter_plugins/processes.py       the processes under one, and their end: what a kill must reach beyond the group it
+                                  was sent to - ansible-core's detached task worker, a nested run's parts (§7.8)
 filter_plugins/live_region.py     every live output's region: drawn in place at the bottom of a terminal, all else above (§7.8)
 filter_plugins/screen.py          every live output's lines: styled segments, cut, aligned, coloured in one palette (§7.8)
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository
@@ -117,7 +119,8 @@ tests/
                                   sign-ins and deploy's sign-in steps, Tailscale, destroy's release, the managed SSH
                                   config, the Claude terminal's script, the justfile, just status and every live
                                   output - the model, each recipe drawn, tools/live's runs in parts (live_kit.py runs
-                                  each at a terminal of its own; vt.py, a small terminal they read back through) -
+                                  each at a terminal of its own; vt.py, a small terminal they read back through;
+                                  interrupts.py, SIGTERM and SIGHUP taken as a Ctrl-C in every pytest process) -
                                   and the wiki (test_docs.py)
   molecule/                       shared fakes: PVE API, qm, virt-customize, GitHub API, gh, claude, tailscale,
                                   Tailscale API, the Anthropic Messages API (for the real claude in configure)

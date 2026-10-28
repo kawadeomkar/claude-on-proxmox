@@ -56,6 +56,7 @@ def _sibling(stem):
 
 text = _sibling("text")
 screen = _sibling("screen")
+processes = _sibling("processes")
 view = _sibling("run_view")
 live = _sibling("live_region")
 
@@ -485,6 +486,7 @@ class Part:
         self.warnings = []
         self.interrupted = int(bool(interrupted))
         self.child = None
+        self.under = []
         self.reading = False
         self.records = {}
         self.failed_hosts = []
@@ -518,12 +520,20 @@ class Part:
 
     def _interrupt(self, *_):
         # The child runs in a process group of its own, which the terminal's Ctrl-C does not reach: it is sent there,
-        # and the child says its last and ends. A second one ends the group, and what it still writes goes unread.
+        # and the child says its last and ends. A second one ends everything the child started - its group and every
+        # process under it, since one in a session of its own, ansible-core's task worker, a nested run's part, outlives
+        # the group - and what it still writes goes unread.
         self.interrupted += 1
         if self.child is None:
             return
-        with contextlib.suppress(OSError):
-            os.killpg(self.child.pid, signal.SIGKILL if self.interrupted > 1 else signal.SIGINT)
+        if self.interrupted > 1:
+            processes.end(self.child.pid, *self.under, signum=signal.SIGKILL)
+        else:
+            # What the child has started, remembered before it is signalled: a child that ends at the Ctrl-C leaves
+            # them under PID 1, where a second Ctrl-C could no longer find them from it.
+            self.under = processes.descendants(self.child.pid)
+            with contextlib.suppress(OSError):
+                os.killpg(self.child.pid, signal.SIGINT)
         if self.interrupted > 1 and self.reading:
             raise Abandoned
 

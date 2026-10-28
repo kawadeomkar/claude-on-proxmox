@@ -572,7 +572,11 @@ is drawn as one run, its parts in turn:
   re-run instead, and the run's end says it stopped) - and the part reads it once its own handler is in, so a part
   interrupted before its command runs none and says it stopped. The part sends Ctrl-C to its child's group, reads
   the pipe to its end, so the child's last words reach the log, marks its task stopped (`■`) and exits 130; a second
-  Ctrl-C ends the whole group and reads no more of it, whatever a grandchild still holds. SIGTERM or SIGHUP - a
+  Ctrl-C ends everything the child started and reads no more of it: its group, and every process the part found
+  under the child before the first Ctrl-C went out (`filter_plugins/processes.py`, which reads the table `ps`
+  prints), since one in a session of its own - ansible-core's task worker, detached by `WorkerProcess._detach`;
+  a nested run's part - outlives the group, and a child that ended at the first leaves them under PID 1, where no
+  walk from it finds them. SIGTERM or SIGHUP - a
   kill, a timeout, the tab closing - is sent on to the child's session, which no terminal signals; the region goes,
   the echo comes back, the state is saved said stopped, and the part dies of the same signal. A child a signal ended
   exits as the shell says it, 128 and the signal.

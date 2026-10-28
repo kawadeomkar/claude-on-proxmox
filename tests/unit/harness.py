@@ -261,12 +261,21 @@ def _inventory(root: Path, hosts: dict, ordered: bool) -> Path:
     return inventory
 
 
+def _processes():
+    """filter_plugins/processes.py, loaded by path once as claude_on_proxmox_processes, as the engines load it."""
+    name = "claude_on_proxmox_processes"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, REPO / "filter_plugins" / "processes.py")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
 def _end(process: subprocess.Popen) -> None:
-    """Kill a run and its process group: its workers and what they started, though not an async job, which leaves it."""
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    """Kill a run and everything under it: its group, and what left the group - ansible-core's task worker, detached
+    into a session of its own, which a kill of the group alone left behind idle for good, and a nested run's parts -
+    each found before any is signalled (filter_plugins/processes.py), an async job's wrapper among them."""
+    _processes().end(process.pid, signum=signal.SIGKILL)
     process.wait()
 
 
