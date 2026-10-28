@@ -26,7 +26,7 @@ system picks and prints it (`harness._start`), so no port is probed, freed and t
 and starts with `socket.getfqdn` answering at once (`harness.FAKE_START`): for the fake Proxmox's `0.0.0.0`, macOS
 spent five seconds on it.
 
-pytest over `tests/unit/`: 2230 tests. By file:
+pytest over `tests/unit/`: 2229 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 33): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -150,7 +150,7 @@ pytest over `tests/unit/`: 2230 tests. By file:
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
   that reaches for them, no terminal).
-- **The Claude sign-in** (`test_claude_login.py` 47): `browser_login.yml` against the stand-in `claude`,
+- **The Claude sign-in** (`test_claude_login.py` 48): `browser_login.yml` against the stand-in `claude`,
   one run of `claude_login.yml` for every sign-in case - a VM whose ssh refuses the connection among them,
   said at once and ending no other VM's turn, a failed sign-in said in its own, one VM per batch and the
   work after the sign-ins waiting for the last - with what each VM records of its answer read after it;
@@ -167,7 +167,7 @@ pytest over `tests/unit/`: 2230 tests. By file:
   credential fill` proving that git itself gets the token through the config written, deploy's GitHub
   step per VM - starting by itself, and asking first with `github_login_auto_start: false` - every task
   that renders a token held to `no_log`, and the whole output searched for every canned token.
-- **The sign-in playbooks** (`test_sign_in_plays.py` 38): `claude_login.yml`, `github_login.yml` and
+- **The sign-in playbooks** (`test_sign_in_plays.py` 36): `claude_login.yml`, `github_login.yml` and
   `deploy.yml`'s own sign-in steps end to end - a VM whose ssh refuses the connection among VMs that
   sign in (for `claude_login.yml` alone, in `test_claude_login.py`'s run), a failed sign-in said in its
   turn, a failure after a sign-in (Remote Control's start, a clone) told apart from a failed one and

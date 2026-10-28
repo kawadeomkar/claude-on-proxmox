@@ -400,25 +400,17 @@ def test_a_failed_sign_in_is_said_in_its_turn_and_raised_once_every_vm_had_its_o
     assert _failed(report)["alpha"] == "Fail where the sign-in failed: " + message
 
 
-@pytest.mark.parametrize(("fixture", "matter"), [("claude_named", "claude"), ("github_named", "github")])
-def test_next_steps_keep_a_failed_sign_in_and_a_vm_not_reached_with_the_command_that_retries_each(
-    request, fixture, matter
-):
-    # Said, and raised at the end, but recorded nowhere: NEXT STEPS forgot both.
-    _, report = request.getfixturevalue(fixture)
+def test_next_steps_keep_a_failed_sign_in_and_a_vm_not_reached_with_the_command_that_retries_each(github_named):
+    # Said, and raised at the end, but recorded nowhere: NEXT STEPS forgot both. Claude's are in test_claude_login.py.
+    _, report = github_named
     left = _left_to_do(report)
     (failed,) = _said(report, "Say why, and go on with the next VM", "alpha")
-    assert left["alpha"][matter] == failed
-    assert f"just login alpha --only {matter}" in failed, failed
+    assert left["alpha"]["github"] == failed
+    assert "just login alpha --only github" in failed, failed
     (unreached,) = _said(report, "Say which VM could not be reached", "beta")
-    assert left["beta"][matter] == unreached
+    assert left["beta"]["github"] == unreached
     assert "beta could not be reached" in unreached and "Connection refused." in unreached, unreached
-    assert unreached.endswith(f"Retry it with: just login beta --only {matter}"), unreached
-
-
-def test_next_steps_keep_nothing_of_a_claude_sign_in_that_went_through(claude_named):
-    _, report = claude_named
-    assert _left_to_do(report)["gamma"]["claude"] == ""
+    assert unreached.endswith("Retry it with: just login beta --only github"), unreached
 
 
 @pytest.fixture(scope="module")
@@ -556,7 +548,7 @@ def test_the_reason_ends_its_sentence_and_the_message_ends_with_the_command_that
     ("fixture", "host", "matter"),
     [
         ("after_claude", "epsilon", "remote_control"),
-        ("after_github", "delta", "github"),
+        ("github_named", "delta", "github"),
         ("deployed_after", "b-after", "remote_control"),
     ],
 )

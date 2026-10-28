@@ -396,6 +396,14 @@ def test_next_steps_keep_a_sign_in_left_to_do_and_nothing_once_signed_in(signed)
         assert f"just login {host} --only claude" in said[host], said[host]
 
 
+def test_next_steps_keep_a_vm_not_reached_with_the_command_that_retries_it(signed):
+    _, report = signed
+    unreached = _messages(report, "Say which VM could not be reached")["down"]
+    assert _left_to_do(report)["down"]["claude"] == unreached
+    assert "down could not be reached" in unreached and "Connection refused." in unreached, unreached
+    assert unreached.endswith("Retry it with: just login down --only claude"), unreached
+
+
 def test_a_signed_in_vm_is_only_reported(signed):
     root, report = signed
     assert "auth login" not in _calls(root, "already")
