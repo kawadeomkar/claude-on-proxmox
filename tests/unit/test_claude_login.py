@@ -388,6 +388,12 @@ def test_next_steps_keep_a_sign_in_left_to_do_and_nothing_once_signed_in(signed)
     assert left["accepted"]["claude"] == ""
     assert left["already"]["claude"] == ""
     assert "just login skipped --only claude" in left["skipped"]["claude"]
+    # A code claude refused, or one it could not read, is a failed sign-in:
+    # its line, with the command that retries it, which no report recorded.
+    said = _messages(report, "Say why, and go on with the next VM")
+    for host in ("rejected", "invalid"):
+        assert left[host]["claude"] == said[host]
+        assert f"just login {host} --only claude" in said[host], said[host]
 
 
 def test_a_signed_in_vm_is_only_reported(signed):

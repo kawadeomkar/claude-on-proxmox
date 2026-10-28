@@ -30,6 +30,7 @@ from harness import (
     _desktop,
     _failures,
     _free_port,
+    _left_to_do,
     _messages,
     _pve,
     _results,
@@ -68,6 +69,7 @@ printf '%s\\n' "$*" >> "$(dirname "$0")/hostname-calls.log"
 cat "$(dirname "$0")/hostname-is" 2>/dev/null || echo pve
 """
 LOCAL_EXAMPLE = REPO / "inventory" / "group_vars" / "all" / "local.yml.example"
+DEPLOY_NEXT = "Next: just deploy alpha, which creates a VM named alpha (any name will do)."
 
 
 @pytest.fixture
@@ -98,6 +100,7 @@ def _inventory_of(
         test_settings = {
             "proxmox_api_port": _port(base),
             "vault_proxmox_api_token_secret": PVE_SECRET,
+            "vault_github_username": "octocat",
             "vm_ssh_public_keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyDoNotUse test@example"],
         }
         local.write_text(LOCAL_EXAMPLE.read_text() + yaml.safe_dump(test_settings | (settings or {})))
@@ -162,6 +165,13 @@ def _said(report: dict) -> str:
     return "\n".join(str(message) for message in _messages(report, "Say what each check found").values())
 
 
+def _next(report: dict) -> dict:
+    """What the run recorded for NEXT STEPS, by matter: just init's only, under a key no VM can have."""
+    left = _left_to_do(report)
+    assert set(left) <= {"just init"}, left
+    return left.get("just init", {})
+
+
 def _calls(tmp_path: Path) -> list[dict]:
     log = tmp_path / "pve" / "calls.log"
     return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
@@ -185,6 +195,8 @@ def test_nothing_is_checked_while_a_value_is_the_examples(tmp_path: Path, fake_p
     said = "\n".join(str(m) for m in _messages(report, "Say what is not set yet").values())
     assert "Proxmox is not checked yet: the Proxmox host address (inventory/hosts.yml) is still" in said
     assert _calls(tmp_path) == [] and _ssh_calls(root) == ""
+    # Nothing new for NEXT STEPS: init_settings.yml's, printed before, names what is missing.
+    assert _left_to_do(report) == {}
 
 
 def test_every_check_passes_on_a_host_with_its_template_and_every_default_fits(tmp_path: Path, fake_pve: str) -> None:
@@ -208,6 +220,9 @@ def test_every_check_passes_on_a_host_with_its_template_and_every_default_fits(t
         name for name, _, result in _results(report) if name.startswith("init_ask | Ask") and not result.get("skipped")
     ]
     assert asked == []
+    # The one step left, said last and kept for NEXT STEPS.
+    assert said.rstrip().endswith("\n" + DEPLOY_NEXT)
+    assert _next(report) == {"init_check": DEPLOY_NEXT}
 
 
 def test_a_wrong_secret_names_the_token(tmp_path: Path, fake_pve: str) -> None:
@@ -381,6 +396,10 @@ def test_a_plaintext_vault_is_a_problem(tmp_path: Path, fake_pve: str) -> None:
     report = _check(root, fake_pve, "ssh", vault="vault_proxmox_api_token_secret: x\n")
     assert report["rc"] != 0
     assert "!!   vault.yml is not encrypted, and every recipe refuses it: just vault encrypts it" in _said(report)
+    assert _next(report) == {
+        "init_check": "just init found 1 problem for just deploy: fix it, then run just init again.\n"
+        "  !!   vault.yml is not encrypted, and every recipe refuses it: just vault encrypts it"
+    }
 
 
 # The token's secret nowhere in the output or the log: test_without_the_template_root_ssh_is_checked_and_reads_the_node.
@@ -615,6 +634,47 @@ def test_no_host_in_the_proxmox_group_is_said_not_a_crash(tmp_path: Path, fake_p
     assert "which has none" in _said(report)
 
 
+# ------------------------------------------------------------------ NEXT STEPS ---
+def test_next_steps_keep_each_problem_with_its_fix_and_no_deploy(tmp_path: Path, fake_pve: str) -> None:
+    root = tmp_path / "run"
+    keyless = {"vm_ssh_public_keys": [], "vm_password": ""}
+    report = _check(root, fake_pve, "ssh", keyless, vault="vault_proxmox_api_token_secret: x\n")
+    assert report["rc"] != 0
+    line = _next(report)["init_check"]
+    problems = [text for text in _said(report).splitlines() if text.startswith("  !!   ")]
+    assert len(problems) == 2, problems
+    assert line == "\n".join(
+        ["just init found 2 problems for just deploy: fix them, then run just init again.", *problems]
+    )
+    assert "ssh-keygen -t ed25519" in line and "just deploy alpha" not in line + _said(report)
+
+
+def test_next_steps_leave_just_deploy_to_the_github_username(tmp_path: Path, fake_pve: str) -> None:
+    # Every check passes, but the username is the example's: init_settings.yml's
+    # NEXT STEPS names it, and just deploy is not next yet.
+    root = tmp_path / "run"
+    report = _check(root, fake_pve, "ssh", {"vault_github_username": "your-github-username"})
+    assert report["rc"] == 0, _failures(report)
+    assert "!!" not in _said(report) and "just deploy alpha" not in _said(report)
+    assert _next(report) == {"init_check": ""}
+
+
+def test_next_steps_say_what_could_not_be_checked_when_nothing_is_wrong(tmp_path: Path, fake_pve: str) -> None:
+    # The template on a node just gone down, still listed by name: its storage
+    # and bridge cannot be read, nothing is wrong yet, and just deploy is not next.
+    _pve(fake_pve, "PUT", "fake/vm-node", vmid="9000", node="pve2")
+    _pve(fake_pve, "PUT", "fake/nodes/pve2", status="offline", named="1")
+    root = tmp_path / "run"
+    report = _check(root, fake_pve, "ssh", {"proxmox_node": "pve2"})
+    assert report["rc"] == 0, _failures(report)
+    assert "ok   node pve2: it holds the template" in _said(report) and "just deploy alpha" not in _said(report)
+    assert _next(report) == {
+        "init_check": "just init could not check all that just deploy needs: run it again once it can.\n"
+        "  --   the storage is not checked: node pve2 is not up\n"
+        "  --   the template's bridge is not checked: node pve2 is not up"
+    }
+
+
 # ------------------------------------------------------------------- static ---
 def _tasks(node):
     for item in node if isinstance(node, list) else []:
@@ -634,6 +694,7 @@ READ_ONLY = {
     "ansible.builtin.slurp",
     "ansible.builtin.stat",
     "ansible.builtin.set_fact",
+    "ansible.builtin.set_stats",
     "ansible.builtin.debug",
     "ansible.builtin.assert",
     "ansible.builtin.fail",
@@ -651,8 +712,9 @@ INCLUDED = {"tasks/cluster_vms.yml", "tasks/init_choose.yml", "tasks/init_local_
 
 
 def test_every_task_is_a_read_but_the_settings_written():
-    # A task reads, or includes the cluster listing, a choice, a question or
-    # local.yml's writer - the one thing that writes, a setting at a time.
+    # A task reads, records for NEXT STEPS, or includes the cluster listing, a
+    # choice, a question or local.yml's writer - the one thing that writes, a
+    # setting at a time.
     files = (PLAYBOOK, CLUSTER_VMS, CHOOSE)
     tasks = [task for path in files for task in _tasks(yaml.safe_load(path.read_text()))]
     for task in tasks:
