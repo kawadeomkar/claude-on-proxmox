@@ -47,6 +47,8 @@ patterns=(
   '(^|/)\.sessions/'
   # just status's report of a run, which names every VM by address.
   '(^|/)\.cache/status/'
+  # The state a run drawn in parts keeps between its parts: its reports name every VM by address.
+  '(^|/)\.cache/live/'
   # Working documents beside the wiki: a plan, a review or a smoke runbook
   # names the Proxmox host and the VMs. The wiki itself is exempted below.
   '^docs/'

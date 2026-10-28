@@ -410,7 +410,9 @@ device flow and Tailscale's web login, which wait for a browser, never for the s
 The sign-in play is `serial: 1` only when it can prompt (names given, or `just deploy`); a bare report
 reads the fleet at once. Under serial a VM whose sign-in fails is a whole batch failed, which
 `PlaybookExecutor` turns into the end of the run - every later VM and every later play. So the sign-in
-play rescues a failure, says it, records it, and a last play without serial fails each such VM, unless
+play rescues a failure, says it with the `just login <vm> --only claude` that retries it (added where the
+failure does not name it already), records it - for NEXT STEPS too, under `claude`, so a deploy that goes
+on past it still lists it at the end - and a last play without serial fails each such VM, unless
 `just deploy` imported the playbook (`claude_vm_login_in_deploy`): deploy has done its job and goes on to
 GitHub and VS Code. `rescue` handles failed tasks, never an unreachable host, so a play before it pings
 every VM with `ignore_unreachable` and records one that does not answer the same way. The rescued
@@ -419,8 +421,9 @@ once the failure it tests for is recorded. The rescue's first
 task re-raises `pause`'s abort (Ctrl-C, then A): the person asked for the run to end, not for the next
 VM's page. The work after a sign-in - Remote Control's start and its stay-up check - is not a sign-in,
 so it runs in the follow-on play, after the last prompt, and a failure there is recorded in
-`claude_vm_configure_failures` with the command that retries it, failing the VM at the end of `just
-login --only claude` and at the end of `just deploy` alike.
+`claude_vm_configure_failures` with the command that retries it, and for NEXT STEPS under
+`remote_control`, failing the VM at the end of `just login --only claude` and at the end of `just deploy`
+alike.
 
 ### The path unit
 
@@ -554,8 +557,10 @@ vault token is applied); under `just deploy`, whose configure has just run the r
 signed in just now.
 
 `login.yml` is three parts: `login_read.yml` (the home, `which gh`, `auth_status.yml`), the prompt and the
-device flow, and `login_report.yml` (the report, and its NEXT STEPS record, decided by
-`github_projects_login_left`). The `status` entry point, which `just status` runs, is the first and the
+device flow, both on `github_projects_login_due` (gh the role's, signed out, and the device flow its way
+in: a fact, which `github_login.yml` reads after the role to say, for a VM whose Claude sign-in nobody
+answered, why the flow was not started), and `login_report.yml` (the report, and its NEXT STEPS record,
+decided by `github_projects_login_left`). The `status` entry point, which `just status` runs, is the first and the
 last of them and nothing between, so it says what `just login --only github` would and signs nothing in.
 A check gh could not make with GitHub - no network - is `github_projects_auth_unchecked`: gh says both it
 and a refused token as state `error`, and only a refusal carries GitHub's `HTTP 401` or `403`, so status
@@ -694,7 +699,11 @@ plan's research record.
   compared only when `tailscale_advertise_tags` is set, reported with the admin console as the fix, and
   never changed: `set` has no `--advertise-tags`, and a web login without tags would make a tagged VM the
   user's own device.
-- **The web login** (`tasks/login.yml`, `web_login.yml`). One `up --timeout=5s` per attempt - each keyless
+- **The web login** (`tasks/login.yml`, `web_login.yml`), where `tailscale_login_possible` holds, as the
+  fact `tailscale_login_due` that the question and the login go on, and that `tailscale_login.yml` reads
+  after the role to say, for a VM whose Claude sign-in nobody answered, why it was not started - in NEXT STEPS
+  in place of the report's line only where the VM is merely signed out (`tailscale_login_signed_out`, the
+  report's `NeedsLogin` case), never over a page still waiting, an expired login or a refused key. One `up --timeout=5s` per attempt - each keyless
   `up` mints a new page - then the page is read from `AuthURL` once and opened here, only when it is
   Tailscale's own sign-in page (or one under `tailscale_login_server`), and the state is polled until
   `Running` or `NeedsMachineAuth`, up to `tailscale_login_timeout`. tailscaled finishes a login approved

@@ -53,6 +53,13 @@ cannot use are shown with what it lacks. Each check prints `ok`, or `!!` with wh
 fails when one finds a problem, so run it again once it is fixed. While the address or the secret is still
 the example's, nothing is checked.
 
+At a terminal, after `just install`'s own output, the questions and the checks are drawn live as one run: the
+questions a row each, with no frame between one and the next, and the checks listed as they are made, a `✗`
+for each problem. It ends with one summary, the checks whole in it, and one `NEXT STEPS` block of what is
+left: the values still to set, each problem with its fix or, once there is none, `just deploy alpha` - the
+command below. Without a terminal it prints a line as each step ends instead of the live rows, then the same one
+summary and one `NEXT STEPS` block.
+
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |
@@ -133,10 +140,11 @@ With `github_login_auto_start: false` or `tailscale_login_auto_start: false` the
 so a VM can be left for later: Enter signs in a VM whose Claude sign-in you just answered, `y` one that
 needed none (signed in already, or on an API key), and `n` leaves it. A VM whose Claude sign-in nobody
 answered - Enter at its `Code:` prompt, or a browser that never came back - is left out of the other two,
-and a run with no terminal skips all three; either way the deploy finishes, `just login alpha` does
-them later (`--only claude`, `github` or `tailscale` for one of them), and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the command
-that retries it, and the rest of the deploy goes on. [During a run](../guides/runs.md) shows how
-each of these waits looks.
+each saying so with the command that starts it, and a run with no terminal skips all three; either way the
+deploy finishes, `just login alpha` does them later (`--only claude`, `github` or `tailscale` for one of
+them), and `deploy_sign_in: false` leaves them out on purpose. A sign-in that fails is said, with the
+command that retries it, and the rest of the deploy goes on; NEXT STEPS at the end lists it again, with
+every sign-in left. [During a run](../guides/runs.md) shows how each of these waits looks.
 
 ## Running it again, and the stages one by one
 

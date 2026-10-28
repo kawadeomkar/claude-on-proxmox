@@ -69,21 +69,22 @@ class CallbackModule(CallbackBase):
         self._status = _sibling("status")
         self._quiet = bool(os.environ.get("STATUS_QUIET"))
         self._live = live.can_draw() and not self._quiet
-        # Ansible's own colour setting: ANSIBLE_NOCOLOR, or NO_COLOR.
-        self._color = self._live and not C.ANSIBLE_NOCOLOR
         self._found = {}
         self._started = time.monotonic()
         self._fleet_at = None
         self._done_at = {}
         self._reported = False
         self._failures = []
-        # Taken now, from the main thread, so a warning before the first frame is drawn above it; spun from the
-        # playbook's start.
-        self._region = None
+        # The region and the colour every live output shares (live_region.Output), the colour Ansible's own setting:
+        # ANSIBLE_NOCOLOR, or NO_COLOR. Taken now, from the main thread, so a warning before the first frame is drawn
+        # above it; spun from the playbook's start.
+        more = "⋮ {} more lines, shown when the run ends"
+        self._out = live.Output(
+            self._display, frame=self._frame_lines, live=self._live, color=not C.ANSIBLE_NOCOLOR, more=more
+        )
+        self._color = self._out.color
         if self._live:
-            more = "⋮ {} more lines, shown when the run ends"
-            self._region = live.LiveRegion(self._display, frame=self._frame_lines, more=more)
-            self._region.start()
+            self._out.start()
 
     # --- the report, from what has been found so far ------------------------------------------------------------
     def _now_said(self):
@@ -129,20 +130,23 @@ class CallbackModule(CallbackBase):
             doing = f"reading {', '.join(ssh)} over SSH"
         else:
             doing = "ranking what needs attention"
+        reading = len(api) + len(ssh)
+        self._out.title(f"status · reading {reading} VM{'' if reading == 1 else 's'}" if reading else "status")
         return text.split("\n") + [self._status.one_line(f"{glyph} {doing} · {elapsed}", cols - 1)]
 
     def _redraw(self):
-        if self._region is not None:
-            self._region.redraw()
+        if self._live:
+            self._out.redraw()
 
     def _finish(self):
-        if self._region is not None:
-            self._region.finish()
+        if self._live:
+            self._out.title("status · done")
+            self._out.finish()
 
     # --- Ansible's events --------------------------------------------------------------------------------------
     def v2_playbook_on_start(self, playbook):
-        if self._region is not None:
-            self._region.spin()
+        if self._live:
+            self._out.spin()
 
     def v2_runner_on_ok(self, result):
         self._handle_warnings_and_exception(result)
@@ -164,12 +168,9 @@ class CallbackModule(CallbackBase):
                 model = facts["status_report"]
                 reading = self._reading(model)
                 plain = self._status.status_text(model, False, reading=reading)
-                if self._color:
-                    # The colours are for the screen: Display logs what it is given, so the log gets the plain text.
-                    self._display.display(self._status.status_text(model, True, reading=reading), screen_only=True)
-                    self._display.display(plain, log_only=True)
-                else:
-                    self._display.display(plain)
+                # The colours are for the screen: Display logs what it is given, so the log gets the plain text.
+                coloured = self._status.status_text(model, True, reading=reading) if self._color else plain
+                self._out.print([(coloured, plain)])
 
     # A failure or an unreachable VM is the report's to say - a rescue records it, or the ping's register does - so
     # neither prints Ansible's error: only its warnings, and its message at the end of a run that left no report.

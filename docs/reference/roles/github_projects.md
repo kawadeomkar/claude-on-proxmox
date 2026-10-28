@@ -363,8 +363,9 @@ classDef rescue stroke:#665352,stroke-width:2px;
 | Task | Module | When |
 |---|---|---|
 | Read gh and its login state | `ansible.builtin.include_tasks` |  |
-| Ask whether to sign gh in to GitHub now for {{ inventory_hostname }} | `ansible.builtin.pause` | <code>github_projects_login_ask &#124; bool and github_projects_auth_wanted &#124; bool and github_projects_web_wanted &#124; bool and github_projects_auth_status.rc &#124; default(1) == 0 and not github_projects_signed_in &#124; bool</code> |
-| Sign gh in by the device flow | `ansible.builtin.include_tasks` | <code>github_projects_login_go &#124; bool and github_projects_auth_wanted &#124; bool and github_projects_web_wanted &#124; bool and github_projects_auth_status.rc &#124; default(1) == 0 and not github_projects_signed_in &#124; bool</code> |
+| Record whether the device flow would sign gh in | `ansible.builtin.set_fact` |  |
+| Ask whether to sign gh in to GitHub now for {{ inventory_hostname }} | `ansible.builtin.pause` | <code>github_projects_login_ask &#124; bool and github_projects_login_due &#124; bool</code> |
+| Sign gh in by the device flow | `ansible.builtin.include_tasks` | <code>github_projects_login_go &#124; bool and github_projects_login_due &#124; bool</code> |
 | Report the login state and what to do about it | `ansible.builtin.include_tasks` |  |
 
 ```mermaid
@@ -380,10 +381,11 @@ classDef includeVars stroke:#8e44ad,stroke-width:2px;
 classDef rescue stroke:#665352,stroke-width:2px;
 
   Start-->|Include task| login___Read_gh_and_its_login_state_login_read_yml_0[login   read gh and its login state<br>include_task: login read yml]:::includeTasks
-  login___Read_gh_and_its_login_state_login_read_yml_0-->|Task| login___Ask_whether_to_sign_gh_in_to_GitHub_now_for_inventory_hostname1[login   ask whether to sign gh in to github now<br>for inventory hostname<br>When: **github projects login ask   bool and github<br>projects auth wanted   bool and github projects<br>web wanted   bool and github projects auth status<br>rc   default 1     0 and not github projects<br>signed in   bool**]:::task
-  login___Ask_whether_to_sign_gh_in_to_GitHub_now_for_inventory_hostname1-->|Include task| login___Sign_gh_in_by_the_device_flow_device_flow_yml_2[login   sign gh in by the device flow<br>When: **github projects login go   bool and github<br>projects auth wanted   bool and github projects<br>web wanted   bool and github projects auth status<br>rc   default 1     0 and not github projects<br>signed in   bool**<br>include_task: device flow yml]:::includeTasks
-  login___Sign_gh_in_by_the_device_flow_device_flow_yml_2-->|Include task| login___Report_the_login_state_and_what_to_do_about_it_login_report_yml_3[login   report the login state and what to do<br>about it<br>include_task: login report yml]:::includeTasks
-  login___Report_the_login_state_and_what_to_do_about_it_login_report_yml_3-->End
+  login___Read_gh_and_its_login_state_login_read_yml_0-->|Task| login___Record_whether_the_device_flow_would_sign_gh_in1[login   record whether the device flow would sign<br>gh in]:::task
+  login___Record_whether_the_device_flow_would_sign_gh_in1-->|Task| login___Ask_whether_to_sign_gh_in_to_GitHub_now_for_inventory_hostname2[login   ask whether to sign gh in to github now<br>for inventory hostname<br>When: **github projects login ask   bool and github<br>projects login due   bool**]:::task
+  login___Ask_whether_to_sign_gh_in_to_GitHub_now_for_inventory_hostname2-->|Include task| login___Sign_gh_in_by_the_device_flow_device_flow_yml_3[login   sign gh in by the device flow<br>When: **github projects login go   bool and github<br>projects login due   bool**<br>include_task: device flow yml]:::includeTasks
+  login___Sign_gh_in_by_the_device_flow_device_flow_yml_3-->|Include task| login___Report_the_login_state_and_what_to_do_about_it_login_report_yml_4[login   report the login state and what to do<br>about it<br>include_task: login report yml]:::includeTasks
+  login___Report_the_login_state_and_what_to_do_about_it_login_report_yml_4-->End
 ```
 
 ### `login_read.yml`

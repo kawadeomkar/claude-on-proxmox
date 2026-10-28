@@ -38,6 +38,8 @@ vault*.json
 .sessions/
 # just status's report of a run: it names every VM by address.
 .cache/status/
+# The state a run drawn in parts keeps between its parts (tools/live): its reports name every VM by address.
+.cache/live/
 # A committed template carries no real values.
 !*.example
 

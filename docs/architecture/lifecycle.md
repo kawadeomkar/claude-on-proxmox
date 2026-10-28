@@ -255,9 +255,9 @@ transcript's path, Claude Code resumes it where it lies and writes to it there, 
 holds of the same ID (the `configure` scenario holds that against the real claude). Not best effort like
 the releases: a failed save - SSH or tar failing, an archive cut short, a name asked for that did not
 arrive, or the VM no longer answering, which its VM tasks take with `ignore_unreachable` and an assert,
-never leaving the run unseen - sets `claude_vm_delete_failure`, starts Remote Control again
-(`release_resume`) and ends the host, so the VM is neither released nor deleted and the last play fails
-the run with why. Its VM tasks run as the VM user, never through sudo, whose files they read. With
+never leaving the run unseen - sets `claude_vm_delete_failure`, and `claude_vm_save_error` with the
+failed task and its message alone, starts Remote Control again (`release_resume`) and ends the host, so
+the VM is neither released nor deleted and the last play fails the run with why. Its VM tasks run as the VM user, never through sudo, whose files they read. With
 `destroy_release: false` the host ends there, saved and not released. Then the `release` entry
 point of `claude_code` (stop Remote Control's path unit and service, `claude auth logout`), `github_projects`
 (`gh auth logout`, and no token revoked: revoking the one this project's device flow made, through
@@ -275,21 +275,35 @@ set on every run of its file.
 (`ansible_playbook_python`), since its hosts now carry SSH settings for the release. A VM the release
 kept, its sessions unsaved, ends first. The role with `proxmox_vm_state: absent` across the
 placeholders, fanning out over `forks`; it looks each VM up again and applies the ownership check per
-VM. Its `known_hosts` task is `throttle: 1`, because parallel deletes would otherwise each rewrite
+VM. It runs in a block: `claude_vm_deleted` after it marks a VM gone, and a deletion that fails is
+rescued - a play in which every VM fails ends the run - into `claude_vm_delete_failure` and
+`claude_vm_delete_error`, its reason alone, raised by the last play. Its `known_hosts` task is `throttle: 1`, because parallel deletes would otherwise each rewrite
 the same file and restore a key another had just removed.
 
 **Play 3 — forget the alias (localhost).** `tasks/ssh_config.yml` with `state: absent` for the VMs
-that are actually gone: play 2 ends with a `post_tasks` fact, `claude_vm_deleted`, which a host that
-failed in the role never reaches, and play 3 removes only the aliases of hosts that have it. A VM
-whose deletion failed - a stop that timed out, protection on, an API error - keeps its alias,
-because it is still there to connect to, and the run names it. A run refused in play 1 never
+that are actually gone: the delete play sets `claude_vm_deleted` only after the role, which a host that
+failed in it never reaches, and play 3 removes only the aliases of hosts that have it. A VM still there
+keeps its alias, because it is there to connect to, and the line that says so names its reason: its
+deletion failed - a stop that timed out, protection on, an API error (`claude_vm_delete_error`) - or a
+save that failed kept it, its deletion never tried (`claude_vm_save_error`), or the run lost it before
+its deletion, a task failing on it or the VM no longer answering. Said "its deletion failed" for every
+VM kept, as it once was, it was wrong for a VM kept by its save. A run refused in play 1 never
 reaches play 3; removing a block that is not there is a no-op. A localhost play rather than a task in the role, so the role stays free of the controller's
-ssh config and the one writer per run needs no throttle. The same play says, for every VM it deleted,
-what the release did - joining the three clauses, and where its sessions were saved and how many entries
-of the VM's were left out - or, for a VM it could not reach or with `destroy_release: false`, what is left
-of it to remove by hand and where: the Tailscale device (which keeps its name, so a VM built again under
-it would join as `<name>-1`), a GitHub token its sign-in made, and a Claude Code login, which Anthropic
-offers no way to revoke from outside - and where its sessions were saved, or that they were not.
+ssh config and the one writer per run needs no throttle. The same play says, in one line for every VM
+of `claude_vm_doomed` and never two, what became of it. A VM deleted and released: what the release did -
+joining the three clauses, and where its sessions were saved and how many entries of the VM's were left
+out. A VM deleted unreleased: why - no address to reach it at, not answering, its sudo failing, or
+`destroy_release: false` - and what is left of it to remove by hand and where: the Tailscale device
+(which keeps its name, so a VM built again under it would join as `<name>-1`), a GitHub token its sign-in
+made, and a Claude Code login, which Anthropic offers no way to revoke from outside - and where its
+sessions were saved, or that they were not. A VM not deleted: "not deleted" and why, from the facts
+above, never from a message's text, its SSH alias kept with it, then how far it was released first; and a
+VM kept by its save, "kept, its SSH alias with it, neither released nor deleted" with the save's error.
+Each line is recorded for NEXT STEPS straight after (`claude_vm_next`, matter `destroy`), `''` only for a
+VM deleted and released with no GitHub token or Tailscale device left. The kept aliases' line is
+recorded `''` while every VM it names has a line of its own there, which every VM still there has: it
+named each VM and its rerun a second time. The report once looped over the deleted VMs alone, so a VM
+released and then refused its deletion, or kept by its save, had no line of its own.
 
 ## 4.6 `playbooks/status.yml` — read-only, drawn live
 
@@ -392,7 +406,8 @@ under `--json` or at a terminal that cannot take it, only the finished report ap
 drawn in the region every live output shares
 ([§7.8](custom-code.md#78-filter_pluginslive_regionpy-and-filter_pluginsscreenpy--every-live-output)), as
 `just deploy`'s run is: nothing wraps, a resize pushes the screen into the scrollback and starts afresh,
-the cursor is never hidden. `tests/unit/test_status_live.py` runs the real playbook at a pseudo-terminal of
+the cursor is never hidden. The tab's title says `status · reading 3 VMs` while VMs are read, and `status · done`
+at the end. `tests/unit/test_status_live.py` runs the real playbook at a pseudo-terminal of
 its own and reads the bytes back through a small terminal (`tests/unit/vt.py`).
 
 **The recipe.** `just status [names] [--only sections] [--json]` runs the playbook through
@@ -438,13 +453,16 @@ it. `claude_login.yml` and `github_login.yml` are imported with discovery off,
 GitHub one decides VM by VM, from what the Claude step left on each VM
 ([§5.5](roles.md#55-claude_code--install-claude-code)): a VM whose Claude sign-in
 nobody answered (`claude_code_login_skipped` - Enter at the prompt, or a browser that never came back) is
-left. With `github_login_auto_start` (the default) every other VM starts at once; off, each is asked
+left, and told so where the flow would have run (`github_projects_login_due`), with `just login <vm>
+--only github`, the line NEXT STEPS keeps. With `github_login_auto_start` (the default) every other VM starts at once; off, each is asked
 first (`claude_vm_login_ask`, the role's `github_projects_login_ask`): Enter signs in one whose Claude
 sign-in was answered, `y` one that showed none (signed in already, or an API key). `tailscale_login.yml`
 follows the same way with `tailscale_login_auto_start`, and `when: deploy_sign_in | bool and
 tailscale_enabled | default(true) | bool` (§4.10): a VM an auth key joined during configuration is only
 reported. A run with no terminal gets `deploy_sign_in: false` from the justfile's `no_tty_args`: sign-ins
-that start by themselves would otherwise each wait for a browser nobody watches.
+that start by themselves would otherwise each wait for a browser nobody watches. A sign-in that failed,
+or found its VM unreachable, is said with the `just login <vm> --only ...` that retries it and recorded
+for NEXT STEPS under its own matter, since deploy raises it nowhere else.
 
 Last, `code.yml` with `code_in_deploy`, when `deploy_code`. For several VMs its first task prints
 each VM's `just code` line and ends the play. For one - the default VM of a bare deploy counts, so the
@@ -809,7 +827,8 @@ had their turn, with every message. Between them it passes what deploy passes (�
 (`claude_vm_login_named`, the play var both later sign-in plays keep): GitHub and Tailscale start by
 themselves for a VM whose Claude sign-in was answered, are asked about first with
 `github_login_auto_start` or `tailscale_login_auto_start` off, and are left for one whose Claude sign-in
-nobody answered. Without names every step reports, and nothing starts. `claude_vm_login_in_deploy` is
+nobody answered, which each says, with the command that starts it. Without names every step reports,
+nothing starts, and nothing is said of a sign-in left. `claude_vm_login_in_deploy` is
 not set, so GitHub's follow-on play runs the whole `github_projects` role for each VM named, as
 `just login --only github` does, since no configuration ran just before it. `--only claude`, `github` or
 `tailscale` runs that playbook alone.
@@ -881,7 +900,11 @@ told which password encrypts (`--encrypt-vault-id default`), since with `.vault_
 `ANSIBLE_VAULT_PASSWORD_FILE` both it has two, and what it says when it fails is said, holding no secret.
 The vault is decrypted again and compared with what was meant. The run ends with what it wrote and what is
 still missing - a vault left plaintext among it - and a run with no terminal (or `--no-prompt`) that was
-given values but still lacks the address, the secret or the username fails, naming them.
+given values but still lacks the address, the secret or the username fails, naming them. What is still
+missing, and a vault no recipe can use yet, are recorded for NEXT STEPS (`claude_vm_next`, under the key
+`just init`, matter `init_settings`) while a value is missing or the vault cannot be opened - when the checks
+below stop at once or do not run. Once every value is set it records nothing and names no `just deploy`: the
+checks run next and say what comes after.
 
 ## 4.13 `playbooks/init_check.yml`
 
@@ -937,6 +960,9 @@ every task a read (held by `tests/unit/test_init_check.py`):
    console, and deploy configures the VMs over SSH, which takes a key; with neither, the public keys in
    `~/.ssh` are listed and the `local.yml` line suggested.
 
-Each result is `ok` or `!!` with its fix, printed together at the end, and the run fails when any is `!!`.
-It writes `local.yml` alone, through `tasks/init_local_setting.yml`, and only at a terminal or for a value
-given; without either, it reports.
+Each result is `ok`, `!!` with its fix, or `--` not checked, printed together at the end, and the run fails
+when any is `!!`. NEXT STEPS (`claude_vm_next`, under the key `just init`, matter `init_check`) then gives
+each `!!` line with its fix; with none, what could not be checked; with neither, `just deploy alpha`, which
+the report's last line says too - unless the GitHub username is still the example's, which the questions'
+NEXT STEPS names. A run that ended at step 1 records nothing. It writes `local.yml` alone, through
+`tasks/init_local_setting.yml`, and only at a terminal or for a value given; without either, it reports.

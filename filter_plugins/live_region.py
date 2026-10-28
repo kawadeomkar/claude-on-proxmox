@@ -16,8 +16,8 @@ What it does, once started:
   the screen alone.
 - Wraps Display.prompt_until and Display.do_var_prompt: a pause prints with display() and only then takes Display's
   lock to read the keys (ansible-core 2.21), and a vars_prompt reads with input(), so the region is erased before
-  either and drawn again only once it returns. The spinner takes the same lock, and draws nothing while a prompt is
-  up.
+  either and drawn again only once it returns, and the run has worked half a second more: questions one after
+  another show no frame between them. The spinner takes the same lock, and draws nothing while a prompt is up.
 - On a resize (SIGWINCH), which can wrap a frame worked out for the old size, pushes the screen into the
   scrollback and draws again from the top. The cursor is never hidden.
 - Sets the terminal's title (OSC 0) when it changes, and rings the bell when asked.
@@ -33,16 +33,21 @@ function it draws nothing and only routes, for a run whose output is not a termi
 from __future__ import annotations
 
 import atexit
+import contextlib
 import os
 import signal
 import sys
 import termios
 import threading
+import time
 from contextlib import contextmanager
 
 FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SYNC_ON, SYNC_OFF = "\x1b[?2026h", "\x1b[?2026l"
 FRAME_SECONDS = 0.1
+# After a prompt, the region comes back only once the run has worked this long: questions one after another, just
+# init's, show no frame between them.
+SETTLE_SECONDS = 0.5
 MIN_ROWS, MIN_COLS = 4, 20
 
 
@@ -62,10 +67,11 @@ class LiveRegion:
     """The region. frame(cols, rows, glyph) returns its lines; route(kwargs) returns display()'s keyword arguments;
     more says the lines a frame taller than the screen leaves out, {} their number."""
 
-    def __init__(self, display, frame=None, route=None, stream=None, more="⋮ {} more lines"):
+    def __init__(self, display, frame=None, route=None, stream=None, more="⋮ {} more lines", on_prompt=None):
         self._display = display
         self._frame = frame
         self._route = route
+        self._on_prompt = on_prompt  # told True as a prompt takes the screen, False once it is answered
         self._more = more
         self._stream = stream or sys.stdout
         self._pid = os.getpid()
@@ -79,6 +85,7 @@ class LiveRegion:
         self._thread = None
         self._title = None
         self._echo = None  # the terminal's settings before the echo went off, while it is off
+        self._settle = 0.0  # until when, after a prompt, nothing is drawn
         self.prompting = False
 
     # --- the screen -------------------------------------------------------------------------------------------
@@ -120,8 +127,11 @@ class LiveRegion:
         return os.get_terminal_size(self._stream.fileno())
 
     def redraw(self):
-        """Draw the frame again, in place. A no-op while stopped, paused for a prompt, or without a frame."""
+        """Draw the frame again, in place. A no-op while stopped, paused for a prompt, settling after one, or without
+        a frame."""
         if not self._frame or self._stop.is_set() or self._paused or not self._started:
+            return
+        if time.monotonic() < self._settle:
             return
         with self._display._lock:
             try:
@@ -140,7 +150,9 @@ class LiveRegion:
             if rows < MIN_ROWS or cols < MIN_COLS:
                 lines = []
             limit = rows - 1
-            if len(lines) > limit:
+            # A frame taller than the screen keeps its top and its last line; a screen too small has none at all -
+            # a terminal that reports 0 rows, a pseudo-terminal nobody gave a size, among them.
+            if lines and len(lines) > limit:
                 lines = lines[: limit - 2] + [self._more.format(len(lines) - limit + 1)[: cols - 1], lines[-1]]
             with self._uninterrupted():
                 up = f"\x1b[{self._drawn - 1}A" if self._drawn > 1 else ""
@@ -209,15 +221,19 @@ class LiveRegion:
                     self._paused = True
                     self.prompting = True
                     self._quiet(False)
+                if self._on_prompt is not None:
+                    self._on_prompt(True)
                 try:
                     return original(*args, **kwargs)
                 finally:
+                    if self._on_prompt is not None:
+                        self._on_prompt(False)
                     with display._lock:
                         self._paused = False
                         self.prompting = False
                         if self._frame and not self._stop.is_set():
                             self._quiet(True)
-                        self.redraw()
+                        self._settle = time.monotonic() + SETTLE_SECONDS
 
             return wrapped_prompt
 
@@ -257,6 +273,76 @@ class LiveRegion:
                 self._erase()
                 self._stop.set()
                 self._quiet(False)
+
+
+class Output:
+    """What every live output does around its region, whatever it draws: whether to draw at all, the region, and its
+    own words printed coloured to the screen and plain to the log.
+
+    live says whether there is a region (can_draw(), unless the caller decided: a run piped is drawn as lines);
+    color whether the screen gets the palette (the caller's ANSIBLE_NOCOLOR). With to_log, everything Display prints
+    goes to the log alone - the stream a drawn run replaces - but what is printed inside say(), and anything on
+    stderr, which still reaches the screen."""
+
+    def __init__(
+        self, display, frame=None, live=None, color=False, to_log=False, more="⋮ {} more lines", on_prompt=None
+    ):
+        self.display = display
+        self.live = can_draw() if live is None else live
+        self.color = bool(color) and self.live
+        self._speaking = threading.local()
+        self.region = LiveRegion(
+            display,
+            frame=frame if self.live else None,
+            route=self._route if to_log else None,
+            more=more,
+            on_prompt=on_prompt,
+        )
+
+    # --- the region's life, as LiveRegion's --------------------------------------------------------------------
+    def start(self):
+        self.region.start()
+
+    def redraw(self):
+        self.region.redraw()
+
+    def spin(self):
+        self.region.spin()
+
+    def finish(self):
+        self.region.finish()
+
+    def title(self, text):
+        self.region.title(text)
+
+    def bell(self):
+        self.region.bell()
+
+    # --- the output's own words --------------------------------------------------------------------------------
+    @contextlib.contextmanager
+    def say(self):
+        """What is printed inside reaches the screen, where the route would send it to the log alone."""
+        previous = getattr(self._speaking, "on", False)
+        self._speaking.on = True
+        try:
+            yield
+        finally:
+            self._speaking.on = previous
+
+    def _route(self, kwargs):
+        if getattr(self._speaking, "on", False) or kwargs.get("stderr"):
+            return kwargs
+        return {**kwargs, "log_only": True}
+
+    def print(self, lines):
+        """Lines of the output's own, (coloured, plain) each: the colour to the screen, the plain text to the log."""
+        with self.say():
+            for coloured, plain in lines:
+                if self.color:
+                    self.display.display(coloured, screen_only=True)
+                    self.display.display(plain, log_only=True)
+                else:
+                    self.display.display(plain)
 
 
 class FilterModule:
