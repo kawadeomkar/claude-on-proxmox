@@ -92,6 +92,8 @@ MUST_BLOCK = [
     ".sessions/alpha-20261023-153000/sessions.json",
     # just status's report names every VM by address.
     ".cache/status/20261025-143200.json",
+    # A run in parts' state names every VM by address, as its reports do.
+    ".cache/live/20261026-131050-init.json",
     # Working documents beside the wiki name the Proxmox host and the VMs,
     # whatever they are called, and so does a review's source directory.
     "docs/plan-github-auth-2026-10-08.md",

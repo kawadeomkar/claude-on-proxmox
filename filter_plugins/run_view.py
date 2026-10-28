@@ -88,6 +88,7 @@ RANK = {
     "left": 1,
     "declined": 1,
     "raised": 5,
+    "stopped": 4,
     "failed": 5,
     "unreachable": 5,
 }
@@ -97,6 +98,8 @@ BAR = 20
 WAIT_AFTER = 2.0
 # SLOWEST lists only tasks that took this long.
 SLOW = 1.0
+# The state a run in parts keeps between its parts: a part never takes over one of another version.
+STATE_VERSION = 1
 # How a VM is marked in a step's row and in the summary.
 MARKS = {
     "running": ("", "c"),
@@ -227,6 +230,7 @@ class Task:
         self.batch = 0  # the play, or serial play's batch, it started in
         self.prompted = 0.0  # seconds a prompt of this task had the person's attention
         self.prompting = None  # since when a prompt of this task has been up
+        self.detail = ""  # a command's last line, said dim after its name while it runs
         self.version = 0  # how many times its hosts have changed: a step's VMs are worked out again only then
 
     def host_start(self, host, now):
@@ -478,6 +482,7 @@ class Run:
         self.started = {}  # stage key: the step the last task a step starts at began, in the play running
         self.said_info = {}  # stage key: what its row says, from the fact its declaration names
         self.declined = ""  # the line said for an answer that ended the run, not a failure
+        self.stopped = False  # a run in parts that Ctrl-C, or anything but a failed part, ended part way
         self.blamed = []  # the VMs a raise on this machine repeated failures of
         self.frame_vms = None  # the run's VMs while a frame is drawn, worked out once for it
 
@@ -774,12 +779,159 @@ class Run:
         if host != "localhost" and host not in self.blamed:
             self.blamed.append(host)
 
-    def end(self, now, failed=False):
+    def end(self, now, failed=False, stopped=False):
+        """The run's end: failed, or stopped part way - Ctrl-C in a run in parts, whose end is said by its trap."""
         if self.current is not None:
             self._left(now)
             self.current.close(now)
         self.finished = now
-        self.failed = failed
+        self.failed = failed or stopped
+        self.stopped = stopped
+
+    def command(self, stage, step, name, now):
+        """A command a run runs as a part of its own - one of just lint's checks, just test's pytest - as one task in
+        stage's step, on this machine."""
+        key = f"command:{stage}:{step}:{len(self.order)}"
+        self.play = key
+        self.play_stage[key] = (stage, step)
+        self.batch += 1
+        self.started = {}
+        task = self.task(key, name, None, now)
+        self.host_start(key, "localhost", now)
+        return task
+
+    # --- a run in parts ---------------------------------------------------------------------------------------
+    def dump(self, now, next_records=None, failed_hosts=()):
+        """What a later part of a run in parts, and its end, need of this part and the ones before it: every task,
+        step, report and record, each time from the run's start, and what NEXT STEPS and the head will say -
+        next_records, the parts' NEXT STEPS records merged, {stat: {vm: {matter: line}}}. Every value in it was
+        cleaned when the run took it in."""
+        index = {id(task): n for n, task in enumerate(self.order)}
+
+        def at(value):
+            return None if value is None else value - self.begun
+
+        def ended(value):
+            return at(value if value is not None else now)
+
+        return {
+            "version": STATE_VERSION,
+            "title": self.title,
+            "started_at": self.started_at,
+            "check": self.check,
+            "names": self.names,
+            "tasks": [
+                {
+                    "key": task.key,
+                    "name": task.name,
+                    "stage": task.stage,
+                    "step": task.step,
+                    "role": task.role,
+                    "hidden": task.hidden,
+                    "start": at(task.start),
+                    "end": ended(task.end),
+                    "hosts": {host: [at(start), ended(end), said] for host, (start, end, said) in task.hosts.items()},
+                    "outcome": task.outcome,
+                    "wait": [at(task.wait[0]), task.wait[1]] if task.wait else None,
+                    "prompted": task.waited(now) if not task.wait else 0.0,
+                    "detail": task.detail,
+                }
+                for task in self.order
+            ],
+            "stages": [
+                {
+                    "key": stage.key,
+                    "steps": [
+                        {
+                            "key": step.key,
+                            "expected": step.expected,
+                            "raised_on": sorted(step.raised_on),
+                            "tasks": [index[id(task)] for task in step.tasks],
+                        }
+                        for step in stage.steps.values()
+                    ],
+                }
+                for stage in self.stages.values()
+            ],
+            "notes": [
+                {
+                    "host": note.host,
+                    "text": note.text,
+                    "task": index.get(id(note.task)),
+                    "lines": note.lines,
+                    "matters": sorted(list(matter) for matter in note.matters),
+                }
+                for note in self.notes
+            ],
+            "plan": self.plan,
+            "records": [[vm, matter, lines] for (vm, matter), lines in self.records.items()],
+            "facts": self.facts,
+            "outcomes": self.outcomes,
+            "said_info": self.said_info,
+            "said": sorted([list(key) if isinstance(key, tuple) else [key] for key in self.said]),
+            "declined": self.declined,
+            "blamed": self.blamed,
+            "first_failure": self.first_failure,
+            "prompted": self.prompted + ((now - self.prompting) if self.prompting is not None else 0.0),
+            "reached_last": self.reached_last,
+            "best": [[list(key) if isinstance(key, tuple) else key, value] for key, value in self.best.items()],
+            "next_records": next_records or {},
+            "failed_hosts": sorted(set(failed_hosts)),
+        }
+
+    def adopt(self, state, now):
+        """The parts of the run before this one, taken over from their state: their stages and steps done, said
+        already when the output is lines, and one clock from the run's start."""
+        self.started_at = float(state["started_at"])
+        self.begun = now - max(0.0, time.time() - self.started_at)
+
+        def at(value):
+            return None if value is None else self.begun + float(value)
+
+        tasks = []
+        for saved in state["tasks"]:
+            task = Task(saved["key"], saved["name"], saved["stage"], saved["step"], at(saved["start"]))
+            task.role, task.hidden, task.end, task.outcome = (
+                saved["role"],
+                saved["hidden"],
+                at(saved["end"]),
+                saved["outcome"],
+            )
+            task.hosts = OrderedDict(
+                (host, [at(start), at(end), said]) for host, (start, end, said) in saved["hosts"].items()
+            )
+            task.wait = (at(saved["wait"][0]), saved["wait"][1]) if saved["wait"] else None
+            task.prompted, task.detail = float(saved["prompted"]), saved["detail"]
+            task.batch = -1
+            tasks.append(task)
+        for saved in state["stages"]:
+            stage = self._stage(saved["key"])
+            for saved_step in saved["steps"]:
+                step = stage.step(saved_step["key"])
+                step.tasks = [tasks[n] for n in saved_step["tasks"]]
+                # Counted as it was: what a later task of the same step reaches is counted beyond it.
+                step.extra = int(saved_step["expected"])
+                step.raised_on = set(saved_step["raised_on"])
+        self.order = tasks
+        for saved in state["notes"]:
+            note = Note(saved["host"], saved["text"], tasks[saved["task"]] if saved["task"] is not None else None)
+            note.lines, note.matters = saved["lines"], {tuple(matter) for matter in saved["matters"]}
+            self.notes.append(note)
+        self.plan = list(state["plan"])
+        self.records = OrderedDict(((vm, matter), list(lines)) for vm, matter, lines in state["records"])
+        self.facts = OrderedDict(state["facts"])
+        self.outcomes = dict(state["outcomes"])
+        self.said_info = dict(state["said_info"])
+        self.said = {tuple(key) if len(key) > 1 else key[0] for key in state["said"]}
+        self.declined = state["declined"]
+        self.blamed = list(state["blamed"])
+        self.first_failure = state["first_failure"]
+        self.prompted = float(state["prompted"])
+        self.reached_last = bool(state["reached_last"])
+        # No bar and no percentage falls from one part to the next either.
+        best = state.get("best") or []
+        self.best = {tuple(key) if isinstance(key, list) else key: float(value) for key, value in best}
+        self.names = self.names or list(state["names"])
 
     # --- where it is ------------------------------------------------------------------------------------------
     def running_stage(self):
@@ -992,7 +1144,7 @@ class Run:
                 else:
                     hosts = self._hosts_said(task, now, glyph, width_ // 2)
                     tail = hosts or [*vm, (screen.clock(task.seconds(now)), style)]
-                name = [(task.name, "b")]
+                name = [(task.name, "b"), *([(f"  {task.detail}", "d")] if task.detail else [])]
             elif task.outcome == "skipped":
                 mark, style, name, tail = "–", "d", [(task.name, "d")], [*vm, ("skipped", "d")]
             else:
@@ -1005,8 +1157,9 @@ class Run:
                     "raised": ("↑", "d"),
                     "ignored": ("↺", "d"),
                     "included": ("↳", "d"),
+                    "stopped": ("■", "y"),
                 }.get(task.outcome, ("✓", "g"))
-                dim = ("rescued", "lost", "raised", "ignored", "included")
+                dim = ("rescued", "lost", "raised", "ignored", "included", "stopped")
                 name = [(task.name, "d" if task.outcome in dim else "")]
                 tail = [*vm, (screen.duration(task.seconds(now)), "d")]
             room = width_ - 2 - screen.width(tail) - 2
@@ -1140,7 +1293,8 @@ class Run:
     def title_text(self, now):
         """The terminal's title: the run, and where it is; its percentage never falls."""
         if self.finished is not None:
-            return f"{self.title} · {'declined' if self.declined else 'failed' if self.failed else 'done'}"
+            ended = "declined" if self.declined else "stopped" if self.stopped else "failed" if self.failed else "done"
+            return f"{self.title} · {ended}"
         if self.waiting_for_you():
             return f"{self.title} · waiting for you"
         stage = self.running_stage()
@@ -1156,8 +1310,15 @@ class Run:
         return f"{self.title} · {where} {percent}%"
 
     # --- output that is not a terminal --------------------------------------------------------------------------
-    def ended_lines(self, now):
-        """A line for each step and stage that has ended since the last call, for output that is not a terminal."""
+    def ended_lines(self, now, final=False):
+        """A line for each step and stage that has ended since the last call, for output that is not a terminal;
+        final, at a part's end, its running step and stage too."""
+        if final:
+            current, self.current = self.current, None
+            try:
+                return self.ended_lines(now)
+            finally:
+                self.current = current
         out = []
         for stage in self.stages.values():
             if not stage.reached or self._quiet(stage):
@@ -1178,7 +1339,8 @@ class Run:
         return out
 
     def _ended(self, label, step, now):
-        mark = "✗" if step.failed() else "–" if step.skipped() else "✓"
+        stopped = any(task.outcome == "stopped" for task in step.tasks)
+        mark = "✗" if step.failed() else "■" if stopped else "–" if step.skipped() else "✓"
         said = [screen.plural(step.reached, "task")]
         if step.changed():
             said.append(self._changed_said(step.changed()))
@@ -1210,7 +1372,16 @@ class Run:
         everyone = self._vms()
         if self.declined:
             return [("claude-on-proxmox", "b"), (f"  {self.title} · declined · {took}", "y"), (f" · {ended}", "")]
-        if not failed_hosts:
+        if self.stopped:
+            # Where the run was: the step, or the stage, of the last task it started.
+            last = self.order[-1] if self.order else None
+            where = f" at {last.step or last.stage}" if last is not None else ""
+            return [
+                ("claude-on-proxmox", "b"),
+                (f"  {self.title} · stopped after {took}{where}", "y"),
+                (f" · {ended}", ""),
+            ]
+        if not failed_hosts and not self.failed:
             return [("claude-on-proxmox", "b"), (f"  {self.title} · done in {took}", ""), (f" · {ended}", "")]
         if self.reached_last and len(everyone) >= 2 and len([vm for vm in failed if vm in everyone]) < len(everyone):
             said = f"{screen.plural(len(failed), 'VM')} failed: {', '.join(failed)}"
@@ -1249,7 +1420,10 @@ class Run:
             said_head += "    VMS"
         lines.append([(said_head, "h")])
         for key, part in rows:
-            mark, style = ("✗", "r") if part.failed() else ("–", "d") if part.skipped() else ("✓", "g")
+            stopped = any(task.outcome == "stopped" for task in part.tasks)
+            mark, style = (
+                ("✗", "r") if part.failed() else ("■", "y") if stopped else ("–", "d") if part.skipped() else ("✓", "g")
+            )
             head = [(" ", ""), (mark + " ", style), (str(key)[:label].ljust(label), "b")]
             counts = f"{screen.duration(part.seconds(now)):>6}" if "time" in columns else ""
             counts += f"{part.reached:>9}" if "tasks" in columns else ""

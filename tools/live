@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""A part of a recipe's run that is a command, drawn live, or passed through as it ran before.
+
+    tools/live [--log-dir D] [--retention N] [--stamp S] [--ansible-args A] run <stage> [--step <label>] -- <command>...
+    tools/live [...] end <exit status>
+
+The justfile's `live` runs it with the environment's Python and the run's logging settings: `run` in front of each
+command of a recipe drawn in parts (just lint's checks), `end` from the recipe's trap. It decides first, with the
+standard library alone, whether to draw: a fresh virtualenv's first command must work before `just install` has put
+the engine's own packages there. It passes the command through - exec'd unchanged, the live switch and the state's
+path taken out of its environment, nothing else changed - when there is no terminal, no title
+(CLAUDE_ON_PROXMOX_LIVE), a -v in ANSIBLE_ARGS, no run log (LOG_DIR=), no state to keep the run in between its
+parts (LIVE_DIR=), or no PyYAML and ansible-core to draw with.
+Otherwise it runs itself again through tools/run-logged, under the title's recipe, and hands the command to
+filter_plugins/live_commands.py, which draws it and keeps the run's state (CLAUDE_ON_PROXMOX_LIVE_STATE) for the next
+part. `end` says the summary from that state, and removes it; without one it says nothing
+(docs/architecture/custom-code.md §7.8).
+"""
+
+from __future__ import annotations
+
+import signal
+
+# Ctrl-C from the first moment, never the default that would end this part before it could say so: a part already
+# interrupted runs nothing and says it stopped. Blocked, never ignored, across the re-run through tools/run-logged, so
+# one that comes in between is never lost: it waits, and is taken here the moment this handler is in - or, where
+# /bin/sh is dash, which unblocks it at run-logged's first command, it ends the re-run there, and the run's end says
+# it stopped. A command passed through gets it as it would have: the default, or ignored where this was started with it
+# ignored (nohup, a script's background job).
+IGNORED = signal.getsignal(signal.SIGINT) == signal.SIG_IGN
+INTERRUPTED = []
+signal.signal(signal.SIGINT, lambda *_: INTERRUPTED.append(1))
+signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+
+import argparse  # noqa: E402 - after the handler
+import importlib.util  # noqa: E402
+import os  # noqa: E402
+import re  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[1]
+LIVE_ENV = "CLAUDE_ON_PROXMOX_LIVE"
+STATE_ENV = "CLAUDE_ON_PROXMOX_LIVE_STATE"
+LOGGED = "--logged"
+# A stage's or step's label as a declaration writes one; a recipe's name as the title's first word.
+LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$")
+RECIPE = re.compile(r"^[a-z][a-z-]{0,19}$")
+VERBOSE = re.compile(r"(^|\s)(-v+|--verbose)(?=\s|$)")
+
+
+def _arguments(argv):
+    # The command is everything after the first --, taken whole: argparse would read its options as this one's.
+    command = argv[argv.index("--") + 1 :] if "--" in argv else []
+    argv = argv[: argv.index("--")] if "--" in argv else argv
+    parser = argparse.ArgumentParser(prog="tools/live")
+    parser.add_argument(LOGGED, action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--log-dir", default=os.environ.get("LOG_DIR", ""))
+    parser.add_argument("--retention", default=os.environ.get("LOG_RETENTION_DAYS", "14"))
+    parser.add_argument("--stamp", default=os.environ.get("CLAUDE_ON_PROXMOX_LOG_STAMP", ""))
+    parser.add_argument("--ansible-args", default="")
+    commands = parser.add_subparsers(dest="command", required=True)
+    run = commands.add_parser("run")
+    run.add_argument("stage")
+    run.add_argument("--step", default="")
+    run.add_argument("--read", choices=["plain"], default="plain")
+    end = commands.add_parser("end")
+    end.add_argument("status", type=int)
+    args = parser.parse_args(argv)
+    args.argv = command
+    if args.command == "run":
+        if not args.argv:
+            parser.error("run needs a command after --")
+        for label in (args.stage, args.step):
+            if label and not LABEL.match(label):
+                parser.error(f"not a stage or step: {label!r}")
+    return args
+
+
+def _title():
+    return os.environ.get(LIVE_ENV, "").strip()
+
+
+def _drawn(args):
+    """Whether this part is drawn, decided with the standard library alone."""
+    if not sys.stdout.isatty() or not _title() or not RECIPE.match(_title().split()[0]):
+        return False
+    if VERBOSE.search(args.ansible_args):
+        return False
+    if not args.log_dir and not os.environ.get("ANSIBLE_LOG_PATH"):
+        return False
+    # A run in parts keeps its model in a state between its parts: without one (LIVE_DIR=), each part would say a
+    # whole run of its own.
+    if not os.environ.get(STATE_ENV):
+        return False
+    return all(importlib.util.find_spec(name) is not None for name in ("yaml", "ansible"))
+
+
+def _passed_through(argv):
+    """The command as it ran before: the run's switch and state out of its environment, nothing else changed."""
+    env = {name: value for name, value in os.environ.items() if name not in (LIVE_ENV, STATE_ENV)}
+    signal.signal(signal.SIGINT, signal.SIG_IGN if IGNORED else signal.SIG_DFL)
+    try:
+        os.execvpe(argv[0], argv, env)
+    except OSError as error:
+        print(f"{argv[0]}: {error.strerror}", file=sys.stderr)
+        # As a shell says it: 127 for a command it cannot find, 126 for one it found and cannot run.
+        return 127 if isinstance(error, FileNotFoundError) else 126
+
+
+def _logged(args, argv):
+    """This again, through tools/run-logged under the title's recipe: the run's log, as every recipe's."""
+    env = dict(os.environ)
+    env.update(LOG_DIR=args.log_dir, LOG_RETENTION_DAYS=args.retention, CLAUDE_ON_PROXMOX_LOG_STAMP=args.stamp)
+    run_logged = str(REPO / "tools" / "run-logged")
+    recipe = _title().split()[0]
+    # Blocked across the exec, as the top of this file says: a Ctrl-C now is the run's, not lost.
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    try:
+        os.execve(run_logged, [run_logged, recipe, sys.executable, str(Path(__file__).resolve()), LOGGED, *argv], env)
+    except OSError as error:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+        print(f"{run_logged}: {error.strerror}", file=sys.stderr)
+        return 127 if isinstance(error, FileNotFoundError) else 126
+
+
+def _engine():
+    name = "claude_on_proxmox_live_commands"
+    spec = importlib.util.spec_from_file_location(name, REPO / "filter_plugins" / "live_commands.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def main(argv):
+    args = _arguments(argv)
+    state = os.environ.get(STATE_ENV, "")
+    if args.command == "end":
+        # Nothing was drawn, or nothing is left to say: a run whose parts all passed through ends as it did.
+        if not state or not Path(state).is_file():
+            return 0
+        if not args.logged:
+            return _logged(args, ["end", str(args.status)])
+        _engine().end(_title(), state, args.status)
+        return 0
+    if not args.logged:
+        if INTERRUPTED:
+            return 130
+        if not _drawn(args):
+            return _passed_through(args.argv)
+        rest = ["run", args.stage, *(["--step", args.step] if args.step else []), "--read", args.read, "--"]
+        return _logged(args, [*rest, *args.argv])
+    # INTERRUPTED itself, which the part reads once its own handler is in: a Ctrl-C until then is still this one's.
+    return _engine().run(_title(), args.stage, args.step or None, args.argv, state, interrupted=INTERRUPTED)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

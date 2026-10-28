@@ -289,7 +289,7 @@ def test_no_parameter_shares_its_name_with_an_assignment() -> None:
 def test_self_passes_on_every_setting() -> None:
     # A recipe that runs another (test lints, init installs) runs it through self, which would otherwise drop the
     # command line's BIN= and the rest.
-    settings = {name for name in _json()["assignments"] if name.isupper()} | {"stamp"}
+    settings = {name for name in _json()["assignments"] if name.isupper()} | {"stamp", "live_run"}
     passed = set(re.findall(r" ([A-Za-z_]+)=", _evaluate("self")))
     assert passed == settings, (passed, settings)
 

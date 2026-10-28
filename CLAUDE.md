@@ -385,7 +385,12 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `filter_plugins/live_recipes.py`, a report hands an `Output` a frame of its own; never a second region, palette
   or cut. A command's live output is its declaration: the engine (`filter_plugins/live_ansible.py`), the model
   (`run_view.py`) and the region know no command, and what a declaration cannot say becomes a new field there,
-  never code of one command's own. The region draws one
+  never code of one command's own. A recipe of several processes is one run in parts: each command goes through
+  `tools/live`, which passes it through unchanged, without the variable or the state's path, unless it can draw -
+  a terminal, a title, no `-v`, a log, a state, the engine's packages, decided with the standard library alone -
+  and each part takes over the run's state in `LIVE_DIR` (`.cache/live/`, refused by
+  `tests/check_no_local_files.sh`), whose end, the recipe's trap, says the summary; a nested recipe joins its
+  parent's run through the `live_run` setting, never the environment. The region draws one
   write per redraw in synchronized output, up exactly the lines drawn, so no line may wrap (`tests/unit/vt.py`
   counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`); keeps
   the echo off while it is up; and never hides the cursor. Modules load each other by path, once, as
@@ -407,13 +412,14 @@ token; `github_auth_method: token` still fails. The status JSON carries
   Proxmox and the guest agent, and nothing else of them. Any `-v` or another
   stdout callback is the stream. No test or scenario sets
   the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against a stand-in deploy,
-  holds the log to the stream's, and fails if a tracked file other than the callback, the engine
-  (`filter_plugins/live_ansible.py`), the declarations (`filter_plugins/live_recipes.py`), the recipes drawn live,
-  the live tests' kit (`tests/unit/live_kit.py`), the live tests that draw a playbook through the engine, each
-  listed by name, and `test_justfile.py`'s recording stand-in names it. A failure is headed by its step and its VM,
-  and one a declared task raises again is drawn under the failure a rescue took; a declared refusal (destroy's
-  unconfirmed deletion) is said as the person's answer, never as a failure. See docs/architecture/custom-code.md
-  §7.5.
+  holds the log to the stream's, and fails if a tracked file other than the callback, the engines
+  (`filter_plugins/live_ansible.py`, `filter_plugins/live_commands.py` and `tools/live`), the declarations
+  (`filter_plugins/live_recipes.py`), the recipes drawn live, the live tests' kit (`tests/unit/live_kit.py`), the
+  live tests that draw a playbook through the engine or a command through `tools/live`, each listed by name, and
+  `test_justfile.py`'s recording stand-in names it; `tools/live` takes it, and the state's path, out of every
+  command's environment, passed through or drawn. A failure is headed by its step and its VM, and one a declared
+  task raises again is drawn under the failure a rescue took; a declared refusal (destroy's unconfirmed deletion)
+  is said as the person's answer, never as a failure. See docs/architecture/custom-code.md §7.5.
 
 - **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`
