@@ -749,3 +749,63 @@ def test_a_step_that_only_skipped_reads_skipped():
     script.task("template", "t2", "Build the template", "proxmox_template", outcome="skipped")
     script.task("register", "p0", "Register the VMs", hosts=("localhost",))
     assert script.run.ended_lines(script.now)[0].startswith("– template / proxmox_template")
+
+
+def _login(names=("alpha", "beta", "gamma")):
+    plays = [
+        ("reach", "/r/playbooks/claude_login.yml:24", [("p1", None)], "Reach each VM before its sign-in"),
+        ("sign", "/r/playbooks/claude_login.yml:51", [("l1", "claude_code"), ("l2", "claude_code")]),
+        ("gh", "/r/playbooks/github_login.yml:66", [("g1", "github_projects")]),
+    ]
+    script = Script(plays=plays, title="login " + " ".join(names))
+    script.run.names = list(names)
+    return script
+
+
+def test_a_login_marks_each_vm_by_its_outcome_and_whose_turn_it_is():
+    script = _login()
+    script.task("reach", "p1", "Reach the VM", hosts=("alpha", "beta", "gamma"))
+    script.run.result("p1", "beta", "lost", script.now)
+    script.run.play_start("sign", batches=3)
+    script.task("sign", "l1", "Say the page", "claude_code", hosts=("alpha",))
+    script.task("sign", "l2", "Ask for the code", "claude_code", hosts=("alpha",), outcome=None, took=0)
+    row = next(line for line in script.run.frame(script.now, 120, 30, "⠋", color=False) if " Claude " in line)
+    # alpha's turn; beta was not reached; gamma, pinged already, has not had its turn.
+    assert "alpha ⠋ (1 of 3) · beta ✗ · gamma ○" in row, row
+    script.run.result("l2", "alpha", "ok", script.now + 1)
+    # A refused code is a failure the rescue took: the fact says so, the task's result cannot.
+    script.task("sign", "l1", "Say the page", "claude_code", hosts=("gamma",))
+    script.task("sign", "l2", "Ask for the code", "claude_code", hosts=("gamma",))
+    script.run.outcome("alpha", "claude_code_login_done", True)
+    script.run.outcome("gamma", "claude_vm_claude_login_failure", "the code was refused")
+    script.task("gh", "g1", "Report the login state", "github_projects", hosts=("alpha", "gamma"))
+    script.run.end(script.now)
+    summary = "\n".join(script.run.summary(script.now, 100, color=False))
+    claude = next(line for line in summary.splitlines() if line.startswith(" ") and " Claude " in line)
+    assert "alpha ✓ · beta ✗ · gamma ✗" in claude, summary
+    assert summary.splitlines()[2].startswith("SIGN-INS ") and "VMS" in summary.splitlines()[2]
+
+
+def test_a_serial_turn_is_counted_in_the_order_the_play_reaches_the_vms_not_the_order_they_were_named():
+    # just login gamma alpha: discovery adds the VMs in the cluster listing's order, alpha first, and the serial play
+    # takes them so; alpha's is the first turn.
+    script = _login(("gamma", "alpha"))
+    script.run.play_start("sign", batches=2)
+    script.task("sign", "l1", "Say the page", "claude_code", hosts=("alpha",))
+    script.task("sign", "l2", "Ask for the code", "claude_code", hosts=("alpha",), outcome=None, took=0)
+    row = next(line for line in script.run.frame(script.now, 120, 30, "⠋", color=False) if " Claude " in line)
+    assert "alpha ⠋ (1 of 2)" in row and "gamma ○" in row, row
+    script.run.result("l2", "alpha", "ok", script.now + 1)
+    script.task("sign", "l1", "Say the page", "claude_code", hosts=("gamma",))
+    script.task("sign", "l2", "Ask for the code", "claude_code", hosts=("gamma",), outcome=None, took=0)
+    row = next(line for line in script.run.frame(script.now, 120, 30, "⠋", color=False) if " Claude " in line)
+    assert "gamma ⠋ (2 of 2)" in row and "alpha ✓" in row, row
+
+
+def test_a_failure_raised_again_marks_its_vm_in_the_step_of_its_cause():
+    script = _login(("alpha", "beta"))
+    script.task("sign", "l1", "Start Remote Control", "claude_code", hosts=("alpha", "beta"))
+    script.run.raised("sign in", "Claude", "beta")
+    script.run.end(script.now)
+    claude = next(line for line in script.run.summary(script.now, 100, color=False) if " Claude " in line)
+    assert claude.startswith(" ✗ Claude") and "alpha ✓ · beta ✗" in claude, claude

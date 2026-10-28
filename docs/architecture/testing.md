@@ -19,7 +19,7 @@ nohup has them ignored; and a pseudo-terminal's reader reads to its end after th
 API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
 and then taken by another worker's fake.
 
-pytest over `tests/unit/`: 2108 tests. By file:
+pytest over `tests/unit/`: 2120 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 33): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -65,8 +65,8 @@ pytest over `tests/unit/`: 2108 tests. By file:
   reading status's and deploy's streams the same cut anywhere. Every test that runs something at a terminal opens
   it through `harness._at_a_pseudo_terminal`, and every live test through `tests/unit/live_kit.py`, which gives
   each run a `HOME` of its own.
-- **`just deploy`'s live output** (`test_run_view.py` 97, `test_deploy_live.py` 17, `test_live_recipes.py` 4): the
-  model, fed
+- **`just deploy`'s live output** (`test_run_view.py` 100, `test_deploy_live.py` 17, `test_login_live.py` 3,
+  `test_live_recipes.py` 8): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
   report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
@@ -83,9 +83,12 @@ pytest over `tests/unit/`: 2108 tests. By file:
   failure a rescue takes through an import or include dim, and one a rescue filtered out by `--tags` said; a
   failure raised again drawn under its cause, a report's lines kept, NEXT STEPS line for line the stream's;
   the log every line the stream logs, in order; a line per step through a pipe; `-v`, no variable and no log
-  streamed; and no other tracked file naming the variable. `test_live_recipes.py` holds every declaration to the
-  playbooks it names - each play, block and task it matches is there, each fact it reads is set by a task - and
-  every live test that runs a real playbook to the paths its own tests pin.
+  streamed; and no other tracked file naming the variable. `test_login_live.py` runs the real `login.yml` once, at
+  a pseudo-terminal, against `test_sign_in_plays.py`'s stand-in VMs and fake GitHub: each failure under the
+  sign-in it happened in, the raise naming none, the `SIGN-INS` table's marks, the head naming the VMs that failed, and the region
+  gone. `test_live_recipes.py` holds every declaration to the playbooks it names - each play, block and task it
+  matches is there, each fact it reads is set by a task - and every live test that runs a real playbook to the
+  paths its own tests pin, read from its code, so a pin in a comment is none.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   96), both ways.
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:

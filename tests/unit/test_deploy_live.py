@@ -542,8 +542,10 @@ def test_no_other_test_or_scenario_draws_a_run():
         and "CLAUDE_ON_PROXMOX_LIVE" in (REPO / name).read_text(errors="replace")
     )
     # The callback that hands the run to the engine, the engine that reads it and the declarations its title names,
-    # the recipe that sets it, and the tests: the live kit sets it for the live tests, and test_justfile.py reads the
-    # title the recipe exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or config.
+    # the recipe that sets it, and the tests, each by name: the live kit sets it for the live tests, this one and the
+    # live tests that draw a playbook through the engine name it, and test_justfile.py reads the title the recipe
+    # exports, from an ansible-playbook stand-in that runs nothing. No scenario, tool or config, and no other test -
+    # test_status_live.py's run is drawn by a callback of its own.
     assert mentions == [
         "callback_plugins/claude_on_proxmox.py",
         "filter_plugins/live_ansible.py",
@@ -552,12 +554,29 @@ def test_no_other_test_or_scenario_draws_a_run():
         "tests/unit/live_kit.py",
         "tests/unit/test_deploy_live.py",
         "tests/unit/test_justfile.py",
+        "tests/unit/test_login_live.py",
     ], mentions
-    # In the justfile, deploy's recipe alone.
+    # In the justfile, only the recipes a declaration draws (filter_plugins/live_recipes.py), each its own title.
     lines = (REPO / "justfile").read_text().splitlines()
-    start = next(n for n, line in enumerate(lines) if line.startswith("deploy "))
-    end = next(n for n in range(start + 1, len(lines)) if lines[n] and not lines[n].startswith(" "))
-    assert all(start < n < end for n, line in enumerate(lines) if "CLAUDE_ON_PROXMOX_LIVE" in line)
+    recipe, naming = None, set()
+    for line in lines:
+        if line and not line.startswith((" ", "#", "[")) and ":" in line and not line.startswith(("set ", "alias ")):
+            recipe = line.split()[0].rstrip(":")
+        if "CLAUDE_ON_PROXMOX_LIVE" in line:
+            naming.add(recipe)
+    assert naming <= set(_recipes().RECIPES), naming
+    assert {"deploy", "login"} <= naming, naming
+
+
+def _recipes():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "test_live_recipes_module", REPO / "filter_plugins" / "live_recipes.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 RAISED = """

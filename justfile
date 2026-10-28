@@ -461,6 +461,10 @@ login SIGN_IN='' *NAMES:
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
     {{ no_tty_args }}
+    # Drawn live (callback_plugins/claude_on_proxmox.py, its declaration in filter_plugins/live_recipes.py), under
+    # this title. Any -v in ANSIBLE_ARGS streams it as before.
+    CLAUDE_ON_PROXMOX_LIVE="login${only:+ --only $only}${names:+ $(printf %s "$names" | tr , ' ')}"
+    export CLAUDE_ON_PROXMOX_LIVE
     exec {{ run_logged }} "login${only:+-$only}" "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} "playbooks/${only:+${only}_}login.yml"
 
 # What every VM this project created is doing, and what needs doing next,

@@ -9,6 +9,7 @@ as that playbook's own tests run it, with every path those pin (docs/architectur
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import re
 from pathlib import Path
@@ -142,11 +143,52 @@ def test_every_fact_a_declaration_reads_is_set_by_a_task(name):
 
 # Each live test, and what it must name to run a real playbook as that playbook's own tests run it: the runner, or
 # every path they pin. A live test that runs only stand-ins - deploy's, playbooks named as the real ones in a
-# directory of its own - takes nothing from the repository's playbooks/.
+# directory of its own - takes nothing from the repository's playbooks/. Each pin is read from the test's code
+# (_pinned), never its text: a module imported from (`from x import`), a call (`name(`), a name used, a string given
+# as a dict's key or a call's argument (`"key"`), or a key given a constant (`"key": False`).
 LIVE_TESTS = {
     "test_deploy_live.py": (),
+    # login.yml as test_sign_in_plays.py runs it: its stand-in VMs and extra vars, which keep every sign-in off this
+    # machine's browser, clipboard and terminal.
+    "test_login_live.py": ("from test_sign_in_plays import", "_extra(", "_hosts("),
     "test_status_live.py": ("status_root",),
 }
+
+
+def _pinned(source):
+    """What a test's code does, in LIVE_TESTS' terms: a pin in a comment or a docstring is no pin."""
+    pinned = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            pinned.add(f"from {node.module} import")
+            pinned |= {alias.asname or alias.name for alias in node.names}
+        elif isinstance(node, ast.Call):
+            pinned.add(f"{ast.unparse(node.func)}(")
+            strings = (arg.value for arg in node.args if isinstance(arg, ast.Constant))
+            pinned |= {f'"{value}"' for value in strings if isinstance(value, str)}
+        elif isinstance(node, ast.Name):
+            pinned.add(node.id)
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    pinned.add(f'"{key.value}"')
+                    if isinstance(value, ast.Constant):
+                        pinned.add(f'"{key.value}": {value.value!r}')
+    return pinned
+
+
+def test_a_pin_counts_only_in_a_tests_code():
+    source = '''"""Runs it with "destroy_sessions_dir" pinned."""
+# "claude_ssh_config_file", _hosts(
+from test_release import _extra
+
+run({"destroy_sessions_dir": str(root), "claude_ssh_config_include": False}, "ssh")
+'''
+    pinned = _pinned(source)
+    assert {'"destroy_sessions_dir"', '"claude_ssh_config_include": False', '"ssh"', "run(", "_extra"} <= pinned
+    assert "from test_release import" in pinned
+    assert not {'"claude_ssh_config_file"', "_hosts(", '"claude_ssh_config_include": True'} & pinned
+    assert '"destroy_sessions_dir"' not in _pinned(source.replace('{"destroy_sessions_dir": str(root), ', "{"))
 
 
 def test_every_live_test_runs_a_real_playbook_only_as_its_own_tests_do():
@@ -156,5 +198,6 @@ def test_every_live_test_runs_a_real_playbook_only_as_its_own_tests_do():
         source = (REPO / "tests" / "unit" / name).read_text()
         if not pins:
             assert not re.search(r"""REPO\s*/\s*["']playbooks["']""", source), f"{name} runs a real playbook"
+        pinned = _pinned(source)
         for pin in pins:
-            assert pin in source, f"{name} does not pin {pin}"
+            assert pin in pinned, f"{name} does not pin {pin} in its code"
