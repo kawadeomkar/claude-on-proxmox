@@ -1,5 +1,6 @@
-"""plain_text: what a VM printed, safe to quote in a message on this machine. banner: the block
-that sets a moment the run waits for the person apart."""
+"""plain_text: what a VM printed, safe to quote in a message on this machine. visible_text: that, with no
+Unicode format character to reorder a line. banner: the block that sets a moment the run waits for the person
+apart."""
 
 from __future__ import annotations
 
@@ -13,6 +14,8 @@ _spec = importlib.util.spec_from_file_location("text_filters", REPO / "filter_pl
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
 plain_text = _module.plain_text
+visible_text = _module.visible_text
+one_line = _module.one_line
 banner = _module.banner
 
 
@@ -48,6 +51,16 @@ def test_nothing_a_terminal_acts_on_is_left():
     every = "".join(chr(c) for c in range(0x00, 0xA0)) + "x"
     left = plain_text(every)
     assert all(ch in "\t\n" or 0x20 <= ord(ch) < 0x7F for ch in left), repr(left)
+
+
+def test_visible_text_keeps_lines_and_indents_and_leaves_no_format_character():
+    # A bidi override that would read "login.exe" backwards, zero-width characters, a line separator.
+    raw = "  account \u202eexe.nigol\u202c ok\n\tnext\u200b line\u2028end\x1b[31m"
+    assert visible_text(raw) == "  account  exe.nigol  ok\n\tnext  line end"
+    every = "".join(chr(c) for c in range(0x2000, 0x2070)) + "\ufeff\u061c\u00ad"
+    assert all(_module.unicodedata.category(ch) not in ("Cf", "Zl", "Zp") for ch in visible_text(every))
+    # one_line is the same text on one line.
+    assert one_line(raw) == "account exe.nigol ok next line end"
 
 
 def test_a_banner_is_a_titled_block_that_ends_in_a_newline():

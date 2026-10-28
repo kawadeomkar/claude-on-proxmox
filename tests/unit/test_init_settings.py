@@ -35,6 +35,7 @@ from harness import (
     REPO,
     _desktop,
     _failures,
+    _left_to_do,
     _messages,
     _pve_cli,
     _pve_cli_calls,
@@ -739,6 +740,8 @@ def test_a_vault_left_plaintext_is_said_and_no_deploy_is_suggested(tmp_path: Pat
     summary = _said(report, "Say what was written, and what is left")
     assert "vault.yml is still plaintext" in summary and "just deploy" not in summary
     assert not Path(files["init_vault_file"]).read_text().startswith("$ANSIBLE_VAULT")
+    # Every value is set: the checks, which run next, say it as a problem.
+    assert _next(report) == {"init_settings": ""}
 
 
 def test_a_run_that_keeps_the_modules_files_is_refused(tmp_path: Path) -> None:
@@ -985,6 +988,77 @@ def test_the_tailscale_notice_is_gone_once_the_setting_is_there(tmp_path: Path, 
 
 
 # --tailscale that differs from the setting: test_given_values_that_differ_from_set_ones_fail_and_write_nothing.
+
+
+# ----------------------------------------------------------------- NEXT STEPS ---
+def _next(report: dict) -> dict:
+    """What the run recorded for NEXT STEPS, by matter: just init's only, under a key no VM can have."""
+    left = _left_to_do(report)
+    assert set(left) <= {"just init"}, left
+    return left.get("just init", {})
+
+
+@pytest.mark.parametrize("asking", [False, True], ids=["no-terminal", "init_ask"])
+def test_next_steps_keep_each_value_still_to_set(tmp_path: Path, asking: bool) -> None:
+    # As the report says it: with no terminal, how to give them too, and the
+    # vault left plaintext; with init_ask, Enter at each, the vault encrypted.
+    files = _files(tmp_path)
+    report = _init(tmp_path, files, {"init_ask": True} if asking else None)
+    assert report["rc"] == 0, _failures(report)
+    left = _next(report)
+    assert list(left) == ["init_settings"]
+    line = left["init_settings"]
+    assert line.startswith(
+        "Still to set:\n  the Proxmox host address: just init asks again, or edit inventory/hosts.yml\n"
+        "  the API token secret: just init asks again, or just vault\n"
+        "  the GitHub username: just init asks again, or just vault"
+    ), line
+    # Each paragraph one line, as NEXT STEPS prints it.
+    no_prompt = (
+        "Nothing is asked without a terminal, or with --no-prompt: run just init at one, give the values on its command"
+        " line (just init --host ... in docs/getting-started/first-deploy.md), or edit the files and run just vault."
+    )
+    plaintext = (
+        "vault.yml is still plaintext, which every recipe refuses: just vault encrypts it, or just init does at a"
+        " terminal."
+    )
+    assert (no_prompt in line.splitlines()) is not asking
+    assert (plaintext in line.splitlines()) is not asking
+    assert line in _said(report, "Say what was written, and what is left")
+
+
+def test_next_steps_keep_what_a_scripted_run_still_lacks_though_it_fails(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    report = _init(tmp_path, files, {"init_given": {"host": "pve.lan"}})
+    assert report["rc"] != 0
+    line = _next(report)["init_settings"]
+    assert "the Proxmox host address" not in line
+    assert "  the API token secret: just init asks again, or just vault\n" in line
+    assert "  the GitHub username: just init asks again, or just vault\n" in line
+
+
+def test_next_steps_leave_nothing_once_every_value_is_set(tmp_path: Path) -> None:
+    # What comes next is the checks' to say: just deploy is no longer said here.
+    files = _files(tmp_path)
+    report = _init(tmp_path, files, {"init_given": _every_value_given(tmp_path)})
+    assert report["rc"] == 0, _failures(report)
+    assert _next(report) == {"init_settings": ""}
+    summary = _said(report, "Say what was written, and what is left").rstrip().splitlines()
+    assert summary[-2].startswith("  inventory/group_vars/all/vault.yml ") and summary[-1].startswith("Optional,")
+    assert SECRET not in json.dumps(report)
+
+
+def test_next_steps_say_a_vault_that_cannot_be_opened(tmp_path: Path) -> None:
+    # just init then checks nothing: this is the last NEXT STEPS the run prints.
+    files = _files(tmp_path)
+    _encrypt(files, _example("init_vault_file"))
+    Path(files["init_vault_pass_file"]).unlink()
+    report = _init(tmp_path, files, {"init_given": {"host": "pve.lan"}})
+    assert report["rc"] == 0, _failures(report)
+    assert _next(report) == {
+        "init_settings": "vault.yml is encrypted and there is neither .vault_pass nor ANSIBLE_VAULT_PASSWORD_FILE to"
+        " open it, so just init leaves it alone: just vault opens it, asking for its password."
+    }
 
 
 # --------------------------------------------------------------------- static ---

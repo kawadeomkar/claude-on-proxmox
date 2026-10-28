@@ -841,8 +841,15 @@ def test_github_login_says_the_role_signs_a_pending_vault_token_in_next(pending_
     said = _messages(report, "Report the login state and what to do about it")["pending"]
     assert "the role signs gh in with it next, in this run" in said, said
     assert "make " not in said
-    # Not left to do: the role run after the report signs it in.
-    assert _left_to_do(report)["pending"]["github"] == ""
+    # Not left to do: the role run after the report signs it in - unless that
+    # role stops at its directory task, as on a machine with no group named
+    # after this user, when its failure is what is left, with its retry.
+    left = _left_to_do(report)["pending"]["github"]
+    if _has_own_group():
+        assert left == ""
+    else:
+        assert left.startswith('pending: configuring its GitHub repositories failed at "'), left
+        assert left.endswith("Retry it with: just deploy pending --tags github_projects"), left
     assert DEVICE_LOGIN not in _calls(root, "pending")
     if _has_own_group():
         # And it does: the role run after the report signs gh in with it.
@@ -1484,6 +1491,26 @@ def test_asking_first_signs_gh_in_only_where_a_claude_code_was_entered(deployed_
 def test_asking_first_asks_every_vm_but_one_whose_claude_prompt_got_enter(deployed_asking):
     _, report = deployed_asking
     assert _asked(report) == {"typed", "quiet"}
+
+
+@pytest.mark.parametrize("fixture", ["deployed", "deployed_asking"])
+def test_deploy_says_once_why_gh_s_sign_in_was_not_started_where_the_claude_sign_in_was_skipped(request, fixture):
+    # The role's report says only that gh is signed out. Not for quiet, left
+    # at its question: that one was asked, and its answer is the reason.
+    _, report = request.getfixturevalue(fixture)
+    said = [
+        (host, result["msg"])
+        for name, host, result in _results(report)
+        if name == "Say why GitHub's sign-in was not started" and not result.get("skipped")
+    ]
+    line = (
+        "skipped: GitHub's sign-in was not started, since its Claude sign-in was skipped:"
+        " just login skipped --only github starts it."
+    )
+    assert said == [("skipped", line)], said
+    # One NEXT STEPS line for it, this one, in place of the role's own report
+    # of the same sign-out.
+    assert _left_to_do(report)["skipped"]["github"] == line
 
 
 def test_asking_first_signs_a_vm_that_showed_no_claude_prompt_in_on_a_typed_y(tmp_path, fake_github):

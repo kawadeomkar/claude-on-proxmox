@@ -18,8 +18,12 @@ What these guard:
   OAuth client exchanged for one - and only a device named as this project
   asked the VM to join, since the VM reports the ID. A refusal is said with the
   device to delete by hand, and a device already gone as such.
-- A VM with no address is left as it is, and the report names what is left of
-  it to remove by hand.
+- A VM with no address, or that does not answer, is left as it is, and the
+  report names what is left of it to remove by hand.
+- The report gives every VM asked for one line, and the line says what truly
+  became of it: deleted and released, deleted unreleased and why, released
+  but not deleted, or kept by a save that failed, its deletion never tried -
+  and the kept SSH alias of a VM still there says which.
 - No token, key or secret reaches the output, module arguments included.
 - destroy starts a stopped VM to release it or save its sessions, and releases
   before it deletes - finding the address of a VM it started though the cluster
@@ -49,6 +53,7 @@ from harness import (
     _certificate,
     _failures,
     _left_to_do,
+    _messages,
     _pve,
     _run,
     _run_at_a_terminal,
@@ -57,7 +62,7 @@ from harness import (
 
 DESTROY = REPO / "playbooks" / "destroy.yml"
 FAKES = REPO / "tests" / "molecule"
-REPORT = "Say what each deleted VM was released from, and what is left of it"
+REPORT = "Say what became of each VM, and what is left of it"
 ADMIN = "https://login.tailscale.com/admin/machines"
 
 # Canned credentials, each searched for in the whole report.
@@ -120,6 +125,10 @@ CASES = {
     "workspaces": {"sessions": True, "workspaces": True},
     # No address: stopped and would not start, or an agent that never answered.
     "unreached": {"address": ""},
+    # An address, but no answer there: here, no Python where Ansible looks for it.
+    "unanswering": {"answers": False},
+    # Signed in to Claude, released, and then refused its deletion, as Proxmox refuses a protected VM.
+    "stuck": {"claude": True, "undeletable": True},
 }
 
 # The VM's sessions in the "sessions" case: begun there, a copy just code wrote
@@ -233,8 +242,10 @@ def _hosts(root: Path, cases: dict, github: str, tailscale: str) -> dict:
         api = case.get("api", "")
         hosts[name] = {
             "ansible_connection": "local",
-            "ansible_python_interpreter": str(home / "python"),
+            "ansible_python_interpreter": str(home / ("python" if case.get("answers", True) else "no-python")),
             "vm_user": "dev",
+            **({"destroy_test_undeletable": True} if case.get("undeletable") else {}),
+            **({"destroy_test_lost": True} if case.get("lost") else {}),
             **({"destroy_save_sessions": case["save"]} if "save" in case else {}),
             **({"vscode_workspaces_dir": str(home / "ws")} if case.get("workspaces") else {}),
             "claude_vm_release_address": case.get("address", "192.0.2.10"),
@@ -253,21 +264,45 @@ def _hosts(root: Path, cases: dict, github: str, tailscale: str) -> dict:
     return hosts
 
 
-def _destroy_tail(root: Path, saved: Path | None = None) -> Path:
-    """destroy.yml's release play, the deletion marked as done, and its report: as destroy.yml has them.
+# What the stand-in for proxmox_vm says of a VM marked undeletable, as Proxmox refuses a protected one.
+REFUSED = "can't remove VM - protection mode enabled"
 
-    The sessions a VM's save brings back go to ``saved``, root/saved without one: never the checkout's .sessions/.
+
+def _destroy_tail(root: Path, saved: Path | None = None) -> Path:
+    """destroy.yml's release play, its deletion and its report: as destroy.yml has them, proxmox_vm aside.
+
+    The deletion is destroy's own play with a stand-in for the role, which deletes nothing and refuses a VM
+    with destroy_test_undeletable set, so that its rescue records why. A VM with destroy_test_lost set fails
+    a task of its release outside any rescue, as one that stops answering does, and leaves the run. The
+    sessions a VM's save brings back go to ``saved``, root/saved without one: never the checkout's .sessions/.
     """
     plays = yaml.safe_load(DESTROY.read_text())
     release = next(play for play in plays if play.get("name") == "Release each VM from what it signed in to")
     # Its task files where they are: the play runs from a copy here.
     release = json.loads(json.dumps(release).replace('"tasks/', f'"{REPO / "playbooks" / "tasks"}/'))
     release["vars"] = {**release.get("vars", {}), "destroy_sessions_dir": str(saved or root / "saved")}
+    record = [task.get("name") for task in release["tasks"]].index("Record that the VM was released")
+    release["tasks"].insert(
+        record,
+        {
+            "name": "Lose the VM before it is recorded released",
+            "ansible.builtin.fail": {"msg": "lost on the way"},
+            "when": "destroy_test_lost | default(false) | bool",
+        },
+    )
+    delete = next(play for play in plays if play.get("name") == "Delete the VMs on Proxmox")
+    (step,) = [task for task in delete["tasks"] if "block" in task]
+    assert step["block"][0]["ansible.builtin.import_role"] == {"name": "proxmox_vm"}
+    step["block"][0] = {
+        "name": "Stand in for proxmox_vm",
+        "ansible.builtin.fail": {"msg": f"{REFUSED}."},
+        "when": "destroy_test_undeletable | default(false) | bool",
+    }
     tasks = next(play["tasks"] for play in plays if any(task.get("name") == REPORT for task in play.get("tasks", [])))
     at = next(index for index, task in enumerate(tasks) if task.get("name") == REPORT)
     # The report and its record for NEXT STEPS, then the kept aliases' and
-    # theirs, which are skipped here, every deletion having been done: a
-    # record's condition naming its report's task var failed every destroy.
+    # theirs: a record's condition naming its report's task var failed every
+    # destroy. The aliases themselves are never touched here.
     report = tasks[at : at + 4]
     assert [task.get("name") for task in report] == [
         REPORT,
@@ -281,18 +316,7 @@ def _destroy_tail(root: Path, saved: Path | None = None) -> Path:
         yaml.safe_dump(
             [
                 {**release, "hosts": "claude_vms"},
-                {
-                    "name": "Mark each VM deleted, as destroy's deletion does",
-                    "hosts": "claude_vms",
-                    "gather_facts": False,
-                    # But one the release play kept, as the deletion leaves it.
-                    "tasks": [
-                        {
-                            "ansible.builtin.set_fact": {"claude_vm_deleted": True},
-                            "when": "claude_vm_delete_failure is not defined",
-                        }
-                    ],
-                },
+                {**delete, "hosts": "claude_vms"},
                 {"name": "Report", "hosts": "localhost", "gather_facts": False, "tasks": on_these},
             ]
         )
@@ -578,16 +602,48 @@ def test_no_transcript_reaches_the_output(released):
     assert MARKER not in json.dumps(report)
 
 
-def test_a_vm_that_could_not_be_reached_is_left_as_it_is_and_what_is_left_named(released):
+# What a VM deleted unreleased leaves to remove by hand, after the reason it was not released.
+LEFT = (
+    f"its Tailscale device, if it was on your tailnet, stays until you delete it at {ADMIN} (or a VM built again"
+    " under its name joins as <name>-1); a GitHub token its sign-in made stays valid until revoked at"
+    " https://github.com/settings/applications, under GitHub CLI (which signs out every gh); and Anthropic has no"
+    " way to revoke its Claude Code login from outside. Claude Code sessions: not saved, nor its auto memory, if it"
+    " had any."
+)
+
+
+def test_a_vm_with_no_address_is_left_as_it_is_and_what_is_left_named(released):
     root, report, _, _ = released
     assert _calls(root, "unreached", ".tailscale-fake", "calls.log") == []
-    assert _said(report)["unreached"] == (
-        "unreached: could not be reached, so it was not released: its Tailscale device, if it was on your tailnet,"
-        f" stays until you delete it at {ADMIN} (or a VM built again under its name joins as <name>-1); a GitHub token"
-        " its sign-in made stays valid until revoked at https://github.com/settings/applications, under GitHub CLI"
-        " (which signs out every gh); and Anthropic has no way to revoke its Claude Code login from outside. Claude"
-        " Code sessions: not saved, nor its auto memory, if it had any."
+    assert _said(report)["unreached"] == f"unreached: had no address to reach it at, so it was not released: {LEFT}"
+
+
+def test_a_vm_that_does_not_answer_is_left_as_it_is_and_what_is_left_named(released):
+    # It has an address; Ansible finds nothing to run there. Deleted as it is, as one whose SSH fails.
+    root, report, _, _ = released
+    assert _calls(root, "unanswering", ".tailscale-fake", "calls.log") == []
+    assert "auth logout" not in _calls(root, "unanswering", ".claude", "fake", "calls.log")
+    assert _said(report)["unanswering"] == f"unanswering: could not be reached, so it was not released: {LEFT}"
+
+
+def test_a_vm_released_and_then_refused_its_deletion_says_both_and_keeps_its_line_for_next_steps(released):
+    # Its line said nothing before: only the VMs deleted had one.
+    root, report, _, _ = released
+    assert not (root / "stuck" / ".claude" / ".credentials.json").exists()
+    said = _said(report)["stuck"]
+    assert said == (
+        f"stuck: not deleted - its deletion failed (Stand in for proxmox_vm: {REFUSED}), so it is still there, its"
+        " SSH alias with it: run just destroy stuck again once that is fixed. It was released - Claude Code: signed"
+        " out."
     )
+    assert _left_to_do(report)["stuck"] == {"destroy": said}
+
+
+def test_every_vm_asked_for_gets_exactly_one_line(released):
+    # Those deleted and those not, never one twice: the report loops over every VM of the run.
+    _, report, _, _ = released
+    (lines,) = [result["results"] for name, _, result in _results_of(report) if name.endswith(REPORT)]
+    assert sorted(item["claude_release_name"] for item in lines) == sorted(CASES)
 
 
 def test_next_steps_keep_each_vm_with_something_left_to_do_and_nothing_for_one_released_clean(released):
@@ -599,7 +655,14 @@ def test_next_steps_keep_each_vm_with_something_left_to_do_and_nothing_for_one_r
     assert report["rc"] == 0, _failures(report)
     said = _said(report)
     left = {vm: matters["destroy"] for vm, matters in _left_to_do(report).items()}
-    assert set(left) == set(CASES)
+    # The alias of the one VM still there is named in that VM's own line, kept with it, and not again: the
+    # aliases' line, which names the VM and its rerun too, is recorded empty.
+    assert set(left) == set(CASES) | {"kept SSH aliases"}
+    assert left["kept SSH aliases"] == ""
+    assert _messages(report, "Say which aliases were kept, and why")["localhost"] == (
+        "Kept the SSH alias of stuck: its deletion failed above, so the VM is still there. `just destroy stuck` again"
+        " once the cause is fixed removes it with the VM."
+    )
     for vm in (
         "everything",
         "vault-token",
@@ -610,6 +673,8 @@ def test_next_steps_keep_each_vm_with_something_left_to_do_and_nothing_for_one_r
         "liar",
         "two-accounts",
         "unreached",
+        "unanswering",
+        "stuck",
     ):
         assert left[vm] == said[vm], vm
     for vm in ("gone", "both", "marked-vault", "nothing", "sessions", "unsaved", "workspaces"):
@@ -624,9 +689,20 @@ def test_no_token_key_or_secret_reaches_the_output(released):
 
 @pytest.fixture(scope="module")
 def kept(tmp_path_factory, fake_github, fake_tailscale):
-    """A destroy whose save fails, its folder here not writable: the VM signed in to Claude, with a session."""
+    """A destroy whose save fails, its folder here not writable: the VM signed in to Claude, with a session.
+
+    Beside it, with nothing to save: stuck, released and then refused its deletion; guarded, which does not
+    answer and is refused its deletion too, as the provision scenario's protected VM; and lost, which the run
+    loses part way through its release, signed out of Claude Code by then.
+    """
     root = tmp_path_factory.mktemp("kept")
-    hosts = _hosts(root, {"kept": {"claude": True, "sessions": True}}, fake_github, fake_tailscale)
+    cases = {
+        "kept": {"claude": True, "sessions": True},
+        "guarded": {"answers": False, "undeletable": True},
+        "stuck": {"claude": True, "undeletable": True},
+        "lost": {"claude": True, "lost": True},
+    }
+    hosts = _hosts(root, cases, fake_github, fake_tailscale)
     locked = root / "locked"
     locked.mkdir(mode=0o500)
     try:
@@ -640,7 +716,6 @@ def test_a_vm_whose_sessions_could_not_be_saved_is_neither_released_nor_deleted(
     root, report = kept
     assert (root / "kept" / ".claude" / ".credentials.json").exists()
     assert "auth logout" not in _calls(root, "kept", ".claude", "fake", "calls.log")
-    assert "kept" not in _said(report)
     (why,) = [
         result["ansible_facts"]["claude_vm_delete_failure"]
         for name, host, result in _results_of(report)
@@ -654,6 +729,59 @@ def test_a_vm_whose_sessions_could_not_be_saved_is_neither_released_nor_deleted(
         "Run just destroy again once that is fixed, or set destroy_save_sessions: false to delete it without them."
     )
     assert MARKER not in json.dumps(report)
+
+
+def test_a_vm_kept_by_its_save_is_said_to_be_kept_for_that_and_never_for_a_deletion_that_failed(kept):
+    # Its deletion was never tried: the kept alias once said it had failed.
+    _, report = kept
+    (error,) = [
+        result["ansible_facts"]["claude_vm_save_error"]
+        for name, host, result in _results_of(report)
+        if name == "Keep the VM, whose sessions could not be saved"
+    ]
+    assert error.startswith("session_save | Bring them here: The sessions could not be brought here: ")
+    said = _said(report)
+    assert said["kept"] == (
+        f"kept: kept, its SSH alias with it, neither released nor deleted - its Claude Code sessions could not be"
+        f" saved ({error}). Run just destroy kept again once that is fixed, or set destroy_save_sessions: false to"
+        " delete it without them."
+    )
+    assert said["stuck"] == (
+        f"stuck: not deleted - its deletion failed (Stand in for proxmox_vm: {REFUSED}), so it is still there, its"
+        " SSH alias with it: run just destroy stuck again once that is fixed. It was released - Claude Code: signed"
+        " out."
+    )
+    assert said["guarded"] == (
+        f"guarded: not deleted - its deletion failed (Stand in for proxmox_vm: {REFUSED}), so it is still there, its"
+        " SSH alias with it: run just destroy guarded again once that is fixed. It was not released: it could not be"
+        " reached."
+    )
+    aliases = _messages(report, "Say which aliases were kept, and why")["localhost"]
+    assert aliases == (
+        "Kept the SSH aliases of guarded, stuck: their deletion failed above, so the VMs are still there; and of kept:"
+        " its Claude Code sessions could not be saved, so the VM was neither released nor deleted, and is still"
+        " there; and of lost: the run lost it before its deletion, so the VM is still there. `just destroy"
+        " guarded,kept,lost,stuck` again once the cause is fixed removes each with its VM."
+    )
+    # Each VM still there once in NEXT STEPS, by its own line, which names its alias: never again by the aliases'.
+    assert {vm: matters["destroy"] for vm, matters in _left_to_do(report).items()} == {
+        "guarded": said["guarded"],
+        "kept": said["kept"],
+        "lost": said["lost"],
+        "stuck": said["stuck"],
+        "kept SSH aliases": "",
+    }
+
+
+def test_a_vm_the_run_lost_part_way_through_its_release_is_said_not_deleted_with_how_far_it_went(kept):
+    # Never deleted, nor said to have failed its deletion: it left the run before the delete play.
+    root, report = kept
+    assert not (root / "lost" / ".claude" / ".credentials.json").exists()
+    assert _said(report)["lost"] == (
+        "lost: not deleted - the run lost it before its deletion (a task failed on it above, or it stopped"
+        " answering), so it is still there, its SSH alias with it: run just destroy lost again once that is fixed."
+        " Released so far - Claude Code: signed out."
+    )
 
 
 @pytest.fixture(scope="module")

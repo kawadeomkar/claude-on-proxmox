@@ -17,7 +17,8 @@
 # bridge, each listed with what the token can use. Last, the VMs will get an SSH
 # key. Each check reports ok, a problem, or why it was skipped, and the run
 # fails when any found a problem - a scripted just init then exits non-zero -
-# though "not configured yet" is none.
+# though "not configured yet" is none. NEXT STEPS then gives each problem with
+# its fix, or, once there is none, just deploy.
 #
 # It writes only local.yml, through tasks/init_local_setting.yml, and only at
 # a terminal (init_ask) or for a value given on the command line (--storage,
@@ -131,6 +132,37 @@
          else 'node ' ~ init_node ~ ' is not up' }}
     init_template_bridge: >-
       {{ (init_template_config.json.data.net0 | default('')) | regex_findall('bridge=([^,]+)') | first | default('') }}
+
+    # What the checks found wrong, which fails the run; and what they could
+    # not check, which is no problem of its own, its cause usually one.
+    init_problems: "{{ init_results | default([]) | rejectattr('ok') | rejectattr('skipped', 'defined') | list }}"
+    init_unchecked: "{{ init_results | default([]) | selectattr('skipped', 'defined') | list }}"
+    # The one value init_settings.yml asks for that just deploy needs and no
+    # check here reads: while it is the example's, init_settings.yml's NEXT
+    # STEPS names it, and just deploy is not next.
+    init_github_placeholder: your-github-username
+    init_github_set: "{{ github_username | default('', true) | string not in ['', init_github_placeholder] }}"
+    init_deploy_next: "Next: just deploy alpha, which creates a VM named alpha (any name will do)."
+    # What is left to do, as the report and the failure say it, for NEXT
+    # STEPS: each problem with its fix; what could not be checked, when
+    # nothing is wrong; otherwise just deploy. A template that renders nothing
+    # is none, hence the string beside it.
+    init_left: "{{ init_left_lines | default('', true) | trim }}"
+    init_left_lines: |-
+      {% if init_problems | length > 0 %}
+      {% set one = init_problems | length == 1 %}
+      just init found {{ init_problems | length }} problem{{ '' if one else 's' }} for just deploy: fix {{ 'it' if one else 'them' }}, then run just init again.
+      {% for result in init_problems %}
+        !!   {{ result.text }}
+      {% endfor %}
+      {% elif init_unchecked | length > 0 %}
+      just init could not check all that just deploy needs: run it again once it can.
+      {% for result in init_unchecked %}
+        --   {{ result.text }}
+      {% endfor %}
+      {% elif init_github_set | bool %}
+      {{ init_deploy_next }}
+      {% endif %}
   tasks:
     - name: Say what is not set yet
       ansible.builtin.debug:
@@ -620,6 +652,20 @@
           {% for result in init_results %}
           {{ '  --   ' if result.skipped | default(false) else '  ok   ' if result.ok else '  !!   ' }}{{ result.text }}
           {% endfor %}
+          {% if init_problems | length == 0 and init_unchecked | length == 0 and init_github_set | bool %}
+          {{ init_deploy_next }}
+          {% endif %}
+
+    # NEXT STEPS (callback_plugins/claude_on_proxmox.py): each problem with its
+    # fix, what could not be checked, or just deploy; nothing while only the
+    # GitHub username is missing, which init_settings.yml's records. A run that
+    # stopped at once, a value still the example's, records nothing.
+    - name: Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_vm_next: "{{ {'just init': {'init_check': init_left}} }}"
+        aggregate: true
+        per_host: false
 
     - name: Fail when a check found a problem
       ansible.builtin.fail:
@@ -627,6 +673,4 @@
           just init found {{ init_problems | length }} problem{{ '' if init_problems | length == 1 else 's' }}
           (the lines marked !! above) for just deploy: fix {{ 'it' if init_problems | length == 1 else 'them' }},
           then run just init again.
-      vars:
-        init_problems: "{{ init_results | rejectattr('ok') | rejectattr('skipped', 'defined') | list }}"
       when: init_problems | length > 0

@@ -957,6 +957,66 @@ def test_just_deploy_starts_the_web_login_by_itself_for_every_vm_but_one_whose_c
     assert report["rc"] == 0, _failures(report)
 
 
+def _not_started(report: dict) -> list:
+    return [
+        (host, result["msg"])
+        for name, host, result in _results(report)
+        if name == "Say why Tailscale's sign-in was not started" and not result.get("skipped")
+    ]
+
+
+NOT_STARTED = (
+    "skipped: Tailscale's sign-in was not started, since its Claude sign-in was skipped:"
+    " just login skipped --only tailscale starts it."
+)
+
+
+def test_just_deploy_says_once_why_the_web_login_was_not_started_where_the_claude_sign_in_was_skipped(deployed):
+    # The role's report says only that the VM is not signed in.
+    _, report = deployed
+    assert _not_started(report) == [("skipped", NOT_STARTED)]
+    assert _said(report)["skipped"].startswith("skipped: Tailscale is installed but not signed in."), _said(report)
+    # One NEXT STEPS line for it, this one, in place of the role's own report.
+    left = _left_to_do(report)
+    assert left["skipped"]["tailscale"] == NOT_STARTED
+    assert left["typed"]["tailscale"] == "" and left["quiet"]["tailscale"] == ""
+
+
+def test_just_deploy_keeps_the_role_s_own_line_for_a_key_refused_or_a_page_waiting_where_claude_was_skipped(
+    tmp_path,
+):
+    # Claude's sign-in skipped for each, after the configure play, as in just
+    # deploy: the "not started" line takes the place only of a plain sign-out's
+    # report. A refused key's line says to put a new one in the vault, and a
+    # waiting page's that it joins once approved - "just login ... starts it"
+    # would make a fresh page and end the one waiting.
+    cases = {
+        "refused": {"key": "expired"},
+        "waiting": {"ts": {"authurl": "https://login.tailscale.com/a/0123456789abcd"}, "marker": "pending"},
+        "skipped": {},
+    }
+    hosts = _hosts(tmp_path, cases)
+    for host in hosts.values():
+        host.update(AFTER_CLAUDE["skipped"])
+    playbook = tmp_path / "configure_then_deploy_s_sign_in.yml"
+    playbook.write_text(
+        json.dumps([_role_play(), {"ansible.builtin.import_playbook": str(_deploy_tailscale(tmp_path))}])
+    )
+    settings = {**WEB_EXTRA, "vm_name": ",".join(hosts), "deploy_sign_in": True}
+    report = _run(tmp_path, playbook, hosts, "-e", json.dumps(settings), ordered=True)
+    assert report["rc"] == 0, _failures(report)
+    # No web login for any of them, and each is told why.
+    assert {host for host, _ in _not_started(report)} == set(cases)
+    assert _ups(_calls(tmp_path, "waiting")) == [] and _ups(_calls(tmp_path, "skipped")) == []
+    said, left = _said(report), _left_to_do(report)
+    assert said["refused"].startswith("refused: Tailscale refused vault_tailscale_auth_key (invalid key: "), said
+    assert "Put a new one in the vault" in said["refused"], said
+    assert said["waiting"].startswith("waiting: not signed in to Tailscale yet - the page stays valid for 7 days"), said
+    assert left["refused"]["tailscale"] == said["refused"]
+    assert left["waiting"]["tailscale"] == said["waiting"]
+    assert left["skipped"]["tailscale"] == NOT_STARTED
+
+
 def test_tailscale_login_auto_start_defaults_to_on():
     defaults = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults.yml").read_text())
     assert defaults["tailscale_login_auto_start"] is True
@@ -969,6 +1029,8 @@ def test_asking_first_signs_in_only_where_someone_is(tmp_path):
     assert len(_ups(_calls(tmp_path, "typed"))) == 1
     assert _ups(_calls(tmp_path, "quiet")) == [] and _ups(_calls(tmp_path, "skipped")) == []
     assert report["rc"] == 0, _failures(report)
+    # quiet was asked, and its answer is the reason: only skipped is told why.
+    assert _not_started(report) == [("skipped", NOT_STARTED)]
 
 
 def test_asking_first_at_a_terminal_asks_under_a_block(tmp_path):
@@ -1279,12 +1341,10 @@ def test_the_inventory_wires_the_desktop_switch_into_the_role():
 def test_destroy_names_the_device_left_of_each_vm_it_could_not_release():
     # logout frees no name: a VM built again under it would join as <name>-1, for good.
     # tests/unit/test_release.py runs the report; this holds its wording for an
-    # unreleased VM, and that it reads only the VMs actually deleted.
+    # unreleased VM, and that it reads every VM, the deleted and those still there.
     plays = yaml.safe_load((REPO / "playbooks" / "destroy.yml").read_text())
     tasks = [task for play in plays for task in play.get("tasks", [])]
-    report = next(
-        task for task in tasks if task["name"] == "Say what each deleted VM was released from, and what is left of it"
-    )
-    assert "selectattr('claude_vm_deleted', 'defined')" in report["loop"]
+    report = next(task for task in tasks if task["name"] == "Say what became of each VM, and what is left of it")
+    assert report["loop"] == "{{ groups['claude_vm_doomed'] | default([]) }}"
     assert "https://login.tailscale.com/admin/machines" in report["vars"]["claude_release_where"]
     assert "<name>-1" in report["vars"]["claude_release_left"]

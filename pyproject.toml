@@ -72,6 +72,8 @@ line-length = 120
 # the controller's (3.12+ for the pinned ansible-core).
 target-version = "py310"
 extend-exclude = [".venv", ".ansible", ".cache", ".vagrant"]
+# The tools that are Python with no .py, which ruff finds by extension only: just lint checks them as the rest.
+extend-include = ["tools/live", "tools/status-exit"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]

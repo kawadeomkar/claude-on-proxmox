@@ -28,6 +28,10 @@ after a start or a stop, the next N listings still report the status from
 before it, the way a real cluster lists the status pvestatd last polled, up to
 ten seconds old. /nodes/<node>/qemu/<id>/status/current is never stale.
 
+A started VM's guest agent fails its first two polls, so every wait for it is
+exercised; a fixture that is not about that wait answers from the first with
+PUT /api2/json/fake/agent-ready-after?polls=0.
+
 GET /access/permissions answers each token's privileges by path, as Proxmox
 does - the privilege's name as the key, 1 or 0 its propagate flag - from a
 table a fixture fills with PUT /api2/json/fake/privileges?token=&path=&privs=
@@ -95,6 +99,10 @@ DOWN_NODE = "pve2"
 # from. While it is on, its guests are listed with their names and as
 # stopped, the way Proxmox lists guests on a node that has just come back.
 NODES_ONLINE = {DOWN_NODE: False}
+# Whether its guests are still listed with their names while it is down, as
+# in the five minutes before the cluster drops its statistics: on with
+# PUT /api2/json/fake/nodes/pve2?status=offline&named=1.
+NODES_NAMED = {DOWN_NODE: False}
 
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 VMS = {
@@ -160,6 +168,8 @@ TASKS = 0
 # first poll succeeded, so a fleet never exercised the loop more than once.
 AGENT_CALLS = {}
 AGENT_READY_AFTER = 2
+# How many it fails now: AGENT_READY_AFTER until a fixture sets another.
+AGENT_READY = {"after": AGENT_READY_AFTER}
 # The listing's lag (see the docstring): how many listings after a status
 # change still report the old status, and per VM, that status and how many
 # listings it has left.
@@ -304,7 +314,7 @@ def resource(vm):
     # statistics, which the cluster drops five minutes after a node stops
     # reporting. A guest on a node that is down is therefore listed with
     # neither, and consumers that index `name` without a default fall over.
-    if vm["node"] != DOWN_NODE or NODES_ONLINE[DOWN_NODE]:
+    if vm["node"] != DOWN_NODE or NODES_ONLINE[DOWN_NODE] or NODES_NAMED[DOWN_NODE]:
         entry["name"] = vm["name"]
         entry["template"] = vm["template"]
     if vm["node"] == DOWN_NODE and NODES_ONLINE[DOWN_NODE]:
@@ -399,6 +409,7 @@ class Handler(BaseHTTPRequestHandler):
         if parts[:2] == ["fake", "nodes"] and method == "PUT" and len(parts) == 3:
             # Not a PVE endpoint: a fixture's switch for the node that is down.
             NODES_ONLINE[parts[2]] = params.get("status") == "online"
+            NODES_NAMED[parts[2]] = params.get("named") == "1"
             return self._reply(200, {"node": parts[2], "status": params.get("status")})
         if parts == ["nodes"]:
             return self._reply(
@@ -412,6 +423,10 @@ class Handler(BaseHTTPRequestHandler):
             # Not a PVE endpoint: a fixture's switch for the listing's lag.
             LISTING_LAG["listings"] = int(params.get("listings", "0"))
             return self._reply(200, dict(LISTING_LAG))
+        if parts[:2] == ["fake", "agent-ready-after"] and method == "PUT":
+            # Not a PVE endpoint: how many polls of a started VM's agent fail, for a fixture not about the wait.
+            AGENT_READY["after"] = int(params.get("polls", str(AGENT_READY_AFTER)))
+            return self._reply(200, dict(AGENT_READY))
         if parts == ["cluster", "resources"] and params.get("type") == "storage":
             # Only the storages the token may audit, as Proxmox lists them; none on the node that is down.
             listed = []
@@ -610,7 +625,7 @@ class Handler(BaseHTTPRequestHandler):
             if vm["status"] != "running":
                 return self._reply(500, None, f"VM {vmid} is not running")
             AGENT_CALLS[vmid] = AGENT_CALLS.get(vmid, 0) + 1
-            if AGENT_CALLS[vmid] <= AGENT_READY_AFTER:
+            if AGENT_CALLS[vmid] <= AGENT_READY["after"]:
                 return self._reply(500, None, "QEMU guest agent is not running")
             return self._reply(200, {"result": agent_interfaces(vm)})
         if sub == ["status", "current"]:
@@ -657,7 +672,7 @@ class Handler(BaseHTTPRequestHandler):
         if sub[:1] == ["agent"] and sub[1:] in (["get-osinfo"], ["get-fsinfo"]) and method == "GET":
             if vm["status"] != "running":
                 return self._reply(500, None, f"VM {vmid} is not running")
-            if AGENT_CALLS.get(vmid, 0) <= AGENT_READY_AFTER:
+            if AGENT_CALLS.get(vmid, 0) <= AGENT_READY["after"]:
                 return self._reply(500, None, "QEMU guest agent is not running")
             if sub[1] == "get-osinfo":
                 return self._reply(

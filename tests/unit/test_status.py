@@ -751,8 +751,8 @@ def callback(monkeypatch):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         cb = module.CallbackModule()
-        if cb._region is not None:
-            cb._region._terminal_size = lambda: (100, 60)
+        if cb._live:
+            cb._out.region._terminal_size = lambda: (100, 60)
         # Plain, to read back: Ansible reads its colour setting once, when its constants are first imported.
         cb._color = False
         made.append(cb)
@@ -760,8 +760,8 @@ def callback(monkeypatch):
 
     yield make
     for cb in made:
-        if cb._region is not None:
-            cb._region._stop.set()
+        if cb._live:
+            cb._out.region._stop.set()
         # The region's wraps of Display live on the singleton: put them back for the next test.
         for name in ("display", "prompt_until", "do_var_prompt"):
             vars(cb._display).pop(name, None)
@@ -780,19 +780,25 @@ def test_the_live_region_is_redrawn_in_place_and_erased_for_the_finished_report(
     cb, terminal = callback()
     fleet = _fleet()
     cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": fleet}}))
-    first = terminal.getvalue()
+    # The tab's title first (OSC 0), what it is reading; then the region.
+    title, first = re.match(r"\x1b\]0;([^\x07]*)\x07(.*)", terminal.getvalue(), re.S).groups()
+    assert title == "status · reading 2 VMs"
     assert "VMS" in first and "⠋" in first and first.startswith("\x1b[?2026h")
     cb.v2_runner_on_ok(
         _ok("alpha", {"status_found": {"api": {"read": True, "state": "running", "root": None, "pending": []}}})
     )
     # Moved up exactly the lines drawn before, then the whole region again, in one write.
     drawn = first.count("\n") + 1
-    assert terminal.getvalue()[len(first) :].startswith(f"\x1b[?2026h\x1b[{drawn - 1}A\r")
+    assert re.sub(r"\x1b\]0;[^\x07]*\x07", "", terminal.getvalue())[len(first) :].startswith(
+        f"\x1b[?2026h\x1b[{drawn - 1}A\r"
+    )
     model = S.status_report({"localhost": {"fleet": fleet}}, "now")
     terminal.seek(0)
     terminal.truncate()
     cb.v2_runner_on_ok(_ok("localhost", {"status_report": model}))
-    out = terminal.getvalue()
+    # The tab says the report is done, then the region is erased for the report.
+    assert terminal.getvalue().startswith("\x1b]0;status · done\x07")
+    out = re.sub(r"\x1b\]0;[^\x07]*\x07", "", terminal.getvalue())
     assert out.startswith("\x1b[") and "\r\x1b[J" in out.split("claude-on-proxmox")[0]
     assert out.rstrip().split("\n")[-1].startswith("exit 2")
     assert "⠋" not in out.split("\x1b[J", 1)[1]
@@ -800,10 +806,12 @@ def test_the_live_region_is_redrawn_in_place_and_erased_for_the_finished_report(
 
 def test_a_live_line_is_cut_to_the_width_and_the_region_to_the_height(callback) -> None:
     cb, terminal = callback()
-    cb._region._terminal_size = lambda: (40, 8)
+    cb._out.region._terminal_size = lambda: (40, 8)
     fleet = _fleet()
     cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": fleet}}))
-    frame = terminal.getvalue().replace("\x1b[?2026h", "").replace("\x1b[?2026l", "")
+    frame = (
+        re.sub(r"\x1b\]0;[^\x07]*\x07", "", terminal.getvalue()).replace("\x1b[?2026h", "").replace("\x1b[?2026l", "")
+    )
     lines = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", frame).replace("\r", "").split("\n")
     assert len(lines) <= 7
     assert max(len(line) for line in lines) <= 39
@@ -815,9 +823,9 @@ def test_a_resize_pushes_the_screen_into_the_scrollback_and_starts_afresh(callba
     cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": _fleet()}}))
     terminal.seek(0)
     terminal.truncate()
-    cb._region._resized = True
-    cb._region._terminal_size = lambda: (80, 30)
-    cb._region.redraw()
+    cb._out.region._resized = True
+    cb._out.region._terminal_size = lambda: (80, 30)
+    cb._out.region.redraw()
     assert terminal.getvalue().startswith("\n" * 30 + "\x1b[29A\r")
 
 
@@ -826,8 +834,8 @@ def test_the_callback_writes_no_other_escape_than_its_own(callback) -> None:
     cb._color = True
     fleet = _fleet()
     cb.v2_runner_on_ok(_ok("localhost", {"status_found": {"fleet": fleet}}))
-    cb._region._resized = True
-    cb._region.redraw()
+    cb._out.region._resized = True
+    cb._out.region.redraw()
     cb.v2_runner_on_ok(_ok("localhost", {"status_report": S.status_report({"localhost": {"fleet": fleet}}, "now")}))
     assert "\x1b[1;36mVMS" in terminal.getvalue()
     escapes = set(re.findall(r"\x1b\[[0-9;?]*[A-Za-z]", terminal.getvalue())) - set(

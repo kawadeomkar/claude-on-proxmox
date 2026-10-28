@@ -47,16 +47,31 @@
       ignore_unreachable: true
       register: claude_vm_reach
 
+    # The command that retries it ends the line, with no full stop after it:
+    # one would be pasted along with it.
     - name: Remember that the VM could not be reached
+      vars:
+        claude_vm_failed_why: "{{ claude_vm_reach.msg | default('no answer', true) | regex_replace('\\s+', ' ') | trim }}"
       ansible.builtin.set_fact:
         claude_vm_github_login_failure: >-
           {{ inventory_hostname }} could not be reached, so gh was not signed in there:
-          {{ claude_vm_reach.msg | default('no answer') | trim }}
+          {{ claude_vm_failed_why ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.') }}
+          Retry it with: just login {{ inventory_hostname }} --only github
       when: claude_vm_reach is unreachable
 
     - name: Say which VM could not be reached
       ansible.builtin.debug:
         msg: "{{ claude_vm_github_login_failure }}"
+      when: claude_vm_reach is unreachable
+
+    # NEXT STEPS (callback_plugins/claude_on_proxmox.py): the line above, under
+    # the sign-in's own matter, which a later record of the VM would replace.
+    - name: Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          github_projects_next: "{{ {inventory_hostname: {'github': claude_vm_github_login_failure}} }}"
+        aggregate: true
+        per_host: false
       when: claude_vm_reach is unreachable
 
 # One VM at a time where a sign-in can prompt - names given, or just deploy -
@@ -75,6 +90,15 @@
     # also the one that clones; just deploy's configure has just run it.
     claude_vm_login_role_follows: >-
       {{ claude_vm_login_named | bool and not (claude_vm_login_in_deploy | default(false) | bool) }}
+    # A VM just deploy, or just login with names, leaves out of this sign-in
+    # because nobody answered its Claude sign-in (claude_vm_login_interactive
+    # and claude_vm_login_ask, as deploy.yml and login.yml decide them): told
+    # so below. Never in a report, which starts nothing for any VM.
+    claude_vm_login_held: >-
+      {{ (claude_vm_login_in_deploy | default(false) | bool or claude_vm_login_named | bool)
+         and claude_code_login_skipped | default(false) | bool
+         and not (claude_vm_login_interactive | default(claude_vm_login_named) | bool)
+         and not (claude_vm_login_ask | default(false) | bool) }}
   serial: "{{ 1 if (claude_vm_login_in_deploy | default(false) | bool or claude_vm_login_named | bool) else '100%' }}"
 
   tasks:
@@ -97,19 +121,65 @@
           # too, read again for each task, and the rescue sets this fact, so
           # the message after it was skipped.
           when: claude_vm_github_login_failure is not defined
+
+        # The role's report says gh is signed out; this says why nothing
+        # signed it in - only where the device flow would have run
+        # (github_projects_login_due, which the role's question and flow go
+        # on too), so a VM signed in already, or by the vault token, hears
+        # nothing of it.
+        - name: Say why GitHub's sign-in was not started
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }}: GitHub's sign-in was not started, since its Claude sign-in was skipped:
+              just login {{ inventory_hostname }} --only github starts it.
+          register: claude_vm_github_held_reported
+          when:
+            - claude_vm_github_login_failure is not defined
+            - claude_vm_login_held | bool
+            - github_projects_login_due | default(false) | bool
+
+        # NEXT STEPS: the line above, in place of the role's own report of the
+        # same sign-out, just before it - one line, and the one that says why.
+        - name: Keep what is left to do for the end of the run
+          ansible.builtin.set_stats:
+            data:
+              github_projects_next: "{{ {inventory_hostname: {'github': claude_vm_github_held_reported.msg}} }}"
+            aggregate: true
+            per_host: false
+          when:
+            - claude_vm_github_login_failure is not defined
+            - claude_vm_login_held | bool
+            - github_projects_login_due | default(false) | bool
       rescue:
         - name: Stop the run when the person aborted at the prompt
           ansible.builtin.fail:
             msg: "{{ ansible_failed_result.msg }}"
           when: ansible_failed_result.msg | default('') is search('user requested abort')
 
+        # The role's own failures name the command that retries them; any
+        # other gets it added, so the line NEXT STEPS keeps names it too.
         - name: Remember why this VM's sign-in failed
+          vars:
+            claude_vm_failed_why: "{{ ansible_failed_result.msg | default('the sign-in failed', true) | string | trim }}"
+            claude_vm_retry: just login {{ inventory_hostname }} --only github
           ansible.builtin.set_fact:
-            claude_vm_github_login_failure: "{{ ansible_failed_result.msg | default('the sign-in failed', true) }}"
+            claude_vm_github_login_failure: >-
+              {{ claude_vm_failed_why if claude_vm_retry in claude_vm_failed_why
+                 else claude_vm_failed_why ~ ('' if claude_vm_failed_why is search('[.!?]$') else '.')
+                      ~ ' Retry it with: ' ~ claude_vm_retry }}
 
         - name: Say why, and go on with the next VM
           ansible.builtin.debug:
             msg: "{{ claude_vm_github_login_failure }}"
+
+        # NEXT STEPS: the line above, which replaces whatever an earlier report
+        # of the run left for this VM's sign-in.
+        - name: Keep what is left to do for the end of the run
+          ansible.builtin.set_stats:
+            data:
+              github_projects_next: "{{ {inventory_hostname: {'github': claude_vm_github_login_failure}} }}"
+            aggregate: true
+            per_host: false
 
 # The rest of the role, after the last approval, for every VM signed in just
 # now, and under just login x --only github for every VM named: the credential
@@ -160,6 +230,15 @@
         - name: Say why
           ansible.builtin.debug:
             msg: "{{ claude_vm_configure_failures | last }}"
+
+        # NEXT STEPS: the line above, which replaces what the role's own
+        # reports of this VM's GitHub left.
+        - name: Keep what is left to do for the end of the run
+          ansible.builtin.set_stats:
+            data:
+              github_projects_next: "{{ {inventory_hostname: {'github': claude_vm_configure_failures | last}} }}"
+            aggregate: true
+            per_host: false
 
 # just deploy carries on past a sign-in that failed, and raises the work after
 # a sign-in at its own end; just login --only github exists to sign in, so here the
