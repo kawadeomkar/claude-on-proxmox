@@ -565,7 +565,7 @@ def test_no_other_test_or_scenario_draws_a_run():
         if "CLAUDE_ON_PROXMOX_LIVE" in line:
             naming.add(recipe)
     assert naming <= set(_recipes().RECIPES), naming
-    assert {"deploy", "login"} <= naming, naming
+    assert {"deploy", "login", "destroy"} <= naming, naming
 
 
 def _recipes():

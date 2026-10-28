@@ -151,6 +151,15 @@ LIVE_TESTS = {
     # login.yml as test_sign_in_plays.py runs it: its stand-in VMs and extra vars, which keep every sign-in off this
     # machine's browser, clipboard and terminal.
     "test_login_live.py": ("from test_sign_in_plays import", "_extra(", "_hosts("),
+    # destroy.yml as test_release.py runs it: its stand-in VMs, and every path a run writes - the saved sessions, the
+    # managed SSH config and the user's - in the test's own directory.
+    "test_destroy_live.py": (
+        "tr._hosts(",
+        '"destroy_sessions_dir"',
+        '"claude_ssh_config_file"',
+        '"claude_ssh_user_config"',
+        '"claude_ssh_config_include": False',
+    ),
     "test_status_live.py": ("status_root",),
 }
 

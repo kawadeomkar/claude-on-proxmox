@@ -87,8 +87,10 @@ with one line for every VM you named, saying what became of it:
 
 A VM that is still there keeps its SSH alias, which its line says, as does a line of the run's own that
 names every alias kept and why; run `just destroy` for it again once the cause is fixed, and the run fails
-while any VM was not deleted. Each VM's line is in NEXT STEPS too, once, except a VM deleted and released
-with nothing left to do by hand.
+while any VM was not deleted, naming each. At a terminal the run is drawn live once you have answered, a row
+for each VM's release from each service and each VM's state on it ([During a run](runs.md)); the lines above
+print whole above it. Each VM's line is in NEXT STEPS too, once, except a VM deleted and released with nothing
+left to do by hand.
 `destroy_release: false` deletes the VMs without releasing them, and says the same; their sessions are
 still saved first, a stopped VM started for it, unless `destroy_save_sessions` is off too.
 

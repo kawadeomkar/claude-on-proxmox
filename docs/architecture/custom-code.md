@@ -179,8 +179,8 @@ JSON report (`_left_to_do`), in every state they already run.
 
 ### `just deploy`, drawn live
 
-`CLAUDE_ON_PROXMOX_LIVE`, which the justfile's recipes drawn live export - `deploy`, `login` - set to what was run
-(`deploy --check alpha`, `login alpha beta`, the run's title), hands every event of the run to an engine, `filter_plugins/live_ansible.py`, at
+`CLAUDE_ON_PROXMOX_LIVE`, which the justfile's recipes drawn live export - `deploy`, `login`, `destroy` - set to
+what was run (`deploy --check alpha`, `login alpha beta`, the run's title), hands every event of the run to an engine, `filter_plugins/live_ansible.py`, at
 verbosity 0 and with a run log to send the stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above.
 The callback then keeps only its classic output, which the engine prints through it too. The engine takes the
 variable out of the environment when the playbook starts, so nothing the run starts - the VS Code whose terminals a
@@ -194,8 +194,12 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   (`play.get_path()`): template, provision, configure, `SSH aliases`, the three sign-in playbooks as one stage
   `sign in`, VS Code. A play the declaration does not name - `discover.yml`, which configure and each sign-in
   import, and `deploy.yml`'s first - takes the stage of the play after it, else of the one before, and a test
-  holds the declaration to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is its role; in the
-  sign-in stage, the sign-in, for every play of its file. A quiet stage - `finish`, deploy's last play, which only
+  holds the declaration to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is the declared step
+  whose `blocks` name a block around it, at any depth and whatever role or file it comes from - destroy's release
+  of each service, where `claude_code`'s entry points fall in two blocks, the save's and the sign-out's - else, in
+  the sign-in stage, the sign-in, for every play of its file, else its role; an include's tasks are counted in the
+  step they will run in, by the same rule, when the playbook starts and when it announces them. A stage's row may
+  say the VMs a fact of the run names (`Info`: destroy's check, `started beta`, from `claude_vm_release_started`). A quiet stage - `finish`, deploy's last play, which only
   raises again what failed after the sign-ins - is counted but never drawn, unless one of its tasks fails; a step
   whose every task was skipped reads `–`, never `✓`. A run of one stage (`--only configure`) is drawn as that
   stage's steps, with no row of its own: the footer says `step 2 of 6`, the summary's table is `STEPS`.
@@ -229,11 +233,16 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   the one under it. One in a `rescue` or an `always` is the run's, unless a block further out has it among its
   own, and a rescue the play's `--tags` leave no task of takes nothing, as Ansible then fails the host.
 - **A failure raised again.** A task the declaration names under `raises` - deploy's and configure's last plays'
-  `fail` of `claude_vm_configure_failures` - repeats failures rescues took earlier, which the engine keeps per
-  host with the names of the blocks around them. It is drawn under each cause the declaration's blocks name, by
+  `fail` of `claude_vm_configure_failures`, destroy's `Fail for each VM that was not deleted` - repeats failures
+  rescues took earlier, which the engine keeps per host with the names of the blocks around them: on its own host,
+  or with `hosts="any"` on every host, as destroy's last play, on this machine, raises what failed on each VM; the
+  VMs it repeats a failure of are then the ones the summary's head names. It is drawn under each cause the declaration's blocks name, by
   the cause's step - `✗ tailscale · alpha: Join the tailnet` and what it said - followed by the raise's own words
   but those that only repeat a cause's; the cause's step counts the failure, and the raise is `↑` in the window.
-  A failing task the declaration does not name is an ordinary failure.
+  A failing task the declaration does not name is an ordinary failure, unless it is one the declaration names
+  under `declines` - destroy's `Abort unless confirmed` - which is the person's answer, not a failure: its line
+  is said once (`Nothing was deleted: the deletion was not confirmed.`), the summary is its head alone,
+  `declined`, and so is the title.
 - **What a VM may set.** Only `proxmox_vm`'s tasks give the summary a VM's ID and address: a task on the VM
   could set any fact. A declaration may also name the playbooks whose `add_host` does (`addresses_from`:
   discovery, for `just login`), and then only the host's `ansible_host`, kept when it parses as an IPv4 address,
@@ -241,14 +250,20 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   else a VM said does. The VMs the run was given come from its `vm_name` extra var, each held to a VM name's
   pattern. Each VM's outcome in a declared step comes from the facts its declaration names (`outcomes`:
   `claude_code_login_done`, `claude_code_login_skipped`, `claude_vm_claude_login_failure` and the like), of
-  which the engine keeps only whether each holds, never its text; a VM a task could not reach though it ignored
-  that (a sign-in's ping) is marked unreachable, and a failure raised again marks its VM in its cause's step.
+  which the engine keeps only whether each holds, never its text; a fact that says a VM failed fails the step of
+  the task that set it, as the failure its rescue took, and a stage may declare them for its steps
+  (destroy's `delete`: `claude_vm_delete_error`, `claude_vm_save_error`, `claude_vm_deleted`). A VM a task could
+  not reach though it ignored that (a sign-in's ping) is marked unreachable, and a failure raised again marks its
+  VM in its cause's step, once however often it is raised.
 - **The screen.** The region (§7.8) draws the frame, which `run_view` folds to the height before the region
   cuts it, and steps aside for every prompt. The running step's last five tasks show (the declaration's
-  `window`), never the check of an included role's arguments, and a `meta` task Ansible starts once per host once.
-  A run of two or more VMs says each VM's state on each step's row - `alpha ✓ · beta ⠴` - and the VM on each task
-  line; in a serial play, whose turn it is (`alpha ⠴ (1 of 3)`, counted in the order the play reaches the VMs -
-  the cluster listing's, not the order they were named in), the VMs whose turn has not come `○`. The tab's title says where the run is, and the bell rings once per wait and at the end. A wait is a task
+  `window`), never the check of an included role's arguments, and a `meta` task, which Ansible starts once for
+  each host, each just before that host's result, once: a host an `end_host` ends sends none, and is `–`, left as
+  it is. A run of two or more VMs says each VM's state on each step's row - `alpha ✓ · beta ⠴` - and the VM on
+  each task line: while a step of a play that is not serial runs, every VM still in the play is at it, and one
+  the play left or failed is so; in a serial play, whose turn it is (`alpha ⠴ (1 of 3)`, counted in the order the
+  play reaches the VMs - the cluster listing's, not the order they were named in), the VMs whose turn has not come
+  `○`. The tab's title says where the run is, and the bell rings once per wait and at the end. A wait is a task
   tagged `attention_browser` that is not a block's `debug`: from its first retry, or once it has run two seconds
   (`WAIT_AFTER`) - a wait that never retries, GitHub's device flow, is known by that, and a skipped one is over
   first. Its time is counted as yours, and so is a prompt's: the region tells the engine when a prompt takes the
@@ -256,8 +271,8 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   prompt only when nothing has asked for the person for ten seconds. A retried task that waits for a machine -
   the guest agent's address - says its try and its limit on its line (`try 3 of 37 · up to 2:55`).
 - **The end.** At the stats event the region is erased for good, PLAY RECAP goes to the log, and the summary
-  (`Run.summary`) and NEXT STEPS print, the title `done`, or `failed` when a VM failed. The summary's head is
-  one of three: `done in 6 min 12 s`; `done in 6 min 12 s · 1 VM failed: beta`, when the run started its last
+  (`Run.summary`) and NEXT STEPS print, the title `done`, or `failed` when a VM failed. The summary's head is,
+  but for an answer that declined the run, one of three: `done in 6 min 12 s`; `done in 6 min 12 s · 1 VM failed: beta`, when the run started its last
   play and only some of its two or more VMs failed; or `failed after 2 min 4 s at common`, naming where the first
   failure was drawn. The summary gives each VM a line per report, cut to the width, the report being whole above:
   one of several lines, or longer than a line, by its first sentence; a report run again in a later play - the
@@ -272,7 +287,7 @@ by the title's first word: `just deploy` is the first, and §7.8 says how anothe
   ends (`Run.ended_lines`), the reports, and the summary.
 
 No test or scenario sets the variable - the harness passes on only `PASSED_ON`, and `test_deploy_live.py`
-fails if a tracked file other than the callback, the engine, the declarations, the justfile's `deploy` recipe,
+fails if a tracked file other than the callback, the engine, the declarations, the justfile's recipes drawn live,
 the live tests' kit, the live tests that draw a playbook through the engine - each by name - and `test_justfile.py`,
 whose `ansible-playbook` only records, names it - so nothing a test pins is drawn.
 
@@ -497,12 +512,13 @@ each module that needs another loads it by path, once, as `claude_on_proxmox_<st
 callbacks, `status.py`, `run_view.py` and `live_ansible.py` share one copy of each.
 
 **Another recipe, drawn live.** A recipe whose playbook is a run joins `just deploy` without code of its own, as
-`just login` has: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its title, as `deploy`'s does, and its
-declaration in `filter_plugins/live_recipes.py`, named by the title's first word, says what its run is made of -
-its stages, by playbook or by play, a quiet one counted but never drawn (discovery, a last play that only raises);
-each stage's steps, by playbook; each step's `outcomes`, the facts that mark each VM; the tasks that raise again
-what rescues took (`raises`, with their causes' blocks, and the unreachable VMs a ping ignored); how many tasks a
-window shows; the word for a step of a run of one stage (`noun`: `sign-in 2 of 3`) and the summary's columns;
+`just login` and `just destroy` have: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its title, as `deploy`'s
+does, and its declaration in `filter_plugins/live_recipes.py`, named by the title's first word, says what its run is
+made of - its stages, by playbook or by play, a quiet one counted but never drawn (discovery, a last play that only
+raises), and the VMs a fact names on a stage's row (`info`); each stage's steps, by playbook or by the blocks around
+their tasks; each step's `outcomes`, or its stage's, the facts that mark each VM; the tasks that raise again what
+rescues took (`raises`, with their causes' blocks, their hosts, and the unreachable VMs a ping ignored); the tasks
+whose failure is a person's answer (`declines`, with the line said instead); how many tasks a window shows; the word for a step of a run of one stage (`noun`: `sign-in 2 of 3`) and the summary's columns;
 the playbooks whose `add_host` gives a VM's address and ID; and the playbook whose first play reports what the run
 will do. Its reports, waits and NEXT STEPS records follow §7.5's conventions, which the engine already reads.
 Anything a declaration cannot say becomes a new field and new code in the engine, never code of one command's
