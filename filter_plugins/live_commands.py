@@ -486,7 +486,8 @@ class Part:
         self.warnings = []
         self.interrupted = int(bool(interrupted))
         self.child = None
-        self.under = []
+        self.under = {}
+        self.blind = []
         self.reading = False
         self.records = {}
         self.failed_hosts = []
@@ -527,21 +528,25 @@ class Part:
         if self.child is None:
             return
         if self.interrupted > 1:
-            processes.end(self.child.pid, *self.under, signum=signal.SIGKILL)
+            processes.end(self.child.pid, remembered=self.under, signum=signal.SIGKILL, blind=self.blind.append)
         else:
             # What the child has started, remembered before it is signalled: a child that ends at the Ctrl-C leaves
-            # them under PID 1, where a second Ctrl-C could no longer find them from it.
-            self.under = processes.descendants(self.child.pid)
+            # them under PID 1, or a subreaper, where a second Ctrl-C could no longer find them from it.
+            try:
+                self.under = processes.snapshot(self.child.pid)
+            except processes.Blind as error:
+                self.blind.append(str(error))
             with contextlib.suppress(OSError):
                 os.killpg(self.child.pid, signal.SIGINT)
         if self.interrupted > 1 and self.reading:
             raise Abandoned
 
     def _outside(self, signum, _frame):
-        # The child's session has no terminal to signal it: it gets the signal from here, and the part unwinds.
+        # The child's session has no terminal to signal it: it gets the signal from here - with everything it started,
+        # since a playbook sends its detached task worker a SIGTERM on but not a SIGHUP, which would leave the worker
+        # behind - and the part unwinds.
         if self.child is not None:
-            with contextlib.suppress(OSError):
-                os.killpg(self.child.pid, signum)
+            processes.end(self.child.pid, signum=signum, blind=self.blind.append)
         raise Ended(signum)
 
     def abandon(self):
@@ -549,11 +554,20 @@ class Part:
         recipe's end - each as far as a terminal that may be gone allows."""
         with contextlib.suppress(Exception):
             self.out.finish()
+        self._said_blind()
         if self.run is not None:
             with contextlib.suppress(Exception):
                 state = self.run.dump(self._now(), self.records, self.failed_hosts)
                 state["stopped"] = True
                 save_state(self.state_path, state)
+
+    def _said_blind(self):
+        # A process table that could not be read, said in the log once the handler that found so has returned: the
+        # child's group was ended, what had left it was not.
+        for said in self.blind:
+            with contextlib.suppress(Exception):
+                self._line(f"tools/live: {said}".encode())
+        self.blind = []
 
     def start(self):
         now = self._now()
@@ -623,6 +637,7 @@ class Part:
                 child.wait(timeout=5)
         self.stop.set()
         poller.join()
+        self._said_blind()
         # Killed by a signal, as the shell says it: 128 and the signal's number.
         rc = 128 - rc if rc < 0 else rc
         return self._ended(INTERRUPTED if self.interrupted else rc)

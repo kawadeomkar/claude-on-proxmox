@@ -574,10 +574,12 @@ is drawn as one run, its parts in turn:
   the pipe to its end, so the child's last words reach the log, marks its task stopped (`■`) and exits 130; a second
   Ctrl-C ends everything the child started and reads no more of it: its group, and every process the part found
   under the child before the first Ctrl-C went out (`filter_plugins/processes.py`, which reads the table `ps`
-  prints), since one in a session of its own - ansible-core's task worker, detached by `WorkerProcess._detach`;
-  a nested run's part - outlives the group, and a child that ended at the first leaves them under PID 1, where no
-  walk from it finds them. SIGTERM or SIGHUP - a
-  kill, a timeout, the tab closing - is sent on to the child's session, which no terminal signals; the region goes,
+  prints, each process with its start, so a pid another process has by then is left alone), since one in a
+  session of its own - ansible-core's task worker, detached by `WorkerProcess._detach`; a nested run's part -
+  outlives the group, and a child that ended at the first leaves them under PID 1 or a subreaper, where no walk
+  from it finds them. SIGTERM or SIGHUP - a kill, a timeout, the tab closing - is sent on to the child's session,
+  which no terminal signals, and to everything under it, since a playbook sends its task worker a SIGTERM on but
+  not a SIGHUP, which would leave the worker behind; the region goes,
   the echo comes back, the state is saved said stopped, and the part dies of the same signal. A child a signal ended
   exits as the shell says it, 128 and the signal.
 - **The state.** Each part takes over the run's model from the parts before it (`Run.dump` and `Run.adopt`: every

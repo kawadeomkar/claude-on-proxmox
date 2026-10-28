@@ -695,13 +695,15 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   arguments misses. And a suite started with `&` or under nohup has SIGINT, SIGQUIT and SIGHUP ignored in every
   child: a test that sends Ctrl-C starts its child through `harness._default_signals`, or the Ctrl-C reaches
   nothing (the device-flow test hung that way on a VM, never on CI).
-- **ansible-core's task worker detaches: a kill of a playbook's group leaves the task in flight behind.**
-  `WorkerProcess._detach` (2.21) `setsid`s the forked worker and points its stdio at `/dev/null`, so `killpg` on
-  the playbook's group ended the playbook and left that worker reparented to PID 1, idle for good: 46 of them after
+- **ansible-core's task worker detaches: a SIGKILL or SIGHUP to a playbook's group leaves the task in flight.**
+  `WorkerProcess._detach` (2.21) `setsid`s the forked worker and points its stdio at `/dev/null`; the playbook
+  sends a SIGINT or SIGTERM on to it, a SIGKILL or SIGHUP it cannot, so `killpg(SIGKILL)` on the playbook's group
+  ended the playbook and left that worker reparented to PID 1, idle for good: 46 of them after
   a suite hung (2026-10-27), each listed as `ansible-playbook`. `harness._end` and a part's second Ctrl-C
   (`filter_plugins/live_commands.py`) end the whole tree, found by `ps` before anything is signalled
-  (`filter_plugins/processes.py`; a part remembers its child's tree at the first Ctrl-C, since a child that ends
-  there leaves it under PID 1); and every pytest process takes SIGTERM and SIGHUP as a Ctrl-C
+  (`filter_plugins/processes.py`; a part remembers its child's tree, by each process's start, at the first Ctrl-C,
+  since a child that ends there leaves it under PID 1 or a subreaper; an outside SIGTERM or SIGHUP goes to the
+  whole tree); and every pytest process takes SIGTERM and SIGHUP as a Ctrl-C, once,
   (`tests/unit/interrupts.py`; one ignored on the way in, nohup's SIGHUP, stays so), since `tools/live` and CI's
   cancel send them and the default ended a worker at once, its run and that run's tree left behind.
   `test_processes.py` holds all three, under xdist too.

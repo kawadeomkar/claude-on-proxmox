@@ -1,14 +1,19 @@
 """The processes under one, and their end: what a kill must reach beyond the process group it was sent to.
 
 A playbook's task runs in a worker ansible-core forks and detaches - `WorkerProcess._detach` (2.21): `setsid`, its
-stdio on `/dev/null` - a session and process group of its own. A signal to the playbook's group therefore ends the
-playbook and leaves the task in flight behind, reparented to PID 1 and idle for good; a part's child (`tools/live`)
-runs in a session of its own for the same reason, and what it starts may again. `descendants` reads the table `ps`
-prints, which macOS and Linux both have, and must be read before anything is signalled: a dead parent's children
-move to PID 1, where nothing leads to them. `end` signals a process, every process under it and each of their
-groups but this process's own, so a child started in this group is ended alone, never this process with it; a pid
-remembered from before part of the tree ended is signalled only while it is under PID 1, never once another
-process has it.
+stdio on `/dev/null` - a session and process group of its own. ansible-core sends that worker a SIGINT or SIGTERM
+of its own on (`TaskQueueManager._signal_handler`), but a SIGKILL, or a SIGHUP, which it does not handle, ends the
+playbook and leaves the task in flight behind, reparented and idle for good; a part's child (`tools/live`) runs in
+a session of its own for the same reason, and what it starts may again. `descendants` reads the table `ps` prints,
+which macOS and Linux both have, and must be read before anything is signalled: a dead parent's children move to
+PID 1, or to a subreaper, where nothing leads to them. `snapshot` keeps a tree with each process's start, for an
+`end` after part of it has gone: a pid remembered is signalled only while the process of that start is still at it,
+never once another has it. `end` signals a process, every process under it and each of their groups but this
+process's own, so a child started in this group is ended alone, never this process with it; the root's group is
+signalled whether or not it can still be looked up, since both callers start it as a group leader, a child that
+has exited, a zombie, no longer answers for its group on macOS, and its children moved on the moment it exited,
+found under it no more. The interrupts are held off while the table is read
+and the tree signalled, since a second one - a hangup moments after a kill - would otherwise end the end itself.
 
 Loaded by path as claude_on_proxmox_processes (filter_plugins/live_commands.py, tests/unit/harness.py); no filters.
 """
@@ -20,26 +25,33 @@ import os
 import signal
 import subprocess
 
+# Held off while a tree is read and signalled: one of them arriving then would abandon the end half way.
+HELD = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
-def _parents() -> dict[int, int]:
-    """Every process by pid, with its parent's, as ps lists them now; {} when ps fails."""
+
+class Blind(OSError):
+    """The process table could not be read: ps is missing, or failed."""
+
+
+def _table() -> dict[int, tuple[int, str]]:
+    """Every process by pid, with its parent's and its start, as ps lists them now."""
     try:
-        table = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
-        return {}
-    parents = {}
-    for line in table.splitlines():
-        fields = line.split()
-        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
-            parents[int(fields[0])] = int(fields[1])
-    return parents
+        out = subprocess.run(["ps", "-axo", "pid=,ppid=,lstart="], capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise Blind(f"the process table could not be read ({error}): the group ended, what left it not") from error
+    table = {}
+    for line in out.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) == 3 and fields[0].isdigit() and fields[1].isdigit():
+            table[int(fields[0])] = (int(fields[1]), fields[2].strip())
+    return table
 
 
-def descendants(pid: int, parents: dict[int, int] | None = None) -> list[int]:
-    """Every process under pid as ps lists them now, each before its own children; [] when none, or ps fails."""
-    parents = _parents() if parents is None else parents
+def descendants(pid: int, table: dict[int, tuple[int, str]] | None = None) -> list[int]:
+    """Every process under pid as ps lists them now, each before its own children; Blind when ps cannot be read."""
+    table = _table() if table is None else table
     children: dict[int, list[int]] = {}
-    for child, parent in parents.items():
+    for child, (parent, _) in table.items():
         children.setdefault(parent, []).append(child)
     found: list[int] = []
     queue = [pid]
@@ -51,30 +63,44 @@ def descendants(pid: int, parents: dict[int, int] | None = None) -> list[int]:
     return found
 
 
-def end(pid: int, *remembered: int, signum: int = signal.SIGKILL) -> list[int]:
+def snapshot(pid: int) -> dict[int, str]:
+    """Every process under pid with its start, to remember a tree by before part of it ends."""
+    table = _table()
+    return {each: table[each][1] for each in descendants(pid, table)}
+
+
+def end(pid: int, *, remembered: dict[int, str] | None = None, signum: int = signal.SIGKILL, blind=None) -> list[int]:
     """Signal a process, every process under it and their groups other than this one's; the pids signalled.
 
-    remembered: what was under pid before part of it ended - a child that exits at a Ctrl-C leaves its own children,
-    those in sessions of their own, under PID 1, where a walk from the child no longer finds them. Each is signalled,
-    with what is under it, only while it is under PID 1 or still under pid: any other parent means the pid is another
-    process's by now, reused, and none of this tree's.
+    remembered, a snapshot from before part of the tree ended: each pid in it is signalled, with what is under it,
+    only while a process of that start is still at it. blind, called with the message, is how a table that cannot be
+    read is said: the process and its group are then ended as before, and what left the group is not.
     """
-    parents = _parents()
-    pids = [pid, *descendants(pid, parents)]
-    for each in remembered:
-        if each not in pids and parents.get(each) == 1:
-            pids.extend(found for found in (each, *descendants(each, parents)) if found not in pids)
-    own = os.getpgrp()
-    groups = set()
-    for each in pids:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            groups.add(os.getpgid(each))
-    for group in groups - {own}:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(group, signum)
-    for each in pids:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.kill(each, signum)
+    held = signal.pthread_sigmask(signal.SIG_BLOCK, HELD)
+    try:
+        try:
+            table = _table()
+        except Blind as error:
+            table = {}
+            if blind is not None:
+                blind(str(error))
+        pids = [pid, *descendants(pid, table)]
+        for each, started in (remembered or {}).items():
+            if each not in pids and table.get(each, (None, None))[1] == started:
+                pids.extend(found for found in (each, *descendants(each, table)) if found not in pids)
+        own = os.getpgrp()
+        groups = {pid}
+        for each in pids:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                groups.add(os.getpgid(each))
+        for group in groups - {own}:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(group, signum)
+        for each in pids:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(each, signum)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, held)
     return pids
 
 

@@ -50,6 +50,7 @@ import termios
 import time
 import urllib.parse
 import urllib.request
+import warnings
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -274,8 +275,11 @@ def _processes():
 def _end(process: subprocess.Popen) -> None:
     """Kill a run and everything under it: its group, and what left the group - ansible-core's task worker, detached
     into a session of its own, which a kill of the group alone left behind idle for good, and a nested run's parts -
-    each found before any is signalled (filter_plugins/processes.py), an async job's wrapper among them."""
-    _processes().end(process.pid, signum=signal.SIGKILL)
+    each found before any is signalled (filter_plugins/processes.py); though not an async job's wrapper, which
+    daemonises itself before any test could call this, and leaves."""
+    _processes().end(
+        process.pid, signum=signal.SIGKILL, blind=lambda said: warnings.warn(said, RuntimeWarning, stacklevel=3)
+    )
     process.wait()
 
 

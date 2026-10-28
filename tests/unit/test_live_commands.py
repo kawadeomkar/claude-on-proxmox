@@ -408,12 +408,13 @@ def test_a_second_ctrl_c_ends_a_part_whose_childs_group_will_not(tmp_path):
     # the pipe, until the second ends everything the child started: its group, and a grandchild in a session of its
     # own - ansible-core's task worker, a nested run's part - which outlives the group.
     detached = tmp_path / "detached"
+    # 'waiting' last, once the handler is in and the grandchildren started: a Ctrl-C before that ended the child.
     holds = (
-        "import signal, subprocess, sys; print('waiting', flush=True); "
+        "import signal, subprocess, sys; "
         "subprocess.Popen(['sh', '-c', 'trap \\\"\\\" INT; sleep 60']); "
         "apart = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True); "
         f"open('{detached}', 'w').write(str(apart.pid)); "
-        "signal.signal(signal.SIGINT, lambda *_: sys.exit(130)); signal.pause()"
+        "signal.signal(signal.SIGINT, lambda *_: sys.exit(130)); print('waiting', flush=True); signal.pause()"
     )
     argv, environment, state = _recipe(tmp_path, [_part("holds", holds)])
     sent = []
