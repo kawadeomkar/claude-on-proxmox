@@ -11,8 +11,8 @@ CLAUDE_ON_PROXMOX_LIVE, its title, and keeps only its classic output for itself.
 Either way the default callback still renders every task, sent to the run's log alone (display's log_only), so the
 log is what it would be without the engine; the run's own words go to the screen in colour and to the log without;
 and a summary replaces PLAY RECAP on the screen, which the log keeps, followed by NEXT STEPS. What the run is made
-of - its stages and steps - is its recipe's declaration (filter_plugins/live_recipes.py); nothing here names a
-command (docs/architecture/custom-code.md §7.5, §7.8).
+of - its stages and steps, the failures it raises again - is its recipe's declaration
+(filter_plugins/live_recipes.py); nothing here names a command (docs/architecture/custom-code.md §7.5, §7.8).
 
 Loaded by path as claude_on_proxmox_live_ansible, as every module here loads another; it has no filters of its own.
 """
@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import atexit
 import importlib.util
+import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -51,9 +53,17 @@ LIVE_ENV = "CLAUDE_ON_PROXMOX_LIVE"
 WAITING_TAG = "attention_browser"
 DEBUG_ACTIONS = frozenset({"debug", "ansible.builtin.debug", "ansible.legacy.debug"})
 STATS_ACTIONS = frozenset({"set_stats", "ansible.builtin.set_stats", "ansible.legacy.set_stats"})
+INCLUDE_TASKS = frozenset({"include_tasks", "ansible.builtin.include_tasks", "ansible.legacy.include_tasks"})
+INCLUDE_ROLE = frozenset({"include_role", "ansible.builtin.include_role", "ansible.legacy.include_role"})
+ARGUMENT_CHECKS = frozenset({"validate_argument_spec", "ansible.builtin.validate_argument_spec"})
 # The facts the provision stage says a VM by.
 VM_FACTS = ("proxmox_vm_resolved_id", "proxmox_vm_address", "proxmox_vm_exists")
 FAILURE_LINES = 20
+# A prompt rings the bell when the person has had nothing to answer for this long: they may have looked away.
+QUIET_SECONDS = 10.0
+# A task name's file prefix, as an included file's tasks are named: "session_read | Read the sessions".
+FILE_PREFIX = re.compile(r"^[a-z0-9_]+ \| ")
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def from_environment(callback, playbook):
@@ -68,18 +78,61 @@ def from_environment(callback, playbook):
     return engine
 
 
+def vm_names(extra_vars):
+    """The VMs a run was given (vm_name, comma-separated), from the command line's extra vars: each a plain name."""
+    names = ""
+    for given in extra_vars or ():
+        given = str(given).strip()
+        if given.startswith("{"):
+            try:
+                names = str(json.loads(given).get("vm_name", names) or "")
+            except (ValueError, AttributeError):
+                continue
+        elif given.startswith("vm_name="):
+            names = given.split("=", 1)[1]
+    out = []
+    for name in names.split(","):
+        name = plain_text(name).strip()
+        if NAME.match(name) and name not in out:
+            out.append(name)
+    return out
+
+
 # --- what a play compiled to -------------------------------------------------------------------------------------
-def tasks_of(blocks, out, play=None):
-    """Each task a play compiled to, as (its ID, its role's name or None), blocks' rescue and always included, and
-    only those --tags and --skip-tags leave, as the play's iterator filters them."""
+def tasks_of(blocks, out, play=None, search=()):
+    """Each task a play compiled to, as (its ID, its role's name or None, meta), blocks' rescue and always included,
+    and only those --tags and --skip-tags leave, as the play's iterator filters them. meta says, for an include whose
+    file is literal, how many tasks it will announce (include) and, for include_role, the role they are in."""
     for block in blocks:
         for part in (block.block, block.rescue, block.always):
             for item in part or []:
                 if hasattr(item, "block"):
-                    tasks_of([item], out, play)
+                    tasks_of([item], out, play, search)
                 elif not getattr(item, "implicit", False) and tagged_in(item, play):
-                    out.append((item._uuid, role_of(item)))
+                    out.append((item._uuid, role_of(item), _include_meta(item, search)))
     return out
+
+
+def _include_meta(task, search):
+    """For an include whose file a playbook names literally: the count of the tasks it will announce."""
+    args = getattr(task, "args", None) or {}
+    try:
+        if task.action in INCLUDE_TASKS:
+            target = args.get("file") or args.get("_raw_params")
+            if not isinstance(target, str) or "{{" in target:
+                return {}
+            base = os.path.dirname(str(task.get_path()).split(":", 1)[0])
+            path = target if os.path.isabs(target) else os.path.join(base, target)
+            return {"include": view.count_tasks(path)} if os.path.isfile(path) else {}
+        if task.action in INCLUDE_ROLE:
+            name, tasks_from = args.get("name"), args.get("tasks_from")
+            if not isinstance(name, str) or "{{" in name or "{{" in str(tasks_from or ""):
+                return {}
+            path = view.role_tasks_file(name.split(".")[-1], tasks_from, search)
+            return {"include": view.count_tasks(path), "include_role": name.split(".")[-1]} if path else {}
+    except Exception:  # noqa: BLE001 - a count is a nicety: an include whose file cannot be read is counted as it runs
+        return {}
+    return {}
 
 
 def tagged_in(task, play):
@@ -93,6 +146,16 @@ def tagged_in(task, play):
 
 def role_of(task):
     return task._role.get_name(include_role_fqcn=False) if getattr(task, "_role", None) else None
+
+
+def blocks_of(task):
+    """The names of the blocks around a task, innermost first."""
+    names, node = [], getattr(task, "_parent", None)
+    while node is not None:
+        if hasattr(node, "block") and getattr(node, "name", None):
+            names.append(str(node.name))
+        node = getattr(node, "_parent", None)
+    return names
 
 
 def rescued(task, play=None):
@@ -130,6 +193,16 @@ def _keeps(items, play):
     return False
 
 
+def play_batches(play):
+    """How many batches a play runs in: one, unless it is serial."""
+    try:
+        inventory = play._variable_manager._inventory
+        hosts = len(inventory.get_hosts(play.hosts, order=play.order))
+        return view.batches(hosts, play.serial)
+    except Exception:  # noqa: BLE001 - a count is a nicety
+        return 1
+
+
 class Engine:
     """One live run: the callback's events in; the region, the run's own words and the summary out."""
 
@@ -139,13 +212,20 @@ class Engine:
         self.mode = "live" if live.can_draw() else "lines"
         self.run = None
         self.out = live.Output(
-            self.display, frame=self._frame, live=self.mode == "live", color=not C.ANSIBLE_NOCOLOR, to_log=True
+            self.display,
+            frame=self._frame,
+            live=self.mode == "live",
+            color=not C.ANSIBLE_NOCOLOR,
+            to_log=True,
+            on_prompt=self.prompt,
         )
         self.color = self.out.color
         self.region = self.out.region
         self.plan_play = None
         self.title = title
         self._failed_items = {}  # (task ID, host): the results of a loop's items that failed, said with the task
+        self._rescued = {}  # host: what each failure a rescue took said, for a later raise of it
+        self._attended = self._now()  # when the person last had something to answer: the start, a bell, a prompt
 
     # --- what the run says, and where it goes ------------------------------------------------------------------
     # The run's own words and anything on stderr - warnings, deprecations, errors - stay on the screen; the rest,
@@ -167,14 +247,20 @@ class Engine:
         return time.monotonic()
 
     def _wrapped(self, head, lines, style=""):
-        """head, then lines wrapped under where head ends, whole - never cut: (coloured, plain) pairs for print."""
+        """head, then lines wrapped under where head ends, whole - never cut: (coloured, plain) pairs for print. A
+        line keeps its own indent, its wrapped pieces under where its words start."""
         column = screen.width(head)
         room = max(20, self._width() - 1 - column)
         out = []
-        pieces = [piece for line in lines for piece in screen.fill(line, room)]
-        for index, piece in enumerate(pieces):
-            runs = [*(head if index == 0 else [(" " * column, "")]), (piece, style)]
-            out.append((screen.render(runs, self.color), screen.render(runs, False)))
+        first = True
+        for line in lines:
+            indent = len(line) - len(line.lstrip(" "))
+            pieces = screen.fill(line.strip(), max(10, room - indent)) if line.strip() else [""]
+            for piece in pieces:
+                lead = head if first else [(" " * column, "")]
+                first = False
+                runs = [*lead, (" " * indent + piece, style)]
+                out.append((screen.render(runs, self.color), screen.render(runs, False)))
         return out
 
     def _frame(self, cols, rows, glyph):
@@ -184,9 +270,14 @@ class Engine:
             now = self._now()
             # A tagged wait that never retries, GitHub's device flow, is known by how long it runs.
             if self.run.settle(now):
-                self.region.bell()
-            self.region.title(self.run.title_text(now))
+                self._bell(now)
+            self.out.title(self.run.title_text(now))
             return self.run.frame(now, cols, rows, glyph, self.color)
+
+    def _bell(self, now):
+        self._attended = now
+        if self.mode == "live":
+            self.out.bell()
 
     def _after(self):
         """After each event: in lines mode, a line for each step that ended; live, a redraw now."""
@@ -195,7 +286,7 @@ class Engine:
             if ended:
                 self.print([(line, line) for line in ended])
         else:
-            self.region.redraw()
+            self.out.redraw()
 
     def _log_path(self):
         path = os.environ.get("ANSIBLE_LOG_PATH", "")
@@ -206,17 +297,39 @@ class Engine:
         except ValueError:
             return path
 
+    def _who(self, host):
+        """Whom a line is about: a VM, or for this machine the run's one VM, else this machine."""
+        if host != "localhost":
+            return host
+        return self.run.names[0] if len(self.run.names) == 1 else "this machine"
+
+    @staticmethod
+    def _name(task):
+        """A task's name as drawn: without its role's prefix, which its step says, nor its file's."""
+        name = task.get_name().strip()
+        role = role_of(task)
+        if role and name.startswith(role + " : "):
+            name = name[len(role) + 3 :]
+        return FILE_PREFIX.sub("", name)
+
     # --- the playbook ------------------------------------------------------------------------------------------
     def start(self, playbook):
-        check = bool((context.CLIARGS or {}).get("check"))
-        self.run = view.Run(self.title, self._now(), check=check, log=self._log_path())
+        cli = context.CLIARGS or {}
+        self.run = view.Run(
+            self.title,
+            self._now(),
+            check=bool(cli.get("check")),
+            log=self._log_path(),
+            vms=vm_names(cli.get("extra_vars")),
+        )
+        search = [os.path.join(os.getcwd(), "roles"), *C.DEFAULT_ROLES_PATH]
         plays = []
         for play in playbook.get_plays():
             try:
-                tasks = tasks_of(play.compile(), [], play)
+                tasks = tasks_of(play.compile(), [], play, search)
             except Exception:  # noqa: BLE001 - a count is a nicety: a play that will not compile here still runs
                 tasks = []
-            plays.append((play._uuid, play.get_path(), tasks))
+            plays.append((play._uuid, play.get_path(), tasks, play.get_name()))
         self.run.plays(plays)
         first = playbook.get_plays()[:1]
         if first and Path(str(first[0].get_path()).split(":", 1)[0]).name in self.run.recipe.plan:
@@ -231,20 +344,18 @@ class Engine:
 
     def _stopped_title(self):
         if self.run.finished is None:
-            self.region.title(f"{self.run.title} · stopped")
+            self.out.title(f"{self.run.title} · stopped")
 
     def play_start(self, play):
+        batches = play_batches(play) if play._uuid not in self.run.play_batches else 1
         with self.display._lock:
-            self.run.play_start(play._uuid, play.get_name(), play.get_path())
+            self.run.play_start(play._uuid, play.get_name(), play.get_path(), batches=batches)
 
     def task_start(self, task):
         with self.display._lock:
-            name = task.get_name().strip()
-            role = role_of(task)
-            if role and name.startswith(role + " : "):
-                name = name[len(role) + 3 :]
             waits = WAITING_TAG in task.tags and task.action not in DEBUG_ACTIONS
-            self.run.task(task._uuid, name, role, self._now(), waits=waits)
+            hidden = bool(getattr(task, "implicit", False)) or task.action in ARGUMENT_CHECKS
+            self.run.task(task._uuid, self._name(task), role_of(task), self._now(), waits=waits, hidden=hidden)
             self._after()
 
     def include(self, included_file):
@@ -257,7 +368,20 @@ class Engine:
                 path = view.role_tasks_file(role, tasks_from, search)
             else:
                 role, path = role_of(task), str(included_file._filename)
-            self.run.include(role, view.count_tasks(path) if path else 0)
+            self.run.include(role, view.count_tasks(path) if path else 0, key=task._uuid)
+
+    def prompt(self, up):
+        """A prompt took the screen (up) or was answered: the person's time; and the bell, when they have had nothing
+        to answer for a while."""
+        now = self._now()
+        with self.display._lock:
+            self.run.prompt(up, now)
+        if up:
+            if now - self._attended >= QUIET_SECONDS:
+                self._bell(now)
+            self.out.title(f"{self.run.title} · waiting for you")
+        else:
+            self._attended = now
 
     # --- results -----------------------------------------------------------------------------------------------
     def runner_start(self, host, task):
@@ -309,18 +433,26 @@ class Engine:
                             self.run.record(str(vm), str(matter), plain_text(line), task=task)
 
     def _report(self, result):
-        """A debug message, a report: whole above the region, wrapped, and a line of the summary, under its VM."""
+        """A debug message, a report: whole above the region, each of its lines kept as a line and wrapped under
+        its own indent, and a line of the summary, under its VM."""
         msg = result.result.get("msg")
         if msg in (None, ""):
             return
         host = result.host.get_name()
         parts = msg if isinstance(msg, list) else str(msg).splitlines()
-        lines = [said for said in (view.one_line(str(part)) for part in parts) if said]
+        # Each line as it reads, indent and all: no escape, control or format character - a bidi override - is left.
+        lines = [text.visible_text(str(part)).rstrip().expandtabs(4) for part in parts]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
         if not lines:
             return
         plan = self.plan_play is not None and self.run.play == self.plan_play
+        kept = [line for line in lines if line.strip()]
         with self.display._lock:
-            self.run.note(host, " ".join(lines), plan=plan, task=self.run.find(result.task._uuid))
+            note = " ".join(view.one_line(line) for line in kept)
+            self.run.note(host, note, plan=plan, task=self.run.find(result.task._uuid), lines=len(kept))
         # A play on this machine names the VM in its words; anywhere else the VM leads, once.
         if lines[0].startswith(host + ": "):
             lines[0] = lines[0][len(host) + 2 :]
@@ -332,9 +464,39 @@ class Engine:
 
     def failed(self, result, ignore_errors=False):
         outcome = "ignored" if ignore_errors else "rescued" if rescued(result.task, self.cb._play) else "failed"
-        self._result(result, outcome)
-        if outcome == "failed":
+        causes = self._causes(result) if outcome == "failed" else []
+        before = self.run.first_failure
+        # A failure that only raises again what rescues took is the causes' steps', not its own task's.
+        self._result(result, "raised" if causes else outcome)
+        if outcome == "rescued":
+            self._remember(result)
+        elif causes:
+            self._raised(result, causes, first=not before)
+        elif outcome == "failed":
             self._failure(result, "failed")
+
+    def _remember(self, result):
+        """A failure a rescue took, kept for the task that may raise it again later."""
+        with self.display._lock:
+            task = self.run.find(result.task._uuid)
+            where = (task.step or task.stage) if task is not None else ""
+        self._rescued.setdefault(result.host.get_name(), []).append(
+            {
+                "name": self._name(result.task),
+                "where": where,
+                "stage": task.stage if task is not None else None,
+                "step": task.step if task is not None else None,
+                "blocks": set(blocks_of(result.task)),
+                "said": self._said(result.result),
+            }
+        )
+
+    def _causes(self, result):
+        """The failures a declared raise repeats: those rescued on its host inside the blocks it names."""
+        declared = self.run.recipe.raises.get(self._name(result.task))
+        if declared is None:
+            return []
+        return [kept for kept in self._rescued.get(result.host.get_name(), []) if kept["blocks"] & declared.blocks]
 
     def item_failed(self, result):
         with self.display._lock:
@@ -346,24 +508,51 @@ class Engine:
         if not ignored:
             self._failure(result, "could not be reached")
 
+    def _block(self, where, who, name, took, how, said):
+        """A failure's lines: where and whom, the task, and what it said."""
+        out = [("", "")]
+        out += self._wrapped([("✗ ", "r")], [f"{where} · {who}: {name}{took}{how}"], "r")
+        out += self._wrapped([("    ", "")], [line for line in said if line.strip()][: FAILURE_LINES * 2])
+        return out
+
     def _failure(self, result, how):
-        """A failed task, for good above the region: the task, the VM, what it said, and where the log has it."""
+        """A failed task, for good above the region: the step, the VM, the task, what it said, and where the log has
+        it."""
         with self.display._lock:
             task = self.run.find(result.task._uuid)
             where = (task.step or task.stage) if task is not None else ""
             took = f" ({screen.duration(task.seconds(self._now()))})" if task is not None else ""
-            name = task.name if task is not None else result.task.get_name()
+            name = task.name if task is not None else self._name(result.task)
         said = self._said(result.result)
         # A loop's own msg is "One or more items failed": what each failed item said is the failure.
         for item in self._failed_items.pop((result.task._uuid, result.host.get_name()), []):
             said.append(f"{view.one_line(self.cb._get_item_label(item))}:")
             said += [f"  {line}" for line in self._said(item)]
         said_how = "" if how == "failed" else f" · {how}"
-        out = [("", "")]
-        out += self._wrapped([("✗ ", "r")], [f"{where} on {result.host.get_name()}: {name}{took}{said_how}"], "r")
-        out += self._wrapped([("    ", "")], [line for line in said if line.strip()][: FAILURE_LINES * 2])
+        out = self._block(where, self._who(result.host.get_name()), name, took, said_how, said)
         if self.run.log:
             out += self._wrapped([("    ", "")], [f"the whole output: {self.run.log}"], "d")
+        self.print([*out, ("", "")])
+
+    def _raised(self, result, causes, first):
+        """A failure that raises again what rescues took earlier: drawn under each cause, then its own words, but
+        those that only repeat a cause's."""
+        who = self._who(result.host.get_name())
+        out = []
+        repeated = set()
+        for cause in causes:
+            out += self._block(cause["where"], who, cause["name"], "", "", cause["said"])
+            repeated |= {line.strip() for line in cause["said"]}
+            with self.display._lock:
+                self.run.raised(cause["stage"], cause["step"])
+        own = [line for line in self._said(result.result) if line.strip() and line.strip() not in repeated]
+        if own:
+            out += self._wrapped([("    ", "")], own)
+        if self.run.log:
+            out += self._wrapped([("    ", "")], [f"the whole output: {self.run.log}"], "d")
+        if first:
+            with self.display._lock:
+                self.run.first_failure = causes[0]["where"]
         self.print([*out, ("", "")])
 
     @staticmethod
@@ -383,18 +572,25 @@ class Engine:
         return said
 
     def retry(self, result):
-        """A retried task. False when the callback should render nothing more of it: a wait, said once."""
+        """A retried task. False when the callback should render nothing more of it: a wait for the person, said
+        once; a wait for a machine is said on its line instead, its retries in the log alone."""
+        now = self._now()
+        try:
+            delay = int(result.task.delay)
+        except (TypeError, ValueError):
+            delay = 0
         if WAITING_TAG not in result.task.tags:
+            with self.display._lock:
+                # Ansible says the next attempt and how many there are, the first run among them.
+                attempt, total = result.result.get("attempts", 0), result.result.get("retries", 0)
+                self.run.tried(result.task._uuid, now, attempt, total, delay)
+            self._after()
             return True
         left = result.result.get("retries", 0) - result.result.get("attempts", 0) + 1
-        try:
-            seconds = left * int(result.task.delay)
-        except (TypeError, ValueError):
-            seconds = 0
         with self.display._lock:
-            first = self.run.retry(result.task._uuid, result.host.get_name(), self._now(), seconds)
-        if first and self.mode == "live":
-            self.region.bell()
+            first = self.run.retry(result.task._uuid, result.host.get_name(), now, left * delay)
+        if first:
+            self._bell(now)
         if self.mode == "lines":
             with self.say():
                 self.cb._retry_once(result)
@@ -411,21 +607,23 @@ class Engine:
         with self.display._lock:
             self.run.end(now, failed=bool(failed))
             if self.mode == "live":
-                self.region.title(self.run.title_text(now))
+                self.out.title(self.run.title_text(now))
         if self.mode == "lines":
             self._after()
-        self.region.finish()
+        self.out.finish()
         recap(stats)
-        width = self._width()
-        summary = self.run.summary(now, width, self.color, failed_hosts=failed)
-        plain = self.run.summary(now, width, False, failed_hosts=failed)
-        self.print([("", ""), *zip(summary, plain, strict=True)])
         lines = self.cb.next_steps_of(stats)
+        width = self._width()
+        summary = self.run.summary(now, width, self.color, failed_hosts=failed, next_steps=lines)
+        plain = self.run.summary(now, width, False, failed_hosts=failed, next_steps=lines)
+        self.print([("", ""), *zip(summary, plain, strict=True)])
         if lines:
+            # Each line whole, as the stream prints it: a command or a URL in one is copied from it, and the terminal
+            # wraps it, never a word of the run's.
             with self.say():
                 self.display.display(text.banner(lines, "NEXT STEPS"), color=self.cb.COLOR)
         if self.mode == "live":
-            self.region.bell()
+            self.out.bell()
 
 
 class FilterModule:

@@ -42,24 +42,33 @@ def plain_text(text):
     return _CONTROL.sub("", _SEQUENCES.sub("", str(text)))
 
 
-# What one_line replaces with a space after plain_text: every control character
-# left (tab, newline, carriage return), and Unicode's format, line and paragraph
-# separators - the bidi overrides and isolates, zero-width characters - which can
-# make a line read in an order other than its own.
-_SPACE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+# Unicode's format, line and paragraph separators - the bidi overrides and
+# isolates, zero-width characters - which can make a line read in an order other
+# than its own: visible_text makes each a space.
+_FORMAT_CATEGORIES = frozenset({"Cf", "Zl", "Zp"})
 _SPACES = re.compile(r" {2,}")
+
+
+def visible_text(text):
+    """Return ``text`` through plain_text, each Unicode format or separator character a space.
+
+    Its lines, tabs and indents stay: what a report keeps line by line (every
+    live run's, filter_plugins/live_ansible.py) reads in the order it was
+    written, as one_line's does.
+    """
+    return "".join(" " if unicodedata.category(ch) in _FORMAT_CATEGORIES else ch for ch in plain_text(text))
 
 
 def one_line(text, limit=120):
     """Return ``text`` as one line of plain text, at most ``limit`` characters, ending in "…" when cut.
 
-    plain_text first, so whole escape sequences go; then each newline, carriage
-    return, tab, and Unicode format or separator character becomes a space, and
-    runs of spaces one. None is "".
+    visible_text first, so whole escape sequences go and each Unicode format or
+    separator character is a space; then each newline, carriage return and tab
+    becomes one too, and runs of spaces one. None is "".
     """
     if text is None:
         return ""
-    cleaned = "".join(" " if unicodedata.category(ch) in _SPACE_CATEGORIES else ch for ch in plain_text(text))
+    cleaned = "".join(" " if unicodedata.category(ch) == "Cc" else ch for ch in visible_text(text))
     cleaned = _SPACES.sub(" ", cleaned).strip()
     limit = max(int(limit), 1)
     return cleaned if len(cleaned) <= limit else cleaned[: limit - 1].rstrip() + "…"

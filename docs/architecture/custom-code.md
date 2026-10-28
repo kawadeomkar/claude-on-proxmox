@@ -102,8 +102,12 @@ that quotes the VM's text goes through it: the Claude sign-in's (`claude_code_lo
 (`github_projects_login_text`, `_status_said`, `_token_said`) and `just code`'s SSH failure. Covered by
 `tests/unit/test_text_filter.py`, and by the sign-in tests, which feed both flows escape sequences.
 
-**`one_line(text, limit=120)`** — `plain_text`, then every newline, every other control character and
-every Unicode format, line or paragraph separator (bidi controls and zero-width characters among them)
+**`visible_text(text)`** — `plain_text`, then every Unicode format, line or paragraph separator (bidi
+controls and zero-width characters among them) replaced by a space, its lines, tabs and indents kept: a
+line that reads in the order it was written. What every live run keeps of a report's lines
+(`filter_plugins/live_ansible.py`, §7.5). Covered by `tests/unit/test_text_filter.py`.
+
+**`one_line(text, limit=120)`** — `visible_text`, then every newline and every other control character
 replaced by a space, runs of spaces collapsed, and the whole cut to `limit`, ending in "…". What
 `just status` keeps of every value a VM or Proxmox supplies, so none starts a line of its own in the
 report or in `--json` (§7.7). Covered by `tests/unit/test_status.py`, over a corpus of hostile values.
@@ -175,58 +179,86 @@ shares (§7.8, `can_draw`), and `lines` otherwise. The model is `filter_plugins/
 can be drawn with, and what a run is made of is its recipe's declaration in `filter_plugins/live_recipes.py`, named
 by the title's first word: `just deploy` is the first, and §7.8 says how another recipe joins it.
 
-- **Stages and steps.** A play's stage comes from its playbook's file (`play.get_path()`, the declaration's stages):
-  template, provision, configure, `SSH aliases`, the three sign-in playbooks as one stage `sign in`, VS Code.
-  A play from a file the declaration does not name - `discover.yml`, which configure and each sign-in import, and
-  `deploy.yml`'s own - takes the stage of the play after it, else of the one before, and a test holds the
-  declaration to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is its role; in the sign-in stage,
-  the sign-in, for every play of its file.
+- **Stages and steps.** A play's stage is the first of the declaration's stages that names it: by its file and
+  play name (`deploy.yml:Fail each VM whose work after a sign-in failed`, deploy's `finish`), else by its file
+  (`play.get_path()`): template, provision, configure, `SSH aliases`, the three sign-in playbooks as one stage
+  `sign in`, VS Code. A play the declaration does not name - `discover.yml`, which configure and each sign-in
+  import, and `deploy.yml`'s first - takes the stage of the play after it, else of the one before, and a test
+  holds the declaration to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is its role; in the
+  sign-in stage, the sign-in, for every play of its file. A quiet stage - `finish`, deploy's last play, which only
+  raises again what failed after the sign-ins - is counted but never drawn, unless one of its tasks fails; a step
+  whose every task was skipped reads `–`, never `✓`. A run of one stage (`--only configure`) is drawn as that
+  stage's steps, with no row of its own: the footer says `step 2 of 6`, the summary's table is `STEPS`.
 - **How far a step is.** When the playbook starts, `play.compile()` of each play gives its static tasks with
   the very `_uuid`s they start with, blocks' rescues and always included, and only those `--tags` and
-  `--skip-tags` leave (`evaluate_tags`, as the play's iterator filters them); each include adds its file's
-  count when it announces itself (`v2_playbook_on_include`, `count_tasks`: a block's children, a static
-  import's file, an include as one); a task beyond them counts as reached. A step that has ended is whole, in
-  its row and in its stage's: a rescue that never ran was never left to do. A step's time is its own tasks'
-  time added up, never its first task to its last: a role's handler runs at the end of the play, after every
-  other role.
+  `--skip-tags` leave (`evaluate_tags`, as the play's iterator filters them). An include whose file is literal -
+  `include_tasks` of a named file, `include_role` of a named role - is counted then too, from its file
+  (`count_tasks`: a block's children, a static import's file, an include as one), and that count is kept against
+  the include's ID: when the include announces itself (`v2_playbook_on_include`) it uses that count up rather than
+  adding to it. Any other include adds its file's count then. A serial play - the sign-ins, one VM at a time - runs
+  every task again for each batch, under the same IDs: once it starts, its counts are multiplied by its batches,
+  cut as Ansible cuts them (`run_view.batches`). A task beyond them counts as reached. A step that has ended is
+  whole, in its row and in its stage's: a rescue that never ran was never left to do. No bar and no percentage in
+  the title ever falls: each is held at the highest it has shown. A step's time is its own tasks' time added up,
+  never its first task to its last: a role's handler runs at the end of the play, after every other role.
 - **Where output goes.** The region wraps `Display.display`: each call erases the region, prints, and draws
   it again, every call under `Display`'s lock, so every write to the log takes the locks in one order. A
   route keeps the run's own words and anything on stderr - warnings, deprecations, errors - on the screen and
   sends the rest, every line the default callback and `profile_tasks` print, to the log alone (`log_only`).
   The run's own words print in colour to the screen and plain to the log, so the log is every line the stream
   would have logged, in order, with those added (`test_deploy_live.py` runs a stand-in deploy both ways and
-  compares). They are the plan - the first play's report - and every report after it, whole: wrapped to the
-  width and never cut, its VM first unless a play on this machine names it; the browser blocks and
-  `--check`'s diffs; and each failure: the task, the VM, its message, the last 20 lines of its output - a
-  crashed module's own - and for a loop, what each item that failed said. A failure among a block's own tasks,
-  where the block has a `rescue`, is the block's to handle: dim in the window, nothing printed. That holds at any
-  depth and through any import or include: a static import puts its file's block under a `TaskInclude` that no
-  block lists, so every link between the task and the block is looked at, not only the one under it. One in a
-  `rescue` or an `always` is the run's, unless a block further out has it among its own, and a rescue the play's
-  `--tags` leave no task of takes nothing, as Ansible then fails the host.
+  compares). They are the plan - the first play's report - and every report after it, whole: each of its lines
+  kept as a line, with its indent, wrapped to the width under that indent and never cut, its VM first unless a
+  play on this machine names it; the browser blocks and `--check`'s diffs; and each failure, headed by its step
+  (or its stage) and its VM - `✗ common · alpha: Install baseline packages` - with its message, the last 20 lines
+  of its output - a crashed module's own - and for a loop, what each item that failed said. A task's name is
+  drawn without its role's prefix, which its step says, and without its file's, such as `session_read |`. A failure
+  among a block's own tasks, where the block has a `rescue`, is the block's to handle: dim in the window, nothing
+  printed. That holds at any depth and through any import or include: a static import puts its file's block
+  under a `TaskInclude` that no block lists, so every link between the task and the block is looked at, not only
+  the one under it. One in a `rescue` or an `always` is the run's, unless a block further out has it among its
+  own, and a rescue the play's `--tags` leave no task of takes nothing, as Ansible then fails the host.
+- **A failure raised again.** A task the declaration names under `raises` - deploy's and configure's last plays'
+  `fail` of `claude_vm_configure_failures` - repeats failures rescues took earlier, which the engine keeps per
+  host with the names of the blocks around them. It is drawn under each cause the declaration's blocks name, by
+  the cause's step - `✗ tailscale · alpha: Join the tailnet` and what it said - followed by the raise's own words
+  but those that only repeat a cause's; the cause's step counts the failure, and the raise is `↑` in the window.
+  A failing task the declaration does not name is an ordinary failure.
 - **What a VM may set.** Only `proxmox_vm`'s tasks give the summary a VM's ID and address: a task on the VM
   could set any fact. The ID is a number or nothing, and the address goes through `plain_text`, as everything
-  else a VM said does.
+  else a VM said does. The VMs the run was given come from its `vm_name` extra var, each held to a VM name's
+  pattern.
 - **The screen.** The region (§7.8) draws the frame, which `run_view` folds to the height before the region
-  cuts it, and steps aside for every prompt. The tab's title says where the run is, and the bell rings once
-  per wait and at the end. A wait is a task tagged `attention_browser` that is not a block's `debug`: from its
-  first retry, or once it has run two seconds (`WAIT_AFTER`) - a wait that never retries, GitHub's device
-  flow, is known by that, and a skipped one is over first. Its time is counted as yours.
+  cuts it, and steps aside for every prompt. The running step's last five tasks show (the declaration's
+  `window`), never the check of an included role's arguments, and a `meta` task Ansible starts once per host once.
+  A run of two or more VMs says each VM's state on each step's row - `alpha ✓ · beta ⠴` - and the VM on each task
+  line. The tab's title says where the run is, and the bell rings once per wait and at the end. A wait is a task
+  tagged `attention_browser` that is not a block's `debug`: from its first retry, or once it has run two seconds
+  (`WAIT_AFTER`) - a wait that never retries, GitHub's device flow, is known by that, and a skipped one is over
+  first. Its time is counted as yours, and so is a prompt's: the region tells the engine when a prompt takes the
+  screen and when it is answered (`on_prompt`), the title says `waiting for you`, and the bell rings for a
+  prompt only when nothing has asked for the person for ten seconds. A retried task that waits for a machine -
+  the guest agent's address - says its try and its limit on its line (`try 3 of 37 · up to 2:55`).
 - **The end.** At the stats event the region is erased for good, PLAY RECAP goes to the log, and the summary
-  (`Run.summary`) and NEXT STEPS print, the title `done`, or `failed` when a VM failed. The summary gives each
-  VM a line per report, cut to the width, the report being whole above: a report run again in a later play -
-  the repositories, configure's and then the sign-in's - by its last run; none on a matter a later report
-  recorded again (each report's NEXT STEPS record, the `set_stats` task straight after it, names its matters:
+  (`Run.summary`) and NEXT STEPS print, the title `done`, or `failed` when a VM failed. The summary's head is
+  one of three: `done in 6 min 12 s`; `done in 6 min 12 s · 1 VM failed: beta`, when the run started its last
+  play and only some of its two or more VMs failed; or `failed after 2 min 4 s at common`, naming where the first
+  failure was drawn. The summary gives each VM a line per report, cut to the width, the report being whole above:
+  one of several lines, or longer than a line, by its first sentence; a report run again in a later play - the
+  repositories, configure's and then the sign-in's - by its last run; none on a matter a later report recorded
+  again (each report's NEXT STEPS record, the `set_stats` task straight after it, names its matters:
   configure's "not signed in", which records nothing left under `just deploy` since the sign-in follows, goes
-  once the sign-in's report on that matter comes), nor one whose line a later record replaced; and a play on
-  this machine's under the one VM it names. Ctrl-C has no stats event: the region's `atexit` erases it and the
-  title says `stopped`. Without a terminal there is no region: a line as each step ends
-  (`Run.ended_lines`), the reports, and the summary.
+  once the sign-in's report on that matter comes), nor one whose line a later record replaced, nor one NEXT
+  STEPS says whole; and a play on this machine's under the one VM it names. SLOWEST lists only tasks of a second
+  or more, never a person's time. NEXT STEPS prints each line whole, as the stream does: a command or a URL is
+  copied from one line, and the terminal wraps it, never the run. Ctrl-C has no stats event: the region's
+  `atexit` erases it and the title says `stopped`. Without a terminal there is no region: a line as each step
+  ends (`Run.ended_lines`), the reports, and the summary.
 
 No test or scenario sets the variable - the harness passes on only `PASSED_ON`, and `test_deploy_live.py`
-fails if a tracked file other than the callback, the justfile's `deploy` recipe and `test_justfile.py`, whose
-`ansible-playbook` only records, names it - so nothing a test pins is drawn. A known limit: `deploy.yml`'s last
-play, which raises what failed after the sign-ins, takes VS Code's stage.
+fails if a tracked file other than the callback, the engine, the declarations, the justfile's `deploy` recipe,
+the live tests' kit and `test_justfile.py`, whose `ansible-playbook` only records, names it - so nothing a test
+pins is drawn.
 
 ## 7.6 `filter_plugins/sessions.py` and `playbooks/library/` — the session handoff
 

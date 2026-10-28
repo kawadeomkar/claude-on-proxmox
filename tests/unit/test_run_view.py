@@ -290,7 +290,8 @@ def test_a_failed_task_marks_its_step_and_stage_and_the_summary_says_where_the_r
     assert any(line.strip().startswith("✗ Write the motd") for line in lines)
     script.run.end(script.now)
     summary = script.run.summary(script.now, 100, color=False, failed_hosts=["alpha"])
-    assert summary[0].startswith("claude-on-proxmox  deploy alpha · stopped after 1 min 57 s on alpha · ")
+    # It ended before its last play, on its one VM: failed, and where.
+    assert summary[0].startswith("claude-on-proxmox  deploy alpha · failed after 1 min 57 s at common · ")
     assert any(line.startswith(" ✗ configure") for line in summary)
     assert summary[-1].startswith("16 tasks · 5 changed · 1 failed · log ")
 
@@ -502,18 +503,20 @@ def test_a_vms_id_is_a_number_or_nothing():
 def test_a_running_stage_counts_its_ended_steps_whole():
     # --tags, or a rescue never run: a step ends short of what was counted for it, and the stage goes on.
     plays = [
+        ("template", "/r/playbooks/template.yml:4", [("t1", "proxmox_template")]),
         (
             "configure",
             "/r/playbooks/configure.yml:20",
             [*((f"c{n}", "common") for n in range(9)), ("v1", "dev_tools"), ("v2", "dev_tools")],
-        )
+        ),
     ]
     script = Script(plays=plays)
+    script.task("template", "t1", "Check for the template", "proxmox_template")
     script.task("configure", "c0", "Harden sshd", "common")
     script.task("configure", "v1", "Install the editor", "dev_tools", outcome=None)
     row = next(line for line in script.run.frame(script.now, 100, 40, "⠋", color=False) if "configure" in line)
     assert "  2/3  " in row, row
-    assert script.run.title_text(script.now) == "deploy alpha · configure 67%"
+    assert script.run.title_text(script.now) == "deploy alpha · configure 75%"
 
 
 @pytest.mark.parametrize(
@@ -539,3 +542,210 @@ def test_a_title_follows_the_run_to_done():
     assert script.run.title_text(script.now).startswith("deploy alpha · template ")
     script.run.end(script.now)
     assert script.run.title_text(script.now) == "deploy alpha · done"
+
+
+# --- what every drawn run shares: stages by play, counts, prompts, fleets, the summary's rules --------------------
+def test_a_play_of_a_file_can_be_a_stage_of_its_own():
+    plays = [
+        ("/r/deploy.yml:39", "Check whether the cloud-init template already exists"),
+        ("/r/playbooks/template.yml:4", "Build the cloud-init VM template"),
+        ("/r/playbooks/code.yml:61", "Open a VM in VS Code"),
+        ("/r/deploy.yml:225", "Fail each VM whose work after a sign-in failed"),
+    ]
+    assert view.stages_for(plays) == [("template", None), ("template", None), ("VS Code", None), ("finish", None)]
+    # By its file alone, deploy.yml's last play takes its neighbour's, as before.
+    assert view.stages_of([path for path, _ in plays])[-1] == ("VS Code", None)
+
+
+def _finish_plays():
+    return [
+        *PLAYS[:-1],
+        ("raise", "/r/deploy.yml:225", [("r1", None)], "Fail each VM whose work after a sign-in failed"),
+    ]
+
+
+def test_a_quiet_stage_is_counted_and_drawn_only_once_it_fails():
+    script = Script(plays=_finish_plays()).to_configure()
+    text = "\n".join(script.run.frame(script.now, 100, 40, "⠋", color=False))
+    assert not re.search(r"^ . finish", text, re.M) and script.run.last_play == "raise"
+    script.task("raise", "r1", "Fail where the work after a sign-in failed", outcome="skipped")
+    script.run.end(script.now)
+    summary = "\n".join(script.run.summary(script.now, 100, color=False))
+    assert not re.search(r"^ . finish", summary, re.M), summary
+    failed = Script(plays=_finish_plays()).to_configure()
+    failed.task("raise", "r1", "Fail where the work after a sign-in failed", outcome="failed")
+    failed.run.end(failed.now)
+    assert re.search(r"^ ✗ finish ", "\n".join(failed.run.summary(failed.now, 100, color=False)), re.M)
+
+
+def test_an_include_counted_up_front_is_counted_once_and_a_serial_play_by_its_batches():
+    plays = [
+        ("t", "/r/playbooks/template.yml:4", [("t1", "proxmox_template")]),
+        ("c", "/r/playbooks/configure.yml:20", [("c1", "common"), ("inc", "common", {"include": 3}), ("c2", "common")]),
+    ]
+    script = Script(plays=plays)
+    step = script.run.stages["configure"].steps["common"]
+    assert step.expected == 3 + 3
+    script.task("c", "c1", "One", "common")
+    script.task("c", "inc", "Include the file", "common", outcome="included")
+    script.run.include("common", 3, key="inc")
+    assert step.expected == 6, "the include's tasks were counted when the playbook started"
+    for n in range(3):
+        script.task("c", f"i{n}", f"Included {n}", "common")
+    script.task("c", "c2", "Two", "common")
+    assert step.expected == step.reached == 6
+    # A serial play's tasks run once per batch: counted so once it starts.
+    serial = Script(plays=[("s", "/r/playbooks/claude_login.yml:51", [("l1", "claude_code"), ("l2", "claude_code")])])
+    serial.run.play_start("s", batches=3)
+    assert serial.run.stages["sign in"].steps["Claude"].expected == 6
+    serial.run.play_start("s", batches=3)
+    assert serial.run.stages["sign in"].steps["Claude"].expected == 6, "a second batch counts nothing again"
+
+
+@pytest.mark.parametrize(("hosts", "serial", "batches"), [(3, [1], 3), (3, ["100%"], 1), (5, [2], 3), (4, [], 1)])
+def test_a_serial_plays_batches_are_cut_as_ansible_cuts_them(hosts, serial, batches):
+    assert view.batches(hosts, serial) == batches
+
+
+def test_the_titles_percentage_never_falls_when_a_count_grows():
+    script = Script().to_configure()
+    before = int(script.run.title_text(script.now).rsplit(" ", 1)[1].rstrip("%"))
+    script.run.include("common", 40)
+    after = int(script.run.title_text(script.now).rsplit(" ", 1)[1].rstrip("%"))
+    assert after >= before
+
+
+def test_a_run_of_one_stage_is_drawn_as_its_steps():
+    plays = [("c", "/r/playbooks/configure.yml:20", [("c1", "common"), ("c2", "common"), ("v1", "dev_tools")])]
+    script = Script(plays=plays, title="deploy --only configure")
+    script.task("c", "c1", "Harden sshd", "common", outcome="changed")
+    script.task("c", "c2", "Write the motd", "common", outcome=None, took=0)
+    lines = script.run.frame(script.now, 100, 30, "⠋", color=False)
+    text = "\n".join(lines)
+    assert not re.search(r"^ \S configure", text, re.M), text
+    assert re.search(r"^ ⠋ common +█+ +2/2 +1 changed", text, re.M), text
+    assert re.search(r"^ ○ dev_tools +1 task$", text, re.M), text
+    assert lines[-1].startswith("⠋ 0:01 · step 1 of 2 · ")
+    assert script.run.title_text(script.now) == "deploy --only configure · common 67%"
+    script.run.result("c2", "alpha", "ok", script.now)
+    script.run.end(script.now)
+    summary = script.run.summary(script.now, 100, color=False)
+    assert summary[2].startswith("STEPS ") and summary[3].startswith(" ✓ common ")
+
+
+def test_a_prompt_is_the_persons_time_and_the_runs_when_no_task_is_running():
+    script = Script()
+    script.run.prompt(True, 0.0)
+    assert script.run.title_text(1.0) == "deploy alpha · waiting for you"
+    script.run.prompt(False, 4.0)
+    script.task("login", "l1", "browser_login | Ask for the code", "claude_code", outcome=None, took=0)
+    script.run.prompt(True, script.now + 1)
+    assert script.run.waiting_for_you()
+    script.run.prompt(False, script.now + 9)
+    script.run.result("l1", "alpha", "ok", script.now + 10)
+    script.run.end(script.now + 10)
+    summary = "\n".join(script.run.summary(script.now + 10, 100, color=False))
+    assert "12 s of it yours" in summary, summary
+    assert "Ask for the code" not in summary.split("SLOWEST", 1)[-1] or "SLOWEST" not in summary
+
+
+def test_a_retried_wait_for_a_machine_says_its_try_and_its_limit():
+    script = Script()
+    script.task("create", "p3", "present | Wait for the guest agent", "proxmox_vm", outcome=None, took=0)
+    script.run.tried("p3", script.now + 10, attempt=3, total=37, delay=5)
+    line = next(line for line in script.run.frame(script.now + 10, 100, 40, "⠋", color=False) if "guest agent" in line)
+    assert line.endswith("try 3 of 37 · up to 2:55"), line
+
+
+def test_a_fleet_says_each_vms_state_on_each_step_and_its_vm_on_each_task():
+    script = Script()
+    script.run.names = ["alpha", "beta"]
+    script.task("configure", "c1", "Refresh apt cache", "common", hosts=("alpha", "beta"), outcome="changed")
+    script.task("configure", "c2", "Install baseline packages", "common", hosts=("alpha",), outcome=None, took=0)
+    script.run.host_start("c2", "beta", script.now)
+    script.run.result("c2", "beta", "failed", script.now + 1)
+    lines = script.run.frame(script.now + 2, 100, 40, "⠋", color=False)
+    row = next(line for line in lines if line.startswith("     ") and "common" in line)
+    assert "alpha ⠋ · beta ✗" in row, row
+    refresh = next(line for line in lines if "Refresh apt cache" in line)
+    assert "alpha" not in refresh or "beta" in refresh, "a task on both says both, or neither as one VM"
+
+
+def test_a_steps_vm_marks_are_kept_between_frames_and_follow_every_change():
+    script = Script()
+    script.run.names = ["alpha", "beta"]
+
+    def row(now):
+        lines = script.run.frame(now, 100, 40, "⠋", color=False)
+        return next(line for line in lines if line.startswith("     ") and "common" in line)
+
+    script.task("configure", "c1", "Refresh apt cache", "common", hosts=("alpha", "beta"), outcome=None, took=0)
+    assert "alpha ⠋ · beta ⠋" in row(script.now)
+    assert "alpha ⠋ · beta ⠋" in row(script.now + 1), "an unchanged step draws the same"
+    script.run.result("c1", "alpha", "changed", script.now + 2)
+    assert "alpha ✓ · beta ⠋" in row(script.now + 2)
+    script.run.result("c1", "beta", "failed", script.now + 3)
+    assert "alpha ✓ · beta ✗" in row(script.now + 3)
+    # A task the step had not yet: its hosts, new to the step, are running again.
+    script.task("configure", "c2", "Install baseline packages", "common", hosts=("alpha",), outcome=None, took=0)
+    assert "alpha ⠋ · beta ✗" in row(script.now + 4)
+
+
+def test_the_head_says_done_failed_on_some_vms_or_failed_and_where():
+    script = Script(plays=_finish_plays()).to_configure()
+    script.run.result("c6", "alpha", "ok", script.now)
+    script.run.end(script.now)
+    assert re.match(
+        r"claude-on-proxmox  deploy alpha · done in 1 min 57 s · \d\d:\d\d$",
+        script.run.summary(script.now, 100, color=False)[0],
+    )
+    fleet = Script(plays=_finish_plays()).to_configure()
+    fleet.run.names = ["alpha", "beta"]
+    fleet.run.play_start("raise")
+    fleet.task("raise", "r1", "Fail where the work after a sign-in failed", hosts=("alpha", "beta"), outcome="ok")
+    fleet.run.end(fleet.now)
+    head = fleet.run.summary(fleet.now, 100, color=False, failed_hosts=["beta"])[0]
+    assert head.endswith("· done in 1 min 58 s · 1 VM failed: beta"), head
+    alone = Script().to_configure()
+    alone.run.result("c6", "alpha", "failed", alone.now)
+    alone.run.end(alone.now)
+    head = alone.run.summary(alone.now, 100, color=False, failed_hosts=["localhost"])[0]
+    assert "· failed after 1 min 57 s at common · " in head, head
+
+
+def test_the_summary_says_a_long_report_by_its_first_sentence_and_leaves_next_steps_to_next_steps():
+    script = Script().to_configure()
+    script.run.result("c6", "alpha", "ok", script.now)
+    script.run.note("alpha", "VS Code is opening /home/dev/projects. The first connection takes a minute.", lines=2)
+    script.run.note("alpha", "alpha: just login alpha --only github")
+    script.run.end(script.now)
+    text = "\n".join(
+        script.run.summary(script.now, 100, color=False, next_steps=["alpha: just login alpha --only github"])
+    )
+    alpha = text.split("ALPHA", 1)[1].split("\n\n", 1)[0]
+    assert " VS Code is opening /home/dev/projects.\n" in alpha + "\n" and "first connection" not in alpha, alpha
+    assert "just login alpha --only github" not in alpha, alpha
+    # Only tasks of a second or more are slow.
+    slowest = text.split("SLOWEST", 1)[1].split("\n\n", 1)[0]
+    assert "Harden sshd" not in slowest and "Install baseline packages" in slowest
+
+
+def test_a_task_counted_but_never_shown_and_one_started_once_per_host():
+    script = Script()
+    script.run.play_start("configure")
+    script.run.task("x1", "Validating arguments against arg spec 'main'", "common", 0.0, hidden=True)
+    script.run.result("x1", "alpha", "ok", 0.1)
+    first = script.run.task("m1", "Leave a VM as it is", None, 0.2)
+    again = script.run.task("m1", "Leave a VM as it is", None, 0.3)
+    assert first is again
+    window = [line for line in script.run.frame(1.0, 100, 40, "⠋", color=False) if line.startswith(" " * 9)]
+    assert not any("Validating" in line for line in window), window
+    assert sum("Leave a VM" in line for line in window) == 1
+
+
+def test_a_step_that_only_skipped_reads_skipped():
+    script = Script()
+    script.task("template", "t1", "Check for the template", "proxmox_template", outcome="skipped")
+    script.task("template", "t2", "Build the template", "proxmox_template", outcome="skipped")
+    script.task("register", "p0", "Register the VMs", hosts=("localhost",))
+    assert script.run.ended_lines(script.now)[0].startswith("– template / proxmox_template")

@@ -188,9 +188,11 @@ def test_the_route_sends_to_the_log_alone_and_never_a_prompt():
     assert display.logged[-1] == "after the end" and "after the end" not in stream.getvalue()
 
 
-def test_a_region_on_a_screen_too_small_for_one_draws_nothing():
+# 0 by 0: a pseudo-terminal nobody gave a size, as script(1) makes one without a terminal of its own.
+@pytest.mark.parametrize("size", [(40, 3), (40, 1), (0, 0)])
+def test_a_region_on_a_screen_too_small_for_one_draws_nothing(size):
     region, _, stream = _region(frame=lambda cols, rows, glyph: ["one", "two"])
-    region._terminal_size = lambda: (40, 3)
+    region._terminal_size = lambda: size
     region.start()
     region.redraw()
     region.finish()
