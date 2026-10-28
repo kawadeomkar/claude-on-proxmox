@@ -148,12 +148,22 @@ A run waits for the person in three ways, and each is set apart:
   `wait_for` has no retries to fold, and carries it for `just deploy`'s live output (below), which tells a
   wait that never retries by how long it runs.
 - **What is left after the run**: NEXT STEPS, after PLAY RECAP, from what the report tasks recorded.
-  Each of the 18 reports that can say what to do later registers its message and records it straight
+  Each of the 28 reports that can say what to do later registers its message and records it straight
   after with `ansible.builtin.set_stats` under its owner's stat - `claude_code_next`,
   `github_projects_next`, `tailscale_next`, `claude_vm_next` (provision and destroy) and `code_next` - as
   `{vm: {matter: line}}`: the message itself while something is left, `''` once nothing is. `aggregate`
   merges the records, so the last one of a VM and matter wins across plays: configure's "not signed in"
-  is cleared by the sign-in's own report later in the same `just deploy`. The decision is made in Jinja
+  is cleared by the sign-in's own report later in the same `just deploy`. The sign-in playbooks record
+  what their own plays say, under the role's stat and the sign-in's matter: a VM that could not be reached
+  and a sign-in that failed, each with the `just login <vm> --only claude`, `github` or `tailscale` that
+  retries it, and the work after a sign-in failing (`remote_control`, or `github` for the repositories),
+  with its `just deploy <vm> --tags ...` - so a failure recorded after the role's own report replaces that
+  report's line. `github_login.yml` and `tailscale_login.yml` also say, for a VM whose Claude sign-in nobody
+  answered, that theirs was not started and what starts it, only where the role would have started it
+  (`github_projects_login_due`, `tailscale_login_due`, facts the role's question and sign-in go on too):
+  that line takes the place of the role's report of the same sign-out, the one before it - for Tailscale only
+  where the VM is merely signed out (`tailscale_login_signed_out`): a page still waiting, an expired login or a
+  refused key keeps the role's own line, which says what to do about it. The decision is made in Jinja
   beside the message, from the same facts, because the text cannot carry it: a stopped Tailscale or a
   missing workflow scope names no `just` command, and "just deploy signs it in next" names one with
   nothing to do. A looped report records each VM in a looped `set_stats` keyed by the loop var, so the
