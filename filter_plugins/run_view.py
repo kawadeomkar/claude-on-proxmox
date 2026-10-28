@@ -6,12 +6,13 @@ frame is a unit test (tests/unit/test_run_view.py). Lines are drawn with filter_
 screen by filter_plugins/live_region.py, as `just status`'s report is (docs/architecture/custom-code.md §7.8);
 docs/guides/runs.md shows what a person sees, and §7.5 how this works.
 
-A run is stages, each a playbook, named by a table of playbook files (STAGE_FILES): `just deploy`'s template,
-provision, configure, sign in and VS Code. A recipe drawn live names its playbooks there. A play from a file the
-table does not name - discover.yml, which configure and each sign-in import, or deploy.yml's own - takes the stage
-of the play after it, else of the one before. Within a stage, a task's step is its role, or for the sign-ins the
-sign-in; tasks outside any role are the stage's own. A playbook in PLAN_FILES says what the run will do in its
-first play's report: printed first, and kept out of the summary.
+A run is stages, each a playbook, as the recipe's declaration in filter_plugins/live_recipes.py names them:
+`just deploy`'s template, provision, configure, sign in and VS Code. A play from a file the declaration does not
+name - discover.yml, which configure and each sign-in import, or deploy.yml's own - takes the stage of the play
+after it, else of the one before. Within a stage, a task's step is its role, or for a stage of declared steps (the
+sign-ins) the step its play's file names; tasks outside any role are the stage's own. A playbook in the
+declaration's plan says what the run will do in its first play's report: printed first, and kept out of the
+summary.
 
 How far a step is: the tasks it has reached, skipped ones included, of the tasks it will reach - those the plays
 compile to (counted when the playbook starts, by task ID), those each include announces (counted from its file when
@@ -47,21 +48,26 @@ def _sibling(stem):
 
 
 screen = _sibling("screen")
+recipes = _sibling("live_recipes")
 _one_line = _sibling("text").one_line
 
-# Each playbook a live run imports, as (stage, step): a step named here is the sign-in's, for all its plays' tasks.
-STAGE_FILES = {
-    "template.yml": ("template", None),
-    "provision.yml": ("provision", None),
-    "configure.yml": ("configure", None),
-    "ssh_config.yml": ("SSH aliases", None),
-    "claude_login.yml": ("sign in", "Claude"),
-    "github_login.yml": ("sign in", "GitHub"),
-    "tailscale_login.yml": ("sign in", "Tailscale"),
-    "code.yml": ("VS Code", None),
-}
-# The playbooks whose first play reports what the run will do.
-PLAN_FILES = frozenset({"deploy.yml"})
+
+def stage_files(recipe):
+    """Each playbook file a recipe's declaration names, as (stage, step): a step named here is the declared step's,
+    for all its plays' tasks."""
+    table = {}
+    for stage in recipe.stages:
+        for step in stage.steps:
+            for play in step.plays:
+                table[play] = (stage.key, step.label)
+        for play in stage.plays:
+            table.setdefault(play, (stage.key, None))
+    return table
+
+
+# just deploy's, which is also what a run of no declaration of its own is drawn by.
+STAGE_FILES = stage_files(recipes.RECIPES["deploy"])
+PLAN_FILES = recipes.RECIPES["deploy"].plan
 # How bad an outcome is, for a task several VMs ran: the worst of them is the task's.
 RANK = {"skipped": 0, "included": 1, "ok": 2, "changed": 3, "ignored": 4, "rescued": 4, "failed": 5, "unreachable": 5}
 WINDOW = 5
@@ -71,9 +77,11 @@ BAR = 20
 WAIT_AFTER = 2.0
 
 
-def stages_of(files):
-    """Each play's (stage, step), from the file of its playbook; one the table does not name takes a neighbour's."""
-    known = [STAGE_FILES.get(os.path.basename(str(f).split(":", 1)[0])) for f in files]
+def stages_of(files, recipe=None):
+    """Each play's (stage, step), from the file of its playbook; one the declaration does not name takes a
+    neighbour's."""
+    table = STAGE_FILES if recipe is None else stage_files(recipe)
+    known = [table.get(os.path.basename(str(f).split(":", 1)[0])) for f in files]
     out = []
     for index, entry in enumerate(known):
         if entry is None:
@@ -271,8 +279,10 @@ class Stage:
 class Run:
     """One just deploy, from the plays it will run and the events Ansible sends."""
 
-    def __init__(self, title, now, check=False, log="", started_at=None):
+    def __init__(self, title, now, check=False, log="", started_at=None, recipe=None):
         self.title, self.check, self.log = title, check, log
+        self.recipe = recipe if recipe is not None else recipes.recipe(title)
+        self.specs = {stage.key: stage for stage in self.recipe.stages}
         self.begun = now
         self.started_at = started_at if started_at is not None else time.time()
         self.stages = OrderedDict()
@@ -291,7 +301,8 @@ class Run:
     # --- what the playbook is ---------------------------------------------------------------------------------
     def plays(self, plays):
         """plays: (key, playbook file, [(task key, role or None)...]) in order, as the playbook lists them."""
-        for (key, _, tasks), (stage, override) in zip(plays, stages_of([f for _, f, _ in plays]), strict=True):
+        files = [f for _, f, _ in plays]
+        for (key, _, tasks), (stage, override) in zip(plays, stages_of(files, self.recipe), strict=True):
             self.play_stage[key] = (stage, override)
             for task_key, role in tasks:
                 self._stage(stage).step(override or role).expect(task_key)
@@ -304,7 +315,7 @@ class Run:
     def play_start(self, key, name="", path=""):
         if key not in self.play_stage:
             # A play the playbook did not list: its own stage, from its file or name.
-            self.play_stage[key] = stages_of([path])[0] if path else (name or "run", None)
+            self.play_stage[key] = stages_of([path], self.recipe)[0] if path else (name or "run", None)
         self.play = key
 
     # --- the events -------------------------------------------------------------------------------------------
@@ -446,6 +457,10 @@ class Run:
             return f"{len(vms)} VMs"
         return ""
 
+    def _shows_vm(self, stage):
+        spec = self.specs.get(stage.key)
+        return spec is not None and spec.info == "vm"
+
     # --- the live frame ---------------------------------------------------------------------------------------
     def frame(self, now, cols, rows, glyph, color=True):
         """The region's lines: each cut to cols - 1, and few enough for rows - 1 where folding can make them so."""
@@ -573,14 +588,15 @@ class Run:
             if state == "waiting":
                 task = self.current
                 since, seconds = task.wait
-                step = f"{task.step}: " if task.step and stage.key == "sign in" else ""
+                spec = self.specs.get(stage.key)
+                step = f"{task.step}: " if task.step and spec is not None and spec.steps else ""
                 waited = screen.clock(now - task.start)
                 said = f"{step}waiting for you in the browser · {', '.join(task.hosts) or ''} · {waited}"
                 if seconds:
                     said += f" of up to {screen.clock(seconds + (since - task.start))}"
                 lines.append(screen.cut([(" ", ""), ("⏸ ", "y"), (stage.key.ljust(13), "b"), (said, "y")], limit))
             else:
-                info = self._vm_info() if stage.key == "provision" and state != "to come" else ""
+                info = self._vm_info() if self._shows_vm(stage) and state != "to come" else ""
                 if state == "done" and not info and not stage.changed() and not stage.failed():
                     info = "no changes"
                 total = self._whole(stage)
@@ -696,7 +712,7 @@ class Run:
                 if step.waited(now):
                     part += f" ({screen.duration(step.waited(now))} yours)"
                 parts.append(part)
-            if stage.key == "provision" and self._vm_info():
+            if self._shows_vm(stage) and self._vm_info():
                 parts.insert(0, self._vm_info())
             lines += self._flow(head, parts, limit)
         vms = self._vms()

@@ -166,18 +166,20 @@ JSON report (`_left_to_do`), in every state they already run.
 ### `just deploy`, drawn live
 
 `CLAUDE_ON_PROXMOX_LIVE`, which the justfile's `deploy` recipe alone exports, set to what was run (`deploy
---check alpha`, the run's title), turns the callback's live mode on at verbosity 0, with a run log to send the
-stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above. The callback takes the variable out of
-its environment when the playbook starts, so nothing the run starts - the VS Code whose terminals a later
-`just destroy` may run in - inherits it. It is `live` when stdout can take the region every live output shares
-(§7.8, `can_draw`), and `lines` otherwise. The model is `filter_plugins/run_view.py`, which any playbook run can
-be drawn with: `just deploy` is the first, and §7.8 says how another recipe joins it.
+--check alpha`, the run's title), hands every event of the run to an engine, `filter_plugins/live_ansible.py`, at
+verbosity 0 and with a run log to send the stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above.
+The callback then keeps only its classic output, which the engine prints through it too. The engine takes the
+variable out of the environment when the playbook starts, so nothing the run starts - the VS Code whose terminals a
+later `just destroy` may run in - inherits it. It is `live` when stdout can take the region every live output
+shares (§7.8, `can_draw`), and `lines` otherwise. The model is `filter_plugins/run_view.py`, which any playbook run
+can be drawn with, and what a run is made of is its recipe's declaration in `filter_plugins/live_recipes.py`, named
+by the title's first word: `just deploy` is the first, and §7.8 says how another recipe joins it.
 
-- **Stages and steps.** A play's stage comes from its playbook's file (`play.get_path()`, `STAGE_FILES`):
+- **Stages and steps.** A play's stage comes from its playbook's file (`play.get_path()`, the declaration's stages):
   template, provision, configure, `SSH aliases`, the three sign-in playbooks as one stage `sign in`, VS Code.
-  A play from a file the table does not name - `discover.yml`, which configure and each sign-in import, and
+  A play from a file the declaration does not name - `discover.yml`, which configure and each sign-in import, and
   `deploy.yml`'s own - takes the stage of the play after it, else of the one before, and a test holds the
-  table to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is its role; in the sign-in stage,
+  declaration to `deploy.yml`'s imports and `--only`'s playbooks. A task's step is its role; in the sign-in stage,
   the sign-in, for every play of its file.
 - **How far a step is.** When the playbook starts, `play.compile()` of each play gives its static tasks with
   the very `_uuid`s they start with, blocks' rescues and always included, and only those `--tags` and
@@ -428,6 +430,13 @@ good, and runs at exit, Ctrl-C included.
   what was drawn holds once a frame meant for the old size has wrapped. `title()` sets the tab's title (OSC
   0) when it changes, and `bell()` rings.
 
+**`Output`**, beside it, is what every live output does around its region, whatever it draws: whether to draw
+(`can_draw()`, unless the caller decided), whether to colour (the caller's `ANSIBLE_NOCOLOR`), the region, and the
+output's own words printed coloured to the screen and plain to the log (`print`). With `to_log`, everything
+`Display` prints goes to the log alone - the stream a drawn run replaces - but what is printed inside `say()` and
+anything on stderr. The live run's engine and `just status`'s callback both draw through one, so neither keeps a
+copy of that logic.
+
 **`screen.py`** — a line is a list of `(text, style)` segments, the style one of `PALETTE`'s: headings,
 bold, dim, and the colours of done, to do, failed, running and waiting. `cut` (to a width, ending in a dim
 "…"), `pad`, `right` (a tail aligned to the edge, dropped before it would crowd the line), `render` (in the
@@ -437,17 +446,18 @@ East Asian ambiguous-width characters double-wide (`█`, `●`, `·`) wraps a f
 
 **Loading.** A filter plugin is no module another can import, and a callback cannot ask for one by name, so
 each module that needs another loads it by path, once, as `claude_on_proxmox_<stem>` (`_sibling`): the
-callbacks, `status.py` and `run_view.py` share one copy of each.
+callbacks, `status.py`, `run_view.py` and `live_ansible.py` share one copy of each.
 
 **Another recipe, drawn live.** A recipe whose playbook is a run - `just login`, `just destroy`, `just code`,
 `just init` - joins `just deploy` without code of its own: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its
-title, as `deploy`'s does; `run_view.STAGE_FILES` names its playbooks' stages (the sign-in playbooks already
-are), and `PLAN_FILES` one whose first play reports what the run will do; its reports, waits and NEXT STEPS
-records follow §7.5's conventions, which the callback already reads. A command that is a report rather than a
-run, as `just status` is, keeps a model and a frame function of its own and hands the frame to `LiveRegion`,
-drawing its lines with `screen.py`. Either way its test runs it at a pseudo-terminal through
-`harness._at_a_pseudo_terminal` and reads the screen back through `vt.py`, and `test_deploy_live.py`'s guard
-names each tracked file that may name the variable.
+title, as `deploy`'s does; its declaration in `filter_plugins/live_recipes.py`, named by the title's first word,
+names its playbooks' stages (the sign-in playbooks already are deploy's) and the playbook whose first play reports
+what the run will do; its reports, waits and NEXT STEPS records follow §7.5's conventions, which the engine already
+reads. A command that is a report rather than a run, as `just status` is, keeps a model and a frame function of
+its own and hands the frame to an `Output`, drawing its lines with `screen.py`. Either way its test runs it through
+`tests/unit/live_kit.py`: at a pseudo-terminal of its own (`harness._at_a_pseudo_terminal`) with a `HOME` of its
+own, read back through `vt.py`, or piped, with the checks every drawn run must pass (`Ran`); and
+`test_deploy_live.py`'s guard names each tracked file that may name the variable.
 
 Covered by `tests/unit/test_live_region.py` (the region against a stand-in `Display`, whose `display`,
 `prompt_until`, `do_var_prompt` and lock it holds to ansible-core's), `tests/unit/test_screen.py`,

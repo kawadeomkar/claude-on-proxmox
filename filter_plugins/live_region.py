@@ -33,6 +33,7 @@ function it draws nothing and only routes, for a run whose output is not a termi
 from __future__ import annotations
 
 import atexit
+import contextlib
 import os
 import signal
 import sys
@@ -257,6 +258,70 @@ class LiveRegion:
                 self._erase()
                 self._stop.set()
                 self._quiet(False)
+
+
+class Output:
+    """What every live output does around its region, whatever it draws: whether to draw at all, the region, and its
+    own words printed coloured to the screen and plain to the log.
+
+    live says whether there is a region (can_draw(), unless the caller decided: a run piped is drawn as lines);
+    color whether the screen gets the palette (the caller's ANSIBLE_NOCOLOR). With to_log, everything Display prints
+    goes to the log alone - the stream a drawn run replaces - but what is printed inside say(), and anything on
+    stderr, which still reaches the screen."""
+
+    def __init__(self, display, frame=None, live=None, color=False, to_log=False, more="⋮ {} more lines"):
+        self.display = display
+        self.live = can_draw() if live is None else live
+        self.color = bool(color) and self.live
+        self._speaking = threading.local()
+        self.region = LiveRegion(
+            display, frame=frame if self.live else None, route=self._route if to_log else None, more=more
+        )
+
+    # --- the region's life, as LiveRegion's --------------------------------------------------------------------
+    def start(self):
+        self.region.start()
+
+    def redraw(self):
+        self.region.redraw()
+
+    def spin(self):
+        self.region.spin()
+
+    def finish(self):
+        self.region.finish()
+
+    def title(self, text):
+        self.region.title(text)
+
+    def bell(self):
+        self.region.bell()
+
+    # --- the output's own words --------------------------------------------------------------------------------
+    @contextlib.contextmanager
+    def say(self):
+        """What is printed inside reaches the screen, where the route would send it to the log alone."""
+        previous = getattr(self._speaking, "on", False)
+        self._speaking.on = True
+        try:
+            yield
+        finally:
+            self._speaking.on = previous
+
+    def _route(self, kwargs):
+        if getattr(self._speaking, "on", False) or kwargs.get("stderr"):
+            return kwargs
+        return {**kwargs, "log_only": True}
+
+    def print(self, lines):
+        """Lines of the output's own, (coloured, plain) each: the colour to the screen, the plain text to the log."""
+        with self.say():
+            for coloured, plain in lines:
+                if self.color:
+                    self.display.display(coloured, screen_only=True)
+                    self.display.display(plain, log_only=True)
+                else:
+                    self.display.display(plain)
 
 
 class FilterModule:

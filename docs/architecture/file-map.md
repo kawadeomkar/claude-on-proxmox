@@ -92,6 +92,9 @@ filter_plugins/settings.py        init_answer, the rule each just init answer fo
                                   init_candidates and init_choose_rows, what the token can use among a node's storages or bridges
 filter_plugins/run_view.py        a live run as stages, steps and tasks (just deploy's first): its frame, a line per step,
                                   the summary (§7.5)
+filter_plugins/live_ansible.py    the engine that draws a playbook run live: Ansible's events in, the region, the run's own
+                                  words and the summary out; the stdout callback hands it every event (§7.5)
+filter_plugins/live_recipes.py    every command drawn live, declared: its stages and steps, named by its title (§7.8)
 filter_plugins/live_region.py     every live output's region: drawn in place at the bottom of a terminal, all else above (§7.8)
 filter_plugins/screen.py          every live output's lines: styled segments, cut, aligned, coloured in one palette (§7.8)
 filter_plugins/sessions.py        claude_sessions_plan, which session goes to which VM checkout by origin; git_repository

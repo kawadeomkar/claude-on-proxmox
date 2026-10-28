@@ -391,8 +391,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
 
 - **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
   which only the deploy recipe exports (the run's title) and the callback takes out of its environment at once,
-  so nothing the run starts inherits it, turns the stdout callback's live mode on at verbosity 0 with a run
-  log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
+  so nothing the run starts inherits it, hands the stdout callback's every event to the engine at verbosity 0 with
+  a run log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
   Every line the stream would print still reaches the run log, in order, through `Display`'s `log_only` - so
   without a log (`LOG_DIR=`) the run is the stream; the reports, browser blocks, diffs, warnings and failures
   print above the region for good, whole - a report is wrapped, never cut, a failure says its output's end and
@@ -400,8 +400,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   includes too - is the block's. What a VM said reaches the screen through `plain_text`, and only `proxmox_vm`
   gives the summary a VM's address. Any `-v` or another stdout callback is the stream. No test or scenario sets
   the variable: `test_deploy_live.py` runs the callback at a pseudo-terminal of its own against a stand-in deploy,
-  holds the log to the stream's, and fails if a tracked file other than the callback, `run_view.py`, the deploy
-  recipe and `test_justfile.py`'s recording stand-in names it. See docs/architecture/custom-code.md §7.5.
+  holds the log to the stream's, and fails if a tracked file other than the callback, the engine
+  (`filter_plugins/live_ansible.py`), `run_view.py`, the declarations (`filter_plugins/live_recipes.py`), the
+  deploy recipe and `test_justfile.py`'s recording stand-in names it. See docs/architecture/custom-code.md §7.5.
 
 - **`just init` writes only what is still a placeholder, only at a terminal or as given, and the vault
   only encrypted.** `playbooks/init_settings.yml` runs with its own inventory, `playbooks/inventory/init.yml`
