@@ -283,6 +283,7 @@ class Step:
         self.included = 0
         self.extra = 0
         self.tasks = []
+        self.planned = False  # listed by a run in parts before any part reached it: how many tasks it has is unknown
         self.states = None  # (its tasks as vm_states last saw them, what they said of each VM)
 
     def expect(self, task_key, times=1):
@@ -312,7 +313,9 @@ class Step:
 
     @property
     def expected(self):
-        return max(sum(self.static.values()) + self.included + self.extra, len(self.tasks))
+        # A step a run in parts has only listed is one task until a part reaches it.
+        listed = 1 if self.planned and not self.tasks else 0
+        return max(sum(self.static.values()) + self.included + self.extra, len(self.tasks), listed)
 
     @property
     def reached(self):
@@ -708,6 +711,26 @@ class Run:
                 note.matters.add((vm, matter))
                 return
 
+    def _ran_steps(self):
+        """The steps a run reached: a run whose steps are commands counts them, not the commands - lint's python is
+        two."""
+        return [
+            step
+            for stage in self.stages.values()
+            for key, step in stage.steps.items()
+            if key is not None and step.tasks
+        ]
+
+    def unrun(self):
+        """The steps a run in parts listed and never reached: a run that ended with none failing but these left was
+        stopped between its parts."""
+        return [
+            step.key
+            for stage in self.stages.values()
+            for step in stage.steps.values()
+            if step.planned and not step.tasks
+        ]
+
     def _vms(self):
         """The run's VMs: those it was given, then those it learned of, then every host it touched but this one."""
         if self.frame_vms is not None:
@@ -788,6 +811,13 @@ class Run:
         self.failed = failed or stopped
         self.stopped = stopped
 
+    def planned(self, stage, steps):
+        """The steps of stage a run in parts will run, in order: each listed to come until a part reaches it, and
+        counted as one task till then, so that no percentage reads whole while one is still to come."""
+        for step in steps:
+            planned = self._stage(stage).step(step)
+            planned.planned = planned.planned or not planned.tasks
+
     def command(self, stage, step, name, now):
         """A command a run runs as a part of its own - one of just lint's checks, just test's pytest - as one task in
         stage's step, on this machine."""
@@ -844,7 +874,8 @@ class Run:
                     "steps": [
                         {
                             "key": step.key,
-                            "expected": step.expected,
+                            "expected": step.expected if step.tasks or not step.planned else 0,
+                            "planned": step.planned,
                             "raised_on": sorted(step.raised_on),
                             "tasks": [index[id(task)] for task in step.tasks],
                         }
@@ -911,6 +942,7 @@ class Run:
                 step.tasks = [tasks[n] for n in saved_step["tasks"]]
                 # Counted as it was: what a later task of the same step reaches is counted beyond it.
                 step.extra = int(saved_step["expected"])
+                step.planned = bool(saved_step.get("planned"))
                 step.raised_on = set(saved_step["raised_on"])
         self.order = tasks
         for saved in state["notes"]:
@@ -1059,7 +1091,8 @@ class Run:
     def frame(self, now, cols, rows, glyph, color=True):
         """The region's lines: each cut to cols - 1, and few enough for rows - 1 where folding can make them so."""
         limit = cols - 1
-        tiers = {"changed": cols >= 80, "counts": cols >= 64, "bars": cols >= 52}
+        counts = self.recipe.counts
+        tiers = {"changed": cols >= 80, "counts": counts and cols >= 64, "bars": counts and cols >= 52}
         # Nothing changes while a frame is drawn: the VMs, which every stage and window asks for, are worked out once.
         self.frame_vms = self._vms()
         try:
@@ -1103,8 +1136,10 @@ class Run:
         if step.failed() and state != "to come":
             glyph, style = "✗", "r"
         if state == "to come":
-            count = screen.plural(step.expected, "task") if step.expected else ""
-            return screen.cut([(" " * indent, ""), ("○ ", "d"), (label.ljust(label_width), "d"), (count, "d")], limit)
+            known = step.expected and not getattr(step, "planned", False)
+            count = screen.plural(step.expected, "task") if known else ""
+            said = label.ljust(label_width) + count if count else label
+            return screen.cut([(" " * indent, ""), ("○ ", "d"), (said, "d")], limit)
         glyph = {"done": "✓", "waiting": "⏸", "skipped": "–"}.get(state, glyph) if style != "r" else glyph
         bold = "" if state in ("done", "skipped") else "b"
         weight = "d" if state == "skipped" else bold
@@ -1453,6 +1488,14 @@ class Run:
             if not flat and key in self.said_info:
                 parts.insert(0, self.said_info[key])
             lines += self._flow(head, parts, limit)
+        # A run that failed or stopped part way says what it never reached: the steps, or the stages, still to come.
+        if self.failed or failed_hosts:
+            if flat:
+                never = [key for key, step in stage.steps.items() if key is not None and not step.tasks]
+            else:
+                never = [stage_.key for stage_ in self._shown() if not stage_.tasks]
+            if never:
+                lines += self._flow([(" not run  ", "d")], never, limit, style="d")
         # What a play on this machine said about a VM - its address, its alias, its window - is that VM's.
         said = [(self._about(note, vms), note) for note in self.notes]
         # A report on a matter a later report recorded again is over: configure's "not signed in" once the sign-in
@@ -1520,8 +1563,12 @@ class Run:
         if failed_vms and len(vms) >= 2:
             failed_said += f" ({screen.plural(len(failed_vms), 'VM')})"
         totals = [
-            screen.plural(len(self.order), "task"),
-            self._changed_said(changed) or "nothing changed",
+            # A run whose steps are commands counts them as its checks, and says nothing of changes it never makes.
+            screen.plural(
+                len(self.order) if self.recipe.counts else len(self._ran_steps()),
+                "task" if self.recipe.counts else self.recipe.noun,
+            ),
+            *([self._changed_said(changed) or "nothing changed"] if "changed" in self.recipe.columns else []),
             failed_said,
         ]
         if yours:

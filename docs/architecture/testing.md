@@ -19,7 +19,7 @@ nohup has them ignored; and a pseudo-terminal's reader reads to its end after th
 API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
 and then taken by another worker's fake.
 
-pytest over `tests/unit/`: 2182 tests. By file:
+pytest over `tests/unit/`: 2194 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 33): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -66,8 +66,8 @@ pytest over `tests/unit/`: 2182 tests. By file:
   it through `harness._at_a_pseudo_terminal`, and every live test through `tests/unit/live_kit.py`, which gives
   each run a `HOME` of its own.
 - **The live output** (`test_run_view.py` 107, `test_deploy_live.py` 18, `test_login_live.py` 3,
-  `test_destroy_live.py` 4, `test_code_live.py` 3, `test_live_recipes.py` 18, `test_live_commands.py`
-  26): the model, fed
+  `test_destroy_live.py` 4, `test_code_live.py` 3, `test_lint_live.py` 5, `test_live_recipes.py` 22,
+  `test_live_commands.py` 27): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
   report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
@@ -89,31 +89,35 @@ pytest over `tests/unit/`: 2182 tests. By file:
   failure raised again drawn under its cause, a report's lines kept, NEXT STEPS line for line the stream's; a
   task's file the one the import nearest the play names;
   the log every line the stream logs, in order; a line per step through a pipe; `-v`, no variable and no log
-  streamed; and no other tracked file naming the variable. `test_login_live.py` runs the real `login.yml` once, at
-  a pseudo-terminal, against `test_sign_in_plays.py`'s stand-in VMs and fake GitHub: each failure under the
-  sign-in it happened in, the raise naming none, the `SIGN-INS` table's marks, the head naming the VMs that
-  failed, and the region gone. `test_destroy_live.py` runs the real `destroy.yml` against `test_release.py`'s
-  fakes and stand-in VMs, every path it writes pinned: the question answered, the four stages, each VM's release
-  by service and no step of a role's own, the VM it started, each VM's outcome; a VM Proxmox would not delete the
-  one that failed, under its step, and the raise naming none; and a deletion not confirmed said as the answer,
-  the title `declined`. `test_code_live.py` runs the real `code.yml` against the fake Proxmox and
-  `test_code_session.py`'s world and pins: the nine steps, the VM in the header, the window opened, the
-  summary's steps whole and no row of the fleet's skipped tasks; and a VM that is not there said under the step
-  it failed in. `test_live_commands.py` runs `tools/live` in a stand-in recipe in parts, the justfile's trap at
-  its top: passed through piped, without a title, with a `-v` or a bare `-vvv`, without the engine's packages and
-  without a state (`LIVE_DIR=`); an ignored Ctrl-C kept, and 126 and 127 as a shell's; drawn as one run, the
-  earlier part done above the next, a failed part's last 40 lines whole, the head and title `failed` and then
-  `stopped` after Ctrl-C, the child's every line in the log and the switch never in its environment; the state
-  0600 in a 0700 directory, another run's never taken over, and only a run's own states pruned; a playbook as a
-  part, whose NEXT STEPS wait for the run's end, and one Ctrl-C ended before its stats said stopped; an end with no
-  state saying nothing, and one that fails leaving the recipe's status; a Ctrl-C pending before any handler taken,
-  the part running nothing; a second Ctrl-C ending a part whose child's group would not end; SIGTERM and SIGHUP
-  ending the child, the echo back; a command that asks at the terminal failing at once; a passing part's warnings
-  above; a command named past `env`, a shell's by its step; a signal's exit as a shell's; no bar falling between
-  parts; and ansible-playbook's 99 said stopped. `test_live_recipes.py` holds every declaration to the playbooks
-  it names - each play, block and task it matches is there, each fact it reads is set by a task - and every live
-  test that runs a real playbook to the paths its own tests pin, read from its code, so a pin in a comment is
-  none.
+  streamed; and no other tracked file naming the variable. `test_login_live.py` runs the real `login.yml` once, at a
+  pseudo-terminal, against `test_sign_in_plays.py`'s stand-in VMs and fake GitHub: each failure under the sign-in it
+  happened in, the raise naming none, the `SIGN-INS` table's marks, the head naming the VMs that failed, and the
+  region gone. `test_destroy_live.py` runs the real `destroy.yml` against `test_release.py`'s fakes and stand-in
+  VMs, every path it writes pinned: the question answered, the four stages, each VM's release by service and no step
+  of a role's own, the VM it started, each VM's outcome; a VM Proxmox would not delete the one that failed, under
+  its step, and the raise naming none; and a deletion not confirmed said as the answer, the title `declined`.
+  `test_code_live.py` runs the real `code.yml` against the fake Proxmox and `test_code_session.py`'s world and pins:
+  the nine steps, the VM in the header, the window opened, the summary's steps whole and no row of the fleet's
+  skipped tasks; and a VM that is not there said under the step it failed in. `test_live_commands.py` runs
+  `tools/live` in a stand-in recipe in parts, the justfile's trap at its top: passed through piped, without a title,
+  with a `-v` or a bare `-vvv`, without the engine's packages and without a state (`LIVE_DIR=`); an ignored Ctrl-C
+  kept, and 126 and 127 as a shell's; drawn as one run, the earlier part done above the next, a failed part's last
+  40 lines whole, the head and title `failed` and then `stopped` after Ctrl-C, the child's every line in the log and
+  the switch never in its environment; the state 0600 in a 0700 directory, another run's never taken over, and only
+  a run's own states pruned; a playbook as a part, whose NEXT STEPS wait for the run's end, and one Ctrl-C ended
+  before its stats said stopped; an end with no state saying nothing, and one that fails leaving the recipe's
+  status; a Ctrl-C pending before any handler taken, the part running nothing; a second Ctrl-C ending a part whose
+  child's group would not end; SIGTERM and SIGHUP ending the child, the echo back; a command that asks at the
+  terminal failing at once; a passing part's warnings above; a command named past `env`, a shell's by its step; a
+  signal's exit as a shell's; no bar falling between parts; ansible-playbook's 99 said stopped; and a run that ended
+  well before the steps it listed said stopped. `test_lint_live.py` runs the real `just lint` at a pseudo-terminal
+  with `test_justfile.py`'s stand-in linters: each check to come until it runs, its last line, no counts, the
+  `CHECKS` table, every line in the run's one log; a check that fails, its end whole, its exit code the run's and
+  the checks it left unrun named; a just that is not the pinned one, its check left out and the run done; and
+  `ANSIBLE_ARGS=-vvv` through the justfile passing every check through. `test_live_recipes.py` holds every declaration
+  to the playbooks it names - each play, block and task it matches is there, each fact it reads is set by a task -
+  and every live test that runs a real playbook to the paths its own tests pin, read from its code, so a pin in a
+  comment is none.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   98), both ways.
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
@@ -298,7 +302,7 @@ pytest over `tests/unit/`: 2182 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The justfile** (`test_justfile.py` 477): the real `just`, at least the pinned version, run against
+- **The justfile** (`test_justfile.py` 479): the real `just`, at least the pinned version, run against
   stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
   --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
   nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its

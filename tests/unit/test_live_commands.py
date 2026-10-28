@@ -27,14 +27,29 @@ from harness import REPO
 
 LIVE = REPO / "tools" / "live"
 STAMP = "20261026-131050"
-# A recipe in parts, as the justfile writes one: the trap at its top, each command behind tools/live.
-RECIPE = """#!/bin/bash
+
+
+def _the_justfiles_trap():
+    """just lint's end and trap, as the justfile writes them: its {{ live }} the stand-in's live."""
+    lines = [line.strip() for line in (REPO / "justfile").read_text().splitlines()]
+    start = lines.index(next(line for line in lines if line.startswith("lint ")))
+    end = next(line for line in lines[start:] if line.startswith("live_end() {"))
+    trap = next(line for line in lines[start:] if line.startswith("trap ") and "live_end" in line)
+    assert "{{ live }}" in end, end
+    return end.replace("{{ live }}", "live") + "\n" + trap
+
+
+# A recipe in parts, as the justfile writes one: the justfile's own trap at its top, each command behind tools/live.
+RECIPE = (
+    """#!/bin/bash
 set -eu
 live() {{ "{python}" "{live}" --log-dir="{logs}" --stamp={stamp} --ansible-args="${{ARGS:-}}" "$@"; }}
-live_end() {{ live end "$1" || :; }}
-trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT
+"""
+    + _the_justfiles_trap().replace("{", "{{").replace("}", "}}")
+    + """
 {parts}
 """
+)
 SAYS = "import os, sys; print('one'); print('two', os.environ.get('CLAUDE_ON_PROXMOX_LIVE', 'unset'))"
 FAILS = "import sys; [print(f'line-{n}') for n in range(1, 51)]; sys.exit(3)"
 
@@ -131,7 +146,7 @@ def test_parts_are_drawn_as_one_run_and_its_end_says_it_whatever_ended_it(two_pa
     assert re.search(r"^✗ fails: python\S* \(.*\) · exit 3$", screen, re.M), screen
     assert "line-11\n" in screen + "\n" and "line-10\n" not in screen + "\n", screen
     assert re.search(r"^claude-on-proxmox  lint · failed after \d+ s at fails · \d\d:\d\d$", screen, re.M), screen
-    table = screen.split("STEPS", 1)[1].split("\n\n", 1)[0]
+    table = screen.split("CHECKS", 1)[1].split("\n\n", 1)[0]
     assert re.search(r"^ ✓ says ", table, re.M) and re.search(r"^ ✗ fails ", table, re.M), table
     assert ran.screen.titles[-1] == "lint · failed"
     assert not ran.state.exists(), "the end removes the state"
@@ -157,7 +172,7 @@ def test_the_state_is_the_run_s_alone(tmp_path):
     state.parent.mkdir(exist_ok=True)
     state.write_text(json.dumps({"version": 1, "title": "test", "tasks": []}))
     ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
-    assert ran.rc == 0 and "STEPS" in ran.transcript and "test ·" not in ran.transcript, ran.transcript
+    assert ran.rc == 0 and "CHECKS" in ran.transcript and "test ·" not in ran.transcript, ran.transcript
 
 
 def _commands():
@@ -439,4 +454,13 @@ def test_a_playbook_part_ctrl_c_stopped_is_said_stopped(tmp_path):
     argv, environment, state = _recipe(tmp_path, [_part("says", SAYS), "exit 99"])
     ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
     assert ran.rc == 99, ran.text
+    assert re.search(r"^claude-on-proxmox  lint · stopped after \d+ s at says", ran.transcript, re.M), ran.transcript
+
+
+def test_a_run_that_ends_well_before_its_listed_steps_is_said_stopped(tmp_path):
+    # A Ctrl-C between two parts can end the recipe with bash saying 0: the steps it listed and never reached say so.
+    listed = _part("says", SAYS).replace("--step says", '--step says --plan "says next"', 1)
+    argv, environment, state = _recipe(tmp_path, [listed, "exit 0"])
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
+    assert ran.rc == 0, ran.text
     assert re.search(r"^claude-on-proxmox  lint · stopped after \d+ s at says", ran.transcript, re.M), ran.transcript

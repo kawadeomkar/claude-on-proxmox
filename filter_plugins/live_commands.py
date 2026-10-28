@@ -209,8 +209,9 @@ class Part:
     """One command of a run, drawn: its step's task, the child's lines to the log and the last of them on the
     screen, and the state saved for the next part and the run's end, which says the summary."""
 
-    def __init__(self, title, stage, step, argv, state_path, interrupted=False):
+    def __init__(self, title, stage, step, argv, state_path, plan=(), interrupted=False):
         self.title, self.stage, self.step, self.argv, self.state_path = title, stage, step, list(argv), state_path
+        self.plan = list(plan)
         self.display = Display()
         self.mode = "live" if live.can_draw() else "lines"
         self.out = live.Output(
@@ -293,6 +294,7 @@ class Part:
         self.out.start()
         name = command_name(self.argv) or self.step or self.stage
         with self.display._lock:
+            self.run.planned(self.stage, self.plan)
             self.task = self.run.command(self.stage, self.step, name, now)
         self.out.redraw()
         self.out.spin()
@@ -386,10 +388,10 @@ class Part:
         self.out.print([*lines, ("", "")])
 
 
-def run(title, stage, step, argv, state_path, interrupted=False):
+def run(title, stage, step, argv, state_path, plan=(), interrupted=False):
     """A part, drawn: its exit code. interrupted is tools/live's record of a Ctrl-C it took before the part's own
     handler was in, read once it is."""
-    part = Part(title, stage, step, argv, state_path)
+    part = Part(title, stage, step, argv, state_path, plan)
     # Ctrl-C from the first moment: a handler, never SIG_IGN, which the child would inherit. SIGTERM and SIGHUP end
     # the run, its child's session with it.
     previous = {signal.SIGINT: signal.signal(signal.SIGINT, part._interrupt)}
@@ -423,8 +425,9 @@ def end(title, state_path, rc):
     run = view.Run(title, now, log=_log())
     run.adopt(state, now)
     failed_hosts = list(state.get("failed_hosts") or [])
-    # Stopped: Ctrl-C at the recipe (130), at a playbook (ansible-playbook's 99), or a part that says it stopped.
-    stopped = rc in (INTERRUPTED, ANSIBLE_INTERRUPTED) or bool(state.get("stopped"))
+    # Stopped: Ctrl-C at the recipe (130), at a playbook (ansible-playbook's 99), a part that says it stopped, or a
+    # run that ended well with steps it listed never reached - a Ctrl-C between its parts, which bash may say as 0.
+    stopped = rc in (INTERRUPTED, ANSIBLE_INTERRUPTED) or bool(state.get("stopped")) or (rc == 0 and bool(run.unrun()))
     run.end(now, failed=rc != 0 or bool(failed_hosts), stopped=stopped)
     out = live.Output(display, frame=None, live=live.can_draw(), color=not C.ANSIBLE_NOCOLOR, to_log=True)
     if out.live:

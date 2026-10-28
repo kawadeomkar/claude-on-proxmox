@@ -585,6 +585,12 @@ is drawn as one run, its parts in turn:
   that saved itself stopped), after which the head says `stopped after … at` the last part - then removes the
   state. A run whose parts all passed through has none, and ends with
   nothing said, as it did.
+- **`just lint`** is the first: one stage, `lint`, each check a step (`--plan` lists the ones the run will run, to
+  come until each starts, each counted as one task till then so that no percentage reads whole too soon; a run
+  that ends well with one never reached was stopped between its parts, and says so), its rows with no bar or
+  count (`counts=False`), its summary `CHECKS` and the checks a failure left unrun; its totals count the checks,
+  not the commands. Its state's name carries its shell's PID, so two runs started in one second keep two. The
+  syntax check is one command over every playbook, each said as it starts.
 - **Nested recipes.** A recipe in parts that runs another runs it as `{{ self }} live_run=<its name> <recipe>`: that
   one exports no title or state of its own, sets no trap and takes the parent's, so its parts are a stage of the
   parent's run. `live_run` is a just setting, which `self` passes on, never the environment, so a variable left

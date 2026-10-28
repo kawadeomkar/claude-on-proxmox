@@ -177,6 +177,8 @@ LIVE_TESTS = {
         '"claude_ssh_user_config"',
         '"claude_ssh_config_include": False',
     ),
+    # just lint as test_justfile.py runs it: its stand-in linters, its log and its state in the test's own directory.
+    "test_lint_live.py": ("_linters(",),
     # code.yml as test_code_session.py runs it: its pins, never the developer's VS Code settings, time zone or
     # ~/.claude, and both SSH configs in the test's own directory.
     "test_code_live.py": (

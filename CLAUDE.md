@@ -57,14 +57,18 @@ go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
 `--no-deps` would skip one - whose first line is the checkout guard (`tools/check checkout`: just looks for a
 justfile upward, so started in a make-era worktree under `.claude/worktrees/` it would run main's, against
 main's inventory and vault), then its own rules with their messages, then what it needs (`tools/env-run
---bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d. No
+--bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d - but in a
+recipe drawn in parts (`lint`), which exports its title and its state's path (`live_state`, the recipe's name and
+the shell's PID), sets `trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT` - an end that fails changes no exit status -
+only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`,
+so the trap still runs to say the run's end. No
 assignment starts a program: just evaluates what a recipe uses before any line runs, so it would start
 before a refusal. Bash, not sh: Ubuntu's dash dies of a Ctrl-C that the playbook it runs survived
 (Ansible's `pause`, Ctrl-C then C), and `[continue]` needs the script to live on; and only what macOS's
 bash 3.2 has - no arrays, since `"${a[@]}"` of an empty one is fatal there under `-u`, which every script
 has, so a variable that may be unset is read as `${VAR:-}`. A recipe that includes another's work runs it
 as `{{ self }} <recipe>`, which passes on every setting (a recursive just begins without the command line's
-`BIN=`). `test_justfile.py` runs every recipe against stand-ins, under `/bin/bash` on macOS.
+`BIN=`), and, to make it a stage of its own run, `{{ self }} live_run=<its name> <recipe>`. `test_justfile.py` runs every recipe against stand-ins, under `/bin/bash` on macOS.
 
 **A change to behaviour changes the wiki in the same commit.** The page for it is in `docs/`
 (`docs/README.md` maps them; `docs/architecture/` for the design, cited by section number). The
@@ -398,9 +402,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `harness._at_a_pseudo_terminal`. See docs/architecture/custom-code.md §7.8.
 
 - **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
-  which only the recipes drawn live export - `deploy`, `login`, `destroy`, `code` - (the run's title) and the
-  engine takes out of its environment at once,
-  so nothing the run starts inherits it, hands the stdout callback's every event to the engine at verbosity 0 with
+  which only the recipes drawn live export - `deploy`, `login`, `destroy`, `code`, and `lint` for its checks - (the
+  run's title) and the engine takes out of its environment at once, so nothing the run starts inherits it, hands
+  the stdout callback's every event to the engine at verbosity 0 with
   a run log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
   Every line the stream would print still reaches the run log, in order, through `Display`'s `log_only` - so
   without a log (`LOG_DIR=`) the run is the stream; the reports, browser blocks, diffs, warnings and failures
