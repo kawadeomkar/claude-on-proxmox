@@ -16,8 +16,8 @@ What it does, once started:
   the screen alone.
 - Wraps Display.prompt_until and Display.do_var_prompt: a pause prints with display() and only then takes Display's
   lock to read the keys (ansible-core 2.21), and a vars_prompt reads with input(), so the region is erased before
-  either and drawn again only once it returns. The spinner takes the same lock, and draws nothing while a prompt is
-  up.
+  either and drawn again only once it returns, and the run has worked half a second more: questions one after
+  another show no frame between them. The spinner takes the same lock, and draws nothing while a prompt is up.
 - On a resize (SIGWINCH), which can wrap a frame worked out for the old size, pushes the screen into the
   scrollback and draws again from the top. The cursor is never hidden.
 - Sets the terminal's title (OSC 0) when it changes, and rings the bell when asked.
@@ -39,11 +39,15 @@ import signal
 import sys
 import termios
 import threading
+import time
 from contextlib import contextmanager
 
 FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SYNC_ON, SYNC_OFF = "\x1b[?2026h", "\x1b[?2026l"
 FRAME_SECONDS = 0.1
+# After a prompt, the region comes back only once the run has worked this long: questions one after another, just
+# init's, show no frame between them.
+SETTLE_SECONDS = 0.5
 MIN_ROWS, MIN_COLS = 4, 20
 
 
@@ -81,6 +85,7 @@ class LiveRegion:
         self._thread = None
         self._title = None
         self._echo = None  # the terminal's settings before the echo went off, while it is off
+        self._settle = 0.0  # until when, after a prompt, nothing is drawn
         self.prompting = False
 
     # --- the screen -------------------------------------------------------------------------------------------
@@ -122,8 +127,11 @@ class LiveRegion:
         return os.get_terminal_size(self._stream.fileno())
 
     def redraw(self):
-        """Draw the frame again, in place. A no-op while stopped, paused for a prompt, or without a frame."""
+        """Draw the frame again, in place. A no-op while stopped, paused for a prompt, settling after one, or without
+        a frame."""
         if not self._frame or self._stop.is_set() or self._paused or not self._started:
+            return
+        if time.monotonic() < self._settle:
             return
         with self._display._lock:
             try:
@@ -225,7 +233,7 @@ class LiveRegion:
                         self.prompting = False
                         if self._frame and not self._stop.is_set():
                             self._quiet(True)
-                        self.redraw()
+                        self._settle = time.monotonic() + SETTLE_SECONDS
 
             return wrapped_prompt
 

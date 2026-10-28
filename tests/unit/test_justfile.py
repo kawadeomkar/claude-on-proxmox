@@ -1467,6 +1467,9 @@ def _init_settings(tmp_path: Path, settings_body: str = "") -> list[str]:
     _stand_in(bin_dir, "pre-commit")
     _stand_in(bin_dir, "ansible-galaxy")
     _stand_in(bin_dir, "uv")
+    # The environment's Python, which runs the trap's tools/live end.
+    if not (bin_dir / "python").exists():
+        (bin_dir / "python").symlink_to(sys.executable)
     copies = []
     for name in ("hosts.yml", "local.yml", "vault.yml"):
         (tmp_path / f"{name}.example").write_text(f"# {name}\n")
@@ -1476,6 +1479,7 @@ def _init_settings(tmp_path: Path, settings_body: str = "") -> list[str]:
         f"VAULT_FILE={tmp_path / 'vault.yml'}",
         f"VAULT_PASS={tmp_path / '.vault_pass'}",
         f"LOG_DIR={tmp_path / 'logs'}",
+        f"LIVE_DIR={tmp_path / 'live'}",
     ]
     return settings
 
@@ -2102,3 +2106,28 @@ def test_lint_as_a_stage_of_another_run_draws_into_it_and_says_no_end_of_its_own
     runs, env = _live_recorded(tmp_path, "live_run=test", "lint", "yaml")
     assert [run[-1] for run in runs if "end" in run] == [], runs
     assert env == ["unset|unset"], "the parent's title and state, here none, never lint's own"
+
+
+def test_init_draws_its_two_playbooks_as_one_run_whose_trap_says_its_end(tmp_path: Path) -> None:
+    seen = tmp_path / "live-env"
+    said = "${CLAUDE_ON_PROXMOX_LIVE-unset}|${CLAUDE_ON_PROXMOX_LIVE_STATE-unset}"
+    settings = _init_settings(tmp_path, f'echo "{said}" >> "{seen}"')
+    result = _just("init", settings=settings)
+    assert result.returncode == 0, _output(result)
+    state = rf"{re.escape(str(tmp_path / 'live'))}/\d{{8}}-\d{{6}}-init-\d+\.json"
+    title = re.fullmatch(rf"init\|{state}", seen.read_text().split()[0])
+    assert title and len(set(seen.read_text().split())) == 1, seen.read_text()
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    seen_nested = nested / "live-env"
+    result = _just("live_run=test", "init", settings=_init_settings(nested, f'echo "{said}" >> "{seen_nested}"'))
+    assert result.returncode == 0, _output(result)
+    assert set(seen_nested.read_text().split()) == {"unset|unset"}
+    # LIVE_DIR= keeps no state to carry the run between its playbooks: each prints as it did, nothing joined.
+    stateless = tmp_path / "stateless"
+    stateless.mkdir()
+    seen_stateless = stateless / "live-env"
+    settings = [*_init_settings(stateless, f'echo "{said}" >> "{seen_stateless}"'), "LIVE_DIR="]
+    result = _just("init", settings=settings)
+    assert result.returncode == 0, _output(result)
+    assert set(seen_stateless.read_text().split()) == {"unset|unset"}

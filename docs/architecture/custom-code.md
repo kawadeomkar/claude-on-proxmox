@@ -153,12 +153,11 @@ A run waits for the person in three ways, and each is set apart:
   `github_projects_next`, `tailscale_next`, `claude_vm_next` (provision, destroy and `just init`) and
   `code_next` - as `{vm: {matter: line}}`: the message itself while something is left, `''` once nothing is.
   A record about no VM is keyed by words no VM is named, a VM's name being one plain word: destroy's `kept
-  SSH aliases`, and `just init`. Its two playbooks are two `ansible-playbook` runs, each printing its own
-  NEXT STEPS, and each records under a matter of its own: `init_settings`, the values still to set or a vault
-  that cannot be opened, and nothing once every value is set, the checks deciding what comes next; and
-  `init_check`, each problem with its fix, what could not be checked when nothing is wrong, or else `just
-  deploy alpha` - nothing while the GitHub username, which the first names, is still the example's - and
-  nothing at all when it ends before checking, a value still the example's.
+  SSH aliases`, and `just init`. Its two playbooks each record under a matter of their own: `init_settings`,
+  the values still to set or a vault that cannot be opened, and nothing once every value is set, the checks
+  deciding what comes next; and `init_check`, each problem with its fix, what could not be checked when
+  nothing is wrong, or else `just deploy alpha` - nothing while the GitHub username, which the first names, is
+  still the example's - and nothing at all when it ends before checking, a value still the example's.
   `aggregate` merges the records, so the last one of a VM and matter wins across plays: configure's "not
   signed in" is cleared by the sign-in's own report later in the same `just deploy`. The sign-in playbooks
   record what their own plays say, under the role's stat and the sign-in's matter: a VM that could not be
@@ -503,7 +502,8 @@ good, and runs at exit, Ctrl-C included.
 - **Prompts.** `Display.prompt_until` (a `pause`) prints its prompt through `display` and only then takes
   `Display`'s lock to read the keys (ansible-core 2.21), and a `vars_prompt` reads with `input()`
   (`Display.do_var_prompt`). Both are wrapped: the region erases and pauses itself before the prompt and draws
-  again once it returns, and the spinner draws nothing meanwhile.
+  again once it returns and the run has worked half a second more (`SETTLE_SECONDS`), so questions one after
+  another - `just init`'s - show no frame between them; the spinner draws nothing meanwhile.
 - **The terminal.** Its echo is off while the region is up, and on for a prompt and at the end: an Enter
   typed during a run would move the cursor under the region, and the next redraw would leave a copy of it
   behind. A resize (`SIGWINCH`) pushes the screen into the scrollback and draws afresh, since no count of
@@ -592,12 +592,25 @@ is drawn as one run, its parts in turn:
   that saved itself stopped), after which the head says `stopped after … at` the last part - then removes the
   state. A run whose parts all passed through has none, and ends with
   nothing said, as it did.
+- **`just init`** is two playbooks in turn, after `just install`, which is never drawn - it would install the
+  engine's own packages from under it - and only with a state to carry the run between them: under `LIVE_DIR=` each
+  prints as it did. The settings stage's steps are its questions, each `starts` at the include that asks it; the
+  checks stage has a `checklist`, `init_results`, which the engine takes in each time
+  `init_check.yml` records a check - whether it passed, and its text as plain text - and draws under the running
+  stage, a `✗` for each problem, and says whole in the summary. The last task, "Fail when a check found a
+  problem", is a raise whose causes are the checklist's failed checks (`Causes(checklist=True)`); a report line
+  that starts with one of the declaration's `marks` (`ok`, `!!`, `--`, `NOTICE`) takes its style, and the checks'
+  report leaves no line in the summary, whose checklist says it. A part of a run in parts whose declaration has
+  several stages is never drawn as one stage's steps: the next part would draw them otherwise.
 - **`just lint`** is the first: one stage, `lint`, each check a step (`--plan` lists the ones the run will run, to
   come until each starts, each counted as one task till then so that no percentage reads whole too soon; a run
   that ends well with one never reached was stopped between its parts, and says so), its rows with no bar or
   count (`counts=False`), its summary `CHECKS` and the checks a failure left unrun; its totals count the checks,
   not the commands. Its state's name carries its shell's PID, so two runs started in one second keep two. The
   syntax check is one command over every playbook, each said as it starts.
+- **NEXT STEPS** prints each record's lines as they are, as the stream does: a record of several lines - just
+  init's problems, each under the line that counts them - keeps each line with its indent, and each paragraph is one
+  line, which the terminal wraps, never the run.
 - **Nested recipes.** A recipe in parts that runs another runs it as `{{ self }} live_run=<its name> <recipe>`: that
   one exports no title or state of its own, sets no trap and takes the parent's, so its parts are a stage of the
   parent's run. `live_run` is a just setting, which `self` passes on, never the environment, so a variable left

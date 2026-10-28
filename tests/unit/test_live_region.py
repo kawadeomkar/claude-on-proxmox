@@ -17,6 +17,7 @@ import os
 import signal
 import termios
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -168,10 +169,15 @@ def test_a_prompt_has_the_screen_to_itself_and_the_region_comes_back_after():
     region.redraw()
     try:
         assert display.prompt_until("Code:") == b"typed"
+        # Back only once the run has worked half a second: the next question, at once, finds nothing drawn.
+        region.redraw()
+        settled = stream.getvalue()
+        time.sleep(live.SETTLE_SECONDS)
+        region.redraw()
     finally:
         region.finish()
     (before, prompting), during = seen
-    assert prompting and before.endswith("\r\x1b[J") and during == before
+    assert prompting and before.endswith("\r\x1b[J") and during == before and settled == before
     assert stream.getvalue()[len(before) :].startswith(f"{live.SYNC_ON}\rregion")
 
 

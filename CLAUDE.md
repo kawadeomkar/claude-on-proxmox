@@ -58,10 +58,11 @@ go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
 justfile upward, so started in a make-era worktree under `.claude/worktrees/` it would run main's, against
 main's inventory and vault), then its own rules with their messages, then what it needs (`tools/env-run
 --bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d - but in a
-recipe drawn in parts (`lint`), which exports its title and its state's path (`live_state`, the recipe's name and
-the shell's PID), sets `trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT` - an end that fails changes no exit status -
-only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`,
-so the trap still runs to say the run's end. No
+recipe drawn in parts (`lint`, `init`), which exports its title and its state's path (`live_state`, the recipe's
+name and the shell's PID), sets `trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT` - an end that fails changes no exit
+status - only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`
+(lint's checks) or each playbook as it is, joining the run through the exported title and state (init's two), so
+the trap still runs to say the run's end. No
 assignment starts a program: just evaluates what a recipe uses before any line runs, so it would start
 before a refusal. Bash, not sh: Ubuntu's dash dies of a Ctrl-C that the playbook it runs survived
 (Ansible's `pause`, Ctrl-C then C), and `[continue]` needs the script to live on; and only what macOS's
@@ -392,19 +393,21 @@ token; `github_auth_method: token` still fails. The status JSON carries
   never code of one command's own. A recipe of several processes is one run in parts: each command goes through
   `tools/live`, which passes it through unchanged, without the variable or the state's path, unless it can draw -
   a terminal, a title, no `-v`, a log, a state, the engine's packages, decided with the standard library alone -
-  and each part takes over the run's state in `LIVE_DIR` (`.cache/live/`, refused by
+  while a playbook part (init's) joins through the exported variable itself, drawn a line per step without a
+  terminal; each part takes over the run's state in `LIVE_DIR` (`.cache/live/`, refused by
   `tests/check_no_local_files.sh`), whose end, the recipe's trap, says the summary; a nested recipe joins its
   parent's run through the `live_run` setting, never the environment. The region draws one
   write per redraw in synchronized output, up exactly the lines drawn, so no line may wrap (`tests/unit/vt.py`
-  counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`); keeps
+  counts them); steps aside for every prompt (`prompt_until`, and a `vars_prompt`'s `do_var_prompt`), back only
+  half a second after it; keeps
   the echo off while it is up; and never hides the cursor. Modules load each other by path, once, as
   `claude_on_proxmox_<stem>`, and every test that runs something at a terminal opens it through
   `harness._at_a_pseudo_terminal`. See docs/architecture/custom-code.md §7.8.
 
 - **`just deploy` is drawn live, and nothing a person must read is drawn only there.** `CLAUDE_ON_PROXMOX_LIVE`,
-  which only the recipes drawn live export - `deploy`, `login`, `destroy`, `code`, and `lint` for its checks - (the
-  run's title) and the engine takes out of its environment at once, so nothing the run starts inherits it, hands
-  the stdout callback's every event to the engine at verbosity 0 with
+  which only the recipes drawn live export - `deploy`, `login`, `destroy`, `code`, and `lint` and `init` for their
+  parts - (the run's title) and the engine takes out of its environment at once, so nothing the run starts
+  inherits it, hands the stdout callback's every event to the engine at verbosity 0 with
   a run log: at a terminal, the region drawn from `filter_plugins/run_view.py`'s model; otherwise a line per step.
   Every line the stream would print still reaches the run log, in order, through `Display`'s `log_only` - so
   without a log (`LOG_DIR=`) the run is the stream; the reports, browser blocks, diffs, warnings and failures

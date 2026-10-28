@@ -281,6 +281,7 @@ class Engine:
         self._attended = self._now()  # when the person last had something to answer: the start, a bell, a prompt
         self._facts = set()  # the facts the declaration reads each VM's outcome from
         self._infos = {}  # stage key: the fact its row's info names VMs from
+        self._checklists = {}  # stage key: the fact its playbook keeps its checks in
 
     # --- what the run says, and where it goes ------------------------------------------------------------------
     # The run's own words and anything on stderr - warnings, deprecations, errors - stay on the screen; the rest,
@@ -301,20 +302,22 @@ class Engine:
     def _now(self):
         return time.monotonic()
 
-    def _wrapped(self, head, lines, style=""):
+    def _wrapped(self, head, lines, style="", styles=None):
         """head, then lines wrapped under where head ends, whole - never cut: (coloured, plain) pairs for print. A
-        line keeps its own indent, its wrapped pieces under where its words start."""
+        line keeps its own indent, its wrapped pieces under where its words start; styles, one for each line, colour
+        each its own way."""
         column = screen.width(head)
         room = max(20, self._width() - 1 - column)
         out = []
         first = True
-        for line in lines:
+        for number, line in enumerate(lines):
+            style_ = (styles[number] if styles else "") or style
             indent = len(line) - len(line.lstrip(" "))
             pieces = screen.fill(line.strip(), max(10, room - indent)) if line.strip() else [""]
             for piece in pieces:
                 lead = head if first else [(" " * column, "")]
                 first = False
-                runs = [*lead, (" " * indent + piece, style)]
+                runs = [*lead, (" " * indent + piece, style_)]
                 out.append((screen.render(runs, self.color), screen.render(runs, False)))
         return out
 
@@ -373,6 +376,7 @@ class Engine:
             vms=vm_names(cli.get("extra_vars")),
         )
         # A part of a run in parts: the parts before it, done, drawn above its own stages.
+        self.run.parts = bool(self.state)
         earlier = commands.load_state(self.state, self.title) if self.state else None
         if earlier is not None:
             self.run.adopt(earlier, self._now())
@@ -390,6 +394,7 @@ class Engine:
         stages = self.run.recipe.stages
         self._facts = {o.fact for stage in stages for step in (*stage.steps, stage) for o in step.outcomes}
         self._infos = {stage.key: stage.info.fact for stage in stages if isinstance(stage.info, view.recipes.Info)}
+        self._checklists = {stage.key: stage.checklist for stage in stages if stage.checklist}
         first = playbook.get_plays()[:1]
         if first and Path(str(first[0].get_path()).split(":", 1)[0]).name in self.run.recipe.plan:
             self.plan_play = first[0]._uuid
@@ -505,6 +510,16 @@ class Engine:
             for stage, fact in self._infos.items():
                 if fact in (result.result.get("ansible_facts") or {}):
                     self.run.info(stage, self._names(result.result["ansible_facts"][fact]))
+            # A stage's checks, as its playbook records each: only whether it passed, and its text as plain text.
+            for stage, fact in self._checklists.items():
+                checks = (result.result.get("ansible_facts") or {}).get(fact)
+                if isinstance(checks, list):
+                    items = [
+                        (bool(check.get("ok")), "skipped" in check, plain_text(str(check.get("text", ""))))
+                        for check in checks
+                        if isinstance(check, dict)
+                    ]
+                    self.run.checklist(stage, items)
             self._discovered(result)
         if result.task.action in STATS_ACTIONS:
             self._records(result)
@@ -596,14 +611,20 @@ class Engine:
             return
         plan = self.plan_play is not None and self.run.play == self.plan_play
         kept = [line for line in lines if line.strip()]
+        marks = self.run.recipe.marks
+        styles = [marks.get((line.split() or [""])[0], "") for line in lines]
         with self.display._lock:
+            task = self.run.find(result.task._uuid)
             note = " ".join(view.one_line(line) for line in kept)
-            self.run.note(host, note, plan=plan, task=self.run.find(result.task._uuid), lines=len(kept))
+            # A stage's checks, reported line by line, are its checklist's, which the summary says whole.
+            listed = task is not None and task.stage in self.run.checklists and any(styles)
+            if not listed:
+                self.run.note(host, note, plan=plan, task=task, lines=len(kept))
         # A play on this machine names the VM in its words; anywhere else the VM leads, once.
         if lines[0].startswith(host + ": "):
             lines[0] = lines[0][len(host) + 2 :]
         who = [] if host == "localhost" or lines[0].startswith(host + " ") else [(host, "b"), ("  ", "")]
-        self.print(self._wrapped([("  ", ""), *who], lines))
+        self.print(self._wrapped([("  ", ""), *who], lines, styles=styles))
 
     def skipped(self, result):
         self._result(result, "skipped")
@@ -654,6 +675,17 @@ class Engine:
         declared = self.run.recipe.raises.get(self._name(result.task))
         if declared is None:
             return []
+        if declared.checklist:
+            # The checks of the raise's stage that did not pass, each a failure of that stage's, on this machine.
+            with self.display._lock:
+                task = self.run.find(result.task._uuid)
+                stage = task.stage if task is not None else ""
+                failed = self.run.checks_failed(stage)
+            host = result.host.get_name()
+            return [
+                {"name": text, "where": stage, "stage": stage, "step": None, "said": [], "host": host}
+                for text in failed
+            ]
         hosts = list(self._rescued) if declared.hosts == "any" else [result.host.get_name()]
         return [
             kept

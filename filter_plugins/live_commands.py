@@ -423,6 +423,7 @@ def end(title, state_path, rc):
     display = Display()
     now = time.monotonic()
     run = view.Run(title, now, log=_log())
+    run.parts = True
     run.adopt(state, now)
     failed_hosts = list(state.get("failed_hosts") or [])
     # Stopped: Ctrl-C at the recipe (130), at a playbook (ansible-playbook's 99), a part that says it stopped, or a

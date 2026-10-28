@@ -12,7 +12,7 @@
 # (tools/check checkout), then check its own arguments, then what it needs -
 # the environment (tools/env-run --bin), the vault, the collections - and only
 # then does it work, its last command exec'd - but in a recipe drawn in parts
-# (lint), whose trap must still run to say the run's end (tools/live). Nothing
+# (lint, init), whose trap must still run to say the run's end (tools/live). Nothing
 # is a dependency, which JUST_NO_DEPS or --no-deps would skip, and no
 # assignment here starts a program, which just would do before any line ran. A value a person typed
 # reaches a script as an argument ("$1"), never as its text: just holds it to
@@ -219,6 +219,17 @@ init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STO
       test -f "$file" || { cp "$file.example" "$file"; copied="$copied $file"; }
     done
     [ -z "$copied" ] || echo "Created$copied from their .example files (git-ignored)."
+    # Drawn live from here, after just install, as one run in two parts - the questions, then the checks - unless it
+    # is a stage of another recipe's run (live_run), or there is no state to carry the run between them (LIVE_DIR=,
+    # when each playbook prints as it did): its title, which no value given goes into, the state the two playbooks
+    # share, and a trap that says the run's end however it ends, so neither is exec'd.
+    if [ -z {{ quote(live_run) }} ] && [ -n {{ quote(live_state) }} ]; then
+      CLAUDE_ON_PROXMOX_LIVE=init
+      CLAUDE_ON_PROXMOX_LIVE_STATE={{ quote(live_state) }}-init-$$.json
+      export CLAUDE_ON_PROXMOX_LIVE CLAUDE_ON_PROXMOX_LIVE_STATE
+      live_end() { {{ live }} end "$1" || :; }
+      trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT
+    fi
     {{ run_logged }} init "$bin/ansible-playbook" -i playbooks/inventory/init.yml "$@" {{ ANSIBLE_ARGS }} playbooks/init_settings.yml
     # The checks run with the project's inventory and the vault, whose password
     # is looked for now: the questions may have just made .vault_pass.
@@ -227,7 +238,7 @@ init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STO
       exit 0
     fi
     [ ! -f {{ quote(VAULT_PASS) }} ] || set -- --vault-password-file {{ quote(VAULT_PASS) }} "$@"
-    exec {{ run_logged }} init "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/init_check.yml
+    {{ run_logged }} init "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/init_check.yml
 
 # uv's sync installs the versions the lock pins into PYTHON's environment,
 # after checking the lock still matches pyproject.toml. --inexact: the

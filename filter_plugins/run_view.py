@@ -483,6 +483,8 @@ class Run:
         self.batch = 0  # how many plays, and serial plays' batches, have started: a task starts again only in its own
         self.gone = {}  # play key: {host: left or failed}, the hosts no longer in it
         self.started = {}  # stage key: the step the last task a step starts at began, in the play running
+        self.checklists = OrderedDict()  # stage key: [(done, failed or skipped, the check's text)], as recorded
+        self.parts = False  # a part of a run in parts, whose state carries it to the next part
         self.said_info = {}  # stage key: what its row says, from the fact its declaration names
         self.declined = ""  # the line said for an answer that ended the run, not a failure
         self.stopped = False  # a run in parts that Ctrl-C, or anything but a failed part, ended part way
@@ -793,6 +795,18 @@ class Run:
         if spec is not None and isinstance(spec.info, recipes.Info) and names:
             self.said_info[stage] = f"{spec.info.word} {', '.join(names)}"
 
+    def checklist(self, stage, items):
+        """A stage's checks as its playbook has recorded them so far: (passed, skipped, text) each, cleaned."""
+        said = []
+        for passed, skipped, text in items:
+            state = "skipped" if skipped else "done" if passed else "failed"
+            said.append((state, one_line(text)))
+        self.checklists[stage] = said
+
+    def checks_failed(self, stage):
+        """The checks of a stage's checklist that did not pass: a declared raise's causes."""
+        return [text for state, text in self.checklists.get(stage, []) if state == "failed"]
+
     def decline(self, line):
         """An answer that ended the run: said as itself, never as a failure."""
         self.declined = one_line(line)
@@ -908,6 +922,7 @@ class Run:
             "best": [[list(key) if isinstance(key, tuple) else key, value] for key, value in self.best.items()],
             "next_records": next_records or {},
             "failed_hosts": sorted(set(failed_hosts)),
+            "checklists": [[stage, [list(item) for item in items]] for stage, items in self.checklists.items()],
         }
 
     def adopt(self, state, now):
@@ -964,6 +979,7 @@ class Run:
         best = state.get("best") or []
         self.best = {tuple(key) if isinstance(key, list) else key: float(value) for key, value in best}
         self.names = self.names or list(state["names"])
+        self.checklists = OrderedDict((stage, [tuple(item) for item in items]) for stage, items in state["checklists"])
 
     # --- where it is ------------------------------------------------------------------------------------------
     def running_stage(self):
@@ -982,7 +998,10 @@ class Run:
         return [stage for stage in self.stages.values() if not self._quiet(stage)]
 
     def _flat(self):
-        """A run of one stage that has steps is drawn as its steps, with no row of its own."""
+        """A run of one stage that has steps is drawn as its steps, with no row of its own - but never a part of a run
+        in parts whose declaration has more stages, whose later parts draw them all."""
+        if self.parts and sum(not stage.quiet for stage in self.recipe.stages) > 1:
+            return False
         stages = self._shown()
         return len(stages) == 1 and any(key is not None for key in stages[0].steps)
 
@@ -1269,9 +1288,24 @@ class Run:
                     lines.append(self._row(1, glyph, stage.key, 13, stage, state, now, tiers, info, limit, total))
                 if state not in ("running", "waiting"):
                     continue
+            lines += self._checks(stage.key, limit, 1 if flat else 5, 5 if fold else None)
             lines += self._steps(stage, now, limit, glyph, tiers, fold, flat, vms)
         if pending:
             lines.append(screen.cut([(" ", ""), ("○ ", "d"), (f"then {', '.join(pending)}", "d")], limit))
+        return lines
+
+    def _checks(self, stage, limit, indent, last=None):
+        """A stage's checklist, as recorded so far: each check passed, failed or not made; the last ones when folded,
+        and every one that failed."""
+        items = self.checklists.get(stage, [])
+        if last is not None and len(items) > last:
+            items = [item for item in items[:-last] if item[0] == "failed"] + items[-last:]
+        lines = []
+        for state, text in items:
+            mark, style = {"done": ("✓", "g"), "failed": ("✗", "r"), "skipped": ("–", "d")}[state]
+            lines.append(
+                screen.cut([(" " * indent, ""), (f"{mark} ", style), (text, "d" if state == "skipped" else "")], limit)
+            )
         return lines
 
     def _steps(self, stage, now, limit, glyph, tiers, fold, flat, vms):
@@ -1496,6 +1530,10 @@ class Run:
                 never = [stage_.key for stage_ in self._shown() if not stage_.tasks]
             if never:
                 lines += self._flow([(" not run  ", "d")], never, limit, style="d")
+        # Each checklist whole: a check a person must fix is never only in the window.
+        for stage_key, items in self.checklists.items():
+            if items:
+                lines += [[], [(str(stage_key).upper(), "h")], *self._checks(stage_key, limit, 1)]
         # What a play on this machine said about a VM - its address, its alias, its window - is that VM's.
         said = [(self._about(note, vms), note) for note in self.notes]
         # A report on a matter a later report recorded again is over: configure's "not signed in" once the sign-in

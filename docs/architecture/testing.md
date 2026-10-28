@@ -19,7 +19,7 @@ nohup has them ignored; and a pseudo-terminal's reader reads to its end after th
 API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
 and then taken by another worker's fake.
 
-pytest over `tests/unit/`: 2194 tests. By file:
+pytest over `tests/unit/`: 2212 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 33): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -66,8 +66,8 @@ pytest over `tests/unit/`: 2194 tests. By file:
   it through `harness._at_a_pseudo_terminal`, and every live test through `tests/unit/live_kit.py`, which gives
   each run a `HOME` of its own.
 - **The live output** (`test_run_view.py` 107, `test_deploy_live.py` 18, `test_login_live.py` 3,
-  `test_destroy_live.py` 4, `test_code_live.py` 3, `test_lint_live.py` 5, `test_live_recipes.py` 22,
-  `test_live_commands.py` 27): the model, fed
+  `test_destroy_live.py` 4, `test_code_live.py` 3, `test_lint_live.py` 5, `test_init_live.py` 2,
+  `test_live_recipes.py` 27, `test_live_commands.py` 28): the model, fed
   events with the time given - a running, a waiting, a failed, a dry and a fleet run's frame, a wait known
   by how long it runs, a step's time its own tasks', a running stage's ended steps whole, a report a later
   report on its matter made old left out of the summary, as under `just deploy`, no line wider than the
@@ -109,15 +109,20 @@ pytest over `tests/unit/`: 2194 tests. By file:
   status; a Ctrl-C pending before any handler taken, the part running nothing; a second Ctrl-C ending a part whose
   child's group would not end; SIGTERM and SIGHUP ending the child, the echo back; a command that asks at the
   terminal failing at once; a passing part's warnings above; a command named past `env`, a shell's by its step; a
-  signal's exit as a shell's; no bar falling between parts; ansible-playbook's 99 said stopped; and a run that ended
-  well before the steps it listed said stopped. `test_lint_live.py` runs the real `just lint` at a pseudo-terminal
-  with `test_justfile.py`'s stand-in linters: each check to come until it runs, its last line, no counts, the
-  `CHECKS` table, every line in the run's one log; a check that fails, its end whole, its exit code the run's and
-  the checks it left unrun named; a just that is not the pinned one, its check left out and the run done; and
-  `ANSIBLE_ARGS=-vvv` through the justfile passing every check through. `test_live_recipes.py` holds every declaration
-  to the playbooks it names - each play, block and task it matches is there, each fact it reads is set by a task -
-  and every live test that runs a real playbook to the paths its own tests pin, read from its code, so a pin in a
-  comment is none.
+  signal's exit as a shell's; no bar falling between parts; ansible-playbook's 99 said stopped; a run that ended
+  well before the steps it listed said stopped; and NEXT STEPS keeping a record's lines whole, as the stream does.
+  `test_lint_live.py` runs the real `just lint` at a pseudo-terminal with `test_justfile.py`'s stand-in linters:
+  each check to come until it runs, its last line, no counts, the `CHECKS` table, every line in the run's one log; a
+  check that fails, its end whole, its exit code the run's and the checks it left unrun named; a just that is not
+  the pinned one, its check left out and the run done; and `ANSIBLE_ARGS=-vvv` through the justfile passing every
+  check through. `test_init_live.py` runs the real `init_settings.yml` and `init_check.yml` as one run in parts, the
+  first as `test_init_settings.py` runs it at a terminal with its questions typed, the second as
+  `test_init_check.py` runs it against the fake Proxmox: the questions as steps, the checks drawn as they are
+  recorded and whole in the summary, one NEXT STEPS; and a check that fails drawn as the failure, NEXT STEPS keeping
+  its record's lines. `test_live_recipes.py` holds every declaration to the playbooks it names - each play, block
+  and task it matches is there, each fact it reads, a stage's checklist among them, is set by a task, and a VM's
+  address and ID are where the engine reads them - and every live test that runs a real playbook to the paths its
+  own tests pin, read from its code, so a pin in a comment is none.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   98), both ways.
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
@@ -310,7 +315,7 @@ pytest over `tests/unit/`: 2194 tests. By file:
   through `harness.ansible_config`, leaves facts out of the top level), `test_remote_tmp.py` 4 (with
   pipelining, `tasks/remote_tmp.yml` makes the `remote_tmp` the run is configured with before a module
   would make it and warn, and both plays that run modules as root import it before their roles).
-- **The justfile** (`test_justfile.py` 479): the real `just`, at least the pinned version, run against
+- **The justfile** (`test_justfile.py` 480): the real `just`, at least the pinned version, run against
   stand-ins - on macOS under `/bin/bash`, 3.2, so the scripts keep to what it has. Statically, over `just
   --json`: no recipe has a dependency (which `JUST_NO_DEPS` would skip), no assignment starts a program,
   nothing is unstable and no `.env` is read, every public recipe has a `[doc]` and every parameter its

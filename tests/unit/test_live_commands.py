@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -464,3 +465,58 @@ def test_a_run_that_ends_well_before_its_listed_steps_is_said_stopped(tmp_path):
     ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=60)
     assert ran.rc == 0, ran.text
     assert re.search(r"^claude-on-proxmox  lint · stopped after \d+ s at says", ran.transcript, re.M), ran.transcript
+
+
+RECORDED = """
+- name: A part that records what is left as just init does
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Keep what is left to do for the end of the run
+      ansible.builtin.set_stats:
+        data:
+          claude_vm_next:
+            just init:
+              init_settings: "{{ settings }}"
+              init_check: "{{ check }}"
+      vars:
+        settings: |-
+          Still to set:
+            the Proxmox host address: just init asks again, or edit inventory/hosts.yml
+          %s
+        check: |-
+          just init found 2 problems for just deploy: fix them, then run just init again.
+            !!   the token was refused
+            !!   root SSH failed
+"""
+LONG = (
+    "Nothing is asked without a terminal, or with --no-prompt: run just init at one, give the values on its command"
+    " line (just init --host ... in docs/getting-started/first-deploy.md), or edit the files and run just vault."
+)
+# Colour, a title and a bell: what a terminal acts on and does not show.
+ESCAPES = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x07")
+
+
+def _next_steps(text):
+    """NEXT STEPS' lines as printed, colour aside: under its block's rule, up to the first blank line."""
+    after = ESCAPES.sub("", text).replace("\r\n", "\n").split("##  NEXT STEPS\n", 1)[1].split("\n", 1)[1]
+    return list(itertools.takewhile(str.strip, after.splitlines()))
+
+
+def test_next_steps_says_each_record_line_for_line_as_the_stream_does(tmp_path):
+    # just init's records: bullets under the line that counts them, and a paragraph longer than any terminal, whole.
+    (tmp_path / "part.yml").write_text(RECORDED % LONG)
+    (tmp_path / "hosts").write_text(f"localhost ansible_connection=local ansible_python_interpreter={sys.executable}\n")
+    playbook = f'"{kit.ANSIBLE_PLAYBOOK}" -i "{tmp_path / "hosts"}" "{tmp_path / "part.yml"}"'
+    argv, environment, state = _recipe(tmp_path, [_part("says", SAYS), playbook])
+    ran = kit.at_a_terminal(argv, tmp_path, environment, timeout=120)
+    assert ran.rc == 0, ran.text
+    expected = [
+        "Still to set:",
+        "  the Proxmox host address: just init asks again, or edit inventory/hosts.yml",
+        LONG,
+        "just init found 2 problems for just deploy: fix them, then run just init again.",
+        "  !!   the token was refused",
+        "  !!   root SSH failed",
+    ]
+    assert _next_steps(ran.text) == _next_steps(ran.log) == expected, ran.text

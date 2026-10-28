@@ -155,7 +155,35 @@ def test_every_fact_a_declaration_reads_is_set_by_a_task(name):
         info = getattr(stage, "info", "")
         if not isinstance(info, str):
             facts.add(info.fact)
+        # The checks a stage's playbook keeps as it makes them (init's init_results), which its rows are drawn from.
+        if getattr(stage, "checklist", ""):
+            facts.add(stage.checklist)
     assert facts <= set_facts, f"{name}: no task sets {sorted(facts - set_facts)}"
+
+
+ADD_HOST = {"add_host", "ansible.builtin.add_host", "ansible.legacy.add_host"}
+
+
+def test_a_vms_address_and_id_are_where_the_engine_reads_them():
+    # The engine takes a VM's address and ID from two names alone (live_ansible.Engine._discovered): discovery's
+    # add_host, its ansible_host and proxmox_vm_id, and vm_addresses.yml's claude_vm_addressed. A rename in either
+    # would leave every summary without its VM's address and ID, and nothing would fail.
+    files = {name for recipe in recipes.RECIPES.values() for name in recipe.addresses_from}
+    assert files == {"discover.yml", "vm_addresses.yml"}, files
+    added = [
+        item[action]
+        for item in _items(_load_yaml(REPO / "playbooks" / "discover.yml"))
+        for action in ADD_HOST & set(item)
+    ]
+    assert added and all({"ansible_host", "proxmox_vm_id"} <= set(each) for each in added), added
+    set_facts = {
+        fact
+        for item in _items(_load_yaml(REPO / "playbooks" / "tasks" / "vm_addresses.yml"))
+        for action in SET_FACT & set(item)
+        if isinstance(item[action], dict)
+        for fact in item[action]
+    }
+    assert "claude_vm_addressed" in set_facts, set_facts
 
 
 # Each live test, and what it must name to run a real playbook as that playbook's own tests run it: the runner, or
@@ -177,6 +205,9 @@ LIVE_TESTS = {
         '"claude_ssh_user_config"',
         '"claude_ssh_config_include": False',
     ),
+    # init_settings.yml as test_init_settings.py runs it, its files copies in the test's own directory, and
+    # init_check.yml as test_init_check.py does, with its own inventory; a refusing ssh for both.
+    "test_init_live.py": ("tis._files(", "tic._inventory_of(", '"ssh"'),
     # just lint as test_justfile.py runs it: its stand-in linters, its log and its state in the test's own directory.
     "test_lint_live.py": ("_linters(",),
     # code.yml as test_code_session.py runs it: its pins, never the developer's VS Code settings, time zone or
