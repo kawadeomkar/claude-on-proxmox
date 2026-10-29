@@ -671,18 +671,27 @@ lint ALL_HOOKS='' *PARTS:
 # index alone. The Molecule scenarios each run a Docker container and build
 # images into one small disk, so they run one after another.
 [arg('ROLES', long='role', pattern='[a-z_,]*', help="Only these roles' scenarios, comma-separated: on its own it means the role part (just test --role common,claude_code)")]
+[arg('SHARD', long='shard', pattern='([1-9][0-9]*/[1-9][0-9]*)?', help='Only the I-th of N shards of the unit tests, each group of tests whole, as CI splits them: on its own it means the unit part (just test unit --shard 2/3)')]
 [arg('PARTS', pattern='unit|molecule|role|integration|provision', help="unit (pytest over tests/unit/, a worker per CPU, no network), molecule (every Molecule scenario: role, integration, provision), role (the roles' own scenarios), integration (the full configure playbook against a Docker container), provision (provision.yml and discover.yml against a fake Proxmox API)")]
 [doc('Lint, then every test: unit and Molecule (the local quality gate)')]
 [group('develop')]
 [no-exit-message]
 [positional-arguments]
 [script]
-test ROLES='' *PARTS:
+test ROLES='' SHARD='' *PARTS:
     {{ guard }}
-    roles=$1
-    shift
-    # The words as typed, for the run's title: --role below stands for the role part.
+    roles=$1 shard=$2
+    shift 2
+    # The words as typed, for the run's title: --role and --shard below stand for the parts they choose.
     asked=$*
+    if [ -n "$shard" ]; then
+      [ "${shard%/*}" -le "${shard#*/}" ] || { echo "error: --shard takes I/N with I no more than N (got: [$shard])" >&2; exit 1; }
+      [ -z "$roles" ] || { echo "error: --shard splits the unit tests and --role narrows the role scenarios: one at a time" >&2; exit 1; }
+      for part in "$@"; do
+        [ "$part" = unit ] || { echo "error: --shard splits the unit tests, which $part is not: just test unit --shard $shard" >&2; exit 1; }
+      done
+      set -- unit
+    fi
     if [ -n "$roles" ]; then
       case ",$roles," in *,,*) echo "error: --role names roles separated by single commas (got: [$roles])" >&2; exit 1 ;; esac
       for role in $(printf %s "$roles" | tr , ' '); do
@@ -715,7 +724,7 @@ test ROLES='' *PARTS:
       for part in unit role integration provision; do
         if runs "$part"; then stages="$stages $part"; fi
       done
-      CLAUDE_ON_PROXMOX_LIVE="test${roles:+ --role $roles}${asked:+ $asked}"
+      CLAUDE_ON_PROXMOX_LIVE="test${roles:+ --role $roles}${shard:+ --shard $shard}${asked:+ $asked}"
       state={{ quote(live_state) }}
       CLAUDE_ON_PROXMOX_LIVE_STATE=${state:+$state-test-$$.json}
       CLAUDE_ON_PROXMOX_LIVE_STAGES=$stages
@@ -726,8 +735,14 @@ test ROLES='' *PARTS:
     part() { {{ live }} --log="$name" run "$@"; }
     [ -z "$lint" ] || {{ self }} live_run=test lint
     # A worker per CPU, each module whose tests share a fixture kept on one (tests/unit/conftest.py); tests/unit
-    # named, so that conftest.py is read before the options are.
-    if runs unit; then part unit --read pytest -- "$bin/pytest" -p live_pytest tests/unit -n auto --dist loadgroup; fi
+    # named, so that conftest.py, which adds --shard, is read before the options are.
+    if runs unit; then
+      if [ -n "$shard" ]; then
+        part unit --read pytest -- "$bin/pytest" -p live_pytest tests/unit -n auto --dist loadgroup --shard "$shard"
+      else
+        part unit --read pytest -- "$bin/pytest" -p live_pytest tests/unit -n auto --dist loadgroup
+      fi
+    fi
     if runs role; then
       list={{ quote(scenario_roles) }}
       [ -z "$roles" ] || list=$(printf %s "$roles" | tr , ' ')
