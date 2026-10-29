@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -611,6 +612,8 @@ WEB_CASES = {
     "approved-late": {"ts": LATE},
     # Approved by the first status read, the one for the page: it finds NeedsMachineAuth, and no page.
     "needs-admin": {"ts": {"up-waits": "0", "approve-at-read": "1", "needs-approval": ""}},
+    # Approved as approved-late is, after the page, into NeedsMachineAuth: that ends the wait, not its 30 seconds.
+    "admin-late": {"ts": {**LATE, "needs-approval": ""}},
     "waited-out": {"ts": {"up-waits": "0"}, "tailscale_login_timeout": 1},
     # Not Tailscale's page: said, with a warning, and never opened - here with
     # the desktop switch on, so that an opener reached would fail the run.
@@ -643,6 +646,17 @@ WEB_CASES = {
     "signed-in": {"ts": _joined("signed-in"), "marker": NODE},
 }
 WEB_EXTRA = {**EXTRA, "claude_vm_discovery": False, "tailscale_login_poll_seconds": 1}
+
+
+def _seconds(report: dict, task: str, host: str) -> float:
+    """How long the task whose name ends with `task` ran for the host: the sign-in runs one VM per batch."""
+    for play in report["plays"]:
+        for entry in play["tasks"]:
+            if entry["task"]["name"].endswith(task) and host in entry["hosts"]:
+                duration = entry["task"]["duration"]
+                start, end = (datetime.fromisoformat(duration[key].replace("Z", "+00:00")) for key in ("start", "end"))
+                return (end - start).total_seconds()
+    raise AssertionError(f"no task {task!r} ran for {host}")
 
 
 @pytest.fixture(scope="module")
@@ -683,10 +697,23 @@ def test_the_page_is_said_before_the_wait(web_logins):
     )
 
 
-def test_waiting_for_an_admin_ends_the_wait_and_is_said(web_logins):
+def test_a_login_already_waiting_for_an_admin_shows_no_page_and_is_said(web_logins):
     root, report = web_logins
+    assert "needs-admin" not in _messages(report, SAY_PAGE)
     assert _said(report)["needs-admin"] == (
         "needs-admin: signed in to Tailscale and waiting for an admin to approve it at"
+        " https://login.tailscale.com/admin/machines; it connects by itself once approved."
+    )
+
+
+def test_an_approval_that_waits_for_an_admin_ends_the_wait_and_is_said(web_logins):
+    root, report = web_logins
+    assert "admin-late" in _messages(report, SAY_PAGE)
+    # NeedsMachineAuth ends the wait at the poll that sees it, never the
+    # 30 seconds this run waits for an approval.
+    assert _seconds(report, "Wait for the page to be approved", "admin-late") < 15
+    assert _said(report)["admin-late"] == (
+        "admin-late: signed in to Tailscale and waiting for an admin to approve it at"
         " https://login.tailscale.com/admin/machines; it connects by itself once approved."
     )
 

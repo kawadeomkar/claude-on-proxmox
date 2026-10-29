@@ -173,14 +173,15 @@ pytest over `tests/unit/`: 2229 tests. By file:
   no report, a VM whose code was refused or whose Remote Control failed to start still given its GitHub
   and Tailscale turns and failed at the end, and a report without names; and NEXT STEPS holding each
   failed sign-in, unreachable VM and failure after a sign-in, with the command that retries it.
-- **Tailscale** (`test_tailscale.py` 69): the role's files from `ownership.yml` on, and
+- **Tailscale** (`test_tailscale.py` 70): the role's files from `ownership.yml` on, and
   `tailscale_login.yml` whole, against the stand-in `tailscale`, with stand-ins for `dpkg-query` and
   `getent`: a first join once, with the key on stdin and in no report, argument or file; no key for a node
   whose key expired, and a node logged out by hand joined again; a refused key and an OAuth secret without
   tags as reports; one `set` for drift; a login or a Tailscale made by hand only read; tags compared only
   when configured; `NoState` reads, `Starting` and a silent daemon; check mode; the web login's one `up`,
-  its page said before the wait and opened only when it is Tailscale's, an approval after `up` exited, a
-  wait that runs out; a page approved after the run, recorded as the role's login by the next configure,
+  its page said before the wait and opened only when it is Tailscale's, an approval after `up` exited, one
+  that waits for an admin ending the wait at once, a login already waiting for one shown no page, a wait that
+  runs out; a page approved after the run, recorded as the role's login by the next configure,
   and a join still under way marked pending - an earlier key's refusal still in Health included - a refused
   key or refused tags leaving nothing; a control server's page trusted however its address ends, and never
   one on another host; just deploy's sign-in step saying nothing its configure play did again; an expired
