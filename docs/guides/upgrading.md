@@ -97,6 +97,10 @@ not signed in - or joins it, with `vault_tailscale_auth_key` set. Set `tailscale
 `local.yml` first to keep your VMs as they are, and `just deploy --check` beforehand says what would be installed.
 A VM where you installed Tailscale yourself is left exactly as it is either way.
 
+Since `just init` asks whether to use Tailscale, the next `just init` asks it of a checkout whose `local.yml`
+does not set `tailscale_enabled`: `y` keeps your VMs as they are, `n` takes Tailscale off them at the next
+`just deploy`, which says so VM by VM, and Enter leaves it on, unanswered.
+
 ## Adopting VMs created before tagging
 
 From PR #6 as well, which recognises this project's VMs by their tag. This project now recognises its VMs by one Proxmox tag, `claude-on-proxmox`, and

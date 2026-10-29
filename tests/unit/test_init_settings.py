@@ -60,6 +60,8 @@ HOST_PROMPT = b"Proxmox host address:"
 TOKEN_PROMPT = b"API token ID:"
 SECRET_PROMPT = b"API token secret"
 GITHUB_PROMPT = b"GitHub username:"
+TAILSCALE_PROMPT = b"Use Tailscale on the VMs? y or n:"
+TAILSCALE_KEY_PROMPT = b"Tailscale auth key (output is hidden):"
 ACCESS_PROMPT = b"Set it up now? y or n"
 SSH_STAND_IN = """#!/bin/sh
 printf '%s\\n' "$*" >> "$(dirname "$0")/ssh-calls.log"
@@ -219,6 +221,7 @@ EVERY_ANSWER = [
     (HOST_PROMPT, b"pve.lan\n"),
     (TOKEN_PROMPT, b"\n"),
     (GITHUB_PROMPT, b"octocat\n"),
+    (TAILSCALE_PROMPT, b"n\n"),
     (SECRET_PROMPT, SECRET.encode() + b"\n"),
 ]
 
@@ -278,8 +281,10 @@ def test_every_answer_typed_writes_the_three_files_and_the_same_again_changes_no
     comment = " # IP of your Proxmox host (also used for the API)"
     assert changed == [example.index("          ansible_host: 192.0.2.10" + comment)]
     assert hosts[changed[0]] == '          ansible_host: "pve.lan"' + comment
-    # The default token ID writes nothing.
-    assert Path(files["init_local_file"]).read_text() == _example("init_local_file")
+    # The default token ID writes nothing; n to Tailscale writes its setting.
+    assert Path(files["init_local_file"]).read_text() == _example("init_local_file").replace(
+        "# tailscale_enabled: true\n", "tailscale_enabled: false\n"
+    )
     vault = Path(files["init_vault_file"]).read_text()
     assert vault.startswith("$ANSIBLE_VAULT;1.1;AES256")
     expected = (
@@ -307,7 +312,7 @@ def test_every_answer_typed_writes_the_three_files_and_the_same_again_changes_no
 def test_another_token_id_writes_its_two_settings_in_place_of_their_examples(tmp_path: Path) -> None:
     files = _files(tmp_path)
     steps = [(HOST_PROMPT, b"\n"), (TOKEN_PROMPT, b"deploy@pam!claude\n")]
-    steps += [(GITHUB_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
+    steps += [(GITHUB_PROMPT, b"\n"), (TAILSCALE_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
     rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
     assert rc == 0, output
     expected = (
@@ -321,7 +326,7 @@ def test_another_token_id_writes_its_two_settings_in_place_of_their_examples(tmp
 def test_only_the_part_of_a_token_id_that_differs_is_written(tmp_path: Path) -> None:
     files = _files(tmp_path)
     steps = [(HOST_PROMPT, b"\n"), (TOKEN_PROMPT, b"ansible@pve!claude\n")]
-    steps += [(GITHUB_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
+    steps += [(GITHUB_PROMPT, b"\n"), (TAILSCALE_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
     rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
     assert rc == 0, output
     local = Path(files["init_local_file"]).read_text()
@@ -335,17 +340,23 @@ RULE = {
     TOKEN_PROMPT: ("user@realm!name", "API token ID"),
     SECRET_PROMPT: ("36-character secret", "API token secret"),
     GITHUB_PROMPT: ("GitHub username", "GitHub username"),
+    TAILSCALE_PROMPT: ("y or n", "Use Tailscale on the VMs? y or n"),
 }
 
 
 # Each run types two wrong addresses, one at the question and one when it is
-# asked again, and one wrong answer twice at one other question.
+# asked again, and one wrong answer twice at one other question - two in the
+# first run, the Tailscale question's the other.
 @pytest.mark.parametrize(
     "wrong",
     [
         pytest.param(
-            {HOST_PROMPT: ("pve.lan; x", "1.2.3.4 ProxyCommand x"), TOKEN_PROMPT: ("ansible@pve", "ansible@pve")},
-            id="host-semicolon-then-space,token-no-name",
+            {
+                HOST_PROMPT: ("pve.lan; x", "1.2.3.4 ProxyCommand x"),
+                TOKEN_PROMPT: ("ansible@pve", "ansible@pve"),
+                TAILSCALE_PROMPT: ("maybe", "maybe"),
+            },
+            id="host-semicolon-then-space,token-no-name,tailscale-maybe",
         ),
         pytest.param(
             {HOST_PROMPT: ("https://pve:8006", '"quoted"'), SECRET_PROMPT: ("11111111-2222", "11111111-2222")},
@@ -378,7 +389,7 @@ def test_a_wrong_answer_is_asked_for_once_more_then_left(tmp_path: Path, wrong: 
 def test_a_wrong_answer_put_right_is_kept(tmp_path: Path) -> None:
     files = _files(tmp_path)
     steps = [(HOST_PROMPT, b"https://pve.lan:8006\n"), (HOST_PROMPT, b"10.0.0.5\n")]
-    steps += [(TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
+    steps += [(TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"\n"), (TAILSCALE_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
     rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
     assert rc == 0, output
     assert '          ansible_host: "10.0.0.5" #' in Path(files["init_hosts_file"]).read_text()
@@ -405,7 +416,7 @@ def test_set_values_are_never_asked(tmp_path: Path) -> None:
     hosts = Path(files["init_hosts_file"])
     hosts.write_text(hosts.read_text().replace("192.0.2.10", "10.0.0.5"))
     local = Path(files["init_local_file"])
-    local.write_text(local.read_text() + "proxmox_api_token_id: claude\n")
+    local.write_text(local.read_text() + "proxmox_api_token_id: claude\ntailscale_enabled: false\n")
     text = _example("init_vault_file").replace(
         'vault_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"', SECRET_LINE
     )
@@ -422,7 +433,7 @@ def test_an_encrypted_vault_with_a_placeholder_is_asked_and_encrypted_again(tmp_
     _encrypt(files, _example("init_vault_file"))
     password = Path(files["init_vault_pass_file"])
     pass_before = (password.read_bytes(), password.stat().st_mtime_ns, _mode(str(password)))
-    steps = [(HOST_PROMPT, b"\n"), (TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"\n")]
+    steps = [(HOST_PROMPT, b"\n"), (TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"\n"), (TAILSCALE_PROMPT, b"\n")]
     rc, output, _ = _init_at_a_terminal(tmp_path, files, [*steps, (SECRET_PROMPT, SECRET.encode() + b"\n")])
     assert rc == 0, output
     assert SECRET_LINE in _decrypt(files)
@@ -438,7 +449,7 @@ def test_a_verbose_and_debugging_environment_reads_and_writes_the_vault_as_it_is
     # reads back as written. Both at once, so that each must be turned off.
     files = _files(tmp_path)
     _encrypt(files, _example("init_vault_file"))
-    steps = [(HOST_PROMPT, b"\n"), (TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"octocat\n")]
+    steps = [(HOST_PROMPT, b"\n"), (TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"octocat\n"), (TAILSCALE_PROMPT, b"\n")]
     noisy = {"ANSIBLE_VERBOSITY": "3", "ANSIBLE_DEBUG": "1"}
     rc, output, _ = _init_at_a_terminal(tmp_path, files, [*steps, (SECRET_PROMPT, SECRET.encode() + b"\n")], env=noisy)
     assert rc == 0, output[-3000:]
@@ -469,9 +480,10 @@ def test_an_encrypted_vault_with_no_password_is_left_alone(tmp_path: Path) -> No
     _encrypt(files, _example("init_vault_file"))
     Path(files["init_vault_pass_file"]).unlink()
     before = _snapshot(files)
-    rc, output, _ = _init_at_a_terminal(tmp_path, files, [(HOST_PROMPT, b"\n")])
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, [(HOST_PROMPT, b"\n"), (TAILSCALE_PROMPT, b"\n")])
     assert rc == 0, output
-    assert output.count("USER INPUT REQUIRED") == 1
+    # The host's and Tailscale's, local.yml's; the vault's wait for its password.
+    assert output.count("USER INPUT REQUIRED") == 2
     assert "just vault opens it" in output
     assert _snapshot(files) == before
 
@@ -553,10 +565,11 @@ def test_given_token_parts_are_written_only_where_they_differ_from_the_default(t
 def test_some_values_given_at_a_terminal_ask_only_for_the_rest(tmp_path: Path) -> None:
     files = _files(tmp_path)
     given = {"host": "pve.lan", "token_secret_file": str(_secret_file(tmp_path))}
-    rc, output, _ = _init_at_a_terminal(tmp_path, files, [(GITHUB_PROMPT, b"octocat\n")], {"init_given": given})
+    steps = [(GITHUB_PROMPT, b"octocat\n"), (TAILSCALE_PROMPT, b"\n")]
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, steps, {"init_given": given})
     assert rc == 0, output
-    # One question, the username's: the task names hold the others' labels too.
-    assert output.count("USER INPUT REQUIRED") == 1
+    # Two questions, the username's and Tailscale's: the task names hold the others' labels too.
+    assert output.count("USER INPUT REQUIRED") == 2
     vault = _decrypt(files)
     assert SECRET_LINE in vault and GITHUB_LINE in vault
 
@@ -685,7 +698,7 @@ def test_a_host_named_without_an_ansible_host_is_set(tmp_path: Path) -> None:
 
 def test_enter_at_a_terminal_is_later_even_with_values_given(tmp_path: Path) -> None:
     files = _files(tmp_path)
-    steps = [(TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
+    steps = [(TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"\n"), (TAILSCALE_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
     rc, output, _ = _init_at_a_terminal(tmp_path, files, steps, {"init_given": {"host": "pve.lan"}})
     assert rc == 0, output
     assert "Still missing after the values given" not in output
@@ -761,7 +774,12 @@ ACCESS_FILES = (
     REPO / "playbooks" / "tasks" / "init_access_choose.yml",
 )
 # Every question before the offer, answered.
-BEFORE_THE_OFFER = [(HOST_PROMPT, b"pve.lan\n"), (TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"octocat\n")]
+BEFORE_THE_OFFER = [
+    (HOST_PROMPT, b"pve.lan\n"),
+    (TOKEN_PROMPT, b"\n"),
+    (GITHUB_PROMPT, b"octocat\n"),
+    (TAILSCALE_PROMPT, b"\n"),
+]
 CHECKED = yaml.safe_load((REPO / "playbooks" / "init_check.yml").read_text())[0]["vars"]["init_token_privileges"]
 ROLE = [*CHECKED["vms"], "VM.GuestAgent.Audit", *CHECKED["storage"], *CHECKED["bridge"]]
 SET_UP = {
@@ -896,7 +914,12 @@ def test_a_vault_that_cannot_be_written_deletes_the_token_just_made(tmp_path: Pa
     checkout = Path(files["init_vault_file"]).parent
     checkout.chmod(0o555)
     try:
-        steps = [(TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"octocat\n"), (ACCESS_PROMPT, b"y\n")]
+        steps = [
+            (TOKEN_PROMPT, b"\n"),
+            (GITHUB_PROMPT, b"octocat\n"),
+            (TAILSCALE_PROMPT, b"\n"),
+            (ACCESS_PROMPT, b"y\n"),
+        ]
         rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
     finally:
         checkout.chmod(0o755)
@@ -945,6 +968,111 @@ def test_without_a_terminal_the_host_is_never_reached(tmp_path: Path) -> None:
 
 # --------------------------------------------------------------- Tailscale ---
 NOTICE_TASK = "Say that Tailscale is on by default"
+# Low in entropy, as gitleaks wants a canned key: never one Tailscale issued.
+TAILSCALE_KEY = "tskey-auth-kInit0CNTRL-TestOnly000000000000000"
+UP_TO_TAILSCALE = [(HOST_PROMPT, b"\n"), (TOKEN_PROMPT, b"\n"), (GITHUB_PROMPT, b"\n")]
+# The report's last line, which names the auth key only while Tailscale is on and the run wrote none.
+OPTIONAL = "Optional, with just vault: vault_github_token, vault_anthropic_api_key"
+
+
+def test_n_at_the_tailscale_question_writes_it_off_and_is_never_asked_again(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    steps = [*UP_TO_TAILSCALE, (TAILSCALE_PROMPT, b"n\n"), (SECRET_PROMPT, b"\n")]
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
+    assert rc == 0, output
+    assert Path(files["init_local_file"]).read_text() == _example("init_local_file").replace(
+        "# tailscale_enabled: true\n", "tailscale_enabled: false\n"
+    )
+    assert "inventory/group_vars/all/local.yml   tailscale_enabled: false" in output
+    # Off: no key is asked for or named, and no notice says it is on.
+    assert TAILSCALE_KEY_PROMPT.decode() not in output and "NOTICE  Tailscale is on by default" not in output
+    assert f"{OPTIONAL}." in output
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, [*UP_TO_TAILSCALE, (SECRET_PROMPT, b"\n")])
+    assert rc == 0, output
+    assert TAILSCALE_PROMPT.decode() not in output
+
+
+def test_y_writes_it_on_and_the_key_typed_goes_into_the_vault_unseen(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    steps = [*UP_TO_TAILSCALE, (TAILSCALE_PROMPT, b"y\n"), (TAILSCALE_KEY_PROMPT, TAILSCALE_KEY.encode() + b"\n")]
+    rc, output, log = _init_at_a_terminal(tmp_path, files, [*steps, (SECRET_PROMPT, b"\n")])
+    assert rc == 0, output
+    assert "tailscale_enabled: true\n" in Path(files["init_local_file"]).read_text()
+    assert _decrypt(files) == _example("init_vault_file").replace(
+        'vault_tailscale_auth_key: ""', f'vault_tailscale_auth_key: "{TAILSCALE_KEY}"'
+    )
+    assert "inventory/group_vars/all/vault.yml   the Tailscale auth key, encrypted" in output
+    assert f"{OPTIONAL}." in output
+    assert TAILSCALE_KEY not in output and TAILSCALE_KEY not in log
+    # Both set: neither is asked again.
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, [*UP_TO_TAILSCALE, (SECRET_PROMPT, b"\n")])
+    assert rc == 0, output
+    assert TAILSCALE_PROMPT.decode() not in output and TAILSCALE_KEY_PROMPT.decode() not in output
+
+
+def test_enter_at_the_key_is_the_web_login_and_the_next_init_asks_again(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    steps = [*UP_TO_TAILSCALE, (TAILSCALE_PROMPT, b"y\n"), (TAILSCALE_KEY_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
+    assert rc == 0, output
+    assert _decrypt(files) == _example("init_vault_file")
+    # The question says it comes back, and the one setting that ends it.
+    assert "this is asked again next time" in output and "set tailscale_auth_method: web in local.yml" in output
+    steps = [*UP_TO_TAILSCALE, (TAILSCALE_KEY_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
+    assert rc == 0, output
+    assert TAILSCALE_PROMPT.decode() not in output
+
+
+def test_a_key_that_is_not_one_is_asked_for_once_more_then_left_unsaid(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    wrong = (TAILSCALE_KEY_PROMPT, b"tskey a b\n")
+    steps = [*UP_TO_TAILSCALE, (TAILSCALE_PROMPT, b"y\n"), wrong, wrong, (SECRET_PROMPT, b"\n")]
+    rc, output, log = _init_at_a_terminal(tmp_path, files, steps)
+    assert rc == 0, output
+    assert "That is not a key as Tailscale printed it" in output and "is left as it was" in output
+    assert "tskey a b" not in output and "tskey a b" not in log
+    assert _decrypt(files) == _example("init_vault_file")
+
+
+@pytest.mark.parametrize("why", ["a key in the vault", "the web login only"])
+def test_the_key_is_not_asked_for_where_it_has_nothing_to_do(tmp_path: Path, why: str) -> None:
+    files = _files(tmp_path)
+    local = Path(files["init_local_file"])
+    if why == "a key in the vault":
+        vault = Path(files["init_vault_file"])
+        vault.write_text(
+            vault.read_text().replace('vault_tailscale_auth_key: ""', f'vault_tailscale_auth_key: "{TAILSCALE_KEY}"')
+        )
+    else:
+        local.write_text(local.read_text() + "tailscale_auth_method: web\n")
+    steps = [*UP_TO_TAILSCALE, (TAILSCALE_PROMPT, b"y\n"), (SECRET_PROMPT, b"\n")]
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
+    assert rc == 0, output
+    assert "tailscale_enabled: true\n" in local.read_text()
+    assert TAILSCALE_KEY_PROMPT.decode() not in output
+    assert f"{OPTIONAL}." in output
+
+
+def test_enter_at_the_tailscale_question_writes_nothing_and_says_it_stays_on(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    steps = [*UP_TO_TAILSCALE, (TAILSCALE_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
+    assert rc == 0, output
+    assert Path(files["init_local_file"]).read_text() == _example("init_local_file")
+    # Only chosen, never by the default, does Tailscale ask for a key.
+    assert TAILSCALE_KEY_PROMPT.decode() not in output
+    assert "NOTICE  Tailscale is on by default" in output and "answer n" in output
+    assert f"{OPTIONAL}, vault_tailscale_auth_key." in output
+
+
+def test_tailscale_given_on_at_a_terminal_asks_only_for_the_key(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    steps = [*UP_TO_TAILSCALE, (TAILSCALE_KEY_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, steps, {"init_given": {"tailscale": "on"}})
+    assert rc == 0, output
+    assert "tailscale_enabled: true\n" in Path(files["init_local_file"]).read_text()
+    assert TAILSCALE_PROMPT.decode() not in output
 
 
 # On a fresh checkout the notice names the sign-in page: test_without_a_terminal_nothing_is_written.
@@ -1153,6 +1281,7 @@ SECRET_NAMES = (
     "init_vault_text",
     "init_vault_new_text",
     "init_vault_with_secret",
+    "init_vault_with_github",
     "init_secret_given_value",
     "init_secret_env",
     "init_secret_held",

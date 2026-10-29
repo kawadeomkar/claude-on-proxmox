@@ -208,6 +208,7 @@ classDef rescue stroke:#665352,stroke-width:2px;
 |---|---|---|
 | Leave a Tailscale installed outside this project alone | `ansible.builtin.debug` | <code>tailscale_installed &#124; bool and not tailscale_installed_marker.stat.exists</code> |
 | Remove what this role installed | block | <code>tailscale_installed_marker.stat.exists</code> |
+| &emsp;Say that Tailscale is being removed | `ansible.builtin.debug` |  |
 | &emsp;Look for tailscaled's unit | `ansible.builtin.stat` |  |
 | &emsp;Start tailscaled, so that its login can be ended | `ansible.builtin.systemd_service` | <code>tailscale_package_present &#124; bool and tailscale_unit.stat.exists</code> |
 | &emsp;Read whether a login is there to end | `ansible.builtin.command` | <code>tailscale_package_present &#124; bool</code> |
@@ -233,18 +234,19 @@ classDef rescue stroke:#665352,stroke-width:2px;
 
   Start-->|Task| absent___Leave_a_Tailscale_installed_outside_this_project_alone0[absent   leave a tailscale installed outside this<br>project alone<br>When: **tailscale installed   bool and not tailscale<br>installed marker stat exists**]:::task
   absent___Leave_a_Tailscale_installed_outside_this_project_alone0-->|Block Start| absent___Remove_what_this_role_installed1_block_start_0[[absent   remove what this role installed<br>When: **tailscale installed marker stat exists**]]:::block
-  absent___Remove_what_this_role_installed1_block_start_0-->|Task| absent___Look_for_tailscaled_s_unit0[absent   look for tailscaled s unit]:::task
-  absent___Look_for_tailscaled_s_unit0-->|Task| absent___Start_tailscaled__so_that_its_login_can_be_ended1[absent   start tailscaled  so that its login can<br>be ended<br>When: **tailscale package present   bool and tailscale<br>unit stat exists**]:::task
-  absent___Start_tailscaled__so_that_its_login_can_be_ended1-->|Task| absent___Read_whether_a_login_is_there_to_end2[absent   read whether a login is there to end<br>When: **tailscale package present   bool**]:::task
-  absent___Read_whether_a_login_is_there_to_end2-->|Task| absent___Log_the_node_out3[absent   log the node out<br>When: **tailscale package present   bool and tailscale<br>absent status rc   default 1     0 and  tailscale<br>absent status stdout   from json  havenodekey  <br>default false    bool**]:::task
-  absent___Log_the_node_out3-->|Include task| absent___Delete_the_node_s_device_from_the_tailnet_api_delete_yml_4[absent   delete the node s device from the tailnet<br>include_task: api delete yml]:::includeTasks
-  absent___Delete_the_node_s_device_from_the_tailnet_api_delete_yml_4-->|Task| absent___Stop_tailscaled5[absent   stop tailscaled<br>When: **tailscale unit stat exists**]:::task
-  absent___Stop_tailscaled5-->|Task| absent___Remove_the_package6[absent   remove the package<br>When: **tailscale package present   bool**]:::task
-  absent___Remove_the_package6-->|Task| absent___Remove_the_repository7[absent   remove the repository]:::task
-  absent___Remove_the_repository7-->|Task| absent___Remove_the_log_switch_and_the_markers8[absent   remove the log switch and the markers]:::task
-  absent___Remove_the_log_switch_and_the_markers8-->|Task| absent___Say_what_is_gone__and_what_stays_in_the_tailnet9[absent   say what is gone  and what stays in the<br>tailnet]:::task
-  absent___Say_what_is_gone__and_what_stays_in_the_tailnet9-.->|End of Block| absent___Remove_what_this_role_installed1_block_start_0
-  absent___Say_what_is_gone__and_what_stays_in_the_tailnet9-->End
+  absent___Remove_what_this_role_installed1_block_start_0-->|Task| absent___Say_that_Tailscale_is_being_removed0[absent   say that tailscale is being removed]:::task
+  absent___Say_that_Tailscale_is_being_removed0-->|Task| absent___Look_for_tailscaled_s_unit1[absent   look for tailscaled s unit]:::task
+  absent___Look_for_tailscaled_s_unit1-->|Task| absent___Start_tailscaled__so_that_its_login_can_be_ended2[absent   start tailscaled  so that its login can<br>be ended<br>When: **tailscale package present   bool and tailscale<br>unit stat exists**]:::task
+  absent___Start_tailscaled__so_that_its_login_can_be_ended2-->|Task| absent___Read_whether_a_login_is_there_to_end3[absent   read whether a login is there to end<br>When: **tailscale package present   bool**]:::task
+  absent___Read_whether_a_login_is_there_to_end3-->|Task| absent___Log_the_node_out4[absent   log the node out<br>When: **tailscale package present   bool and tailscale<br>absent status rc   default 1     0 and  tailscale<br>absent status stdout   from json  havenodekey  <br>default false    bool**]:::task
+  absent___Log_the_node_out4-->|Include task| absent___Delete_the_node_s_device_from_the_tailnet_api_delete_yml_5[absent   delete the node s device from the tailnet<br>include_task: api delete yml]:::includeTasks
+  absent___Delete_the_node_s_device_from_the_tailnet_api_delete_yml_5-->|Task| absent___Stop_tailscaled6[absent   stop tailscaled<br>When: **tailscale unit stat exists**]:::task
+  absent___Stop_tailscaled6-->|Task| absent___Remove_the_package7[absent   remove the package<br>When: **tailscale package present   bool**]:::task
+  absent___Remove_the_package7-->|Task| absent___Remove_the_repository8[absent   remove the repository]:::task
+  absent___Remove_the_repository8-->|Task| absent___Remove_the_log_switch_and_the_markers9[absent   remove the log switch and the markers]:::task
+  absent___Remove_the_log_switch_and_the_markers9-->|Task| absent___Say_what_is_gone__and_what_stays_in_the_tailnet10[absent   say what is gone  and what stays in the<br>tailnet]:::task
+  absent___Say_what_is_gone__and_what_stays_in_the_tailnet10-.->|End of Block| absent___Remove_what_this_role_installed1_block_start_0
+  absent___Say_what_is_gone__and_what_stays_in_the_tailnet10-->End
 ```
 
 ### `api_delete.yml`

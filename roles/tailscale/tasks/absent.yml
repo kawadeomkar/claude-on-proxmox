@@ -3,7 +3,8 @@
 # or began to (the installed marker). Each step only where its object exists: a
 # run that failed halfway leaves the marker, and perhaps the repository and the
 # drop-in, and nothing else. A Tailscale installed any other way is left as it
-# is, and said to be.
+# is, and said to be where the role runs without the marker - never from
+# configure.yml, which runs it off only where the marker is.
 - name: absent | Leave a Tailscale installed outside this project alone
   ansible.builtin.debug:
     msg: >-
@@ -16,6 +17,15 @@
 - name: absent | Remove what this role installed
   when: tailscale_installed_marker.stat.exists
   block:
+    # Before anything goes, so the run says why Tailscale is leaving a VM that
+    # had it: the last task says what became of it.
+    - name: absent | Say that Tailscale is being removed
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: tailscale_enabled is false, so the Tailscale this project installed here
+          {{ 'would be logged out and removed; check mode changes nothing.' if ansible_check_mode
+             else 'is being logged out and removed.' }}
+
     - name: absent | Look for tailscaled's unit
       ansible.builtin.stat:
         path: "{{ tailscale_unit_path }}"

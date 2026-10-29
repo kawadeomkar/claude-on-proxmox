@@ -658,7 +658,8 @@ plan's research record.
   Tailscale with it, or none at all, is the role's to install, maintain and remove; a package dpkg has
   without it, or a Tailscale dpkg does not know (a `tailscaled` of Tailscale's static binaries in
   `/usr/sbin` or under `/usr/local`, the snap's `/snap/bin/tailscale`), was installed some other way and
-  is only reported - on and off: the package beside it would start a second `tailscaled`. Written first, so
+  is left alone, on and off, and reported while on - off, `configure.yml` runs the role only where the
+  marker is: the package beside it would start a second `tailscaled`. Written first, so
   a run that fails halfway leaves something the role knows to finish or remove. `tailscale-joined` holds
   the node key of the login the role's own join produced (`Self.PublicKey`): only that login's settings are
   changed, so a login made by hand keeps its own, as a gh login made by hand does (§5.6). It holds
@@ -745,7 +746,9 @@ plan's research record.
   `destroy.yml` runs before deleting a VM: start a stopped `tailscaled`, read the node's ID, log it out,
   delete the device, and record a clause in `tailscale_release_said` - whatever Tailscale the VM has,
   since the VM itself is going.
-- **Off** (`absent.yml`), only with the installed marker: `tailscaled` started where the unit exists -
+- **Off** (`absent.yml`), only with the installed marker - `configure.yml` runs the role at all, off, only
+  where its `stat` finds the marker ([§4.4](lifecycle.md#44-playbooksconfigureyml)) - said first, as removing
+  what this project installed: `tailscaled` started where the unit exists -
   logging out takes the daemon, and one stopped by hand would leave the node's key valid in the tailnet -
   then logout where it answers with a node key, stop - never disable: the package's postinst re-enables
   tailscaled on a reinstall only while its enable link survives, so a disable kept a Tailscale installed

@@ -347,7 +347,7 @@ Open the sign-in pages (and copy GitHub's code) on this machine. Off, the run on
 
 ### Tailscale
 
-Tailscale: each VM joins your tailnet ([docs/guides/tailscale.md](../guides/tailscale.md)). On by default; false turns it off again where this project installed it, and leaves a Tailscale installed by hand alone.
+Tailscale: each VM joins your tailnet ([docs/guides/tailscale.md](../guides/tailscale.md)). just init asks, and writes your answer here; on until it is answered. Every VM deployed from then on follows it: false installs nothing of Tailscale's, takes it off again where this project installed it, saying so, and leaves a Tailscale installed by hand alone.
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -466,7 +466,7 @@ Optional: skip interactive `claude` login on the VM. Billing for Claude Code on 
 
 ### Secrets: Tailscale
 
-Optional: a Tailscale auth key, so each new VM joins your tailnet during configuration with nothing to click. Make it reusable (one key for the whole fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale removes an ephemeral node within the hour of it going offline, and a VM left stopped would be. Leave it empty to sign each VM in by Tailscale's web login instead (just login &lt;name&gt; --only tailscale), with no secret here. Only ever used for a VM's first join. [docs/guides/tailscale.md](../guides/tailscale.md).
+Optional: a Tailscale auth key, so each new VM joins your tailnet during configuration with nothing to click; just init asks for it after a y to Tailscale. Make it reusable (one key for the whole fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale removes an ephemeral node within the hour of it going offline, and a VM left stopped would be. Leave it empty to sign each VM in by Tailscale's web login instead (just login &lt;name&gt; --only tailscale), with no secret here. Only ever used for a VM's first join. [docs/guides/tailscale.md](../guides/tailscale.md).
 
 | Secret, in `vault.yml` | Notes |
 |---|---|

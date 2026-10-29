@@ -246,7 +246,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   and record it as the role's; an expired login of the role's keeps its node key, which the marker holds. `/var/lib/claude-on-proxmox/tailscale-installed`, written before the
   repository, marks the Tailscale as the role's: only then are the package, service, log switch and
   removal its business, and a Tailscale installed any other way - by dpkg, or as one dpkg does not know:
-  static binaries, the snap - is reported and left alone, off too. `tailscale-joined` holds the node key
+  static binaries, the snap - is left alone, off too, and reported while on (off, configure runs the role
+  only where the marker is, so it says nothing of one). `tailscale-joined` holds the node key
   of the role's own login: only that login's settings are changed, by one `tailscale set` naming what
   differs. It holds `pending` while a sign-in the role started has not ended (written before the page is
   shown, and after a key join that ran out of time - that one only: `up`'s timeout line and no `invalid key:`;
@@ -258,7 +259,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   package - never a pre-created `/etc/default/tailscaled`, which dpkg keeps as the conffile without
   `PORT`, and the daemon fails. Tags are compared only when configured and never "fixed" by a web login.
   `playbooks/configure.yml` runs the role last, from `tasks:` through `import_role` in a block whose
-  rescue appends to `claude_vm_configure_failures`; a last play raises it, skipped under deploy
+  rescue appends to `claude_vm_configure_failures` - off, only where a `stat` before it finds the installed
+  marker, to remove what it installed, said first: a VM without one gets nothing of the role, the condition
+  on the import, never the block; a last play raises it, skipped under deploy
   (`claude_vm_configure_in_deploy`), whose own last play raises it after VS Code. A failed install takes
   its repository back out (an unreachable source fails every apt refresh, `common`'s first), and the role
   has no handlers (one would run outside the rescue). Check mode skips what needs the package: `apt`
@@ -446,7 +449,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `_init_at_a_terminal` in `tests/unit/test_init_settings.py`, which holds that statically. The token
   secret is never taken from the command line (`just init` refuses any word after its options without
   printing it, make's `TOKEN_SECRET=...` among them): only from `--token-secret-file`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
-  argv. `playbooks/init_check.yml`, its second run, changes nothing but `local.yml`, through
+  argv. Tailscale is asked about while `local.yml` does not set `tailscale_enabled`, the answer written
+  either way, and its auth key only after a `y` (or `on`, or `true` set), hidden, into the vault with the
+  other answers - never from the command line. `playbooks/init_check.yml`, its second run, changes nothing but `local.yml`, through
   `tasks/init_local_setting.yml` and under `init_ask` or a value given: the node when it is the default and
   not the template's (worked out, never chosen), the storage or bridge chosen from what the node lists and
   the token can use (`tasks/init_choose.yml`). Every other task is a read, its one command `hostname -s` over

@@ -107,13 +107,27 @@
   # post_tasks:. import_role, not include_role: a static import takes the
   # block's tag, so just deploy <vm> --tags tailscale runs every task of the role,
   # where an include's tag would reach only the include.
+  #
+  # Off (tailscale_enabled: false), the role runs only on a VM where it
+  # installed Tailscale, or began to - the marker install.yml writes first - to
+  # log it out and remove it, saying so; a VM without one gets this one read and
+  # nothing else of Tailscale's. The condition is the import's, so each of the
+  # role's tasks carries it, and on the task rather than the block, whose
+  # condition would be its rescue's too.
   tasks:
     - name: Install Tailscale and keep it joined
       tags: [tailscale]
       block:
+        - name: Look for a Tailscale this project installed, now that it is off
+          ansible.builtin.stat:
+            path: "{{ tailscale_installed_marker_path }}"
+          register: claude_vm_tailscale_marker
+          when: not (tailscale_enabled | bool)
+
         - name: Run the tailscale role
           ansible.builtin.import_role:
             name: tailscale
+          when: tailscale_enabled | bool or claude_vm_tailscale_marker.stat.exists | default(false)
       rescue:
         - name: Remember that Tailscale failed, for the end of the run
           vars:

@@ -39,6 +39,15 @@ ACCEPTED = {
         ("0123ABCD-4567-89EF-0123-456789ABCDEF\n", "0123abcd-4567-89ef-0123-456789abcdef"),
     ],
     "github_login": [("octocat", "octocat"), ("a", "a"), ("Mona-Lisa-1", "Mona-Lisa-1"), ("a" * 39, "a" * 39)],
+    "auth_key": [
+        ("tskey-auth-kTest0CNTRL-TestOnly000000000000000", "tskey-auth-kTest0CNTRL-TestOnly000000000000000"),
+        # An OAuth client secret, with the flag that keeps its node, and a Headscale key.
+        (
+            "tskey-client-kTest0CNTRL-TestOnly0000?ephemeral=false",
+            "tskey-client-kTest0CNTRL-TestOnly0000?ephemeral=false",
+        ),
+        ("  " + "0" * 48 + " ", "0" * 48),
+    ],
     "yes_no": [("y", "y"), ("YES", "y"), ("n", "n"), ("No", "n")],
 }
 
@@ -64,6 +73,14 @@ REFUSED = {
     "token_id": ["ansible@pve", "ansible!x", "@pve!x", "a@1pve!x", "a@pve!1x", "a@pve!x y", "a b@pve!x"],
     "uuid": ["0123abcd-4567", "0123abcd45678-9ef-0123-456789abcdef", "g123abcd-4567-89ef-0123-456789abcdef"],
     "github_login": ["-octocat", "octocat-", "octo--cat", "a" * 40, "octo cat", "octo_cat"],
+    "auth_key": [
+        "y",
+        "tskey-auth",
+        "tskey-auth-kTest0 CNTRL-TestOnly000000",
+        '"tskey-auth-kTest0CNTRL-TestOnly0"',
+        "tskey-api-kTest0CNTRL-TestOnly000000000000000",
+        "a" * 513,
+    ],
     "yes_no": ["maybe", "1", "yy"],
 }
 

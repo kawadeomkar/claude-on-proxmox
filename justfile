@@ -150,7 +150,8 @@ help *RECIPE:
 # examples only where they are missing - then playbooks/init_settings.yml,
 # which asks, at a terminal, for each value a first deploy needs that is still
 # the example's: the Proxmox host's address, the API token's ID and secret,
-# the GitHub username. Enter leaves one for the next just init, and the vault
+# the GitHub username - and whether to use Tailscale, with its auth key after
+# a y, which no deploy needs. Enter leaves one for the next just init, and the vault
 # is written encrypted. Without a terminal it asks nothing, and writes only the
 # values given as options, so just init can be scripted. Then
 # playbooks/init_check.yml checks what just deploy will need of Proxmox - the
@@ -168,7 +169,7 @@ help *RECIPE:
 [arg('PROMPT', long='no-prompt', value='no', help='Ask nothing, even at a terminal')]
 [arg('HOST', long='host', pattern='[A-Za-z0-9.:-]*', help="The Proxmox host's address, for inventory/hosts.yml")]
 [arg('BRIDGE', long='bridge', pattern='[A-Za-z0-9._-]*', help='The bridge the template is built on, for local.yml (before the template exists)')]
-[arg('TAILSCALE', long='tailscale', pattern='(on|off)?', help='on: each VM joins your tailnet, the default; off: no Tailscale, for a setup without an account (tailscale_enabled in local.yml)')]
+[arg('TAILSCALE', long='tailscale', pattern='(on|off)?', help="Answers init's Tailscale question: on, each VM joins your tailnet; off, no Tailscale, for a setup without an account (tailscale_enabled in local.yml)")]
 [arg('STORAGE', long='storage', pattern='[A-Za-z0-9._-]*', help='The storage for VM disks, for local.yml: written when the token can use it there')]
 [arg('TOKEN_NAME', long='token-name', pattern='[A-Za-z0-9._-]*', help="The API token's name, when it is not ansible")]
 [arg('GITHUB_USER', long='github-user', pattern='[A-Za-z0-9-]*', help='The GitHub account whose repositories are cloned')]

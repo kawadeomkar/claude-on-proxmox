@@ -37,8 +37,8 @@ a first deploy.
   `~/.ssh/id_ed25519.pub`, and VS Code with the `code` command (optional).
 - **Accounts:** a Claude Pro, Max, Team or Enterprise login, which Remote Control needs - on Team and
   Enterprise an Owner turns Remote Control on for the organisation first - or an Anthropic API key, with
-  Remote Control off; GitHub; and Tailscale, which is on by default: without an account, set
-  `tailscale_enabled: false` in `local.yml` (`just init` reminds you).
+  Remote Control off; GitHub; and Tailscale, which is optional: `just init` asks whether to use it, and
+  `n` keeps it off every VM, reached on the LAN as ever.
 
 ## Quick start
 
@@ -74,8 +74,8 @@ the vault encrypted, with its password in `.vault_pass`: keep that file.
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `just vault` |
-| `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone, `tailscale_enabled: false` without a Tailscale account - and what `just init` writes there: a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
+| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise; a Tailscale auth key, which it asks for after a `y` to Tailscale. Optionally `vault_github_token` and `vault_anthropic_api_key`, with `just vault` |
+| `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone - and what `just init` writes there: `tailscale_enabled` from your answer, a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
 Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md),
 and `just vault` edits the vault. [Your first deploy](docs/getting-started/first-deploy.md) has the same

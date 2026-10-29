@@ -170,8 +170,11 @@ alias, and under `just deploy` its sign-ins and VS Code; a fourth play, tagged `
 VM with such a failure - skipped when `claude_vm_configure_in_deploy` is set, as `deploy.yml`'s configure
 import sets it, since deploy's own last play raises the same list (§4.7). `import_role`, not
 `include_role`: a static import takes the block's tag, so `just deploy <vm> --tags tailscale` runs the role's
-tasks, where an include's tag reaches only the include. Tailscale is optional, which is why only it gets
-this treatment: a failure in it is the VM's last, not its first
+tasks, where an include's tag reaches only the include. Off (`tailscale_enabled: false`), a `stat` first
+looks for the marker the role's install writes, and the import, whose condition each of the role's tasks
+carries, runs only where it is there - to log out and remove what the role installed, said first - so a VM
+it never installed Tailscale on gets that one read and nothing of the role. Tailscale is optional, which is
+why only it gets this treatment: a failure in it is the VM's last, not its first
 ([§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)).
 
 > `when:` on an `import_playbook` propagates to the imported plays' tasks rather than skipping the
@@ -858,10 +861,14 @@ in place of their commented example lines); the GitHub username; and last the se
 that a token the offer below makes has its secret written into the vault with no question between. Each answer is held
 to its kind by the `init_answer` filter (`filter_plugins/settings.py`); one that breaks the rule is asked
 for once more, saying it, and Enter leaves the value for the next run. The address in effect is the first
-`proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it. Tailscale is not asked about:
-while `local.yml` does not set `tailscale_enabled`, a `NOTICE` says it is on, by the vault's auth key or the
-sign-in page, and how to turn it off, writing nothing, so a later change to the default still reaches the
-person; `--tailscale on` or `off` writes the setting, by `tasks/init_local_setting.yml`.
+`proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it. Before the offer, Tailscale:
+whether to use it, while `local.yml` does not set `tailscale_enabled` (`yes_no`; `--tailscale on` or `off`
+answers it, as `y` or `n`), written either way by `tasks/init_local_setting.yml` and so never asked again;
+then, for a Tailscale chosen - `y`, `on`, or `true` in `local.yml`, never the default nobody chose - and
+while the vault holds no key and `tailscale_auth_method` is not `web`, an auth key, hidden, kept with the
+hidden answers and written into the vault with the others (`auth_key`; never from the command line). While
+it is unanswered a `NOTICE` says Tailscale is on, by the vault's auth key or the sign-in page, and how to
+turn it off, writing nothing, so a later change to the default still reaches the person.
 
 Before the secret, at a terminal, while the vault has none and none was given, `tasks/init_access.yml`
 offers to make the token: the one change `just init` makes on Proxmox. It adds the first `proxmox` host as
