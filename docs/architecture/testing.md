@@ -63,7 +63,7 @@ pytest over `tests/unit/`: 2229 tests. By file:
   the log, `just init`'s two matters before a VM's - and statically, the six tasks that carry `attention_browser`, every prompt drawn by `banner` (seven, `just init`'s two among them),
   and every report followed by its record, `just init`'s two among them. Each role's own tests then assert what it records, in every
   state they run.
-- **What every live output draws with** (`test_live_region.py` 15, `test_screen.py` 17, `test_vt.py` 4): the
+- **What every live output draws with** (`test_live_region.py` 17, `test_screen.py` 17, `test_vt.py` 4): the
   region against a stand-in `Display` - what is printed above it, a frame cut to the screen, a pause and a
   vars prompt each with the screen to themselves, the route, a screen too small, the echo off on a
   pseudo-terminal of the test's own - whose `display`, `prompt_until`, `do_var_prompt` and lock it holds to
@@ -150,7 +150,10 @@ pytest over `tests/unit/`: 2229 tests. By file:
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
   that reaches for them, no terminal).
-- **The Claude sign-in** (`test_claude_login.py` 43): `browser_login.yml` against the stand-in `claude`,
+- **The Claude sign-in** (`test_claude_login.py` 48): `browser_login.yml` against the stand-in `claude`,
+  one run of `claude_login.yml` for every sign-in case - a VM whose ssh refuses the connection among them,
+  said at once and ending no other VM's turn, a failed sign-in said in its own, one VM per batch and the
+  work after the sign-ins waiting for the last - with what each VM records of its answer read after it;
   the end of an attempt, a TERM and a KILL only for a pid that outlives it by a second, run traced;
   five runs at a pseudo-terminal of the test's own - the page before the prompt, a partly copied code,
   an expired attempt, Ctrl-C then A, and keys typed before the prompt is ready - with the code searched
@@ -164,11 +167,13 @@ pytest over `tests/unit/`: 2229 tests. By file:
   credential fill` proving that git itself gets the token through the config written, deploy's GitHub
   step per VM - starting by itself, and asking first with `github_login_auto_start: false` - every task
   that renders a token held to `no_log`, and the whole output searched for every canned token.
-- **The sign-in playbooks** (`test_sign_in_plays.py` 42): `claude_login.yml`, `github_login.yml` and
+- **The sign-in playbooks** (`test_sign_in_plays.py` 36): `claude_login.yml`, `github_login.yml` and
   `deploy.yml`'s own sign-in steps end to end - a VM whose ssh refuses the connection among VMs that
-  sign in, a failed sign-in said in its turn, a failure after a sign-in (Remote Control's start, a
-  clone) told apart from a failed one and raised at the end of `just deploy`, deploy with no terminal,
-  a refused code and `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts; and
+  sign in (for `claude_login.yml` alone, in `test_claude_login.py`'s run), a failed sign-in said in its
+  turn, a failure after a sign-in (Remote Control's start, a clone) told apart from a failed one and
+  raised at the end of `just deploy`, deploy with no terminal - GitHub's device flow started by itself for
+  each VM whose Claude code was entered, refused or not, and for none whose sign-in nobody answered - a
+  refused code and `deploy_sign_in: false`, and one VM per batch only where a sign-in prompts; and
   `login.yml` - `just login` - running the three in deploy's order and by its rules, held to deploy.yml's
   own decisions: no device flow for a VM whose Claude sign-in nobody answered, said once for it and in
   no report, a VM whose code was refused or whose Remote Control failed to start still given its GitHub
