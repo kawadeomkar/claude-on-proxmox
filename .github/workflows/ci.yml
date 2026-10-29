@@ -28,12 +28,9 @@ env:
 
 jobs:
   lint:
-    name: Lint and unit tests
+    name: Lint
     runs-on: ubuntu-latest
-    # The unit suite runs real playbooks: 44 minutes on a hosted runner one test
-    # at a time, 16-22 on its four vCPUs (two cores, two threads each) with a
-    # worker on each, depending on the CPU the runner lands on.
-    timeout-minutes: 60
+    timeout-minutes: 20
     env:
       # v8.30.0, the same release .pre-commit-config.yaml pins.
       GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
@@ -68,13 +65,6 @@ jobs:
       # scans an empty diff and always passes.
       - name: Lint
         run: just lint
-
-      - name: Unit tests
-        run: just test unit
-        env:
-          # A worker per vCPU, said here: -n auto counts logical CPUs only while
-          # psutil is not installed, and physical cores once it is - two here.
-          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
 
       # The files as the change leaves them. On its own this misses a token
       # committed in one commit and deleted in the next, which is gone from
@@ -116,6 +106,30 @@ jobs:
             rev-list --count "$range"
           docker run --rm -v "$PWD:/repo" -w /repo "$GITLEAKS_IMAGE" \
             git . --log-opts="$range" --config .gitleaks.toml --redact --no-banner --exit-code 1
+
+  # The unit suite runs real playbooks: 44 minutes on a hosted runner one test
+  # at a time, 16-22 on one runner's four vCPUs (two cores, two threads each)
+  # with a worker on each, and 7.9-8.4 for the slowest of three shards. Each
+  # shard keeps every module that shares a fixture whole, and the shards are
+  # balanced by tests/unit/durations.json; test_shards.py holds that the three
+  # run every test exactly once.
+  unit:
+    name: Unit tests (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Unit tests
+        run: just test unit --shard ${{ matrix.shard }}/3
+        env:
+          # A worker per vCPU, said here: -n auto counts logical CPUs only while
+          # psutil is not installed, and physical cores once it is - two here.
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
 
   # Public repository: pull requests can add dependencies. This flags any new
   # one that carries a known advisory before it is merged. It reads the
@@ -210,7 +224,7 @@ jobs:
   # the canary, which may fail on purpose. A cancelled or failed job fails it.
   result:
     name: CI result
-    needs: [lint, dependency-review, molecule, playbooks]
+    needs: [lint, unit, dependency-review, molecule, playbooks]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10

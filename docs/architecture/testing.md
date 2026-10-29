@@ -12,7 +12,10 @@ project's with that module's group, so the fixture - a whole playbook run - is m
 other modules go test by test to whichever worker is free. Whole modules, since a test can reach a fixture
 through `request.getfixturevalue`, which no static look finds; and `tryfirst`, since xdist's own hook turns the
 marks into groups and, run first, would see none and rebuild the fixtures test by test. Plain `pytest` runs one
-test at a time, for one test or one file. Every child a test signals or types Ctrl-C at starts with SIGINT,
+test at a time, for one test or one file. `just test unit --shard <i>/<n>` runs one of n shards, each such module
+whole in one, balanced by `tests/unit/durations.json` (`tools/unit_durations.py`); CI runs three, `CI result` fails
+unless all three passed, and `test_shards.py` holds that the shards together collect every test exactly once.
+Every child a test signals or types Ctrl-C at starts with SIGINT,
 SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite started with `&` or under
 nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
 (`harness._drain`), since on a loaded machine its last bytes arrive late, up to the test's deadline. Every fake
@@ -137,6 +140,8 @@ pytest over `tests/unit/`: 2229 tests. By file:
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
   always()`, and no job of the gate may `continue-on-error`; its script, run as GitHub runs it, passes a
   success or a skip and fails a failure or a cancel.
+- **The shards** (`test_shards.py` 4): `--shard` collected as each CI shard collects it - two, three and four
+  shards that between them run every test exactly once, and a module whose tests share a fixture whole in one.
 - **Remote Control** (`test_remote_control_playbooks.py` 56): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
