@@ -205,7 +205,9 @@ against 41 s.
    sessions would put a relative one wherever it ran - then start each stopped VM through the API (`status/start`), wait
    for its agent to report an IPv4 address on `proxmox_nic` - by the MAC its config gives, as
    `vm_addresses.yml` pairs them, so a bridge the guest grew (`docker0`, `tailscale0`) cannot end the wait
-   before DHCP has answered - list the cluster again and read every requested VM's address
+   before DHCP has answered; asked 36 times at most, `claude_vm_release_agent_delay` (5) seconds apart, a
+   play variable only `-e` changes, which `tests/unit/test_release.py` sets to 0.2 against the fake agent
+   that answers on its third ask - list the cluster again and read every requested VM's address
    (`tasks/vm_addresses.yml`). The listing gives the status Proxmox last polled, up to ten seconds old,
    so a VM started seconds before is still "stopped" there: the VMs started are passed as
    `claude_vm_just_started` and asked whatever it says. Read by the listing alone, a VM that booted
