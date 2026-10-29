@@ -554,6 +554,36 @@ status ONLY='' JSON='' *NAMES:
 
 alias list := status
 
+# Each setting's value and where it was set, read without changing anything
+# (tools/settings): Ansible's own variables for a play of the role, on the
+# group its playbook runs it on, with what a run sets beside them. A secret is
+# said set or not set, never shown, and changes with just vault. How to use it
+# needs no vault, so it comes before the vault's check; the rules before any
+# Python. The vault's password file is the one every recipe passes.
+[arg('ALL', long='all', value='true', help='Every setting of local.yml, and which secrets of vault.yml are set')]
+[arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output')]
+[arg('NAME', pattern='[a-z][a-z0-9_]*', help='A role (tailscale) or one variable or setting (tailscale_ssh); none shows how to use this')]
+[arg('CHANGED', long='changed', value='true', help='Only what local.yml or vault.yml changes from the defaults; alone, all of it')]
+[doc("Each setting's value and where it was set, for a role, a variable or all of them, read without changing anything")]
+[group('use')]
+[no-exit-message]
+[positional-arguments]
+[script]
+settings ALL='' CHANGED='' JSON='' *NAME:
+    {{ guard }}
+    all=$1 changed=$2 json=$3
+    shift 3
+    [ "$#" -le 1 ] || { echo "error: just settings takes one role or variable (got: [$*])" >&2; exit 1; }
+    [ -z "$all" ] || [ "$#" -eq 0 ] || { echo "error: just settings --all lists every setting: give it no role or variable" >&2; exit 1; }
+    {{ find_bin }}
+    if [ "$#" -eq 0 ] && [ -z "$all$changed" ]; then exec "$bin/python" tools/settings --usage --json="$json"; fi
+    tools/check vault {{ quote(VAULT_FILE) }}
+    tools/check collections "$bin"
+    name=${1:-}
+    set --
+    {{ vault_args }}
+    exec "$bin/python" tools/settings "$@" --all="$all" --changed="$changed" --json="$json" -- ${name:+"$name"}
+
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default')]
 [continue]
 [doc("Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them")]
@@ -578,7 +608,7 @@ destroy *NAMES:
     exec {{ run_logged }} destroy "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/destroy.yml
 
 # Only files named the way tools/run-logged names its logs, and only in
-# LOG_DIR, which a just setting puts into the script's text rather than its
+# LOG_DIR, which as a justfile setting goes into the script's text rather than its
 # environment, so `just LOG_DIR=<dir> logs` reads that directory.
 [doc('List the run logs in .logs/, newest first')]
 [group('use')]

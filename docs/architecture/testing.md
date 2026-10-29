@@ -57,6 +57,19 @@ pytest over `tests/unit/`: 2229 tests. By file:
   repositories - a worktree under `.claude/worktrees/` and one outside the projects directory, a branch with
   no upstream, a detached HEAD with commits of its own, a stash, untracked files - every file of them, `.git`
   included, as it was after.
+- **`just settings`** (`test_settings.py` 40): `tools/settings` against inventories of its own, made from the
+  example files with fake, low-entropy values and a vault under a throwaway password, never the checkout's
+  settings; each run with a `HOME` of its own and the collections' path pinned beside it. Every role's rows
+  are its `argument_specs`; every line within 100 columns. The attacks: a `pipe` lookup behind a group
+  variable in `hosts.yml` (refused, never run), an executable in `inventory/` (never run), a secret vaulted
+  inline in `local.yml` and a setting reading `vm_password` (masked), a GitHub username of `local` (no report
+  refused), a secret copied in under a computed name (nothing printed, exit 1), a control sequence in a
+  value. Where values come from: `proxmox_vm` evaluated on `claude_vm_pending`, `proxmox_template` on the
+  Proxmox host with its host variable, a short setting followed to the role variable it feeds, what `just
+  deploy`, `just login` and `just destroy` set beside the value other runs use, a default that lives in a
+  role's `default()`. The vault refused without a password and with a wrong one, opened from
+  `ANSIBLE_VAULT_PASSWORD_FILE` as `ansible-playbook` opens it; the inventory's files unchanged after. Every
+  run fails if any fake secret is in what it printed.
 - **The stdout callback** (`test_attention_callback.py` 16): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in

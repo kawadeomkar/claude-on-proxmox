@@ -5,6 +5,11 @@ Everything you can set lives in two git-ignored files that `just init` copies fr
 for secrets. Set only what differs from the default, so that a default this project changes later
 still reaches you.
 
+To see what yours are and where each was set, run `just settings`: `just settings tailscale` lists one
+role's variables, `just settings tailscale_ssh` explains one, `just settings --changed` lists everything
+you changed, and `--json` gives any of them to a script. It changes nothing. A secret is only ever said to
+be set or not set, never shown, and changes with `just vault`.
+
 ## Variable layering
 
 ```

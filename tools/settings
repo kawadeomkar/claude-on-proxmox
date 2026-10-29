@@ -1,0 +1,794 @@
+"""just settings: each setting's value and where it was set, for one role, one variable or all of them.
+
+    "$bin/python" tools/settings --usage [--json=true]
+    "$bin/python" tools/settings [--vault-password-file <file>] [--all=true] [--changed=true] [--json=true] -- [NAME]
+
+It asks Ansible itself, in-process, as a run would: the loader with the vault opened as Ansible's own commands open
+it, the inventory, the variables of a play that names the role - on a host of the group that role's playbook runs it
+on - and the templar for each value. Nothing of Ansible's precedence is written again here. What a setting is - each
+role's argument_specs, the wiring, the sections of local.yml.example - comes from tools/docs.py, the same model the
+wiki's reference pages are generated from (docs/architecture/custom-code.md §7.9).
+
+It changes nothing and prints no secret:
+
+- Lookups are held to an allowlist where Ansible loads every lookup, however one is reached: pipe runs a command,
+  password writes a file. The inventory is read by the yaml plugin alone, never script, which runs what it finds.
+- A value is masked when the vault file holds it (lock 1), when Ansible marks it as decrypted from a vault, an inline
+  !vault included (lock 2), when its role marks the variable no_log (lock 3), or when its expression reads a name
+  the vault holds or a no_log variable (lock 4). Before anything is printed, every value about to be printed is
+  checked against every secret Ansible decrypted; a match prints nothing and exits 1 (lock 5).
+- The vault's password file is the one the recipe passes (.vault_pass, where there is one), else what
+  ansible-playbook would take; a vault that cannot be opened is refused before anything is printed.
+
+Exits 0 with the report, 1 when it refuses.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+# The yaml inventory plugin alone, set before Ansible reads its configuration: the default list has script, which
+# runs any executable it finds in inventory/.
+os.environ["ANSIBLE_INVENTORY_ENABLED"] = "yaml"
+
+REPO = Path(__file__).resolve().parent.parent
+LOCAL = "inventory/group_vars/all/local.yml"
+VAULT = "inventory/group_vars/all/vault.yml"
+# The lookups a value may run here: each reads, and none starts a program or writes a file.
+SAFE_LOOKUPS = frozenset(
+    f"ansible.builtin.{name}" for name in ("env", "file", "config", "vars", "first_found", "fileglob")
+)
+# The files a person edits, as the report names them.
+USERS = ("hosts.yml", "vault.yml", "local.yml")
+# What the justfile passes with -e that is no setting: the names given, and init's own.
+NOT_SETTINGS = frozenset({"vm_name", "vm_project", "vm_session", "status_only", "init_given", "init_ask"})
+WIDTH = 100
+
+
+def _load(stem: str, path: Path):
+    """A module of this checkout by path, once, as claude_on_proxmox_<stem>, as every module here loads another."""
+    name = f"claude_on_proxmox_{stem}"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
+docs = _load("docs", REPO / "tools" / "docs.py")
+screen = _load("screen", REPO / "filter_plugins" / "screen.py")
+text = _load("text", REPO / "filter_plugins" / "text.py")
+
+import yaml  # noqa: E402
+from ansible import constants as C  # noqa: E402
+from ansible.cli import CLI  # noqa: E402
+from ansible.errors import AnsibleError  # noqa: E402
+from ansible.inventory.manager import InventoryManager  # noqa: E402
+from ansible.parsing.dataloader import DataLoader  # noqa: E402
+from ansible.parsing.vault import VaultHelper  # noqa: E402
+from ansible.playbook.play import Play  # noqa: E402
+from ansible.plugins import loader as plugin_loader  # noqa: E402
+from ansible.plugins.loader import init_plugin_loader  # noqa: E402
+from ansible.template import Templar, trust_as_template  # noqa: E402
+from ansible.vars.manager import VariableManager  # noqa: E402
+from jinja2 import Environment, meta  # noqa: E402
+
+
+class Refused(Exception):
+    """A reason to print nothing and exit 1."""
+
+
+class LookupRefused(Exception):
+    """A lookup outside SAFE_LOOKUPS, refused where Ansible loads it."""
+
+
+def _hold_lookups() -> None:
+    real = plugin_loader.lookup_loader.get
+
+    def get(name, *args, **kwargs):
+        found = plugin_loader.lookup_loader.find_plugin_with_context(name)
+        fqcn = found.resolved_fqcn if found.resolved else name
+        if fqcn not in SAFE_LOOKUPS:
+            raise LookupRefused(fqcn)
+        return real(name, *args, **kwargs)
+
+    plugin_loader.lookup_loader.get = get
+
+
+def _cause(error: BaseException | None, kind: type) -> BaseException | None:
+    seen = set()
+    while error is not None and id(error) not in seen:
+        if isinstance(error, kind):
+            return error
+        seen.add(id(error))
+        error = error.__cause__ or error.__context__
+    return None
+
+
+class _AnyName(dict):
+    """Every filter and test name exists: an expression's variables are read without Ansible's plugins."""
+
+    def __contains__(self, key):
+        return True
+
+    def __getitem__(self, key):
+        return lambda *args, **kwargs: None
+
+    def get(self, key, default=None):
+        return self[key]
+
+
+_JINJA = Environment()
+_JINJA.filters = _AnyName()
+_JINJA.tests = _AnyName()
+
+
+def names_in(expression) -> set[str]:
+    """The variables an expression reads; none for a value that is no template."""
+    if not isinstance(expression, str) or ("{{" not in expression and "{%" not in expression):
+        return set()
+    return meta.find_undeclared_variables(_JINJA.parse(expression)) - {"lookup", "query", "q"}
+
+
+def _leaves(value):
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _leaves(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _leaves(item)
+    else:
+        yield value
+
+
+# ------------------------------------------------------------------------------------- the playbooks, read ---
+def _plays(path: Path) -> list[dict]:
+    return [item for item in yaml.safe_load(path.read_text()) or [] if isinstance(item, dict)]
+
+
+def _role_runs(tasks):
+    """(role, vars, tasks_from) of each import_role and include_role in tasks, blocks included."""
+    for task in tasks or []:
+        if not isinstance(task, dict):
+            continue
+        for key in ("block", "rescue", "always"):
+            yield from _role_runs(task.get(key))
+        for module in ("ansible.builtin.import_role", "ansible.builtin.include_role"):
+            if module in task:
+                given = task[module] or {}
+                yield given.get("name"), task.get("vars") or {}, given.get("tasks_from")
+
+
+def _runs(play: dict):
+    runs = [
+        (
+            (role if isinstance(role, str) else role.get("role") or role.get("name")),
+            (role.get("vars") if isinstance(role, dict) else None) or {},
+            None,
+        )
+        for role in play.get("roles") or []
+    ]
+    for section in ("pre_tasks", "tasks", "post_tasks", "handlers"):
+        runs += list(_role_runs(play.get(section)))
+    return runs
+
+
+def _added(tasks):
+    """The arguments of each add_host in tasks, blocks included."""
+    for task in tasks or []:
+        if isinstance(task, dict):
+            for key in ("block", "rescue", "always"):
+                yield from _added(task.get(key))
+            if "ansible.builtin.add_host" in task:
+                yield task["ansible.builtin.add_host"] or {}
+
+
+def playbooks() -> list[Path]:
+    return [REPO / "deploy.yml", *sorted((REPO / "playbooks").glob("*.yml"))]
+
+
+def where_roles_run() -> dict[str, str]:
+    """Each role's group: the hosts of the play that runs its main entry point and passes it nothing - provision.yml's
+    claude_vm_pending for proxmox_vm, not destroy.yml's, which passes proxmox_vm_state: absent."""
+    found: dict[str, str] = {}
+    for path in playbooks():
+        for play in _plays(path):
+            for role, given, tasks_from in _runs(play):
+                if role and not given and not tasks_from and isinstance(play.get("hosts"), str):
+                    found.setdefault(role, play["hosts"])
+    return found
+
+
+def _justfile() -> dict[str, str]:
+    """Each recipe's script, the assignments it names written out."""
+    source = (REPO / "justfile").read_text()
+    assignments = dict(re.findall(r"(?m)^([a-z_]+) := (.*)$", source))
+    bodies: dict[str, str] = {}
+    recipe = None
+    for line in source.splitlines():
+        head = re.match(r"^([a-z][a-z_]*)(?: [^:]*)?:\s*$", line)
+        if head:
+            recipe = head.group(1)
+            bodies[recipe] = ""
+        elif recipe and line.startswith("    "):
+            bodies[recipe] += re.sub(r"\{\{ (\w+) \}\}", lambda m: assignments.get(m.group(1), m.group(0)), line) + "\n"
+        elif line and not line.startswith(" "):
+            recipe = None
+    return bodies
+
+
+def _how(expression) -> str:
+    """What a run sets a variable from, as the report says it."""
+    if isinstance(expression, str) and "{{" in expression:
+        same = re.fullmatch(r"\{\{\s*(\w+)\s*\}\}", expression.strip())
+        return f"from {same.group(1)}" if same else "per run"
+    return f"to {json.dumps(expression)}"
+
+
+def run_sets() -> dict[str, list[str]]:
+    """The variables a run sets above the inventory, each with what sets it: "just deploy sets it from deploy_sign_in".
+
+    A playbook no other imports is the run of the recipe of the same name; the vars it passes - on an import, a
+    play, a role, an add_host - are read through every import. The justfile's -e objects, recipe by recipe, too.
+    """
+    bodies = _justfile()
+    books = playbooks()
+    imported = {
+        (path.parent / item["ansible.builtin.import_playbook"]).resolve()
+        for path in books
+        for item in _plays(path)
+        if item.get("ansible.builtin.import_playbook")
+    }
+    found: dict[str, list[str]] = {}
+
+    def record(name, said):
+        if said not in found.setdefault(name, []):
+            found[name].append(said)
+
+    def walk(path: Path, recipe: str, seen: set) -> None:
+        if path in seen or not path.is_file():
+            return
+        seen.add(path)
+        for item in _plays(path):
+            given = dict(item.get("vars") or {})
+            for _role, role_vars, _tasks_from in _runs(item):
+                given.update(role_vars)
+            for section in ("pre_tasks", "tasks", "post_tasks"):
+                for added in _added(item.get(section)):
+                    given.update({k: v for k, v in added.items() if k not in ("name", "groups", "group")})
+            for name, expression in given.items():
+                record(name, f"just {recipe} sets it {_how(expression)}")
+            if item.get("ansible.builtin.import_playbook"):
+                walk((path.parent / item["ansible.builtin.import_playbook"]).resolve(), recipe, seen)
+
+    for path in books:
+        if path.resolve() not in imported and path.stem in bodies:
+            walk(path.resolve(), path.stem, set())
+    for recipe, body in bodies.items():
+        for line in body.splitlines():
+            if " -e " in line:
+                for name, value in re.findall(r'\\?"([a-z_]+)\\?"\s*:\s*([a-z0-9]+)', line):
+                    if name not in NOT_SETTINGS:
+                        record(name, f"just {recipe} may pass {value}")
+    return found
+
+
+# --------------------------------------------------------------------------------------------- the report ---
+class Settings:
+    """Every value, as Ansible gives it to the play that runs each role, with where it was set."""
+
+    def __init__(self, inventory: Path, password: str):
+        _hold_lookups()
+        init_plugin_loader([])
+        self.specs = docs.specs()
+        self.defaults, self.feeds = docs.wiring()
+        self.loader = DataLoader()
+        self.vault_file = inventory / "group_vars" / "all" / "vault.yml"
+        encrypted = self.vault_file.is_file() and self.vault_file.read_bytes().startswith(b"$ANSIBLE_VAULT")
+        if password:
+            self.loader.set_vault_secrets(
+                CLI.setup_vault_secrets(self.loader, vault_ids=[], vault_password_files=[password])
+            )
+        elif encrypted:
+            raise Refused(
+                "vault.yml is encrypted, and there is no .vault_pass or ANSIBLE_VAULT_PASSWORD_FILE to open it with"
+            )
+        try:
+            self.inventory = InventoryManager(loader=self.loader, sources=[str(inventory)])
+            self.vault = self._read(self.vault_file)
+        except AnsibleError as error:
+            if "ecrypt" in str(error):
+                raise Refused(f"vault.yml could not be opened with {password}") from error
+            raise
+        self.local = self._read(inventory / "group_vars" / "all" / "local.yml")
+        self.project = self._read(inventory / "group_vars" / "all" / "defaults.yml")
+        self.host_vars = inventory / "host_vars"
+        self.variables = VariableManager(loader=self.loader, inventory=self.inventory)
+        self.example_vault = yaml.safe_load((REPO / VAULT).with_suffix(".yml.example").read_text()) or {}
+        self.where = where_roles_run()
+        self.run_sets = run_sets()
+        self.contexts: dict[str, dict] = {}
+        # Lock 5's list: what the vault holds but the identifiers, the GitHub username and an OAuth client's ID, which
+        # are masked in their own rows and never looked for elsewhere - a username that is a common word would
+        # otherwise refuse every report. Inline !vault values and no_log values join it as they are templated.
+        self.hunted = {
+            str(value)
+            for name, value in self.vault.items()
+            if isinstance(value, str)
+            and len(value.strip()) >= 4
+            and not self.identifier(name)
+            and not self.placeholder(name, value)
+        }
+
+    def _read(self, path: Path) -> dict:
+        # cache="none": the loader caches a file without its trust as a template, and the inventory, reading the
+        # same file after, would get that copy and template none of its values.
+        return (self.loader.load_from_file(str(path), cache="none") or {}) if path.is_file() else {}
+
+    def no_log(self, name: str) -> bool:
+        return any(options.get(name, {}).get("no_log") for options in self.specs.values())
+
+    def identifier(self, vault_name: str) -> bool:
+        fed = docs.set_by(vault_name, self.feeds, self.specs)
+        return bool(fed) and not any(self.no_log(name) for name in fed)
+
+    def placeholder(self, name: str, value) -> bool:
+        """Still the example's value, as just init decides it - never by a pattern."""
+        example = self.example_vault.get(name)
+        return example not in ("", None) and value == example
+
+    def context(self, role: str) -> dict:
+        """The role's variables as the play that runs it sees them: on its group's first host, or a placeholder."""
+        if role in self.contexts:
+            return self.contexts[role]
+        group = self.where.get(role, "claude_vms")
+        hosts = self.inventory.get_hosts(group)
+        if hosts:
+            host, placeholder = hosts[0], False
+        else:
+            if group not in self.inventory.groups:
+                self.inventory.add_group(group)
+            self.inventory.add_host(f"settings-{group}", group=group)
+            host, placeholder = self.inventory.get_host(f"settings-{group}"), True
+        play = Play.load(
+            {"name": "settings", "hosts": host.name, "gather_facts": False, "roles": [role]},
+            variable_manager=self.variables,
+            loader=self.loader,
+        )
+        values = self.variables.get_vars(play=play, host=host)
+        inventory_layer = {name: value for name, value in host.vars.items() if not name.startswith("ansible_")}
+        for each in host.get_groups():
+            for name, value in each.get_vars().items():
+                inventory_layer.setdefault(name, value)
+        self.contexts[role] = {
+            "group": group,
+            "placeholder": placeholder,
+            "values": values,
+            "templar": Templar(loader=self.loader, variables=values),
+            "layers": [  # highest first, each named for the file a person edits
+                ("internal", self._read(REPO / "roles" / role / "vars" / "main.yml")),
+                ("hosts.yml", inventory_layer),
+                ("vault.yml", self.vault),
+                ("local.yml", self.local),
+                ("default", self.project),
+                ("default", self._read(REPO / "roles" / role / "defaults" / "main.yml")),
+            ],
+        }
+        return self.contexts[role]
+
+    @staticmethod
+    def layer(context: dict, name: str):
+        return next(((label, data[name]) for label, data in context["layers"] if name in data), ("unset", None))
+
+    def walk(self, context: dict, name: str, depth: int = 0) -> dict:
+        """What a value is made of, followed through the wiring: the person's own settings it reads, and whether it
+        reads a secret (lock 4), the VM's name or the VM's facts."""
+        found = {"user": [], "secret": False, "per_vm": False, "facts": False}
+        if depth >= 6:
+            return found
+        for ref in sorted(names_in(self.layer(context, name)[1])):
+            if ref in ("inventory_hostname", "inventory_hostname_short"):
+                found["per_vm"] = True
+                continue
+            if ref == "ansible_facts":
+                found["facts"] = True
+                continue
+            if ref in self.vault or ref in self.example_vault or self.no_log(ref):
+                found["secret"] = True
+            where, raw = self.layer(context, ref)
+            if where in USERS:
+                real = not (where == "vault.yml" and (raw in ("", None) or self.placeholder(ref, raw)))
+                found["user"].append((ref, where, real))
+            deeper = self.walk(context, ref, depth + 1)
+            found["user"] += deeper["user"]
+            for key in ("secret", "per_vm", "facts"):
+                found[key] |= deeper[key]
+        return found
+
+    def row(self, role: str, name: str, spec: dict) -> dict:
+        context = self.context(role)
+        where, raw = self.layer(context, name)
+        made_of = self.walk(context, name)
+        via = list(dict.fromkeys((ref, file) for ref, file, _real in made_of["user"]))
+        row = {
+            "name": name,
+            "role": role,
+            "kind": "value",
+            "value": None,
+            "set_in": where if where in USERS else (via[0][1] if via else "default"),
+            "via": [{"name": ref, "file": file} for ref, file in via],
+            "evaluated_as": context["group"],
+        }
+        if name in self.run_sets:
+            row["set_by_run"] = self.run_sets[name]
+        row["changed"] = (
+            where in USERS and not (where == "vault.yml" and (raw in ("", None) or self.placeholder(name, raw)))
+        ) or any(real for _ref, _file, real in made_of["user"])
+        secret = where == "vault.yml" or bool(spec.get("no_log")) or made_of["secret"]  # locks 1, 3, 4
+        if made_of["facts"]:
+            row["kind"] = "on_the_vm"
+        elif made_of["per_vm"] and context["placeholder"]:
+            row["kind"] = "per_vm"
+        else:
+            try:
+                value = context["templar"].template(context["values"][name])
+            except Exception as error:  # noqa: BLE001 - whatever a template raises, the value is not known here
+                refused = _cause(error, LookupRefused)
+                row["kind"] = "at_run_start" if refused else "on_the_vm"
+                if refused:
+                    row["lookup"] = str(refused)
+            else:
+                vaulted = [
+                    item for item in _leaves(value) if VaultHelper.get_ciphertext(item, with_tags=False) is not None
+                ]
+                if vaulted:  # lock 2: Ansible's own mark on what it decrypted, an inline !vault included
+                    secret = True
+                    self.hunted.update(str(item) for item in vaulted if len(str(item)) >= 4)
+                plain = json.loads(json.dumps(value))  # Ansible's tagged types, made plain
+                if secret:
+                    vault_name = via[0][0] if via and via[0][1] == "vault.yml" else name
+                    row["kind"] = "secret"
+                    row["secret"] = (
+                        "not set"
+                        if plain in ("", None, [], {})
+                        else "placeholder"
+                        if self.placeholder(vault_name, plain)
+                        else "set"
+                    )
+                    if isinstance(plain, str) and len(plain) >= 4 and not self.identifier(vault_name):
+                        self.hunted.add(plain)
+                else:
+                    row["value"] = plain
+        row["change"] = "just vault" if row["kind"] == "secret" or row["set_in"] == "vault.yml" else LOCAL
+        if where == "default" and isinstance(raw, str) and "{{" in raw:
+            # The wiring, from a file in git: it holds no secret, whatever the value it makes does.
+            row["wiring"] = raw
+            row["wiring_in"] = (
+                "inventory/group_vars/all/defaults.yml" if name in self.project else (f"roles/{role}/defaults/main.yml")
+            )
+        return row
+
+    def role(self, role: str, only: str | None = None) -> list[dict]:
+        entry_points = yaml.safe_load((REPO / "roles" / role / "meta" / "argument_specs.yml").read_text())
+        entry_point = {}
+        for each, spec in sorted(entry_points["argument_specs"].items(), key=lambda item: item[0] != "main"):
+            for name in spec.get("options") or {}:
+                entry_point.setdefault(name, each)
+        rows = []
+        for name, spec in self.specs[role].items():
+            if only is None or name == only:
+                rows.append(self.row(role, name, spec) | {"entry_point": entry_point[name]})
+                if only:
+                    described = spec.get("description") or ""
+                    rows[-1]["description"] = " ".join(described) if isinstance(described, list) else str(described)
+                    rows[-1]["default"] = spec.get("default")
+        return rows
+
+    def setting(self, name: str) -> dict:
+        """One setting of local.yml.example, on the role whose variable it feeds."""
+        fed = [docs.role_of(var, self.specs) for var in docs.set_by(name, self.feeds, self.specs)]
+        role = next((each for each in fed if each), docs.role_of(name, self.specs) or "common")
+        context = self.context(role)
+        if name not in context["values"] and name in self.defaults:
+            # A default that lives in a role's default() (vm_cores), or one setting's in another's (vm_memory_min_mb).
+            default = self.defaults[name]
+            context["values"][name] = trust_as_template(default) if isinstance(default, str) else default
+        return self.row(role, name, {})
+
+    def everything(self) -> list[dict]:
+        rows = []
+        proxmox = self.inventory.get_hosts("proxmox")
+        address = proxmox[0].vars.get("ansible_host") if proxmox else None
+        address = None if address is None else str(address)  # Ansible's tagged str, made plain
+        example = yaml.safe_load((REPO / "inventory" / "hosts.yml.example").read_text())
+        example = example["all"]["children"]["proxmox"]["hosts"]["pve"]["ansible_host"]
+        rows.append(
+            {
+                "name": "ansible_host",
+                "section": "Proxmox",
+                "role": None,
+                "set_in": "hosts.yml",
+                "via": [],
+                "kind": "placeholder" if address in (None, example) else "value",
+                "value": None if address in (None, example) else address,
+                "changed": address not in (None, example),
+                "change": "inventory/hosts.yml",
+            }
+        )
+        for title, groups in docs.parse_example(REPO / LOCAL.replace(".yml", ".yml.example"), secret=False):
+            for _prose, found in groups:
+                for name, _example in found:
+                    rows.append(self.setting(name) | {"section": title})
+        for title, groups in docs.parse_example(REPO / VAULT.replace(".yml", ".yml.example"), secret=True):
+            for _prose, found in groups:
+                for name, _example in found:
+                    value = self.vault.get(name)
+                    state = (
+                        "not set" if value in ("", None) else "placeholder" if self.placeholder(name, value) else "set"
+                    )
+                    rows.append(
+                        {
+                            "name": name,
+                            "section": f"Secrets: {title}",
+                            "role": None,
+                            "kind": "secret",
+                            "value": None,
+                            "secret": state,
+                            "set_in": "vault.yml",
+                            "via": [],
+                            "changed": state == "set",
+                            "change": "just vault",
+                        }
+                    )
+        return rows
+
+    def notes(self) -> list[str]:
+        if not self.host_vars.is_dir():
+            return []
+        files = sorted(path.name for path in self.host_vars.iterdir() if path.suffix in (".yml", ".yaml"))
+        if not files:
+            return []
+        return [
+            f"inventory/host_vars/ holds {', '.join(files)}: Ansible applies each file to the VM of its name, which "
+            "this report does not show (there is no per-VM setting: docs/reference/settings.md)."
+        ]
+
+    def check(self, rows: list[dict]) -> None:
+        """Lock 5: nothing about to be printed holds a secret Ansible decrypted."""
+        held = [
+            row["name"]
+            for row in rows
+            if row.get("value") is not None
+            and any(secret in json.dumps(row["value"]) or secret in str(row["value"]) for secret in self.hunted)
+        ]
+        if held:
+            raise Refused(
+                f"refusing to print a secret: {', '.join(held)} holds a value of the vault's. Nothing was printed"
+            )
+
+
+# ---------------------------------------------------------------------------------------------- the words ---
+STYLE = {"local.yml": "y", "hosts.yml": "y", "vault.yml": "m"}
+
+
+def shown(row: dict) -> str:
+    kind = row["kind"]
+    if kind == "secret":
+        return {"set": "set (secret)", "not set": "not set", "placeholder": "the example's placeholder"}[row["secret"]]
+    said = {
+        "per_vm": "the VM's name",
+        "on_the_vm": "worked out on the VM",
+        "placeholder": "the example's placeholder",
+        "at_run_start": f"when a run starts ({row.get('lookup', '').rsplit('.', 1)[-1]} lookup)",
+    }
+    if kind in said:
+        return said[kind]
+    value = row["value"]
+    if value == "":
+        return '""'
+    dumped = yaml.safe_dump(value, default_flow_style=True, width=10_000).strip().removesuffix("...").strip()
+    return text.one_line(dumped, 200)
+
+
+def source(row: dict) -> tuple[str, str]:
+    """Where a row was set, and its style: the person's own file in their colour, a default dim."""
+    if row["via"]:
+        first = row["via"][0]
+        return f"{first['name']} in {first['file']}", STYLE.get(first["file"], "")
+    return row["set_in"], STYLE.get(row["set_in"], "d")
+
+
+def table(rows: list[dict], heading) -> list[list]:
+    """Rows under their headings, every line within WIDTH. A value longer than its column is cut with "…" (the
+    one-variable view shows it whole); a source that does not fit beside it goes whole to the next line, and each
+    thing a run sets has a line of its own."""
+    lines: list[list] = []
+    names = min(max((len(row["name"]) for row in rows), default=10), 44)
+    values = max(8, min(26, max((len(shown(row)) for row in rows), default=8)))
+    current = None
+    for row in rows:
+        title = heading(row)
+        if title != current:
+            current = title
+            lines.append([screen.seg(title, "h")])
+        value = screen.cut([screen.seg(shown(row), "m" if row["kind"] == "secret" else "")], values)
+        start = [screen.seg(f"  {row['name']:<{names}}  "), *screen.pad(value, values), screen.seg("  ")]
+        where, style = source(row)
+        if screen.width(start) + len(where) <= WIDTH:
+            lines.append([*start, screen.seg(where, style)])
+        else:
+            lines += [
+                screen.cut(start, WIDTH),
+                [screen.seg("      "), screen.seg(text.one_line(where, WIDTH - 6), style)],
+            ]
+        lines += [[screen.seg("      · "), screen.seg(said, "c")] for said in row.get("set_by_run", [])]
+    return lines
+
+
+def tail(rows: list[dict]) -> list[list]:
+    mine = sum(1 for row in rows if row.get("changed") and row["kind"] != "secret")
+    secrets = sum(1 for row in rows if row.get("changed") and row["kind"] == "secret")
+    said = f"{screen.plural(mine, 'setting')} set in your files, {screen.plural(secrets, 'secret')} set in vault.yml."
+    return [
+        [],
+        *(
+            [screen.seg(line, "d")]
+            for line in screen.fill(f"{said} A setting changes in {LOCAL}, a secret with just vault.", WIDTH)
+        ),
+    ]
+
+
+def _field(label: str, said: str, style: str = "") -> list[list]:
+    """A labelled field of the one-variable view, wrapped under its value."""
+    pieces = screen.fill(said, WIDTH - 12)
+    return [
+        [screen.seg(f"  {label:<8}  " if index == 0 else " " * 12), screen.seg(piece, style)]
+        for index, piece in enumerate(pieces)
+    ]
+
+
+def one(row: dict) -> list[list]:
+    """One variable or setting, explained: its value, the chain of files that set it, what a run sets, its default,
+    where to change it and what it does."""
+    where = (
+        f"role {row['role']}, entry point {row['entry_point']}" if row.get("entry_point") else row.get("section", "")
+    )
+    lines = [[screen.seg(row["name"], "h"), screen.seg(f"  {where}", "d")]]
+    lines += _field("value", shown(row), "m" if row["kind"] == "secret" else "")
+    chain = [(f"{each['name']} in {each['file']}", each["file"]) for each in row["via"]] or [
+        (row["set_in"], row["set_in"])
+    ]
+    if row.get("wiring"):
+        chain.append((f"{row['name']}: {json.dumps(row['wiring'])} in {row['wiring_in']}", "default"))
+    for index, (link, file) in enumerate(chain):
+        lines += _field("set by" if index == 0 else "", text.one_line(link, 400), STYLE.get(file, ""))
+    for said in row.get("set_by_run", []):
+        lines += _field("runs", said, "c")
+    if "default" in row:
+        lines += _field("default", '""' if row["default"] == "" else text.one_line(json.dumps(row["default"]), 200))
+    lines += _field("change", row["change"])
+    for piece in screen.fill(text.one_line(row.get("description") or "", 4000), WIDTH - 2):
+        lines.append([screen.seg(f"  {piece}")])
+    if row.get("role") and row.get("entry_point"):
+        lines.append([screen.seg(f"  docs/reference/roles/{row['role']}.md", "d")])
+    return lines
+
+
+def usage(as_json: bool) -> int:
+    """How to use it: the roles, from their argument_specs so a new one shows up by itself, and the options."""
+    specs = docs.specs()
+    roles = []
+    for path in sorted((REPO / "roles").glob("*/meta/argument_specs.yml")):
+        main = yaml.safe_load(path.read_text())["argument_specs"]["main"]
+        role = path.parent.parent.name
+        roles.append({"role": role, "description": main.get("short_description", ""), "variables": len(specs[role])})
+    if as_json:
+        print(json.dumps({"roles": roles, "options": ["NAME", "--all", "--changed", "--json"]}, indent=2))
+        return 0
+    lines = [
+        [screen.seg("Each setting's value and where it was set, for one role, one variable or all of them.")],
+        [screen.seg(f"Changes nothing: a setting changes in {LOCAL}, a secret with just vault.", "d")],
+        [],
+        [screen.seg("Roles", "h"), screen.seg(" " * 77), screen.seg("variables", "d")],
+        *([screen.seg(f"  {each['role']:<18} {each['description']:<66}{each['variables']:>4}")] for each in roles),
+        [],
+        [screen.seg("Usage", "h")],
+        [
+            screen.seg("  just settings <role>          every variable of one role       "),
+            screen.seg("just settings tailscale", "d"),
+        ],
+        [
+            screen.seg("  just settings <variable>      one variable, explained          "),
+            screen.seg("just settings tailscale_ssh", "d"),
+        ],
+        [screen.seg("  just settings --all           every setting, and which secrets are set")],
+        [
+            screen.seg(
+                "  just settings --changed       only what you changed: alone, all of it; with a role, that role's"
+            )
+        ],
+        [screen.seg("  just settings ... --json      the same, as JSON on standard output")],
+    ]
+    _print(lines)
+    return 0
+
+
+def _print(lines: list[list]) -> None:
+    color = sys.stdout.isatty() and not C.ANSIBLE_NOCOLOR
+    for line in lines:
+        print(screen.render(screen.cut(line, WIDTH), color))
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="just settings", add_help=False)
+    parser.add_argument("--usage", action="store_true")
+    parser.add_argument("--all", default="")
+    parser.add_argument("--changed", default="")
+    parser.add_argument("--json", default="")
+    parser.add_argument("--vault-password-file", default="")
+    # The tests' inventory; the recipe never passes it.
+    parser.add_argument("--inventory", default=str(REPO / "inventory"))
+    parser.add_argument("name", nargs="?", default="")
+    args = parser.parse_args(argv)
+    as_json = args.json == "true"
+    if args.usage or not (args.name or args.all == "true" or args.changed == "true"):
+        return usage(as_json)
+    try:
+        # As ansible-playbook decides it: the file passed, else ANSIBLE_VAULT_PASSWORD_FILE or ansible.cfg's.
+        settings = Settings(Path(args.inventory), args.vault_password_file or (C.DEFAULT_VAULT_PASSWORD_FILE or ""))
+        if args.all == "true" or (args.changed == "true" and not args.name):
+            rows, target = settings.everything(), {"kind": "all"}
+        elif args.name in settings.specs:
+            rows, target = settings.role(args.name), {"kind": "role", "name": args.name}
+        else:
+            role = docs.role_of(args.name, settings.specs)
+            if role:
+                rows = settings.role(role, args.name)
+            elif args.name in settings.defaults or args.name in settings.example_vault or args.name == "ansible_host":
+                rows = [row for row in settings.everything() if row["name"] == args.name]
+            else:
+                raise Refused(
+                    f"{args.name} is neither a role ({', '.join(sorted(settings.specs))}) nor a variable or setting"
+                )
+            target = {"kind": "variable", "name": args.name}
+        if args.changed == "true":
+            rows = [row for row in rows if row.get("changed")]
+        settings.check(rows)
+    except Refused as refusal:
+        print(f"just settings: {refusal}.", file=sys.stderr)
+        return 1
+    notes = settings.notes()
+    if as_json:
+        print(
+            json.dumps(
+                {"target": target, "changed_only": args.changed == "true", "settings": rows, "notes": notes}, indent=2
+            )
+        )
+        return 0
+    if target["kind"] == "variable":
+        lines = one(rows[0])
+    else:
+
+        def heading(row):
+            if "section" in row:
+                return row["section"]
+            if row.get("entry_point", "main") == "main":
+                return row["role"]
+            return f"{row['role']} · {row['entry_point']}"
+
+        lines = table(rows, heading) if rows else [[screen.seg("Nothing here is changed from the defaults.", "d")]]
+        lines += tail(rows)
+    lines += [[], *([screen.seg(piece, "d")] for note in notes for piece in screen.fill(note, WIDTH))] if notes else []
+    _print(lines)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
