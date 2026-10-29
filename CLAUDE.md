@@ -695,6 +695,9 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   Ctrl-C this way, sent the moment the VMs were drawn, just as the next task's workers were forked. A test
   that interrupts a run sends it while the run waits on something held and nothing forks; a Linux pty also
   buffers about 64 KB without blocking the run, so a run can end before its test reads the frame it acts on.
+  Filed upstream as ansible/ansible#87812. A Ctrl-C can still hang a run there now and then (CI's deploy
+  Ctrl-C test once sat in a browser wait for two minutes after one), so that test runs a hung run once more,
+  until the pinned ansible-core has the fix.
 - **pytest-xdist's groups are made in xdist's own `pytest_collection_modifyitems`.** The hook in
   `tests/unit/conftest.py` that marks them is `tryfirst`; run after xdist's, it marked nothing and loadgroup
   quietly became plain load, rebuilding every module-scoped fixture test by test (37.5 minutes against 9.8). It
