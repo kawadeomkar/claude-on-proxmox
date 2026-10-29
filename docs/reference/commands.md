@@ -28,6 +28,9 @@ The words a recipe takes, and how they are checked:
 - **A role or a variable**, one after `settings`: a role's name (`tailscale`), one of its variables
   (`tailscale_ssh`), or a setting of `local.yml` or `vault.yml` (`vm_cores`), in lowercase letters, digits and
   `_`. Without one, `just settings` shows the roles and its options, and `--all` lists every setting.
+- **`--value`**, for `just settings` beside one setting's name: the value to write into `local.yml`, as
+  free text but for a control character. It reaches the recipe as one argument, run by nothing, and is
+  refused unless the setting's type takes it; an expression (`{{ }}`) and a secret are refused.
 - **`--tags`** narrows configuration to some roles, and beside VM names means `--only configure`
   ([Re-running one part of it](../guides/vms.md#re-running-one-part-of-it)); **`--role`** narrows `just
   test` to some roles' scenarios. Both are checked against the role names.
@@ -75,10 +78,11 @@ environment where `python3` is not it.
 | &emsp;`--json` | The report as JSON, alone on standard output, with the same exit code |
 | &emsp;`<name>` | Only these VMs; none reads every VM this project created |
 | &emsp;`just list` | Another name for `just status`, and the same in every way |
-| `just settings [<name>]` | Each setting's value and where it was set, for a role, a variable or all of them, read without changing anything |
+| `just settings [<name>]` | Each setting's value and where it was set, for a role, a variable or all of them; --value sets one in local.yml |
 | &emsp;`--all` | Every setting of local.yml, and which secrets of vault.yml are set |
 | &emsp;`--changed` | Only what local.yml or vault.yml changes from the defaults; alone, all of it |
 | &emsp;`--json` | The report as JSON, alone on standard output |
+| &emsp;`--value VALUE` | Set the one setting named to this value, in local.yml (never a secret: just vault) |
 | &emsp;`<name>` | A role (tailscale) or one variable or setting (tailscale_ssh); none shows how to use this |
 | `just destroy [<name>...]` | Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them |
 | &emsp;`<name>` | The VMs; none means claude-on-proxmox-default |

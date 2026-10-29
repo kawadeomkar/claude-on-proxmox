@@ -653,7 +653,8 @@ playbook as a part, and an end with no state), and each output's own live tests.
 ## 7.9 `tools/settings` — just settings
 
 `just settings` says what each setting is and where it was set, for one role (`just settings tailscale`), one
-variable or setting (`just settings tailscale_ssh`), or all of them (`--all`), and changes nothing. Without a word
+variable or setting (`just settings tailscale_ssh`), or all of them (`--all`), and changes nothing but the one
+setting `--value` writes into `local.yml` (below). Without a word
 it shows how to use it: the roles, read from their `argument_specs`, and the options; that needs no vault, so the
 recipe runs it before the vault's check.
 
@@ -675,7 +676,7 @@ every import; the justfile's `-e` objects too. The row keeps the value a run tha
 --only configure` runs `configure.yml` without `deploy.yml`'s vars) and adds "just deploy sets it from
 deploy_sign_in". A value made from the VM's name says so; one made from its facts is "worked out on the VM".
 
-**Nothing changes.** Every lookup goes through `lookup_loader.get`, which the tool wraps to load only `env`,
+**Reading changes nothing.** Every lookup goes through `lookup_loader.get`, which the tool wraps to load only `env`,
 `file`, `config`, `vars`, `first_found` and `fileglob`: `pipe` runs a command and `password` writes a file, and a
 scan of expressions misses one reached through a variable it does not read (a `hosts.yml` group var). The
 inventory is read by the `yaml` plugin alone (`ANSIBLE_INVENTORY_ENABLED`, set before Ansible reads its config):
@@ -694,6 +695,25 @@ their own rows but not looked for elsewhere, so a username that is a common word
 vault's password file is the one the recipe passes (`.vault_pass`, where there is one), else what
 `ansible-playbook` would take; the tool never looks for one, and a vault it cannot open is refused before anything
 is printed.
+
+**`--value` writes one setting into `local.yml`, and nothing else.** One function, `settable`, decides what a name
+can be set as, or why not, and the read view's `change` comes from it, so the report never names a command the
+writer refuses. A role variable a setting of the examples feeds is written as that setting
+(`claude_code_remote_control` as `claude_remote_control`). Refused, with nothing written: anything `vault.yml`
+holds, feeds or a role marks `no_log` - for `just vault`, the value given never said back, though the shell's
+history keeps it - a value vaulted inline in `local.yml`, a name made from each VM's own (one setting would give
+every VM the same), what a run sets for itself and no example names, the Proxmox host's address (`hosts.yml`),
+anything internal to the project, and a value equal to a secret the vault holds. The value is free text on the
+`just` line but for a control character, so just never says it back; the tool refuses an expression (`{{ }}`,
+`{% %}`, `{# #}`, which Ansible would template and a lookup run) and holds the rest to the type the role's
+`argument_specs` give, through Ansible's own `ArgumentSpecValidator`, as the role checks its arguments - a list as
+`a,b` or YAML, a path kept as typed, `~` and all. It is written as `just init` writes: JSON on one line, in place of
+the line that set it (with its value's further lines), else of its example's commented line, else at the end. The
+result is read back with every tag kept as text before it replaces the file - every other key as it was, an inline
+`!vault` included, or nothing is written (an alias whose anchor the edit removes, two lines of one name) - and it
+replaces it atomically, with its mode. Then the files are read again: what outranks `local.yml` (a `hosts.yml`
+variable, a run) is said, with what applies the change - `just deploy --only configure --tags <role>`, or a VM's
+creation for `proxmox_vm`.
 
 **The report** is a line per variable under its role or section, every line within 100 columns, a value cut with
 "…" in the table and shown whole in the one-variable view, colour only at a terminal (`screen.py`'s palette and

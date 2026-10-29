@@ -554,27 +554,34 @@ status ONLY='' JSON='' *NAMES:
 
 alias list := status
 
-# Each setting's value and where it was set, read without changing anything
-# (tools/settings): Ansible's own variables for a play of the role, on the
-# group its playbook runs it on, with what a run sets beside them. A secret is
-# said set or not set, never shown, and changes with just vault. How to use it
-# needs no vault, so it comes before the vault's check; the rules before any
-# Python. The vault's password file is the one every recipe passes.
+# Each setting's value and where it was set (tools/settings): Ansible's own
+# variables for a play of the role, on the group its playbook runs it on, with
+# what a run sets beside them. A secret is said set or not set, never shown,
+# and changes with just vault. Read without changing anything, but for
+# --value, which writes the one setting named into local.yml - never a secret.
+# How to use it needs no vault, so it comes before the vault's check; the
+# rules before any Python. The vault's password file is the one every recipe
+# passes. A value is free text, refused only for a control character, so just
+# never says it back: it reaches the script as a positional argument, and the
+# tool holds it to the setting's type. No refusal here says the words given,
+# in case a secret was typed as one.
 [arg('ALL', long='all', value='true', help='Every setting of local.yml, and which secrets of vault.yml are set')]
 [arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output')]
 [arg('NAME', pattern='[a-z][a-z0-9_]*', help='A role (tailscale) or one variable or setting (tailscale_ssh); none shows how to use this')]
 [arg('CHANGED', long='changed', value='true', help='Only what local.yml or vault.yml changes from the defaults; alone, all of it')]
-[doc("Each setting's value and where it was set, for a role, a variable or all of them, read without changing anything")]
+[arg('VALUE', long='value', pattern='[^\x00-\x1f\x7f]*', help='Set the one setting named to this value, in local.yml (never a secret: just vault)')]
+[doc("Each setting's value and where it was set, for a role, a variable or all of them; --value sets one in local.yml")]
 [group('use')]
 [no-exit-message]
 [positional-arguments]
 [script]
-settings ALL='' CHANGED='' JSON='' *NAME:
+settings ALL='' CHANGED='' JSON='' VALUE='' *NAME:
     {{ guard }}
-    all=$1 changed=$2 json=$3
-    shift 3
-    [ "$#" -le 1 ] || { echo "error: just settings takes one role or variable (got: [$*])" >&2; exit 1; }
+    all=$1 changed=$2 json=$3 value=$4
+    shift 4
+    [ "$#" -le 1 ] || { echo "error: just settings takes one role or variable, and --value its value" >&2; exit 1; }
     [ -z "$all" ] || [ "$#" -eq 0 ] || { echo "error: just settings --all lists every setting: give it no role or variable" >&2; exit 1; }
+    [ -z "$value" ] || { [ "$#" -eq 1 ] && [ -z "$all$changed" ]; } || { echo "error: --value sets the one setting named beside it: just settings <name> --value <value>" >&2; exit 1; }
     {{ find_bin }}
     if [ "$#" -eq 0 ] && [ -z "$all$changed" ]; then exec "$bin/python" tools/settings --usage --json="$json"; fi
     tools/check vault {{ quote(VAULT_FILE) }}
@@ -582,6 +589,7 @@ settings ALL='' CHANGED='' JSON='' *NAME:
     name=${1:-}
     set --
     {{ vault_args }}
+    [ -z "$value" ] || set -- "$@" --value="$value"
     exec "$bin/python" tools/settings "$@" --all="$all" --changed="$changed" --json="$json" -- ${name:+"$name"}
 
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default')]

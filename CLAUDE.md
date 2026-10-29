@@ -44,7 +44,8 @@ just deploy alpha --tags claude_code # re-run one role, e.g. to push an API key 
 just destroy alpha                   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
 just login alpha                     # Claude, GitHub, Tailscale in deploy's order, one VM after another (--only claude, github or tailscale: one)
 just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed); just list too
-just settings tailscale              # read-only: a role's variables, each value and where it was set (a variable; --all; --changed; --json; none: usage)
+just settings tailscale              # a role's variables, each value and where it was set (a variable; --all; --changed; --json; none: usage)
+just settings vm_cores --value 4     # set one setting in local.yml, held to its type; never a secret (just vault)
 just code alpha [--project repo] [--session <id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
 just logs                            # the run logs, newest first: read these instead of asking for terminal output
 just docs                            # regenerate the wiki's reference pages; serve previews the site, build builds it strictly
@@ -499,7 +500,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   against stand-in VMs (`tests/unit/test_status_vms.py`), which hold that every file there is unchanged.
   See docs/architecture/lifecycle.md §4.6.
 
-- **`just settings` changes nothing and prints no secret.** `tools/settings` asks Ansible's own `VariableManager`
+- **`just settings` reads without changing anything, but for the one setting `--value` writes into `local.yml`,
+  and never prints or writes a secret.** `tools/settings` asks Ansible's own `VariableManager`
   and templar, in-process, for a play of the role on a host of the group its playbook runs it on (read from the
   playbooks), and never writes Ansible's precedence again by hand. Every lookup goes through `lookup_loader.get`,
   wrapped to load only `env`, `file`, `config`, `vars`, `first_found` and `fileglob` - never decided by scanning
@@ -508,12 +510,20 @@ token; `github_auth_method: token` still fails. The status JSON carries
   (`VaultHelper.get_ciphertext`: an inline `!vault`, which the file's values do not carry), when its role marks the
   variable `no_log`, or when its expression reads a name the vault holds or a `no_log` variable; then every value
   about to be printed is checked against every secret decrypted, and a match prints nothing and exits 1 - the GitHub
-  username and an OAuth client's ID masked in their rows but never looked for elsewhere. It never changes the vault
-  or `local.yml`: a secret's row points at `just vault`. The vault's password file is the recipe's (`vault_args`),
+  username and an OAuth client's ID masked in their rows but never looked for elsewhere. It never changes the vault:
+  a secret's row points at `just vault`. `--value` writes one setting into `local.yml` and nothing else: what a
+  name can be set as comes from one function (`settable`), which the read view's hint uses too; anything the
+  vault holds or feeds, a `no_log` variable, an inline `!vault`, a name made from each VM's own, what a run sets
+  for itself, the host's address, an internal value, an expression (`{{ }}`) and a value equal to a vault secret
+  are refused, a secret's value never said back. The rest is held to its `argument_specs` type by Ansible's
+  `ArgumentSpecValidator`, written as `just init` writes (JSON in place of its line or its example's line), read
+  back with every other key unchanged before it replaces the file atomically, or nothing is written. The vault's
+  password file is the recipe's (`vault_args`),
   never looked for by the tool. Its tests (`tests/unit/test_settings.py`) run it only against inventories made from
   the example files with fake secrets, each run with a `HOME` of its own and the collections' path pinned, and fail
-  if any fake secret is printed; the recipe's run against a stand-in `python`, since the tool in the checkout would
-  read the developer's real settings. See docs/architecture/custom-code.md §7.9.
+  if any fake secret is printed, every write into a copy of its own; the recipe's run against a stand-in `python`,
+  since the tool in the checkout would read, and write, the developer's real settings. See
+  docs/architecture/custom-code.md §7.9.
 
 ## Architecture, and why it looks like this
 
@@ -741,7 +751,9 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   before anything runs, and an option or word a recipe does not have is refused. A value reaches its
   script only as a positional argument (`[positional-arguments]`), never as its text, and what goes into
   JSON is checked again there (`tools/check names`, `project` and `session`, `init`'s `only`), then
-  travels to Ansible as JSON. VM names start with a letter or a digit: a recipe without options takes a
+  travels to Ansible as JSON. The one free-text value is `just settings --value`'s, refused by its pattern only
+  for a control character, so just never says a value back, and held to the setting's type by `tools/settings`;
+  no refusal of `just settings` says the words given back, in case a secret was typed as one. VM names start with a letter or a digit: a recipe without options takes a
   word that starts with `-` as a name, so `--project x` after `just destroy` would otherwise name a VM
   `--project`. A recipe's words are a `*` parameter, even where it takes one: a parameter with a default
   lists as `help RECIPE=''`, make's spelling, which just refuses, and leaves the next word to run as a

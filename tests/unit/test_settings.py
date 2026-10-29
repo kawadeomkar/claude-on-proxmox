@@ -18,6 +18,7 @@ import functools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -112,7 +113,9 @@ def scenarios(tmp_path_factory) -> dict[str, Path]:
     }
 
 
-def _run(scenarios: dict, inventory: str, *args: str, password: bool | str = True) -> subprocess.CompletedProcess:
+def _run(
+    scenarios: dict, inventory: str | Path, *args: str, password: bool | str = True
+) -> subprocess.CompletedProcess:
     root = scenarios["root"]
     env = {
         "PATH": os.environ["PATH"],
@@ -127,7 +130,14 @@ def _run(scenarios: dict, inventory: str, *args: str, password: bool | str = Tru
     elif password:
         given = ["--vault-password-file", str(root / "pw")]
     result = subprocess.run(
-        [sys.executable, str(TOOL), "--inventory", str(scenarios[inventory]), *given, *args],
+        [
+            sys.executable,
+            str(TOOL),
+            "--inventory",
+            str(scenarios[inventory] if isinstance(inventory, str) else inventory),
+            *given,
+            *args,
+        ],
         cwd=REPO,
         env=env,
         capture_output=True,
@@ -211,7 +221,9 @@ def test_a_run_changes_no_file_of_its_inventory(scenarios) -> None:
 
 def test_an_inline_vault_value_is_masked(scenarios) -> None:
     row = _report(scenarios, "--", "tailscale")["rows"]["tailscale_login_server"]
-    assert (row["kind"], row["value"], row["secret"], row["change"]) == ("secret", None, "set", "just vault"), row
+    assert (row["kind"], row["value"], row["secret"]) == ("secret", None, "set"), row
+    # Encrypted where it is, in local.yml: no --value writes over it in the clear, and just vault edits vault.yml.
+    assert row["change"] == "inventory/group_vars/all/local.yml" and "encrypted (!vault)" in row["why"], row
 
 
 def test_a_setting_that_reads_any_name_the_vault_holds_is_masked(scenarios) -> None:
@@ -391,7 +403,7 @@ def test_one_variable_names_the_chain_of_files_and_where_to_change_it(scenarios)
     # The wiring line wraps within 100 columns: read as one.
     wiring = 'claude_code_remote_control: "{{ claude_remote_control }}" in inventory/group_vars/all/defaults.yml'
     assert wiring in " ".join(printed.split())
-    assert "change    inventory/group_vars/all/local.yml" in printed
+    assert "change    just settings claude_remote_control --value <value>" in printed
     secret = _text(scenarios, "--", "tailscale_auth_key")
     assert "set (secret)" in secret and "change    just vault" in secret
 
@@ -414,3 +426,239 @@ def test_the_text_and_the_json_hold_the_same_rows(scenarios) -> None:
     names = set(_report(scenarios, "--", "tailscale")["rows"])
     printed = {line.split()[0] for line in _text(scenarios, "--", "tailscale").splitlines() if line.startswith("  t")}
     assert printed == names
+
+
+# ------------------------------------------------------------------------------- --value: one setting, written ---
+
+
+def _writable(scenarios: dict, tmp_path: Path, inventory: str = "base") -> Path:
+    """A copy of a scenario's inventory of the test's own, to write into."""
+    copy = tmp_path / "inventory"
+    shutil.copytree(scenarios[inventory], copy, symlinks=True)
+    return copy
+
+
+def _local(inventory: Path) -> Path:
+    return inventory / "group_vars" / "all" / "local.yml"
+
+
+def _set(scenarios: dict, inventory: Path, name: str, value: str, *args: str) -> subprocess.CompletedProcess:
+    return _run(scenarios, inventory, f"--value={value}", *args, "--", name)
+
+
+def _only_change(before: str, after: str) -> list[tuple[str, str]]:
+    """The lines that differ, as (removed, added) runs: a write changes one place."""
+    removed = [line for line in before.splitlines() if line not in after.splitlines()]
+    added = [line for line in after.splitlines() if line not in before.splitlines()]
+    return list(zip(removed, added, strict=False)) if removed else [("", line) for line in added]
+
+
+def test_a_value_takes_the_place_of_its_examples_line(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_text()
+    result = _set(scenarios, inventory, "vm_memory_mb", "8192", "--json=true")
+    assert result.returncode == 0, result.stderr[-2000:]
+    after = _local(inventory).read_text()
+    assert _only_change(before, after) == [("# vm_memory_mb: 4096", "vm_memory_mb: 8192")]
+    assert before.splitlines().index("# vm_memory_mb: 4096") == after.splitlines().index("vm_memory_mb: 8192")
+    report = json.loads(result.stdout)
+    assert report["wrote"]["how"] == "in place of its example's line" and report["now"]["value"] == 8192
+    assert any("a VM gets it when it is created" in note for note in report["notes"])
+
+
+def test_a_value_takes_the_place_of_the_line_that_set_it_and_its_further_lines(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    local = _local(inventory)
+    local.write_text(local.read_text() + "tailscale_accept_routes:\n  true\ntailscale_upload_logs: false\n")
+    result = _set(scenarios, inventory, "tailscale_accept_routes", "no")
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert local.read_text().endswith("tailscale_accept_routes: false\ntailscale_upload_logs: false\n")
+    assert "in place of the line that set it" in " ".join(result.stdout.split())
+
+
+def test_a_setting_with_no_line_goes_at_the_end_and_an_inline_secret_stays_as_it_was(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_text()
+    assert "!vault" in before
+    result = _set(scenarios, inventory, "tailscale_marker_dir", "~/markers")
+    assert result.returncode == 0, result.stderr[-2000:]
+    # A path as typed, its ~ for every machine that reads it.
+    assert _local(inventory).read_text() == before + 'tailscale_marker_dir: "~/markers"\n'
+
+
+def test_a_role_variable_set_through_a_setting_is_written_as_the_setting(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    result = _set(scenarios, inventory, "claude_code_remote_control", "yes", "--json=true")
+    assert result.returncode == 0, result.stderr[-2000:]
+    report = json.loads(result.stdout)
+    assert report["wrote"]["wrote"] == "claude_remote_control: true" and report["now"]["value"] is True
+    assert "\nclaude_remote_control: true\n" in _local(inventory).read_text()
+    assert "claude_code_remote_control:" not in _local(inventory).read_text()
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "written"),
+    [
+        ("tailscale_ssh", "no", "tailscale_ssh: false"),
+        ("vm_cores", "08", "vm_cores: 8"),
+        ("tailscale_advertise_tags", "tag:a,tag:b", 'tailscale_advertise_tags: ["tag:a", "tag:b"]'),
+        ("tailscale_advertise_tags", "[tag:a, tag:b]", 'tailscale_advertise_tags: ["tag:a", "tag:b"]'),
+        ("tailscale_auth_method", "web", 'tailscale_auth_method: "web"'),
+        ("claude_vm_default_name", "a name with 'quotes' and $(dollars)", None),
+    ],
+)
+def test_a_value_is_written_as_its_type_takes_it(scenarios, tmp_path, name, value, written) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    result = _set(scenarios, inventory, name, value)
+    assert result.returncode == 0, result.stderr[-2000:]
+    lines = _local(inventory).read_text().splitlines()
+    assert (written or f"{name}: {json.dumps(value)}") in lines
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "said"),
+    [
+        ("vm_cores", "eight", "vm_cores takes a whole number, not eight"),
+        ("tailscale_auth_method", "bogus", "tailscale_auth_method takes one of auto, key, web, not bogus"),
+        ("tailscale_ssh", "maybe", "tailscale_ssh takes true or false"),
+        ("tailscale_advertise_tags", "[unclosed", "is not YAML"),
+    ],
+)
+def test_a_value_its_type_does_not_take_is_refused_and_nothing_written(scenarios, tmp_path, name, value, said) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_bytes()
+    result = _set(scenarios, inventory, name, value)
+    assert result.returncode == 1 and result.stdout == "" and said in result.stderr, result.stderr[-500:]
+    assert _local(inventory).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "tailscale_auth_key",
+        "vault_tailscale_auth_key",
+        "github_projects_token",
+        "proxmox_vm_password",
+        "vm_password",
+        "github_projects_username",
+        "claude_code_anthropic_api_key",
+    ],
+)
+def test_a_secret_is_refused_for_just_vault_and_the_value_never_said(scenarios, tmp_path, name) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_bytes()
+    typed = "typed-on-the-command-line-0000"
+    result = _set(scenarios, inventory, name, typed)
+    assert result.returncode == 1 and result.stdout == ""
+    assert "just vault" in result.stderr and typed not in result.stderr
+    assert _local(inventory).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("name", "said"),
+    [
+        ("tailscale_hostname", "made from each VM's own name"),
+        ("proxmox_vm_name", "made from each VM's own name"),
+        ("tailscale_sign_in_follows", "set by a run itself (just deploy sets it from deploy_sign_in)"),
+        ("ansible_host", "the Proxmox host's address is in inventory/hosts.yml"),
+        ("proxmox_api_module_defaults", "internal to the project"),
+        ("tailscale_login_server", "local.yml holds tailscale_login_server encrypted (!vault)"),
+    ],
+)
+def test_what_is_not_one_setting_for_every_vm_is_refused(scenarios, tmp_path, name, said) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_bytes()
+    result = _set(scenarios, inventory, name, "anything")
+    assert result.returncode == 1 and said in result.stderr, result.stderr[-500:]
+    assert _local(inventory).read_bytes() == before
+
+
+def test_an_expression_or_a_control_character_is_refused(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_bytes()
+    ran = tmp_path / "ran"
+    expression = _set(scenarios, inventory, "claude_vm_default_name", "{{ lookup('pipe', 'touch " + str(ran) + "') }}")
+    assert expression.returncode == 1 and "never an expression" in expression.stderr
+    control = _set(scenarios, inventory, "claude_vm_default_name", "a\tb")
+    assert control.returncode == 1 and "without a control character" in control.stderr
+    assert _local(inventory).read_bytes() == before and not ran.exists()
+
+
+def test_a_vault_secret_given_as_a_plain_value_is_refused_unsaid(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_bytes()
+    result = _set(scenarios, inventory, "claude_vm_default_name", FAKE["vault_github_token"])
+    assert result.returncode == 1 and "a secret the vault holds" in result.stderr
+    assert _local(inventory).read_bytes() == before
+
+
+def test_a_value_already_set_writes_nothing(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    assert _set(scenarios, inventory, "tailscale_ssh", "true").returncode == 0
+    stamp = _local(inventory).stat().st_mtime_ns
+    again = _set(scenarios, inventory, "tailscale_ssh", "on")
+    assert again.returncode == 0 and "nothing was written" in " ".join(again.stdout.split())
+    assert _local(inventory).stat().st_mtime_ns == stamp
+
+
+def test_what_outranks_local_yml_is_said(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    result = _set(scenarios, inventory, "proxmox_template_storage", "local-zfs")
+    assert result.returncode == 0, result.stderr[-2000:]
+    said = " ".join(result.stdout.split())
+    assert 'wrote proxmox_storage: "local-zfs"' in said
+    assert "but hosts.yml outranks local.yml: proxmox_template_storage is still from-the-pve-host" in said
+
+
+def test_a_write_keeps_the_files_mode_and_leaves_no_scratch_file(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    _local(inventory).chmod(0o600)
+    assert _set(scenarios, inventory, "vm_cores", "6").returncode == 0
+    assert _local(inventory).stat().st_mode & 0o777 == 0o600
+    assert sorted(path.name for path in _local(inventory).parent.iterdir()) == [
+        "defaults.yml",
+        "local.yml",
+        "vault.yml",
+    ]
+
+
+def test_two_lines_setting_one_name_are_refused(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    local = _local(inventory)
+    local.write_text(local.read_text() + "vm_cores: 6\n")
+    before = local.read_bytes()
+    result = _set(scenarios, inventory, "vm_cores", "8")
+    assert result.returncode == 1 and "sets vm_cores on 2 lines" in result.stderr
+    assert local.read_bytes() == before
+
+
+def test_a_layout_the_read_back_does_not_hold_writes_nothing(scenarios, tmp_path) -> None:
+    # Another key reads this one's value through an alias: writing it would change that one too.
+    inventory = _writable(scenarios, tmp_path)
+    local = _local(inventory)
+    local.write_text(local.read_text() + "tailscale_accept_dns: &dns true\ntailscale_accept_routes: *dns\n")
+    before = local.read_bytes()
+    result = _set(scenarios, inventory, "tailscale_accept_dns", "false")
+    assert result.returncode == 1 and "can be written safely: nothing was written" in result.stderr
+    assert local.read_bytes() == before
+
+
+def test_the_read_views_change_says_what_the_writer_takes(scenarios) -> None:
+    rows = _report(scenarios, "--", "claude_code")["rows"]
+    assert rows["claude_code_remote_control"]["change"] == "just settings claude_remote_control --value <value>"
+    assert rows["claude_code_anthropic_api_key"]["change"] == "just vault"
+    tailscale = _report(scenarios, "--", "tailscale")["rows"]
+    assert (
+        tailscale["tailscale_hostname"]["change"] is None and "VM's own name" in tailscale["tailscale_hostname"]["why"]
+    )
+    assert tailscale["tailscale_ssh"]["change"] == "just settings tailscale_ssh --value <value>"
+
+
+def test_value_names_one_setting(scenarios) -> None:
+    for args in (
+        ("--value=true",),
+        ("--value=true", "--all=true"),
+        ("--value=true", "--changed=true", "--", "vm_cores"),
+    ):
+        result = _run(scenarios, "base", *args)
+        assert result.returncode == 1 and "--value sets one setting" in result.stderr, args

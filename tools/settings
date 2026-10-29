@@ -1,7 +1,9 @@
-"""just settings: each setting's value and where it was set, for one role, one variable or all of them.
+"""just settings: each setting's value and where it was set, for one role, one variable or all of them; --value
+sets one in local.yml.
 
     "$bin/python" tools/settings --usage [--json=true]
     "$bin/python" tools/settings [--vault-password-file <file>] [--all=true] [--changed=true] [--json=true] -- [NAME]
+    "$bin/python" tools/settings [--vault-password-file <file>] --value=<value> [--json=true] -- NAME
 
 It asks Ansible itself, in-process, as a run would: the loader with the vault opened as Ansible's own commands open
 it, the inventory, the variables of a play that names the role - on a host of the group that role's playbook runs it
@@ -20,7 +22,19 @@ It changes nothing and prints no secret:
 - The vault's password file is the one the recipe passes (.vault_pass, where there is one), else what
   ansible-playbook would take; a vault that cannot be opened is refused before anything is printed.
 
-Exits 0 with the report, 1 when it refuses.
+--value writes one setting into local.yml, and nothing else anywhere (Settings.write):
+
+- Never a secret: anything the vault holds, feeds or a role marks no_log, and a value vaulted inline in local.yml,
+  is refused for just vault, the value unsaid. Nor what is not one setting for every VM: a name made from each VM's
+  own, what a run sets for itself, the Proxmox host's address (hosts.yml).
+- A role variable fed by a setting of local.yml.example is written as that setting (claude_remote_control for
+  claude_code_remote_control). The value is held to its type as the role's argument_specs give it, by Ansible's own
+  validator, and is a value, never an expression: {{ }}, {% %} and {# #} are refused.
+- As just init writes: JSON on one line, in place of the line that set it (and its value's further lines), else of
+  its example's commented line, else at the end. The file is read back before it replaces the old one, atomically,
+  with its mode: every other key as it was, an inline !vault included, or nothing is written.
+
+Exits 0 with the report or the write, 1 when it refuses.
 """
 
 from __future__ import annotations
@@ -30,7 +44,9 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 # The yaml inventory plugin alone, set before Ansible reads its configuration: the default list has script, which
@@ -49,6 +65,19 @@ USERS = ("hosts.yml", "vault.yml", "local.yml")
 # What the justfile passes with -e that is no setting: the names given, and init's own.
 NOT_SETTINGS = frozenset({"vm_name", "vm_project", "vm_session", "status_only", "init_given", "init_ask"})
 WIDTH = 100
+# What --value refuses in a value: an expression, which Ansible would template - run, for a lookup - and a control
+# character or a line break, which no setting of one line holds.
+TEMPLATE = re.compile(r"\{\{|\{%|\{#")
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# The roles configure.yml runs, which just deploy --only configure --tags <role> applies.
+CONFIGURED = ("common", "vscode_server", "dev_tools", "claude_code", "github_projects", "tailscale")
+# What each type takes, as a refusal says it.
+TAKES = {
+    "bool": "true or false (yes or no, on or off)",
+    "int": "a whole number",
+    "list": "a list: comma-separated (tag:a,tag:b) or as YAML ([tag:a, tag:b])",
+    "dict": "a mapping, as YAML ({key: value}) or key=value,key=value",
+}
 
 
 def _load(stem: str, path: Path):
@@ -71,6 +100,7 @@ from ansible import constants as C  # noqa: E402
 from ansible.cli import CLI  # noqa: E402
 from ansible.errors import AnsibleError  # noqa: E402
 from ansible.inventory.manager import InventoryManager  # noqa: E402
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator  # noqa: E402
 from ansible.parsing.dataloader import DataLoader  # noqa: E402
 from ansible.parsing.vault import VaultHelper  # noqa: E402
 from ansible.playbook.play import Play  # noqa: E402
@@ -146,6 +176,20 @@ def _leaves(value):
             yield from _leaves(item)
     else:
         yield value
+
+
+class _Tagged(yaml.SafeLoader):
+    """YAML with every tag - !vault, !unsafe - kept as its tag and text, never decrypted: local.yml before and after
+    a write compared key by key, an inline secret among them compared as its ciphertext."""
+
+
+_Tagged.add_multi_constructor(
+    "!", lambda loader, suffix, node: {"tag": suffix, "text": str(getattr(node, "value", ""))}
+)
+
+
+def tagged(source: str):
+    return yaml.load(source, Loader=_Tagged)  # noqa: S506 - a SafeLoader, that keeps tags as text
 
 
 # ------------------------------------------------------------------------------------- the playbooks, read ---
@@ -281,22 +325,34 @@ def run_sets() -> dict[str, list[str]]:
 
 
 # --------------------------------------------------------------------------------------------- the report ---
+# What Ansible lets a process set up once: its plugin loader, the lookups held, and the vault's secrets, which
+# CLI.setup_vault_secrets makes the process's own (VaultSecretsContext). A second Settings - --value reads the files
+# again after its write - reuses them.
+_ONCE: dict = {}
+
+
+def _set_up(loader: DataLoader, password: str) -> None:
+    if "plugins" not in _ONCE:
+        _hold_lookups()
+        init_plugin_loader([])
+        _ONCE["plugins"] = True
+    if password:
+        if "secrets" not in _ONCE:
+            _ONCE["secrets"] = CLI.setup_vault_secrets(loader, vault_ids=[], vault_password_files=[password])
+        loader.set_vault_secrets(_ONCE["secrets"])
+
+
 class Settings:
     """Every value, as Ansible gives it to the play that runs each role, with where it was set."""
 
     def __init__(self, inventory: Path, password: str):
-        _hold_lookups()
-        init_plugin_loader([])
         self.specs = docs.specs()
         self.defaults, self.feeds = docs.wiring()
         self.loader = DataLoader()
         self.vault_file = inventory / "group_vars" / "all" / "vault.yml"
         encrypted = self.vault_file.is_file() and self.vault_file.read_bytes().startswith(b"$ANSIBLE_VAULT")
-        if password:
-            self.loader.set_vault_secrets(
-                CLI.setup_vault_secrets(self.loader, vault_ids=[], vault_password_files=[password])
-            )
-        elif encrypted:
+        _set_up(self.loader, password)
+        if not password and encrypted:
             raise Refused(
                 "vault.yml is encrypted, and there is no .vault_pass or ANSIBLE_VAULT_PASSWORD_FILE to open it with"
             )
@@ -307,11 +363,18 @@ class Settings:
             if "ecrypt" in str(error):
                 raise Refused(f"vault.yml could not be opened with {password}") from error
             raise
-        self.local = self._read(inventory / "group_vars" / "all" / "local.yml")
+        self.local_file = inventory / "group_vars" / "all" / "local.yml"
+        self.local = self._read(self.local_file)
         self.project = self._read(inventory / "group_vars" / "all" / "defaults.yml")
         self.host_vars = inventory / "host_vars"
         self.variables = VariableManager(loader=self.loader, inventory=self.inventory)
         self.example_vault = yaml.safe_load((REPO / VAULT).with_suffix(".yml.example").read_text()) or {}
+        self.example_settings = {
+            name
+            for _title, groups in docs.parse_example(REPO / LOCAL.replace(".yml", ".yml.example"), secret=False)
+            for _prose, found in groups
+            for name, _example in found
+        }
         self.where = where_roles_run()
         self.run_sets = run_sets()
         self.contexts: dict[str, dict] = {}
@@ -343,6 +406,202 @@ class Settings:
         """Still the example's value, as just init decides it - never by a pattern."""
         example = self.example_vault.get(name)
         return example not in ("", None) and value == example
+
+    # ------------------------------------------------------------------------------------------- --value ---
+    def fed_by(self, name: str) -> str | None:
+        """The setting of the examples a role variable is set through, following settings that set settings:
+        claude_remote_control for claude_code_remote_control, login_desktop for tailscale_login_desktop."""
+        documented = self.example_settings | set(self.example_vault)
+        for setting, fed in self.feeds.items():
+            if name in fed:
+                return setting if setting in documented else self.fed_by(setting)
+        return None
+
+    def role_for(self, name: str) -> str | None:
+        """The role a name is a variable of, or the first role whose variables it sets."""
+        return docs.role_of(name, self.specs) or next(
+            (docs.role_of(var, self.specs) for var in docs.set_by(name, self.feeds, self.specs)), None
+        )
+
+    def settable(self, name: str) -> tuple[str | None, str, str]:
+        """What --value writes for a name, or why not: (the name written, "", ""), or (None, why, where it changes).
+
+        The read view's "change" comes from here too, so it never names a command this refuses."""
+        if name == "ansible_host":
+            return None, "the Proxmox host's address is in inventory/hosts.yml", "inventory/hosts.yml"
+        if name in self.example_vault or name.startswith("vault_"):
+            return None, f"{name} is held in vault.yml", "just vault"
+        role = docs.role_of(name, self.specs)
+        target = (self.fed_by(name) or name) if role else name
+        if target in self.example_vault:
+            return None, f"{name} comes from {target}, which vault.yml holds", "just vault"
+        if not role and target not in self.example_settings:
+            # A value of defaults.yml that is in neither the examples nor a role's argument_specs is internal
+            # (docs/reference/settings.md).
+            return None, f"{name} is no setting: it is internal to the project", ""
+        fed = {name, target, *docs.set_by(target, self.feeds, self.specs)}
+        if any(self.no_log(each) for each in fed):
+            return None, f"{name} is a secret", "just vault"
+        if VaultHelper.get_ciphertext(self.local.get(target), with_tags=False) is not None:
+            return None, f"local.yml holds {target} encrypted (!vault)", LOCAL
+        context = self.context(self.role_for(target) or "common")
+        if self.walk(context, name)["per_vm"]:
+            return None, f"{name} is made from each VM's own name: one setting would give every VM the same", ""
+        if name in self.run_sets and target not in self.example_settings:
+            return None, f"{name} is set by a run itself ({'; '.join(self.run_sets[name])})", ""
+        if self.spec_for(target, name).get("type") == "raw":
+            return None, f"{name} takes any value, so --value cannot hold it to a type", LOCAL
+        return target, "", ""
+
+    def spec_for(self, target: str, name: str) -> dict:
+        """The type a setting takes: its own argument_specs, the first role variable's it feeds, or its default's."""
+        for each in (name, target, *docs.set_by(target, self.feeds, self.specs)):
+            role = docs.role_of(each, self.specs)
+            if role:
+                return {
+                    key: value
+                    for key, value in self.specs[role][each].items()
+                    if key in ("type", "elements", "choices")
+                }
+        default = self.defaults.get(target)
+        for kind, python in (("bool", bool), ("int", int), ("list", list), ("dict", dict)):
+            if isinstance(default, python):
+                return {"type": kind} | ({"elements": "str"} if kind == "list" else {})
+        return {"type": "str"}
+
+    def coerce(self, target: str, name: str, raw: str):
+        """raw, the text after --value, as the value the setting takes: refused unless Ansible's own validator, as
+        the role checks its arguments, takes it."""
+        if CONTROL.search(raw):
+            raise Refused("a value is one line of text, without a control character")
+        if TEMPLATE.search(raw):
+            raise Refused(
+                "--value takes a value, never an expression ({{ }}, {% %} or {# #}), which Ansible would template: "
+                f"to write one, edit {LOCAL}"
+            )
+        spec = self.spec_for(target, name)
+        kind = spec.get("type", "str")
+        given = raw
+        if kind in ("list", "dict") and raw.lstrip()[:1] in ("[", "{"):
+            try:
+                given = yaml.safe_load(raw)
+            except yaml.YAMLError as error:
+                raise Refused(f"{target} takes {TAKES[kind]}: {raw} is not YAML") from error
+        result = ArgumentSpecValidator({target: spec}).validate({target: given})
+        if result.error_messages:
+            takes = f"one of {', '.join(map(str, spec['choices']))}" if "choices" in spec else TAKES.get(kind, kind)
+            raise Refused(f"{target} takes {takes}, not {text.one_line(raw, 80)}")
+        if kind in ("str", "path"):
+            return raw  # as typed: a path keeps its ~, for every machine that reads it
+        return json.loads(json.dumps(result.validated_parameters[target]))
+
+    def write(self, name: str, raw: str) -> dict:
+        """Write one setting into local.yml, or refuse with nothing written."""
+        target, why, where = self.settable(name)
+        if target is None:
+            said = (
+                f"{why}: change it with {where}"
+                if where.startswith("just")
+                else (
+                    f"{why}: change it there"
+                    if where and where in why
+                    else f"{why}: change it in {where}"
+                    if where
+                    else why
+                )
+            )
+            # A secret typed on the command line is in the shell's history now, whatever happens here.
+            if where == "just vault":
+                said += ". The value given was not used or printed, but your shell's history keeps it"
+            raise Refused(said)
+        value = self.coerce(target, name, raw)
+        if any(secret in raw or secret in json.dumps(value) for secret in self.hunted):
+            # A secret of the vault's would be in local.yml in the clear, and printed by every report after.
+            raise Refused(
+                f"that value is a secret the vault holds, so {target} would hold it in the clear: not written"
+            )
+        if not self.local_file.is_file():
+            raise Refused(f"{LOCAL} missing. Run: just init")
+        source = self.local_file.read_text()
+        try:
+            before = tagged(source) or {}
+        except yaml.YAMLError as error:
+            raise Refused(f"{LOCAL} is not YAML that reads: nothing was written") from error
+        if not isinstance(before, dict):
+            raise Refused(f"{LOCAL} is not a mapping of settings: nothing was written")
+        lines = source.splitlines(keepends=True)
+        setting = re.compile(rf"^{re.escape(target)}\s*:")
+        found = [index for index, line in enumerate(lines) if setting.match(line)]
+        if len(found) > 1:
+            raise Refused(f"{LOCAL} sets {target} on {len(found)} lines, and the last wins: keep one, by hand")
+        if found and before.get(target) == value:
+            return {"asked": name, "wrote": None, "name": target, "value": value, "line": found[0] + 1}
+        if found:
+            start = end = found[0]
+            end += 1
+            while end < len(lines) and re.match(r"^([ \t]+\S|-([ \t]|$))", lines[end]):
+                end += 1  # its value's further lines
+            how = "in place of the line that set it"
+        else:
+            example = re.compile(rf"^#\s?{re.escape(target)}:")
+            start = next((index for index, line in enumerate(lines) if example.match(line)), len(lines))
+            end = start + 1 if start < len(lines) else start
+            while end < len(lines) and re.match(r"^#\s{3,}\S", lines[end]):
+                end += 1  # its example value's further lines, as tools/docs.py reads the example
+            how = "in place of its example's line" if start < len(lines) else "at its end"
+            if start == len(lines) and lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+        written = f"{target}: {json.dumps(value, ensure_ascii=False)}\n"
+        result = "".join([*lines[:start], written, *lines[end:]])
+        try:
+            after = tagged(result)
+        except yaml.YAMLError:
+            after = None  # an alias left without its anchor, and the like: refused below
+        others = {key: item for key, item in before.items() if key != target}
+        if (
+            not isinstance(after, dict)
+            or after.get(target) != value
+            or {key: item for key, item in after.items() if key != target} != others
+        ):
+            raise Refused(f"{LOCAL} is not laid out so {target} can be written safely: nothing was written")
+        mode = stat.S_IMODE(self.local_file.stat().st_mode)
+        handle, scratch = tempfile.mkstemp(dir=self.local_file.parent, prefix=".local.yml.", suffix=".tmp")
+        try:
+            with os.fdopen(handle, "w") as stream:
+                stream.write(result)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(scratch, mode)
+            os.replace(scratch, self.local_file)
+        except BaseException:
+            Path(scratch).unlink(missing_ok=True)
+            raise
+        return {
+            "asked": name,
+            "wrote": written.rstrip("\n"),
+            "name": target,
+            "value": value,
+            "line": start + 1,
+            "how": how,
+        }
+
+    def applies(self, target: str) -> list[str]:
+        """What puts a setting to use, by the roles of the variables it sets."""
+        roles = {docs.role_of(var, self.specs) for var in {target, *docs.set_by(target, self.feeds, self.specs)}}
+        roles.discard(None)
+        said = []
+        configured = sorted(roles & set(CONFIGURED))
+        if configured:
+            tags = ",".join(configured)
+            said.append(f"just deploy --only configure --tags {tags} applies it to every VM")
+        if "proxmox_vm" in roles:
+            said.append(
+                "a VM gets it when it is created: one that exists keeps what it was made with (just status "
+                "shows one that differs)"
+            )
+        if "proxmox_template" in roles:
+            said.append("the template gets it when it is built: one that exists stays as it is")
+        return said or ["the next run uses it"]
 
     def context(self, role: str) -> dict:
         """The role's variables as the play that runs it sees them: on its group's first host, or a placeholder."""
@@ -466,7 +725,12 @@ class Settings:
                         self.hunted.add(plain)
                 else:
                     row["value"] = plain
-        row["change"] = "just vault" if row["kind"] == "secret" or row["set_in"] == "vault.yml" else LOCAL
+        settable, why, change = self.settable(name)
+        if settable:
+            row["change"] = f"just settings {settable} --value <value>"
+        else:
+            row["change"] = change or None
+            row["why"] = why
         if where == "default" and isinstance(raw, str) and "{{" in raw:
             # The wiring, from a file in git: it holds no secret, whatever the value it makes does.
             row["wiring"] = raw
@@ -640,7 +904,10 @@ def tail(rows: list[dict]) -> list[list]:
         [],
         *(
             [screen.seg(line, "d")]
-            for line in screen.fill(f"{said} A setting changes in {LOCAL}, a secret with just vault.", WIDTH)
+            for line in screen.fill(
+                f"{said} Change a setting with just settings <name> --value <value>, a secret with just vault.",
+                WIDTH,
+            )
         ),
     ]
 
@@ -673,7 +940,7 @@ def one(row: dict) -> list[list]:
         lines += _field("runs", said, "c")
     if "default" in row:
         lines += _field("default", '""' if row["default"] == "" else text.one_line(json.dumps(row["default"]), 200))
-    lines += _field("change", row["change"])
+    lines += _field("change", row["change"] if not row.get("why") else f"{row['change'] or 'not here'}: {row['why']}")
     for piece in screen.fill(text.one_line(row.get("description") or "", 4000), WIDTH - 2):
         lines.append([screen.seg(f"  {piece}")])
     if row.get("role") and row.get("entry_point"):
@@ -690,11 +957,12 @@ def usage(as_json: bool) -> int:
         role = path.parent.parent.name
         roles.append({"role": role, "description": main.get("short_description", ""), "variables": len(specs[role])})
     if as_json:
-        print(json.dumps({"roles": roles, "options": ["NAME", "--all", "--changed", "--json"]}, indent=2))
+        print(json.dumps({"roles": roles, "options": ["NAME", "--all", "--changed", "--json", "--value"]}, indent=2))
         return 0
     lines = [
         [screen.seg("Each setting's value and where it was set, for one role, one variable or all of them.")],
-        [screen.seg(f"Changes nothing: a setting changes in {LOCAL}, a secret with just vault.", "d")],
+        [screen.seg(f"Reads without changing anything; --value sets one in {LOCAL}, and a secret", "d")],
+        [screen.seg("changes with just vault.", "d")],
         [],
         [screen.seg("Roles", "h"), screen.seg(" " * 77), screen.seg("variables", "d")],
         *([screen.seg(f"  {each['role']:<18} {each['description']:<66}{each['variables']:>4}")] for each in roles),
@@ -715,7 +983,42 @@ def usage(as_json: bool) -> int:
             )
         ],
         [screen.seg("  just settings ... --json      the same, as JSON on standard output")],
+        [
+            screen.seg("  just settings <name> --value <value>   set one in local.yml   "),
+            screen.seg("just settings tailscale_ssh --value true", "d"),
+        ],
     ]
+    _print(lines)
+    return 0
+
+
+def written(settings: Settings, result: dict, as_json: bool, inventory: Path, password: str) -> int:
+    """Say what --value wrote, and what that changes: read again from a fresh look at every file, so what outranks
+    local.yml - a hosts.yml variable, a run - is said rather than missed."""
+    target, asked = result["name"], result["asked"]
+    fresh = Settings(inventory, password)
+    role = docs.role_of(asked, fresh.specs)
+    now = fresh.role(role, asked)[0] if role else fresh.setting(target)
+    fresh.check([now])
+    notes = []
+    if result["wrote"] is None:
+        notes.append(f"{LOCAL} sets it already, on line {result['line']}: nothing was written")
+    else:
+        if asked != target:
+            notes.append(f"{asked} is set through {target}, the setting local.yml.example names for it")
+        if now["kind"] == "value" and now["value"] != result["value"] and now["set_in"] != "local.yml":
+            notes.append(f"but {now['set_in']} outranks local.yml: {asked} is still {shown(now)}")
+        notes += [f"{said}, on the run that does" for said in now.get("set_by_run", [])]
+        notes += fresh.applies(target)
+    if as_json:
+        print(json.dumps({"wrote": result, "now": now, "notes": notes}, indent=2))
+        return 0
+    lines = []
+    if result["wrote"] is not None:
+        head = f"wrote {result['wrote']} in {LOCAL}, {result['how']} (line {result['line']})"
+        lines += [[screen.seg(piece, "y")] for piece in screen.fill(text.one_line(head, 1000), WIDTH)]
+    for note in notes:
+        lines += [[screen.seg("  " + piece)] for piece in screen.fill(note, WIDTH - 2)]
     _print(lines)
     return 0
 
@@ -732,17 +1035,24 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--all", default="")
     parser.add_argument("--changed", default="")
     parser.add_argument("--json", default="")
+    parser.add_argument("--value", default="")
     parser.add_argument("--vault-password-file", default="")
     # The tests' inventory; the recipe never passes it.
     parser.add_argument("--inventory", default=str(REPO / "inventory"))
     parser.add_argument("name", nargs="?", default="")
     args = parser.parse_args(argv)
     as_json = args.json == "true"
+    if args.value and (not args.name or args.all == "true" or args.changed == "true"):
+        print("just settings: --value sets one setting: just settings <name> --value <value>.", file=sys.stderr)
+        return 1
     if args.usage or not (args.name or args.all == "true" or args.changed == "true"):
         return usage(as_json)
+    # As ansible-playbook decides it: the file passed, else ANSIBLE_VAULT_PASSWORD_FILE or ansible.cfg's.
+    password = args.vault_password_file or (C.DEFAULT_VAULT_PASSWORD_FILE or "")
     try:
-        # As ansible-playbook decides it: the file passed, else ANSIBLE_VAULT_PASSWORD_FILE or ansible.cfg's.
-        settings = Settings(Path(args.inventory), args.vault_password_file or (C.DEFAULT_VAULT_PASSWORD_FILE or ""))
+        settings = Settings(Path(args.inventory), password)
+        if args.value:
+            return written(settings, settings.write(args.name, args.value), as_json, Path(args.inventory), password)
         if args.all == "true" or (args.changed == "true" and not args.name):
             rows, target = settings.everything(), {"kind": "all"}
         elif args.name in settings.specs:

@@ -12,6 +12,10 @@ even if a guard regressed.
 - just holds each argument to its [arg] pattern before anything runs, so a
   quote, a space, a shell metacharacter or a newline never reaches a script;
   the script checks what goes into JSON again (tools/check names, project).
+  The one free-text value is what just settings --value writes, refused only
+  for a control character: it reaches the script as a positional argument
+  and is run by nothing (a test passes it $(...) and backticks), and
+  tools/settings holds it to the setting's type.
 - The names reach Ansible as one JSON extra-var. `-e vm_name=...` splits on
   whitespace and once silently provisioned half a fleet.
 - The rules - --tags beside names, --check with --only, a stage as a VM name
@@ -2176,6 +2180,40 @@ def test_settings_all_beside_a_name_is_refused_before_python_starts(tmp_path: Pa
     result, runs = _settings(tmp_path, "--all", "tailscale")
     assert result.returncode != 0 and runs == []
     assert "just settings --all lists every setting: give it no role or variable" in _output(result)
+
+
+def test_settings_passes_a_value_as_one_argument_and_runs_none_of_it(tmp_path: Path) -> None:
+    # The one free-text value on the just line: it reaches the script as a positional argument, never its text.
+    ran = tmp_path / "ran"
+    value = f"$(touch {ran}) `touch {ran}` 'single' \"double\" ; | & spaces"
+    result, runs = _settings(
+        tmp_path, "claude_vm_default_name", "--value", value, settings=[f"VAULT_PASS={tmp_path / 'none'}"]
+    )
+    assert result.returncode == 0, _output(result)
+    expected = [f"--value={value}", "--all=", "--changed=", "--json=", "--", "claude_vm_default_name"]
+    assert runs == [["tools/settings", *expected]]
+    assert not ran.exists()
+
+
+@pytest.mark.parametrize(
+    "args", [["--value", "x"], ["--all", "--value", "x"], ["vm_cores", "--changed", "--value", "8"]]
+)
+def test_settings_value_without_one_setting_named_is_refused_before_python_starts(tmp_path: Path, args) -> None:
+    result, runs = _settings(tmp_path, *args)
+    assert result.returncode != 0 and runs == []
+    assert "--value sets the one setting named beside it" in _output(result)
+
+
+def test_settings_says_no_word_back_when_it_refuses_a_second(tmp_path: Path) -> None:
+    # A secret typed as a second word, --value forgotten, is not put on the screen again.
+    result, runs = _settings(tmp_path, "tailscale_auth_key", "notsaidback")
+    assert result.returncode != 0 and runs == []
+    assert "notsaidback" not in _output(result) and " one " in _output(result)
+
+
+def test_settings_refuses_a_control_character_in_a_value_before_anything_runs(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "vm_cores", "--value", "8\n9")
+    assert result.returncode != 0 and runs == [] and NOT_MATCHED in _output(result)
 
 
 def test_settings_checks_the_vault_before_it_reads_anything(tmp_path: Path) -> None:

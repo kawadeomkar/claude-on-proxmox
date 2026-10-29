@@ -7,8 +7,11 @@ still reaches you.
 
 To see what yours are and where each was set, run `just settings`: `just settings tailscale` lists one
 role's variables, `just settings tailscale_ssh` explains one, `just settings --changed` lists everything
-you changed, and `--json` gives any of them to a script. It changes nothing. A secret is only ever said to
-be set or not set, never shown, and changes with `just vault`.
+you changed, and `--json` gives any of them to a script. `just settings tailscale_ssh --value true` sets
+one: it writes `tailscale_ssh: true` into `local.yml`, in place of its example's line, once the value is
+one the setting takes, and says what applies it. A role variable that a setting here feeds is written as
+that setting (`claude_code_remote_control` as `claude_remote_control`). A secret is only ever said to be
+set or not set, never shown or written there: it changes with `just vault`.
 
 ## Variable layering
 
