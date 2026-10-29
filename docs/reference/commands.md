@@ -85,6 +85,7 @@ environment where `python3` is not it.
 | &emsp;`<part>` | lock (uv.lock against pyproject.toml), yaml (yamllint --strict), ansible (ansible-lint, production profile), python (ruff check and format --check), just (just --fmt --check), syntax (--syntax-check on every playbook), hooks (the pre-commit hooks the others do not cover) |
 | `just test [<part>...]` | Lint, then every test: unit and Molecule (the local quality gate) |
 | &emsp;`--role ROLES` | Only these roles' scenarios, comma-separated: on its own it means the role part (just test --role common,claude_code) |
+| &emsp;`--shard SHARD` | Only the I-th of N shards of the unit tests, each group of tests whole, as CI splits them: on its own it means the unit part (just test unit --shard 2/3) |
 | &emsp;`<part>` | unit (pytest over tests/unit/, a worker per CPU, no network), molecule (every Molecule scenario: role, integration, provision), role (the roles' own scenarios), integration (the full configure playbook against a Docker container), provision (provision.yml and discover.yml against a fake Proxmox API) |
 | `just docs [<part>]` | Regenerate the wiki's reference pages from the files they describe |
 | &emsp;`<part>` | serve (the wiki as a site at http://127.0.0.1:8000, rebuilt as you save) or build (the site in site/, failing on a broken link or anchor) |

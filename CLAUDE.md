@@ -35,6 +35,7 @@ just lint                            # uv lock --check, yamllint --strict, ansib
 just lint syntax                     # some of them: lock, yaml, ansible, python, just, syntax, hooks
 just test                            # lint, then every test: unit and every Molecule scenario — the CI gate
 just test unit                       # pytest over tests/unit/, a worker per CPU (pytest-xdist loadgroup)
+just test unit --shard 2/3           # one of the three shards CI runs (tests/unit/durations.json balances them)
 just test --role proxmox_vm          # one role scenario (role: every role; molecule: every scenario)
 just test provision                  # one playbook scenario (integration is the configure scenario)
 just deploy                          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (just deploy alpha: that VM)
@@ -184,7 +185,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   its failure is recorded in `claude_vm_configure_failures` and raised even under `just deploy`, by
   deploy's last play, since it is not a failed sign-in and the VM is not done.
   `tests/unit/test_sign_in_plays.py` runs both playbooks, and deploy's sign-ins as deploy.yml has them,
-  against stand-ins, a VM whose ssh exits 255 among them. `just deploy --only configure` never prompts.
+  against stand-ins, a VM whose ssh exits 255 among them; `claude_login.yml` run alone with such a VM is
+  `test_claude_login.py`'s, on its one run of every sign-in case. `just deploy --only configure` never prompts.
 - **Claude's sign-in comes back over a forward, or hands the code over a pipe, and nothing decides from a
   terminal probe.** Given `BROWSER`, `claude auth login` runs it with a page that redirects to
   `http://localhost:<port>/callback`, listens on the VM's `127.0.0.1:<port>`, and takes a code from that

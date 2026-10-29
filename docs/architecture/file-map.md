@@ -22,6 +22,7 @@ tools/live                        a recipe's command drawn as a part of one run,
                                   from the recipe's trap (§7.8)
 tools/status-exit                 just status's last step: the report's exit code, the report under --json, then no report
 tools/stale_scripts.py            just install: the locked packages whose commands start another Python, to reinstall
+tools/unit_durations.py           tests/unit/durations.json from a run's JUnit report: what the unit tests' shards balance by
 tools/proxmox-access.sh           on the Proxmox host, as root: the API role, user, grants and token, what is missing of them
 pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
 

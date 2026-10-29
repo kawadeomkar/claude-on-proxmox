@@ -1123,9 +1123,11 @@ def _interrupted(started: Path, *command: str) -> tuple[int, str]:
 @pytest.mark.parametrize("continues", [True, False])
 def test_ctrl_c_that_the_playbook_survives_ends_the_run_well(tmp_path: Path, continues: bool) -> None:
     # Ansible's pause, Ctrl-C then C: the playbook catches the signal and finishes. just waits for it and, with
-    # [continue], exits as it does; the script's bash survives the signal too, which Ubuntu's dash would not.
+    # [continue], exits as it does; the script's bash survives the signal too, which Ubuntu's dash would not. The
+    # playbook lives a second past the signal, as a pause does: one that ended with it, within a millisecond, could
+    # be gone before just's signal thread read the signal, which then found no child running and exited 130.
     started = tmp_path / "started"
-    body = f'trap "echo caught" INT; touch "{started}"; sleep 3; echo finished'
+    body = f'trap "echo caught" INT; ( trap "" INT; touch "{started}"; exec sleep 1 ); echo finished'
     settings = _recording(tmp_path, playbook_body=body if continues else f'touch "{started}"; sleep 3; exit 1')
     returncode, output = _interrupted(started, *settings, "deploy", "alpha")
     if continues:
@@ -1983,6 +1985,47 @@ def test_role_narrows_the_role_scenarios(tmp_path: Path, roles: str, expect: lis
     ],
 )
 def test_role_is_checked_before_anything_runs(tmp_path: Path, args: list[str], error: str) -> None:
+    result = _just("test", *args, settings=_testing(tmp_path))
+    assert result.returncode != 0
+    assert error in _output(result)
+    assert not (tmp_path / "order").exists()
+
+
+@pytest.mark.parametrize(
+    ("args", "expect"),
+    [
+        (
+            ["unit", "--shard", "2/3"],
+            ["-p", "live_pytest", "tests/unit", "-n", "auto", "--dist", "loadgroup", "--shard", "2/3"],
+        ),
+        # On its own it means the unit part, as --role means the role part.
+        (
+            ["--shard", "1/2"],
+            ["-p", "live_pytest", "tests/unit", "-n", "auto", "--dist", "loadgroup", "--shard", "1/2"],
+        ),
+    ],
+)
+def test_shard_runs_one_shard_of_the_unit_tests_and_nothing_else(tmp_path: Path, args, expect) -> None:
+    # pytest is given tests/unit, so that the conftest.py there, which adds --shard, is read before the options:
+    # a bare pytest --shard is refused as an option it does not know, never run as the whole suite.
+    result = _just("test", *args, settings=_testing(tmp_path))
+    assert result.returncode == 0, _output(result)
+    assert _runs(tmp_path, "pytest") == [expect]
+    assert not _runs(tmp_path, "yamllint") and not _runs(tmp_path, "molecule")
+
+
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        (["unit", "--shard", "0/3"], NOT_MATCHED),
+        (["unit", "--shard", "2"], NOT_MATCHED),
+        (["unit", "--shard", "1/3/4"], NOT_MATCHED),
+        (["unit", "--shard", "4/3"], "--shard takes I/N with I no more than N (got: [4/3])"),
+        (["role", "--shard", "1/2"], "--shard splits the unit tests, which role is not: just test unit --shard 1/2"),
+        (["--role", "common", "--shard", "1/2"], "--shard splits the unit tests and --role narrows the role scenarios"),
+    ],
+)
+def test_shard_is_checked_before_anything_runs(tmp_path: Path, args: list[str], error: str) -> None:
     result = _just("test", *args, settings=_testing(tmp_path))
     assert result.returncode != 0
     assert error in _output(result)
