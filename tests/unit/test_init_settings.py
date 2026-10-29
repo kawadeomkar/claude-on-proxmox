@@ -907,6 +907,8 @@ def test_a_host_set_up_already_asks_only_for_the_secret(tmp_path: Path) -> None:
     rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
     assert rc == 0, output
     assert "The API access is set up on pve.lan already" in output and "token ansible@pve!ansible exists" in output
+    # A line for each thing the script found, never one run-on sentence of them (the message as JSON shows it).
+    assert "already:\\n  role AnsibleVM exists, with every privilege\\n  user ansible@pve exists\\n" in output
     assert ACCESS_PROMPT.decode() not in output and _host_writes(host) == []
     assert SECRET_LINE in _decrypt(files)
 
