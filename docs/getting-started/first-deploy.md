@@ -35,7 +35,8 @@ for each value a first deploy needs that is still the example's:
    and never asked again. Until you answer, it is on.
 5. **A Tailscale auth key**, after a `y`, while the vault holds none: it joins each new VM by itself during
    `just deploy`. It is not shown as you type. Enter goes without one, and each VM signs in on Tailscale's
-   page during `just deploy` instead.
+   page during `just deploy` instead; the next `just init` asks again. To always sign in on the page and
+   never be asked, set `tailscale_auth_method: web` in `local.yml`.
 6. **Whether to set up the API access.** `just init` reaches the host over root SSH, shows the `pveum`
    commands `tools/proxmox-access.sh` would run there to make the role, the user, its grants and the token,
    and runs them on `y`, putting the token's secret straight into the vault

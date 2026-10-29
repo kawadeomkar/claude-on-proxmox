@@ -1020,6 +1020,8 @@ def test_enter_at_the_key_is_the_web_login_and_the_next_init_asks_again(tmp_path
     rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
     assert rc == 0, output
     assert _decrypt(files) == _example("init_vault_file")
+    # The question says it comes back, and the one setting that ends it.
+    assert "this is asked again next time" in output and "set tailscale_auth_method: web in local.yml" in output
     steps = [*UP_TO_TAILSCALE, (TAILSCALE_KEY_PROMPT, b"\n"), (SECRET_PROMPT, b"\n")]
     rc, output, _ = _init_at_a_terminal(tmp_path, files, steps)
     assert rc == 0, output

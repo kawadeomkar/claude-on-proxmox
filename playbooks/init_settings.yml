@@ -596,7 +596,8 @@
           - "Optional: an auth key joins each new VM to your tailnet during just deploy, with nothing"
           - "to click. Make one in Tailscale's admin console (Settings, Keys): reusable, pre-approved,"
           - tagged, never ephemeral. Enter to go without one, and sign each VM in on Tailscale's page
-          - during just deploy.
+          - during just deploy; this is asked again next time. To always use the page and never be
+          - "asked, set tailscale_auth_method: web in local.yml."
       when: >-
         init_ask | bool and init_vault_readable and init_tailscale_chosen | bool
         and not init_tailscale_key_set | default(false) | bool
