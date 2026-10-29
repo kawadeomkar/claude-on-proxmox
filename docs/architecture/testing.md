@@ -18,9 +18,13 @@ unless all three passed, and `test_shards.py` holds that the shards together col
 Every child a test signals or types Ctrl-C at starts with SIGINT,
 SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite started with `&` or under
 nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
-(`harness._drain`), since on a loaded machine its last bytes arrive late, up to the test's deadline. Every fake
-API a test starts binds a port the system picks and prints it (`harness._start`), so no port is probed, freed
-and then taken by another worker's fake.
+(`harness._drain`), since on a loaded machine its last bytes arrive late, up to the test's deadline. Keys typed
+at a pause go in once it has held the terminal in raw mode for 10 ms, looked at every 20 ms while they wait, since
+pause flushes the input just after it sets raw mode and then waits in silence; a `vars_prompt`'s, read by `input()`
+in canonical mode (a step marked `canonical`), as soon as it asks. Every fake API a test starts binds a port the
+system picks and prints it (`harness._start`), so no port is probed, freed and then taken by another worker's fake;
+and starts with `socket.getfqdn` answering at once (`harness.FAKE_START`): for the fake Proxmox's `0.0.0.0`, macOS
+spent five seconds on it.
 
 pytest over `tests/unit/`: 2229 tests. By file:
 
