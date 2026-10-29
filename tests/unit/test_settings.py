@@ -639,7 +639,7 @@ def test_a_layout_the_read_back_does_not_hold_writes_nothing(scenarios, tmp_path
     local.write_text(local.read_text() + "tailscale_accept_dns: &dns true\ntailscale_accept_routes: *dns\n")
     before = local.read_bytes()
     result = _set(scenarios, inventory, "tailscale_accept_dns", "false")
-    assert result.returncode == 1 and "can be written safely: nothing was written" in result.stderr
+    assert result.returncode == 1 and "can be changed safely: nothing was written" in result.stderr
     assert local.read_bytes() == before
 
 
@@ -661,4 +661,101 @@ def test_value_names_one_setting(scenarios) -> None:
         ("--value=true", "--changed=true", "--", "vm_cores"),
     ):
         result = _run(scenarios, "base", *args)
-        assert result.returncode == 1 and "--value sets one setting" in result.stderr, args
+        assert result.returncode == 1 and "each change one setting, named beside it" in result.stderr, args
+
+
+# ------------------------------------------------------------------------------- --reset: back to the default ---
+
+
+def _reset(scenarios: dict, inventory: Path, name: str, *args: str) -> subprocess.CompletedProcess:
+    return _run(scenarios, inventory, "--reset=true", *args, "--", name)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("vm_memory_mb", "8192"), ("tailscale_advertise_tags", "tag:a,tag:b"), ("tailscale_marker_dir", "~/markers")],
+)
+def test_a_value_set_and_then_reset_leaves_local_yml_as_it_was(scenarios, tmp_path, name, value) -> None:
+    # In place of its example's line, and that line back; or at the end, and taken out again.
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_bytes()
+    assert _set(scenarios, inventory, name, value).returncode == 0
+    assert _local(inventory).read_bytes() != before
+    result = _reset(scenarios, inventory, name)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert _local(inventory).read_bytes() == before
+
+
+def test_reset_says_the_value_the_setting_has_now(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    assert _set(scenarios, inventory, "vm_memory_mb", "8192").returncode == 0
+    report = json.loads(_reset(scenarios, inventory, "vm_memory_mb", "--json=true").stdout)
+    assert report["reset"]["removed"] == ["vm_memory_mb"] and report["reset"]["restored"] == ["vm_memory_mb"]
+    assert report["now"]["value"] == 4096 and "vm_memory_mb is now 4096, from default" in report["notes"]
+    said = " ".join(_reset(scenarios, inventory, "vm_memory_mb").stdout.split())
+    assert "does not set vm_memory_mb, so it is at its default already: nothing was written" in said
+
+
+def test_reset_of_a_role_variable_takes_out_its_setting_and_its_own_line(scenarios, tmp_path) -> None:
+    # The base scenario sets claude_remote_control at the end, its example's line still in place; the role
+    # variable itself is set by hand beside it.
+    inventory = _writable(scenarios, tmp_path)
+    local = _local(inventory)
+    local.write_text(local.read_text() + "claude_code_remote_control: false\n")
+    result = _reset(scenarios, inventory, "claude_code_remote_control", "--json=true")
+    assert result.returncode == 0, result.stderr[-2000:]
+    report = json.loads(result.stdout)
+    assert report["reset"]["removed"] == ["claude_remote_control", "claude_code_remote_control"]
+    assert report["now"]["value"] is True
+    text = local.read_text()
+    assert "\nclaude_remote_control:" not in text and "claude_code_remote_control:" not in text
+    assert text.count("# claude_remote_control: true") == 1
+
+
+def test_reset_of_what_local_yml_does_not_set_writes_nothing(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    stamp = _local(inventory).stat().st_mtime_ns
+    result = _reset(scenarios, inventory, "tailscale_accept_dns")
+    assert result.returncode == 0 and "nothing was written" in " ".join(result.stdout.split())
+    assert _local(inventory).stat().st_mtime_ns == stamp
+
+
+def test_reset_takes_out_a_per_vm_name_set_by_hand(scenarios, tmp_path) -> None:
+    # --value refuses one, since one value would give every VM the same: taking it out can make nothing wrong.
+    inventory = _writable(scenarios, tmp_path)
+    local = _local(inventory)
+    before = local.read_text()
+    local.write_text(before + 'tailscale_hostname: "one-for-all"\n')
+    result = _reset(scenarios, inventory, "tailscale_hostname")
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert local.read_text() == before
+
+
+@pytest.mark.parametrize(
+    ("name", "said"),
+    [
+        ("tailscale_auth_key", "just vault"),
+        ("vault_github_token", "just vault"),
+        ("ansible_host", "inventory/hosts.yml"),
+        ("tailscale_login_server", "encrypted (!vault)"),
+        ("nonsense_name", "nonsense_name is no setting"),
+    ],
+)
+def test_reset_of_a_secret_or_the_hosts_address_is_refused(scenarios, tmp_path, name, said) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    before = _local(inventory).read_bytes()
+    result = _reset(scenarios, inventory, name)
+    assert result.returncode == 1 and said in result.stderr, result.stderr[-500:]
+    assert _local(inventory).read_bytes() == before
+
+
+def test_reset_names_one_setting_and_never_beside_value(scenarios) -> None:
+    for args in (
+        ("--reset=true",),
+        ("--reset=true", "--all=true"),
+        ("--reset=true", "--changed=true", "--", "vm_cores"),
+    ):
+        result = _run(scenarios, "base", *args)
+        assert result.returncode == 1 and "each change one setting, named beside it" in result.stderr, args
+    both = _run(scenarios, "base", "--reset=true", "--value=4", "--", "vm_cores")
+    assert both.returncode == 1 and "one or the other" in both.stderr

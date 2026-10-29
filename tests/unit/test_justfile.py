@@ -2201,7 +2201,26 @@ def test_settings_passes_a_value_as_one_argument_and_runs_none_of_it(tmp_path: P
 def test_settings_value_without_one_setting_named_is_refused_before_python_starts(tmp_path: Path, args) -> None:
     result, runs = _settings(tmp_path, *args)
     assert result.returncode != 0 and runs == []
-    assert "--value sets the one setting named beside it" in _output(result)
+    assert "--value and --reset each change the one setting named beside it" in _output(result)
+
+
+def test_settings_reset_passes_on_with_its_one_setting(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "vm_cores", "--reset", settings=[f"VAULT_PASS={tmp_path / 'none'}"])
+    assert result.returncode == 0, _output(result)
+    assert runs == [["tools/settings", "--reset=true", "--all=", "--changed=", "--json=", "--", "vm_cores"]]
+
+
+@pytest.mark.parametrize("args", [["--reset"], ["--all", "--reset"], ["vm_cores", "--changed", "--reset"]])
+def test_settings_reset_without_one_setting_named_is_refused_before_python_starts(tmp_path: Path, args) -> None:
+    result, runs = _settings(tmp_path, *args)
+    assert result.returncode != 0 and runs == []
+    assert "--value and --reset each change the one setting named beside it" in _output(result)
+
+
+def test_settings_reset_beside_a_value_is_refused_before_python_starts(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "vm_cores", "--reset", "--value", "4")
+    assert result.returncode != 0 and runs == []
+    assert "one or the other" in _output(result)
 
 
 def test_settings_says_no_word_back_when_it_refuses_a_second(tmp_path: Path) -> None:

@@ -1,9 +1,10 @@
 """just settings: each setting's value and where it was set, for one role, one variable or all of them; --value
-sets one in local.yml.
+sets one in local.yml, and --reset puts one back to its default.
 
     "$bin/python" tools/settings --usage [--json=true]
     "$bin/python" tools/settings [--vault-password-file <file>] [--all=true] [--changed=true] [--json=true] -- [NAME]
     "$bin/python" tools/settings [--vault-password-file <file>] --value=<value> [--json=true] -- NAME
+    "$bin/python" tools/settings [--vault-password-file <file>] --reset=true [--json=true] -- NAME
 
 It asks Ansible itself, in-process, as a run would: the loader with the vault opened as Ansible's own commands open
 it, the inventory, the variables of a play that names the role - on a host of the group that role's playbook runs it
@@ -11,7 +12,7 @@ on - and the templar for each value. Nothing of Ansible's precedence is written 
 role's argument_specs, the wiring, the sections of local.yml.example - comes from tools/docs.py, the same model the
 wiki's reference pages are generated from (docs/architecture/custom-code.md §7.9).
 
-It changes nothing and prints no secret:
+Reading changes nothing and prints no secret:
 
 - Lookups are held to an allowlist where Ansible loads every lookup, however one is reached: pipe runs a command,
   password writes a file. The inventory is read by the yaml plugin alone, never script, which runs what it finds.
@@ -22,7 +23,8 @@ It changes nothing and prints no secret:
 - The vault's password file is the one the recipe passes (.vault_pass, where there is one), else what
   ansible-playbook would take; a vault that cannot be opened is refused before anything is printed.
 
---value writes one setting into local.yml, and nothing else anywhere (Settings.write):
+--value writes one setting into local.yml and --reset takes one out, nothing else anywhere (Settings.write and
+Settings.reset):
 
 - Never a secret: anything the vault holds, feeds or a role marks no_log, and a value vaulted inline in local.yml,
   is refused for just vault, the value unsaid. Nor what is not one setting for every VM: a name made from each VM's
@@ -33,6 +35,9 @@ It changes nothing and prints no secret:
 - As just init writes: JSON on one line, in place of the line that set it (and its value's further lines), else of
   its example's commented line, else at the end. The file is read back before it replaces the old one, atomically,
   with its mode: every other key as it was, an inline !vault included, or nothing is written.
+- --reset takes the setting's line out - a role variable's own too, where one is set by hand beside the setting
+  that feeds it - and puts its example's commented line back, as just init found it. Taking a line out can make no
+  value wrong, so it is refused only a secret and the host's address, as --value is; the same read back holds it.
 
 Exits 0 with the report or the write, 1 when it refuses.
 """
@@ -423,10 +428,12 @@ class Settings:
             (docs.role_of(var, self.specs) for var in docs.set_by(name, self.feeds, self.specs)), None
         )
 
-    def settable(self, name: str) -> tuple[str | None, str, str]:
+    def settable(self, name: str, resetting: bool = False) -> tuple[str | None, str, str]:
         """What --value writes for a name, or why not: (the name written, "", ""), or (None, why, where it changes).
 
-        The read view's "change" comes from here too, so it never names a command this refuses."""
+        The read view's "change" comes from here too, so it never names a command this refuses. --reset only takes
+        a line out, which can never make a value wrong, so it is refused only what is secret or in hosts.yml: it
+        may take out a name made from each VM's own, or one a run sets, that local.yml sets by hand."""
         if name == "ansible_host":
             return None, "the Proxmox host's address is in inventory/hosts.yml", "inventory/hosts.yml"
         if name in self.example_vault or name.startswith("vault_"):
@@ -435,15 +442,19 @@ class Settings:
         target = (self.fed_by(name) or name) if role else name
         if target in self.example_vault:
             return None, f"{name} comes from {target}, which vault.yml holds", "just vault"
-        if not role and target not in self.example_settings:
-            # A value of defaults.yml that is in neither the examples nor a role's argument_specs is internal
-            # (docs/reference/settings.md).
-            return None, f"{name} is no setting: it is internal to the project", ""
         fed = {name, target, *docs.set_by(target, self.feeds, self.specs)}
         if any(self.no_log(each) for each in fed):
             return None, f"{name} is a secret", "just vault"
         if VaultHelper.get_ciphertext(self.local.get(target), with_tags=False) is not None:
             return None, f"local.yml holds {target} encrypted (!vault)", LOCAL
+        if resetting:
+            if role or target in self.example_settings or target in self.local:
+                return target, "", ""
+            return None, f"{name} is no setting", ""
+        if not role and target not in self.example_settings:
+            # A value of defaults.yml that is in neither the examples nor a role's argument_specs is internal
+            # (docs/reference/settings.md).
+            return None, f"{name} is no setting: it is internal to the project", ""
         context = self.context(self.role_for(target) or "common")
         if self.walk(context, name)["per_vm"]:
             return None, f"{name} is made from each VM's own name: one setting would give every VM the same", ""
@@ -495,31 +506,16 @@ class Settings:
             return raw  # as typed: a path keeps its ~, for every machine that reads it
         return json.loads(json.dumps(result.validated_parameters[target]))
 
-    def write(self, name: str, raw: str) -> dict:
-        """Write one setting into local.yml, or refuse with nothing written."""
-        target, why, where = self.settable(name)
-        if target is None:
-            said = (
-                f"{why}: change it with {where}"
-                if where.startswith("just")
-                else (
-                    f"{why}: change it there"
-                    if where and where in why
-                    else f"{why}: change it in {where}"
-                    if where
-                    else why
-                )
-            )
-            # A secret typed on the command line is in the shell's history now, whatever happens here.
-            if where == "just vault":
-                said += ". The value given was not used or printed, but your shell's history keeps it"
-            raise Refused(said)
-        value = self.coerce(target, name, raw)
-        if any(secret in raw or secret in json.dumps(value) for secret in self.hunted):
-            # A secret of the vault's would be in local.yml in the clear, and printed by every report after.
-            raise Refused(
-                f"that value is a secret the vault holds, so {target} would hold it in the clear: not written"
-            )
+    @staticmethod
+    def why_not(why: str, where: str) -> str:
+        """A refusal of --value or --reset, with where the setting changes instead."""
+        if where.startswith("just"):
+            return f"{why}: change it with {where}"
+        if where:
+            return f"{why}: change it there" if where in why else f"{why}: change it in {where}"
+        return why
+
+    def _read_local(self) -> tuple[str, dict]:
         if not self.local_file.is_file():
             raise Refused(f"{LOCAL} missing. Run: just init")
         source = self.local_file.read_text()
@@ -529,41 +525,45 @@ class Settings:
             raise Refused(f"{LOCAL} is not YAML that reads: nothing was written") from error
         if not isinstance(before, dict):
             raise Refused(f"{LOCAL} is not a mapping of settings: nothing was written")
-        lines = source.splitlines(keepends=True)
-        setting = re.compile(rf"^{re.escape(target)}\s*:")
+        return source, before
+
+    @staticmethod
+    def _line_of(lines: list[str], name: str) -> int | None:
+        """The one line that sets name, or None; two lines of one name are refused, since the last wins."""
+        setting = re.compile(rf"^{re.escape(name)}\s*:")
         found = [index for index, line in enumerate(lines) if setting.match(line)]
         if len(found) > 1:
-            raise Refused(f"{LOCAL} sets {target} on {len(found)} lines, and the last wins: keep one, by hand")
-        if found and before.get(target) == value:
-            return {"asked": name, "wrote": None, "name": target, "value": value, "line": found[0] + 1}
-        if found:
-            start = end = found[0]
+            raise Refused(f"{LOCAL} sets {name} on {len(found)} lines, and the last wins: keep one, by hand")
+        return found[0] if found else None
+
+    @staticmethod
+    def _value_end(lines: list[str], start: int, commented: bool = False) -> int:
+        """The line after a setting's value: its further lines are indented, or a list's dashes - or, commented,
+        "#   " lines, as tools/docs.py reads the example's."""
+        further = re.compile(r"^#\s{3,}\S") if commented else re.compile(r"^([ \t]+\S|-([ \t]|$))")
+        end = start + 1
+        while end < len(lines) and further.match(lines[end]):
             end += 1
-            while end < len(lines) and re.match(r"^([ \t]+\S|-([ \t]|$))", lines[end]):
-                end += 1  # its value's further lines
-            how = "in place of the line that set it"
-        else:
-            example = re.compile(rf"^#\s?{re.escape(target)}:")
-            start = next((index for index, line in enumerate(lines) if example.match(line)), len(lines))
-            end = start + 1 if start < len(lines) else start
-            while end < len(lines) and re.match(r"^#\s{3,}\S", lines[end]):
-                end += 1  # its example value's further lines, as tools/docs.py reads the example
-            how = "in place of its example's line" if start < len(lines) else "at its end"
-            if start == len(lines) and lines and not lines[-1].endswith("\n"):
-                lines[-1] += "\n"
-        written = f"{target}: {json.dumps(value, ensure_ascii=False)}\n"
-        result = "".join([*lines[:start], written, *lines[end:]])
+        return end
+
+    def _replace(self, before: dict, result: str, changed: dict) -> None:
+        """Replace local.yml with result, once it reads back holding changed - {name: value}, or None for a name
+        taken out - and every other key as it was, an inline !vault included; else write nothing. Atomically,
+        with the file's mode, never leaving a scratch file."""
         try:
             after = tagged(result)
         except yaml.YAMLError:
-            after = None  # an alias left without its anchor, and the like: refused below
-        others = {key: item for key, item in before.items() if key != target}
-        if (
-            not isinstance(after, dict)
-            or after.get(target) != value
-            or {key: item for key, item in after.items() if key != target} != others
-        ):
-            raise Refused(f"{LOCAL} is not laid out so {target} can be written safely: nothing was written")
+            after = None  # an alias left without its anchor, and the like
+        names = set(changed)
+        held = isinstance(after, dict) and all(
+            (name not in after) if value is None else after.get(name) == value for name, value in changed.items()
+        )
+        if not held or {k: v for k, v in after.items() if k not in names} != {
+            k: v for k, v in before.items() if k not in names
+        }:
+            raise Refused(
+                f"{LOCAL} is not laid out so {', '.join(sorted(names))} can be changed safely: nothing was written"
+            )
         mode = stat.S_IMODE(self.local_file.stat().st_mode)
         handle, scratch = tempfile.mkstemp(dir=self.local_file.parent, prefix=".local.yml.", suffix=".tmp")
         try:
@@ -576,6 +576,39 @@ class Settings:
         except BaseException:
             Path(scratch).unlink(missing_ok=True)
             raise
+
+    def write(self, name: str, raw: str) -> dict:
+        """Write one setting into local.yml, or refuse with nothing written."""
+        target, why, where = self.settable(name)
+        if target is None:
+            said = self.why_not(why, where)
+            # A secret typed on the command line is in the shell's history now, whatever happens here.
+            if where == "just vault":
+                said += ". The value given was not used or printed, but your shell's history keeps it"
+            raise Refused(said)
+        value = self.coerce(target, name, raw)
+        if any(secret in raw or secret in json.dumps(value) for secret in self.hunted):
+            # A secret of the vault's would be in local.yml in the clear, and printed by every report after.
+            raise Refused(
+                f"that value is a secret the vault holds, so {target} would hold it in the clear: not written"
+            )
+        source, before = self._read_local()
+        lines = source.splitlines(keepends=True)
+        found = self._line_of(lines, target)
+        if found is not None and before.get(target) == value:
+            return {"asked": name, "wrote": None, "name": target, "value": value, "line": found + 1}
+        if found is not None:
+            start, end = found, self._value_end(lines, found)
+            how = "in place of the line that set it"
+        else:
+            example = re.compile(rf"^#\s?{re.escape(target)}:")
+            start = next((index for index, line in enumerate(lines) if example.match(line)), len(lines))
+            end = self._value_end(lines, start, commented=True) if start < len(lines) else start
+            how = "in place of its example's line" if start < len(lines) else "at its end"
+            if start == len(lines) and lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+        written = f"{target}: {json.dumps(value, ensure_ascii=False)}\n"
+        self._replace(before, "".join([*lines[:start], written, *lines[end:]]), {target: value})
         return {
             "asked": name,
             "wrote": written.rstrip("\n"),
@@ -584,6 +617,40 @@ class Settings:
             "line": start + 1,
             "how": how,
         }
+
+    def example_lines(self, name: str) -> list[str]:
+        """name's commented line in local.yml.example, with its value's further lines, or none."""
+        lines = (REPO / LOCAL.replace(".yml", ".yml.example")).read_text().splitlines(keepends=True)
+        example = re.compile(rf"^#\s?{re.escape(name)}:")
+        start = next((index for index, line in enumerate(lines) if example.match(line)), None)
+        return [] if start is None else lines[start : self._value_end(lines, start, commented=True)]
+
+    def reset(self, name: str) -> dict:
+        """Put a setting back to its default: its line out of local.yml - a role variable's own too, where one was
+        set by hand beside the setting that feeds it - and its example's commented line back in its place, as
+        just init found it. Refused with nothing written, as write() is."""
+        target, why, where = self.settable(name, resetting=True)
+        if target is None:
+            raise Refused(self.why_not(why, where))
+        source, before = self._read_local()
+        lines = source.splitlines(keepends=True)
+        names = [each for each in dict.fromkeys((target, name)) if each in before]
+        if not names:
+            return {"asked": name, "name": target, "removed": [], "restored": [], "line": None}
+        first, restored = None, []
+        for each in names:
+            start = self._line_of(lines, each)
+            if start is None:
+                # Set, but not on a line of its own (a flow mapping, a quoted key): not one this can take out.
+                raise Refused(f"{LOCAL} sets {each}, but not on a line of its own: take it out by hand")
+            # The example's line comes back only where the file has none of its own left.
+            commented = re.compile(rf"^#\s?{re.escape(each)}:")
+            restore = [] if any(commented.match(line) for line in lines) else self.example_lines(each)
+            lines[start : self._value_end(lines, start)] = restore
+            restored += [each] if restore else []
+            first = start if first is None else min(first, start)
+        self._replace(before, "".join(lines), dict.fromkeys(names))
+        return {"asked": name, "name": target, "removed": names, "restored": restored, "line": first + 1}
 
     def applies(self, target: str) -> list[str]:
         """What puts a setting to use, by the roles of the variables it sets."""
@@ -957,12 +1024,13 @@ def usage(as_json: bool) -> int:
         role = path.parent.parent.name
         roles.append({"role": role, "description": main.get("short_description", ""), "variables": len(specs[role])})
     if as_json:
-        print(json.dumps({"roles": roles, "options": ["NAME", "--all", "--changed", "--json", "--value"]}, indent=2))
+        options = ["NAME", "--all", "--changed", "--json", "--value", "--reset"]
+        print(json.dumps({"roles": roles, "options": options}, indent=2))
         return 0
     lines = [
         [screen.seg("Each setting's value and where it was set, for one role, one variable or all of them.")],
-        [screen.seg(f"Reads without changing anything; --value sets one in {LOCAL}, and a secret", "d")],
-        [screen.seg("changes with just vault.", "d")],
+        [screen.seg(f"Reads without changing anything; --value sets one in {LOCAL} and --reset", "d")],
+        [screen.seg("puts one back to its default. A secret changes with just vault.", "d")],
         [],
         [screen.seg("Roles", "h"), screen.seg(" " * 77), screen.seg("variables", "d")],
         *([screen.seg(f"  {each['role']:<18} {each['description']:<66}{each['variables']:>4}")] for each in roles),
@@ -987,6 +1055,10 @@ def usage(as_json: bool) -> int:
             screen.seg("  just settings <name> --value <value>   set one in local.yml   "),
             screen.seg("just settings tailscale_ssh --value true", "d"),
         ],
+        [
+            screen.seg("  just settings <name> --reset            put one back to its default   "),
+            screen.seg("just settings tailscale_ssh --reset", "d"),
+        ],
     ]
     _print(lines)
     return 0
@@ -997,8 +1069,7 @@ def written(settings: Settings, result: dict, as_json: bool, inventory: Path, pa
     local.yml - a hosts.yml variable, a run - is said rather than missed."""
     target, asked = result["name"], result["asked"]
     fresh = Settings(inventory, password)
-    role = docs.role_of(asked, fresh.specs)
-    now = fresh.role(role, asked)[0] if role else fresh.setting(target)
+    now = _now(fresh, asked, target)
     fresh.check([now])
     notes = []
     if result["wrote"] is None:
@@ -1023,6 +1094,44 @@ def written(settings: Settings, result: dict, as_json: bool, inventory: Path, pa
     return 0
 
 
+def _now(fresh: Settings, asked: str, target: str) -> dict | None:
+    """The row of what was asked, read again after a change; none for a name nothing but local.yml knew."""
+    role = docs.role_of(asked, fresh.specs)
+    if role:
+        return fresh.role(role, asked)[0]
+    if target in fresh.defaults or target in fresh.example_settings:
+        return fresh.setting(target)
+    return None
+
+
+def resetted(result: dict, as_json: bool, inventory: Path, password: str) -> int:
+    """Say what --reset took out of local.yml, and the value the setting has now, read again from every file."""
+    target, asked = result["name"], result["asked"]
+    fresh = Settings(inventory, password)
+    now = _now(fresh, asked, target)
+    if now:
+        fresh.check([now])
+    notes = []
+    if not result["removed"]:
+        notes.append(f"{LOCAL} does not set {target}, so it is at its default already: nothing was written")
+    else:
+        if now and now["kind"] == "value":
+            notes.append(f"{asked} is now {shown(now)}, from {source(now)[0]}")
+        notes += fresh.applies(target)
+    if as_json:
+        print(json.dumps({"reset": result, "now": now, "notes": notes}, indent=2))
+        return 0
+    lines = []
+    if result["removed"]:
+        how = "its example's line back in its place" if result["restored"] else "its line taken out"
+        head = f"reset {', '.join(result['removed'])} in {LOCAL}: {how} (line {result['line']})"
+        lines += [[screen.seg(piece, "y")] for piece in screen.fill(head, WIDTH)]
+    for note in notes:
+        lines += [[screen.seg("  " + piece)] for piece in screen.fill(note, WIDTH - 2)]
+    _print(lines)
+    return 0
+
+
 def _print(lines: list[list]) -> None:
     color = sys.stdout.isatty() and not C.ANSIBLE_NOCOLOR
     for line in lines:
@@ -1036,14 +1145,19 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--changed", default="")
     parser.add_argument("--json", default="")
     parser.add_argument("--value", default="")
+    parser.add_argument("--reset", default="")
     parser.add_argument("--vault-password-file", default="")
     # The tests' inventory; the recipe never passes it.
     parser.add_argument("--inventory", default=str(REPO / "inventory"))
     parser.add_argument("name", nargs="?", default="")
     args = parser.parse_args(argv)
     as_json = args.json == "true"
-    if args.value and (not args.name or args.all == "true" or args.changed == "true"):
-        print("just settings: --value sets one setting: just settings <name> --value <value>.", file=sys.stderr)
+    resetting = args.reset == "true"
+    if (args.value or resetting) and (not args.name or args.all == "true" or args.changed == "true"):
+        print("just settings: --value and --reset each change one setting, named beside it.", file=sys.stderr)
+        return 1
+    if args.value and resetting:
+        print("just settings: --value sets a value and --reset takes one out: one or the other.", file=sys.stderr)
         return 1
     if args.usage or not (args.name or args.all == "true" or args.changed == "true"):
         return usage(as_json)
@@ -1051,6 +1165,8 @@ def main(argv: list[str]) -> int:
     password = args.vault_password_file or (C.DEFAULT_VAULT_PASSWORD_FILE or "")
     try:
         settings = Settings(Path(args.inventory), password)
+        if resetting:
+            return resetted(settings.reset(args.name), as_json, Path(args.inventory), password)
         if args.value:
             return written(settings, settings.write(args.name, args.value), as_json, Path(args.inventory), password)
         if args.all == "true" or (args.changed == "true" and not args.name):

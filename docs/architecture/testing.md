@@ -57,7 +57,7 @@ pytest over `tests/unit/`: 2229 tests. By file:
   repositories - a worktree under `.claude/worktrees/` and one outside the projects directory, a branch with
   no upstream, a detached HEAD with commits of its own, a stash, untracked files - every file of them, `.git`
   included, as it was after.
-- **`just settings`** (`test_settings.py` 76): `tools/settings` against inventories of its own, made from the
+- **`just settings`** (`test_settings.py` 89): `tools/settings` against inventories of its own, made from the
   example files with fake, low-entropy values and a vault under a throwaway password, never the checkout's
   settings; each run with a `HOME` of its own and the collections' path pinned beside it. Every role's rows
   are its `argument_specs`; every line within 100 columns. The attacks: a `pipe` lookup behind a group
@@ -76,7 +76,10 @@ pytest over `tests/unit/`: 2229 tests. By file:
   never said; a per-VM name, what a run sets, the host's address, an internal value, an expression (its
   `pipe` never run), a control character, a vault secret as a plain value, two lines of one name and an alias
   the edit would break all refused with the file unchanged; an unchanged value written over by nothing; what
-  outranks `local.yml` said; the file's mode kept and no scratch file left.
+  outranks `local.yml` said; the file's mode kept and no scratch file left. `--reset`: a value set and then reset
+  leaves `local.yml` byte for byte as it was, in place or at the end; a role variable's setting and its own line
+  both taken out; nothing written where nothing is set; a per-VM name set by hand taken out; a secret, the host's
+  address and an inline `!vault` refused.
 - **The stdout callback** (`test_attention_callback.py` 16): `callback_plugins/claude_on_proxmox.py` run
   for real - untagged output byte for byte the default's, no hook failing, the browser block, one
   waiting line for a tagged retry, NEXT STEPS from `set_stats` records, colour on the screen and never in

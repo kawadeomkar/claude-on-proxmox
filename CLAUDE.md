@@ -46,6 +46,7 @@ just login alpha                     # Claude, GitHub, Tailscale in deploy's ord
 just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed); just list too
 just settings tailscale              # a role's variables, each value and where it was set (a variable; --all; --changed; --json; none: usage)
 just settings vm_cores --value 4     # set one setting in local.yml, held to its type; never a secret (just vault)
+just settings vm_cores --reset       # back to its default: its line out of local.yml, its example's line back
 just code alpha [--project repo] [--session <id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
 just logs                            # the run logs, newest first: read these instead of asking for terminal output
 just docs                            # regenerate the wiki's reference pages; serve previews the site, build builds it strictly
@@ -500,8 +501,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   against stand-in VMs (`tests/unit/test_status_vms.py`), which hold that every file there is unchanged.
   See docs/architecture/lifecycle.md §4.6.
 
-- **`just settings` reads without changing anything, but for the one setting `--value` writes into `local.yml`,
-  and never prints or writes a secret.** `tools/settings` asks Ansible's own `VariableManager`
+- **`just settings` reads without changing anything, but for the one setting `--value` writes into `local.yml` or
+  `--reset` takes out, and never prints or writes a secret.** `tools/settings` asks Ansible's own `VariableManager`
   and templar, in-process, for a play of the role on a host of the group its playbook runs it on (read from the
   playbooks), and never writes Ansible's precedence again by hand. Every lookup goes through `lookup_loader.get`,
   wrapped to load only `env`, `file`, `config`, `vars`, `first_found` and `fileglob` - never decided by scanning
@@ -517,7 +518,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   for itself, the host's address, an internal value, an expression (`{{ }}`) and a value equal to a vault secret
   are refused, a secret's value never said back. The rest is held to its `argument_specs` type by Ansible's
   `ArgumentSpecValidator`, written as `just init` writes (JSON in place of its line or its example's line), read
-  back with every other key unchanged before it replaces the file atomically, or nothing is written. The vault's
+  back with every other key unchanged before it replaces the file atomically, or nothing is written. `--reset`
+  takes the setting's line out and puts its example's commented line back (set then reset leaves the file byte for
+  byte as it was), refused only a secret and the host's address, since taking a line out makes no value wrong. The vault's
   password file is the recipe's (`vault_args`),
   never looked for by the tool. Its tests (`tests/unit/test_settings.py`) run it only against inventories made from
   the example files with fake secrets, each run with a `HOME` of its own and the collections' path pinned, and fail

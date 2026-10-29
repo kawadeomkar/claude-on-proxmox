@@ -654,7 +654,7 @@ playbook as a part, and an end with no state), and each output's own live tests.
 
 `just settings` says what each setting is and where it was set, for one role (`just settings tailscale`), one
 variable or setting (`just settings tailscale_ssh`), or all of them (`--all`), and changes nothing but the one
-setting `--value` writes into `local.yml` (below). Without a word
+setting `--value` writes into `local.yml` and `--reset` takes out (below). Without a word
 it shows how to use it: the roles, read from their `argument_specs`, and the options; that needs no vault, so the
 recipe runs it before the vault's check.
 
@@ -714,6 +714,14 @@ result is read back with every tag kept as text before it replaces the file - ev
 replaces it atomically, with its mode. Then the files are read again: what outranks `local.yml` (a `hosts.yml`
 variable, a run) is said, with what applies the change - `just deploy --only configure --tags <role>`, or a VM's
 creation for `proxmox_vm`.
+
+**`--reset` takes one setting out of `local.yml`.** Its line goes, with its value's further lines - a role
+variable's own too, where one is set by hand beside the setting that feeds it - and the example's commented line
+comes back in its place, as `just init` found it, unless the file still has one: a value set and then reset
+leaves `local.yml` byte for byte as it was. Taking a line out can make no value wrong, so `settable` refuses it
+only what is secret (for `just vault`, or an inline `!vault`) and the host's address; a name made from each VM's
+own, set by hand, may go. The same read back holds it, and the same second look says the value the setting has
+now and what applies it.
 
 **The report** is a line per variable under its role or section, every line within 100 columns, a value cut with
 "…" in the table and shown whole in the one-variable view, colour only at a terminal (`screen.py`'s palette and

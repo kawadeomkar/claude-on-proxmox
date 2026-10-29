@@ -114,7 +114,7 @@ rather than skipped. `just vault` changes a secret. The usual first-run snags ar
 | `just code alpha [--project repo] [--session <id>]` | Open a VM, or one repository on it, in VS Code with a Claude terminal; this machine's recent Claude sessions are copied there, and `--session` goes on with one of them |
 | `just login alpha` | Sign the VM in to Claude, GitHub and Tailscale where a sign-in was skipped; `--only claude`, `github` or `tailscale` for one of them |
 | `just status` | What every VM this project created is doing, and what needs doing next: read-only, live at a terminal, `--json` for scripts |
-| `just settings tailscale` | Each of a role's settings, its value and where it was set; one setting (`just settings tailscale_ssh`), or every one (`--all`, `--changed` for yours). `just settings tailscale_ssh --value true` sets one in `local.yml`; a secret is only said set or not set, and changes with `just vault` |
+| `just settings tailscale` | Each of a role's settings, its value and where it was set; one setting (`just settings tailscale_ssh`), or every one (`--all`, `--changed` for yours). `just settings tailscale_ssh --value true` sets one in `local.yml`, and `--reset` puts it back to its default; a secret is only said set or not set, and changes with `just vault` |
 | `just destroy alpha` | Save the Claude sessions only the VM has, sign it out of Claude, GitHub and Tailscale, then delete it |
 | `just logs` | The log of every run, newest first |
 | `ssh alpha` | The alias `just deploy` and `just code` keep pointed at the VM's address, in `~/.ssh/claude-on-proxmox.conf` (one `Include` line added to `~/.ssh/config`) |
