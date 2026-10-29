@@ -718,9 +718,13 @@ creation for `proxmox_vm`.
 **`--reset` takes one setting out of `local.yml`.** Its line goes, with its value's further lines - a role
 variable's own too, where one is set by hand beside the setting that feeds it - and the example's commented line
 comes back in its place, as `just init` found it, unless the file still has one: a value set and then reset
-leaves `local.yml` byte for byte as it was. Taking a line out can make no value wrong, so `settable` refuses it
+leaves a `local.yml` that has its example's line, as `just init` makes it, byte for byte as it was. Taking a line out can make no value wrong, so `settable` refuses it
 only what is secret (for `just vault`, or an inline `!vault`) and the host's address; a name made from each VM's
-own, set by hand, may go. The same read back holds it, and the same second look says the value the setting has
+own, set by hand, may go; a role variable still set by hand beside the setting is said to outrank it. A
+role variable set by hand is what `--value` writes too, in place of its line, since the setting would change
+nothing under it, and a key not on a line of its own (a quoted key) is refused rather than set twice. An empty
+`--value` is no value: just cannot tell it from none given, so `--reset` is the way back to a default. The
+same read back holds it, and the same second look says the value the setting has
 now and what applies it.
 
 **The report** is a line per variable under its role or section, every line within 100 columns, a value cut with

@@ -571,7 +571,7 @@ alias list := status
 [arg('NAME', pattern='[a-z][a-z0-9_]*', help='A role (tailscale) or one variable or setting (tailscale_ssh); none shows how to use this')]
 [arg('RESET', long='reset', value='true', help="Put the one setting named back to its default: its line out of local.yml, its example's back")]
 [arg('CHANGED', long='changed', value='true', help='Only what local.yml or vault.yml changes from the defaults; alone, all of it')]
-[arg('VALUE', long='value', pattern='[^\x00-\x1f\x7f]*', help='Set the one setting named to this value, in local.yml (never a secret: just vault)')]
+[arg('VALUE', long='value', pattern='[^\x00-\x1f\x7f]*', help='Set the one setting named to this value, in local.yml (never a secret: just vault; an empty value is none: --reset)')]
 [doc("Each setting's value and where it was set, for a role, a variable or all of them; --value sets one in local.yml, --reset puts it back")]
 [group('use')]
 [no-exit-message]

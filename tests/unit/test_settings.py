@@ -414,7 +414,12 @@ def test_a_setting_of_local_yml_is_explained_too(scenarios) -> None:
 
 def test_a_name_that_is_no_role_variable_or_setting_is_refused(scenarios) -> None:
     result = _run(scenarios, "base", "--", "nonsense")
-    assert result.returncode == 1 and result.stdout == "" and "nonsense is neither a role" in result.stderr
+    assert (
+        result.returncode == 1
+        and result.stdout == ""
+        and "that is neither a role" in result.stderr
+        and "nonsense" not in result.stderr
+    )
 
 
 def test_a_per_vm_file_is_noted_since_ansible_would_apply_it(scenarios) -> None:
@@ -518,8 +523,12 @@ def test_a_value_is_written_as_its_type_takes_it(scenarios, tmp_path, name, valu
 @pytest.mark.parametrize(
     ("name", "value", "said"),
     [
-        ("vm_cores", "eight", "vm_cores takes a whole number, not eight"),
-        ("tailscale_auth_method", "bogus", "tailscale_auth_method takes one of auto, key, web, not bogus"),
+        ("vm_cores", "eight", "vm_cores takes a whole number: the value given is not one"),
+        (
+            "tailscale_auth_method",
+            "bogus",
+            "tailscale_auth_method takes one of auto, key, web: the value given is not one",
+        ),
         ("tailscale_ssh", "maybe", "tailscale_ssh takes true or false"),
         ("tailscale_advertise_tags", "[unclosed", "is not YAML"),
     ],
@@ -607,7 +616,7 @@ def test_what_outranks_local_yml_is_said(scenarios, tmp_path) -> None:
     assert result.returncode == 0, result.stderr[-2000:]
     said = " ".join(result.stdout.split())
     assert 'wrote proxmox_storage: "local-zfs"' in said
-    assert "but hosts.yml outranks local.yml: proxmox_template_storage is still from-the-pve-host" in said
+    assert "but hosts.yml outranks it: proxmox_template_storage is still from-the-pve-host" in said
 
 
 def test_a_write_keeps_the_files_mode_and_leaves_no_scratch_file(scenarios, tmp_path) -> None:
@@ -738,7 +747,7 @@ def test_reset_takes_out_a_per_vm_name_set_by_hand(scenarios, tmp_path) -> None:
         ("vault_github_token", "just vault"),
         ("ansible_host", "inventory/hosts.yml"),
         ("tailscale_login_server", "encrypted (!vault)"),
-        ("nonsense_name", "nonsense_name is no setting"),
+        ("nonsense_name", "that is neither a role"),
     ],
 )
 def test_reset_of_a_secret_or_the_hosts_address_is_refused(scenarios, tmp_path, name, said) -> None:
@@ -759,3 +768,83 @@ def test_reset_names_one_setting_and_never_beside_value(scenarios) -> None:
         assert result.returncode == 1 and "each change one setting, named beside it" in result.stderr, args
     both = _run(scenarios, "base", "--reset=true", "--value=4", "--", "vm_cores")
     assert both.returncode == 1 and "one or the other" in both.stderr
+
+
+# ------------------------------------------------------------------------------------------- the review's ---
+
+
+def test_changed_beside_a_name_at_its_default_says_so(scenarios) -> None:
+    assert "tailscale_accept_dns is at its default" in _text(scenarios, "--changed=true", "--", "tailscale_accept_dns")
+    assert _report(scenarios, "--changed=true", "--", "tailscale_accept_dns")["settings"] == []
+
+
+def test_a_name_internal_to_the_project_is_shown_alone(scenarios) -> None:
+    row = _report(scenarios, "--", "proxmox_api_host")["rows"]["proxmox_api_host"]
+    assert row["section"] == "Internal to the project" and row["change"] is None and "internal" in row["why"]
+
+
+def test_an_unknown_name_is_never_said_back_but_close_ones_are_named(scenarios) -> None:
+    secret_like = "deadbeefcafe0123456789"
+    result = _run(scenarios, "base", "--", secret_like)
+    assert result.returncode == 1 and secret_like not in result.stderr
+    assert "did you mean vm_cores" in _run(scenarios, "base", "--", "vm_core").stderr
+
+
+def test_a_refused_value_is_never_said_back(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    for name, value in (("vm_cores", "abcdefghijk"), ("tailscale_advertise_tags", "[unclosedxyz")):
+        result = _set(scenarios, inventory, name, value)
+        assert result.returncode == 1 and value not in result.stderr, result.stderr[-300:]
+    # A secret of the vault's, where a number goes: refused as the secret it is, unsaid (_run holds that).
+    token = _set(scenarios, inventory, "vm_cores", FAKE["vault_github_token"])
+    assert token.returncode == 1 and "a secret the vault holds" in token.stderr
+
+
+def test_a_role_variable_set_by_hand_is_written_where_it_is(scenarios, tmp_path) -> None:
+    # The setting that feeds it would change nothing: local.yml's own line of the role variable outranks it.
+    inventory = _writable(scenarios, tmp_path)
+    local = _local(inventory)
+    local.write_text(local.read_text() + "claude_code_remote_control: false\n")
+    result = _set(scenarios, inventory, "claude_code_remote_control", "true", "--json=true")
+    assert result.returncode == 0, result.stderr[-2000:]
+    report = json.loads(result.stdout)
+    assert report["wrote"]["wrote"] == "claude_code_remote_control: true" and report["now"]["value"] is True
+    assert any("sets claude_code_remote_control itself" in note for note in report["notes"])
+    assert "\nclaude_remote_control: false\n" in local.read_text()
+
+
+def test_reset_of_a_setting_says_a_role_variable_set_by_hand_still_outranks_it(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    local = _local(inventory)
+    local.write_text(local.read_text() + "claude_code_remote_control: false\n")
+    said = " ".join(_reset(scenarios, inventory, "claude_remote_control").stdout.split())
+    assert "sets claude_code_remote_control itself, which outranks claude_remote_control" in said
+
+
+def test_a_key_not_on_a_line_of_its_own_is_never_written_twice(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    local = _local(inventory)
+    local.write_text(local.read_text().replace("\nvm_cores: 4\n", '\n"vm_cores": 4\n'))
+    before = local.read_bytes()
+    result = _set(scenarios, inventory, "vm_cores", "8")
+    assert result.returncode == 1 and "not on a line of its own" in result.stderr
+    assert local.read_bytes() == before
+
+
+def test_a_group_var_of_hosts_yml_ranks_below_local_yml_as_ansibles_does(scenarios, tmp_path) -> None:
+    # An inventory file's group vars come below group_vars/all/*; its host vars above (proxmox_template_storage).
+    inventory = _writable(scenarios, tmp_path)
+    hosts = yaml.safe_load((inventory / "hosts.yml").read_text())
+    hosts["all"]["children"]["claude_vms"]["vars"]["vm_user"] = "fromhosts"
+    (inventory / "hosts.yml").write_text(yaml.safe_dump(hosts, sort_keys=False))
+    local = _local(inventory)
+    local.write_text(local.read_text() + "vm_user: fromlocal\n")
+    result = _run(scenarios, inventory, "--json=true", "--", "common_user")
+    assert result.returncode == 0, result.stderr[-2000:]
+    row = json.loads(result.stdout)["settings"][0]
+    assert (row["value"], row["via"]) == ("fromlocal", [{"name": "vm_user", "file": "local.yml"}]), row
+
+
+def test_a_group_no_inventory_has_brings_no_warning(scenarios) -> None:
+    result = _run(scenarios, "base", "--", "proxmox_vm")
+    assert result.returncode == 0 and "Could not match supplied host pattern" not in result.stderr

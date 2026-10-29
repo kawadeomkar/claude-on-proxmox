@@ -45,6 +45,7 @@ Exits 0 with the report or the write, 1 when it refuses.
 from __future__ import annotations
 
 import argparse
+import difflib
 import importlib.util
 import json
 import os
@@ -438,6 +439,8 @@ class Settings:
             return None, "the Proxmox host's address is in inventory/hosts.yml", "inventory/hosts.yml"
         if name in self.example_vault or name.startswith("vault_"):
             return None, f"{name} is held in vault.yml", "just vault"
+        if not self.known(name) and not (resetting and name in self.local):
+            return None, self.unknown(name), ""
         role = docs.role_of(name, self.specs)
         target = (self.fed_by(name) or name) if role else name
         if target in self.example_vault:
@@ -448,9 +451,7 @@ class Settings:
         if VaultHelper.get_ciphertext(self.local.get(target), with_tags=False) is not None:
             return None, f"local.yml holds {target} encrypted (!vault)", LOCAL
         if resetting:
-            if role or target in self.example_settings or target in self.local:
-                return target, "", ""
-            return None, f"{name} is no setting", ""
+            return target, "", ""
         if not role and target not in self.example_settings:
             # A value of defaults.yml that is in neither the examples nor a role's argument_specs is internal
             # (docs/reference/settings.md).
@@ -497,11 +498,12 @@ class Settings:
             try:
                 given = yaml.safe_load(raw)
             except yaml.YAMLError as error:
-                raise Refused(f"{target} takes {TAKES[kind]}: {raw} is not YAML") from error
+                raise Refused(f"{target} takes {TAKES[kind]}: the value given is not YAML") from error
         result = ArgumentSpecValidator({target: spec}).validate({target: given})
         if result.error_messages:
             takes = f"one of {', '.join(map(str, spec['choices']))}" if "choices" in spec else TAKES.get(kind, kind)
-            raise Refused(f"{target} takes {takes}, not {text.one_line(raw, 80)}")
+            # Never the value said back: a secret pasted here by mistake would be on the screen.
+            raise Refused(f"{target} takes {takes}: the value given is not one")
         if kind in ("str", "path"):
             return raw  # as typed: a path keeps its ~, for every machine that reads it
         return json.loads(json.dumps(result.validated_parameters[target]))
@@ -586,15 +588,23 @@ class Settings:
             if where == "just vault":
                 said += ". The value given was not used or printed, but your shell's history keeps it"
             raise Refused(said)
-        value = self.coerce(target, name, raw)
-        if any(secret in raw or secret in json.dumps(value) for secret in self.hunted):
+        if any(secret in raw for secret in self.hunted):
             # A secret of the vault's would be in local.yml in the clear, and printed by every report after.
             raise Refused(
                 f"that value is a secret the vault holds, so {target} would hold it in the clear: not written"
             )
         source, before = self._read_local()
+        by_hand = name != target and name in before
+        if by_hand:
+            # local.yml sets the role variable itself, which outranks the setting that feeds it: write it there,
+            # or the value written would change nothing.
+            target = name
+        value = self.coerce(target, name, raw)
         lines = source.splitlines(keepends=True)
         found = self._line_of(lines, target)
+        if found is None and target in before:
+            # Set, but not on a line of its own (a quoted key, a flow mapping): a line added would be a second key.
+            raise Refused(f"{LOCAL} sets {target}, but not on a line of its own: change it by hand")
         if found is not None and before.get(target) == value:
             return {"asked": name, "wrote": None, "name": target, "value": value, "line": found + 1}
         if found is not None:
@@ -616,6 +626,7 @@ class Settings:
             "value": value,
             "line": start + 1,
             "how": how,
+            "by_hand": by_hand,
         }
 
     def example_lines(self, name: str) -> list[str]:
@@ -675,7 +686,8 @@ class Settings:
         if role in self.contexts:
             return self.contexts[role]
         group = self.where.get(role, "claude_vms")
-        hosts = self.inventory.get_hosts(group)
+        # A group the inventory lacks (claude_vm_pending, which a run adds) would make Ansible warn of a pattern.
+        hosts = self.inventory.get_hosts(group) if group in self.inventory.groups else []
         if hosts:
             host, placeholder = hosts[0], False
         else:
@@ -689,10 +701,12 @@ class Settings:
             loader=self.loader,
         )
         values = self.variables.get_vars(play=play, host=host)
-        inventory_layer = {name: value for name, value in host.vars.items() if not name.startswith("ansible_")}
-        for each in host.get_groups():
+        # hosts.yml as Ansible ranks it: a host's own vars above group_vars/all/*, a group's below even defaults.yml.
+        host_layer = {name: value for name, value in host.vars.items() if not name.startswith("ansible_")}
+        group_layer: dict = {}
+        for each in sorted(host.get_groups(), key=lambda group: group.depth, reverse=True):
             for name, value in each.get_vars().items():
-                inventory_layer.setdefault(name, value)
+                group_layer.setdefault(name, value)
         self.contexts[role] = {
             "group": group,
             "placeholder": placeholder,
@@ -700,10 +714,11 @@ class Settings:
             "templar": Templar(loader=self.loader, variables=values),
             "layers": [  # highest first, each named for the file a person edits
                 ("internal", self._read(REPO / "roles" / role / "vars" / "main.yml")),
-                ("hosts.yml", inventory_layer),
+                ("hosts.yml", host_layer),
                 ("vault.yml", self.vault),
                 ("local.yml", self.local),
                 ("default", self.project),
+                ("hosts.yml", group_layer),
                 ("default", self._read(REPO / "roles" / role / "defaults" / "main.yml")),
             ],
         }
@@ -833,26 +848,77 @@ class Settings:
             context["values"][name] = trust_as_template(default) if isinstance(default, str) else default
         return self.row(role, name, {})
 
-    def everything(self) -> list[dict]:
-        rows = []
-        proxmox = self.inventory.get_hosts("proxmox")
+    def known(self, name: str) -> bool:
+        """A name this can show: a role's variable, a setting of either example, a project default, the address."""
+        return bool(
+            docs.role_of(name, self.specs)
+            or name in self.example_settings
+            or name in self.example_vault
+            or name in self.defaults
+            or name == "ansible_host"
+        )
+
+    def unknown(self, name: str) -> str:
+        """Why a name is refused, never saying it back - a secret pasted for a name would be on the screen - but
+        naming the known ones close to it."""
+        names = {*self.specs, *(var for options in self.specs.values() for var in options), *self.example_settings}
+        close = difflib.get_close_matches(name, sorted(names), n=3, cutoff=0.75)
+        said = f"that is neither a role ({', '.join(sorted(self.specs))}) nor a variable or setting"
+        return said + (f" (did you mean {' or '.join(close)}?)" if close else "")
+
+    def one_setting(self, name: str) -> dict:
+        """The row of one name that is no role's variable: built alone, never by templating every setting."""
+        if name == "ansible_host":
+            return self.host_row()
+        if name in self.example_vault:
+            return self.vault_row(name, "Secrets")
+        section = next(
+            (
+                title
+                for title, groups in docs.parse_example(REPO / LOCAL.replace(".yml", ".yml.example"), secret=False)
+                for _prose, found in groups
+                if name in {each for each, _example in found}
+            ),
+            "Internal to the project",
+        )
+        return self.setting(name) | {"section": section}
+
+    def vault_row(self, name: str, section: str) -> dict:
+        value = self.vault.get(name)
+        state = "not set" if value in ("", None) else "placeholder" if self.placeholder(name, value) else "set"
+        return {
+            "name": name,
+            "section": section,
+            "role": None,
+            "kind": "secret",
+            "value": None,
+            "secret": state,
+            "set_in": "vault.yml",
+            "via": [],
+            "changed": state == "set",
+            "change": "just vault",
+        }
+
+    def host_row(self) -> dict:
+        proxmox = self.inventory.get_hosts("proxmox") if "proxmox" in self.inventory.groups else []
         address = proxmox[0].vars.get("ansible_host") if proxmox else None
         address = None if address is None else str(address)  # Ansible's tagged str, made plain
         example = yaml.safe_load((REPO / "inventory" / "hosts.yml.example").read_text())
         example = example["all"]["children"]["proxmox"]["hosts"]["pve"]["ansible_host"]
-        rows.append(
-            {
-                "name": "ansible_host",
-                "section": "Proxmox",
-                "role": None,
-                "set_in": "hosts.yml",
-                "via": [],
-                "kind": "placeholder" if address in (None, example) else "value",
-                "value": None if address in (None, example) else address,
-                "changed": address not in (None, example),
-                "change": "inventory/hosts.yml",
-            }
-        )
+        return {
+            "name": "ansible_host",
+            "section": "Proxmox",
+            "role": None,
+            "set_in": "hosts.yml",
+            "via": [],
+            "kind": "placeholder" if address in (None, example) else "value",
+            "value": None if address in (None, example) else address,
+            "changed": address not in (None, example),
+            "change": "inventory/hosts.yml",
+        }
+
+    def everything(self) -> list[dict]:
+        rows = [self.host_row()]
         for title, groups in docs.parse_example(REPO / LOCAL.replace(".yml", ".yml.example"), secret=False):
             for _prose, found in groups:
                 for name, _example in found:
@@ -860,24 +926,7 @@ class Settings:
         for title, groups in docs.parse_example(REPO / VAULT.replace(".yml", ".yml.example"), secret=True):
             for _prose, found in groups:
                 for name, _example in found:
-                    value = self.vault.get(name)
-                    state = (
-                        "not set" if value in ("", None) else "placeholder" if self.placeholder(name, value) else "set"
-                    )
-                    rows.append(
-                        {
-                            "name": name,
-                            "section": f"Secrets: {title}",
-                            "role": None,
-                            "kind": "secret",
-                            "value": None,
-                            "secret": state,
-                            "set_in": "vault.yml",
-                            "via": [],
-                            "changed": state == "set",
-                            "change": "just vault",
-                        }
-                    )
+                    rows.append(self.vault_row(name, f"Secrets: {title}"))
         return rows
 
     def notes(self) -> list[str]:
@@ -1070,16 +1119,18 @@ def written(settings: Settings, result: dict, as_json: bool, inventory: Path, pa
     target, asked = result["name"], result["asked"]
     fresh = Settings(inventory, password)
     now = _now(fresh, asked, target)
-    fresh.check([now])
+    fresh.check([now] if now else [])
     notes = []
     if result["wrote"] is None:
         notes.append(f"{LOCAL} sets it already, on line {result['line']}: nothing was written")
     else:
-        if asked != target:
+        if result.get("by_hand"):
+            notes.append(f"{LOCAL} sets {asked} itself, which outranks the setting that feeds it: written there")
+        elif asked != target:
             notes.append(f"{asked} is set through {target}, the setting local.yml.example names for it")
-        if now["kind"] == "value" and now["value"] != result["value"] and now["set_in"] != "local.yml":
-            notes.append(f"but {now['set_in']} outranks local.yml: {asked} is still {shown(now)}")
-        notes += [f"{said}, on the run that does" for said in now.get("set_by_run", [])]
+        if now and now["kind"] == "value" and now["value"] != result["value"]:
+            notes.append(f"but {source(now)[0]} outranks it: {asked} is still {shown(now)}")
+        notes += [f"{said}, on the run that does" for said in (now or {}).get("set_by_run", [])]
         notes += fresh.applies(target)
     if as_json:
         print(json.dumps({"wrote": result, "now": now, "notes": notes}, indent=2))
@@ -1117,6 +1168,12 @@ def resetted(result: dict, as_json: bool, inventory: Path, password: str) -> int
     else:
         if now and now["kind"] == "value":
             notes.append(f"{asked} is now {shown(now)}, from {source(now)[0]}")
+        by_hand = sorted(set(docs.set_by(target, fresh.feeds, fresh.specs)) & set(fresh.local))
+        if by_hand:
+            notes.append(
+                f"but {LOCAL} sets {', '.join(by_hand)} itself, which outranks {target}: just settings "
+                f"{by_hand[0]} --reset takes it out"
+            )
         notes += fresh.applies(target)
     if as_json:
         print(json.dumps({"reset": result, "now": now, "notes": notes}, indent=2))
@@ -1177,12 +1234,10 @@ def main(argv: list[str]) -> int:
             role = docs.role_of(args.name, settings.specs)
             if role:
                 rows = settings.role(role, args.name)
-            elif args.name in settings.defaults or args.name in settings.example_vault or args.name == "ansible_host":
-                rows = [row for row in settings.everything() if row["name"] == args.name]
+            elif settings.known(args.name):
+                rows = [settings.one_setting(args.name)]
             else:
-                raise Refused(
-                    f"{args.name} is neither a role ({', '.join(sorted(settings.specs))}) nor a variable or setting"
-                )
+                raise Refused(settings.unknown(args.name))
             target = {"kind": "variable", "name": args.name}
         if args.changed == "true":
             rows = [row for row in rows if row.get("changed")]
@@ -1198,7 +1253,9 @@ def main(argv: list[str]) -> int:
             )
         )
         return 0
-    if target["kind"] == "variable":
+    if target["kind"] == "variable" and not rows:
+        lines = [[screen.seg(f"{args.name} is at its default: local.yml and vault.yml do not change it.", "d")]]
+    elif target["kind"] == "variable":
         lines = one(rows[0])
     else:
 

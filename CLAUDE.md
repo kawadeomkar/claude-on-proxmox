@@ -519,8 +519,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   are refused, a secret's value never said back. The rest is held to its `argument_specs` type by Ansible's
   `ArgumentSpecValidator`, written as `just init` writes (JSON in place of its line or its example's line), read
   back with every other key unchanged before it replaces the file atomically, or nothing is written. `--reset`
-  takes the setting's line out and puts its example's commented line back (set then reset leaves the file byte for
-  byte as it was), refused only a secret and the host's address, since taking a line out makes no value wrong. The vault's
+  takes the setting's line out and puts its example's commented line back (set then reset leaves a file that has
+  its example's line, as `just init` makes it, byte for byte as it was), refused only a secret and the host's address, since taking a line out makes no value wrong. The vault's
   password file is the recipe's (`vault_args`),
   never looked for by the tool. Its tests (`tests/unit/test_settings.py`) run it only against inventories made from
   the example files with fake secrets, each run with a `HOME` of its own and the collections' path pinned, and fail
