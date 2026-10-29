@@ -365,7 +365,15 @@ def test_a_resize_mid_run_leaves_no_region_on_the_screen(stand_in):
 
 
 def test_ctrl_c_ends_the_run_with_the_region_gone_and_the_tab_saying_so(stand_in):
-    ran = _deploy(stand_in, interrupt="waiting for you")
+    # ansible-core now and then hangs on a Ctrl-C, a known bug (ansible/ansible#87812): CI's run sat in the browser
+    # wait, between its tries, for two minutes after it. A run that hangs is run once more; any other failure is not.
+    # The second run goes once the ansible-core this project pins has the fix.
+    try:
+        ran = _deploy(stand_in, interrupt="waiting for you", timeout=60)
+    except pytest.fail.Exception as hung:
+        if "did not finish within" not in str(hung):
+            raise
+        ran = _deploy(stand_in, interrupt="waiting for you", timeout=60)
     assert ran.rc != 0
     assert ran.screen.titles[-1] == "deploy alpha · stopped", ran.screen.titles
     ran.assert_drawn_and_gone()
