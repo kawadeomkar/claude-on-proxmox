@@ -12,6 +12,11 @@
 # changed by one validated lineinfile on the example's own line; the vault is
 # written once, at the end, encrypted: it never reaches the disk in plaintext.
 #
+# Tailscale is optional: whether the VMs use it is asked while local.yml does
+# not say (tailscale_enabled, written y or n), and, for a y, an auth key for
+# the vault while it holds none (vault_tailscale_auth_key; Enter is the web
+# login during just deploy).
+#
 # Before the secret is asked for, at a terminal, just init offers to make the
 # token itself (tasks/init_access.yml): it shows what tools/proxmox-access.sh
 # would run on the Proxmox host, over root SSH, and runs it on a y - the one
@@ -116,8 +121,17 @@
     init_host_missing: "{{ init_hosts_current in ['', init_host_placeholder] }}"
 
     init_local_settings: "{{ (init_local_read.content | b64decode | from_yaml) or {} }}"
-    # --tailscale on or off, as the value tailscale_enabled takes.
+    # --tailscale on or off, as the value tailscale_enabled takes, and as the
+    # answer to the question it stands for.
     init_tailscale_given: "{{ {'on': true, 'off': false}[init_given.tailscale] if init_given.tailscale is defined else none }}"
+    init_tailscale_given_answer: "{{ '' if init_tailscale_given is none else ('y' if init_tailscale_given else 'n') }}"
+    # The tailscale_enabled this run writes, from the answer, typed or given.
+    init_tailscale_value: "{{ init_answers.tailscale | default('') == 'y' }}"
+    # Tailscale on by a choice - y, --tailscale on, or true in local.yml - and
+    # not by the default nobody chose: only then is the auth key asked for.
+    init_tailscale_chosen: >-
+      {{ init_answers.tailscale | default('') == 'y'
+         or (init_answers.tailscale is not defined and init_local_settings.tailscale_enabled | default(false) | bool) }}
     init_token_user: "{{ init_local_settings.proxmox_api_user | default(init_token_user_default) }}"
     init_token_name: "{{ init_local_settings.proxmox_api_token_id | default(init_token_name_default) }}"
     # The token's parts this run writes: those that differ from the defaults,
@@ -149,7 +163,9 @@
     # What this run puts in the vault, and whether it writes the vault at all:
     # a plaintext one at a terminal always, as there is no leaving it plaintext.
     init_secret_answered: "{{ init_hidden_answers.secret is defined }}"
-    init_vault_answered: "{{ init_secret_answered or init_answers.github_user is defined }}"
+    init_tailscale_key_answered: "{{ init_hidden_answers.tailscale_key is defined }}"
+    init_vault_answered: >-
+      {{ init_secret_answered or init_answers.github_user is defined or init_tailscale_key_answered | bool }}
     # Whether this run wrote the vault, once the last write has run or been skipped.
     init_vault_wrote: "{{ init_vault_reread is not skipped }}"
     init_vault_writes: >-
@@ -158,10 +174,13 @@
       {{ init_vault_text | with_setting('vault_proxmox_api_token_secret', init_hidden_answers.secret,
                                         init_secret_placeholder)
          if init_hidden_answers.secret is defined else init_vault_text }}
+    init_vault_with_github: >-
+      {{ init_vault_with_secret | with_setting('vault_github_username', init_answers.github_user,
+                                               init_github_placeholder)
+         if init_answers.github_user is defined else init_vault_with_secret }}
     init_vault_new_text: >-
-      {{ (init_vault_with_secret | with_setting('vault_github_username', init_answers.github_user,
-                                                init_github_placeholder)
-          if init_answers.github_user is defined else init_vault_with_secret) | regex_replace('\n+$', '') }}
+      {{ (init_vault_with_github | with_setting('vault_tailscale_auth_key', init_hidden_answers.tailscale_key)
+          if init_tailscale_key_answered | bool else init_vault_with_github) | regex_replace('\n+$', '') }}
 
     # The token's secret, given: from --token-secret-file's file (a path relative
     # to the checkout, or ~; just init makes a relative one absolute, from where
@@ -175,8 +194,17 @@
       {{ 'the secret in --token-secret-file (' ~ init_given.token_secret_file ~ ')'
          if init_given.token_secret_file is defined else 'CLAUDE_ON_PROXMOX_TOKEN_SECRET' }}
     init_any_given: "{{ init_given | length > 0 or init_secret_given }}"
-    # This run writes tailscale_enabled: given, and not set.
-    init_tailscale_writes: "{{ init_given.tailscale is defined and init_local_settings.tailscale_enabled is not defined }}"
+    # This run writes tailscale_enabled: answered or given, and not set.
+    init_tailscale_writes: "{{ init_answers.tailscale is defined and init_local_settings.tailscale_enabled is not defined }}"
+    # What the report names as optional in the vault: the auth key only while
+    # Tailscale is on, could use one, and the vault holds none.
+    init_vault_optional: >-
+      {{ ['vault_github_token', 'vault_anthropic_api_key']
+         + ([] if init_tailscale_key_answered | bool or init_tailscale_key_set | default(false) | bool
+                  or init_answers.tailscale | default('') == 'n'
+                  or not (init_local_settings.tailscale_enabled | default(true) | bool)
+                  or init_local_settings.tailscale_auth_method | default('auto') == 'web'
+            else ['vault_tailscale_auth_key']) }}
     # The vault is plaintext at the end of the run: every recipe refuses it.
     init_vault_plaintext: "{{ not init_vault_encrypted and not init_vault_wrote }}"
 
@@ -522,27 +550,68 @@
       when: init_vault_readable and init_github_set | length == 0
 
     # -------------------------------------------------------------- Tailscale ---
-    # Not asked (it is on by default, and the notice says how to turn it off):
-    # --tailscale on or off writes it, which also ends the notice.
+    # Whether the VMs use Tailscale, asked while local.yml does not say, and
+    # written either way: n is never asked again, and y is the setting every VM
+    # deployed from then on follows, until tailscale_enabled changes in
+    # local.yml. --tailscale on or off answers it without a terminal. Enter
+    # writes nothing, like every question here, and Tailscale stays on, the
+    # default, until it is answered.
+    - name: Ask whether the VMs use Tailscale
+      ansible.builtin.include_tasks: tasks/init_ask.yml
+      vars:
+        init_ask_name: tailscale
+        init_ask_label: Use Tailscale on the VMs? y or n
+        init_ask_kind: yes_no
+        init_ask_hidden: false
+        init_ask_given: "{{ init_tailscale_given_answer }}"
+        init_ask_flag: --tailscale
+        init_ask_text:
+          - Tailscale puts each VM on your tailnet, so ssh and VS Code reach it from anywhere, not
+          - only this LAN. y needs a Tailscale account. n keeps it off the VMs, reached on the LAN as
+          - ever, and the next deploy removes it from any VM this project put it on. Enter to decide
+          - later; until then it is on. tailscale_enabled in local.yml changes it any time.
+      when: init_local_settings.tailscale_enabled is not defined
+
     - name: Write tailscale_enabled into local.yml
       ansible.builtin.include_tasks: tasks/init_local_setting.yml
       vars:
         init_setting_key: tailscale_enabled
-        init_setting_value: "{{ init_tailscale_given }}"
-      when: >-
-        (init_ask | bool or init_given.tailscale is defined)
-        and init_given.tailscale is defined and init_local_settings.tailscale_enabled is not defined
+        init_setting_value: "{{ init_tailscale_value }}"
+      when: (init_ask | bool or init_given.tailscale is defined) and init_tailscale_writes | bool
 
-    # Written nothing: the default flows through defaults.yml as before, so a
-    # later change to the project's default still reaches the person.
+    # Only for Tailscale chosen, and while the vault holds no key; kept with the
+    # other answers for the vault, written once, encrypted, at the end. Enter
+    # leaves each VM to Tailscale's sign-in page during just deploy, and the
+    # next just init asks again. Never taken from the command line.
+    - name: Ask for a Tailscale auth key
+      ansible.builtin.include_tasks: tasks/init_ask.yml
+      vars:
+        init_ask_name: tailscale_key
+        init_ask_label: Tailscale auth key
+        init_ask_kind: auth_key
+        init_ask_hidden: true
+        init_ask_given: ""
+        init_ask_flag: ""
+        init_ask_text:
+          - "Optional: an auth key joins each new VM to your tailnet during just deploy, with nothing"
+          - "to click. Make one in Tailscale's admin console (Settings, Keys): reusable, pre-approved,"
+          - tagged, never ephemeral. Enter to go without one, and sign each VM in on Tailscale's page
+          - during just deploy.
+      when: >-
+        init_ask | bool and init_vault_readable and init_tailscale_chosen | bool
+        and not init_tailscale_key_set | default(false) | bool
+        and init_local_settings.tailscale_auth_method | default('auto') != 'web'
+
+    # Unanswered, the default flows through defaults.yml as before, so a later
+    # change to the project's default still reaches the person.
     - name: Say that Tailscale is on by default
       ansible.builtin.debug:
         msg: >-
           NOTICE  Tailscale is on by default: each VM joins your tailnet, by
           {{ 'vault_tailscale_auth_key' if init_tailscale_key_set | default(false) | bool
-             else "Tailscale's sign-in page during just deploy" }}. Without a Tailscale account, turn it off with
-          tailscale_enabled: false in inventory/group_vars/all/local.yml (or just init --tailscale off).
-      when: init_local_settings.tailscale_enabled is not defined and init_given.tailscale is not defined
+             else "Tailscale's sign-in page during just deploy" }}. Without a Tailscale account, turn it off: answer n
+          at just init, set tailscale_enabled: false in inventory/group_vars/all/local.yml, or just init --tailscale off.
+      when: init_local_settings.tailscale_enabled is not defined and init_answers.tailscale is not defined
 
     # ------------------------------------------------------------ 4. the token ---
     # Asked last, straight before the vault: a token the offer makes has its
@@ -588,8 +657,9 @@
             - name: Stop at a vault line the answer cannot replace
               ansible.builtin.fail:
                 msg: >-
-                  {{ init_vault_file }}'s vault_proxmox_api_token_secret or vault_github_username line cannot take
-                  the answer in place (a value over several lines?): set it with just vault.
+                  {{ init_vault_file }}'s vault_proxmox_api_token_secret, vault_github_username or
+                  vault_tailscale_auth_key line cannot take the answer in place (a value over several lines?): set it
+                  with just vault.
 
         # Only when there is no password anywhere: a .vault_pass of the person's
         # own is never read as text, rewritten or re-moded. One made here is made
@@ -700,15 +770,18 @@
             inventory/group_vars/all/local.yml   {{ key }}: {{ value | to_json }}
           {% endfor %}
           {% if init_tailscale_writes | bool %}
-            inventory/group_vars/all/local.yml   tailscale_enabled: {{ init_tailscale_given | to_json }}
+            inventory/group_vars/all/local.yml   tailscale_enabled: {{ init_tailscale_value | to_json }}
           {% endif %}
           {% if init_access_made | default(false) | bool %}
             the Proxmox host                     the token {{ init_access_user }}!{{ init_access_token }}, with what it needs
           {% endif %}
           {% if init_vault_wrote %}
-            inventory/group_vars/all/vault.yml   {{ ((['the token secret'] if init_secret_answered else [])
-                                                     + (['the GitHub username'] if init_answers.github_user is defined else []))
-                                                    | join(' and ') ~ (', ' if init_vault_answered else '') }}encrypted
+          {% set init_vault_said = (['the token secret'] if init_secret_answered else [])
+                                   + (['the GitHub username'] if init_answers.github_user is defined else [])
+                                   + (['the Tailscale auth key'] if init_tailscale_key_answered | bool else []) %}
+            inventory/group_vars/all/vault.yml   {{ ((init_vault_said[:-1] | join(', ') ~ ' and ' ~ init_vault_said[-1])
+                                                     if init_vault_said | length > 1 else init_vault_said | join)
+                                                    ~ (', ' if init_vault_answered else '') }}encrypted
           {% endif %}
           {% endif %}
           {% if init_left | length > 0 %}
@@ -718,7 +791,7 @@
                   and init_access_wrote | default({}) | length == 0 %}
           Every value a first deploy needs is set.
           {% endif %}
-          Optional, with just vault: vault_github_token, vault_anthropic_api_key, vault_tailscale_auth_key.
+          Optional, with just vault: {{ init_vault_optional | join(', ') }}.
 
     # NEXT STEPS (callback_plugins/claude_on_proxmox.py): what the report says
     # is left while a value is missing or the vault cannot be opened - the

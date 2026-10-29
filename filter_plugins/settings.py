@@ -22,6 +22,11 @@ _LABEL = re.compile(r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)")
 _TOKEN_ID = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z][A-Za-z0-9._-]*![A-Za-z][A-Za-z0-9._-]*")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _GITHUB_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
+# Tailscale's tskey-auth-..., an OAuth client secret with its ?ephemeral=false,
+# or a key of the person's own control server (Headscale's are plain hex): one
+# word, never a prefix of Tailscale's alone. Never an API access token, which the
+# same Keys page makes and which joins nothing.
+_AUTH_KEY = re.compile(r"(?!tskey-api-)[A-Za-z0-9._:/?=&+-]{20,512}")
 
 RULES = {
     "host": (
@@ -32,6 +37,11 @@ RULES = {
     "uuid": "the 36-character secret pveum printed, like 01234567-89ab-cdef-0123-456789abcdef",
     "github_login": (
         "a GitHub username: at most 39 letters, digits and single hyphens, not starting or ending with a hyphen"
+    ),
+    "auth_key": (
+        "a key as Tailscale printed it (tskey-auth-..., or an OAuth client secret, tskey-client-..., which needs"
+        " tailscale_advertise_tags) or your control server did, never an API access token (tskey-api-...): one word"
+        " of at least 20 letters, digits and . _ : / ? = & + -"
     ),
     "yes_no": "y or n",
     "choice": "one of the numbers listed",
@@ -60,7 +70,7 @@ def init_answer(value, kind, choices=None):
     """Return ``value`` in the normal form of ``kind``, or ``""`` when it is not one.
 
     host: an address or a DNS name, as typed (an IP address in its compressed
-    form). token_id and github_login: as typed. uuid: lowercased. yes_no:
+    form). token_id, github_login and auth_key: as typed. uuid: lowercased. yes_no:
     ``y`` or ``n``. choice: the item of ``choices`` the number names. Leading
     and trailing whitespace is never part of an answer. An empty value is
     ``""``, the answer that decides later.
@@ -79,6 +89,8 @@ def init_answer(value, kind, choices=None):
         return text if _UUID.fullmatch(text) else ""
     if kind == "github_login":
         return text if _GITHUB_LOGIN.fullmatch(text) else ""
+    if kind == "auth_key":
+        return text if _AUTH_KEY.fullmatch(text) else ""
     if kind == "yes_no":
         return {"y": "y", "yes": "y", "n": "n", "no": "n"}.get(text.lower(), "")
     items = list(choices or [])

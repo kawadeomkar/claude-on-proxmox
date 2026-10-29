@@ -278,9 +278,11 @@ login_desktop: true
 # ------------------------------------------------------------ Tailscale -----
 # Each VM joins your tailnet, so you can reach it - ssh, VS Code, a dev server -
 # from anywhere your other devices are, not only from this LAN
-# (docs/guides/tailscale.md). Optional, and on by default. false turns it
-# off again where this project installed it: logged out, stopped and removed.
-# A Tailscale installed on a VM by hand is left alone either way.
+# (docs/guides/tailscale.md). Optional: just init asks, and writes the answer
+# into local.yml; on by default until then. false installs nothing, and turns
+# it off again where this project installed it: logged out, stopped and
+# removed, said first. A Tailscale installed on a VM by hand is left alone
+# either way.
 tailscale_enabled: true
 # Optional: an auth key (vault_tailscale_auth_key) joins each new VM during
 # configuration, with nothing to click. Without one, just login --only tailscale - and

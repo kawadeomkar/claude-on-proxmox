@@ -250,7 +250,11 @@ pytest over `tests/unit/`: 2229 tests. By file:
   failing and a run at a terminal not; `ANSIBLE_VAULT_PASSWORD_FILE` alone and beside `.vault_pass`, an
   encryption that fails said, a host named without an `ansible_host` taken as set, a vault line over several
   lines left alone, a vault left plaintext said, and a run that keeps the modules' files refused; the
-  Tailscale notice, naming the auth key or the sign-in page, gone once `tailscale_enabled` is set, and
+  Tailscale question, `n` written and never asked again, `y` written and its auth key, hidden, written
+  into the vault and in no output or log, Enter at the key asked again next time, a wrong key asked once
+  more and left unsaid, no key asked with one in the vault or the web login only, Enter at the question
+  writing nothing and saying Tailscale stays on, `--tailscale on` asking only for the key; the Tailscale
+  notice, naming the auth key or the sign-in page, gone once `tailscale_enabled` is set, and
   `--tailscale` writing it; NEXT STEPS keeping each value still to set, as the report says it, with no
   terminal and with Enter at each, in a scripted run that then fails too, and a vault that cannot be opened;
   nothing once every value is set, even with the vault left plaintext, which the checks say, and no `just

@@ -35,6 +35,8 @@ What these guard:
   the user's own), and carries nothing the VM printed but plain text.
 - configure.yml runs the role last, in a rescued block, so a failure leaves the
   VM its alias and fails the run at its end - or under just deploy, deploy's.
+  Off, it runs the role only on a VM the role installed Tailscale on, to remove
+  it, said first; any other VM gets one read and nothing of the role.
 - Every test setup keeps off Tailscale's services and this machine's tailscale:
   this harness, the Molecule scenarios, the Vagrantfile; and the role's
   scenario is in the justfile's scenario_roles and CI's matrix.
@@ -1197,12 +1199,84 @@ def test_ownership_asks_dpkg_rather_than_package_facts():
     assert "dpkg-query" in (ROLE / "tasks" / "ownership.yml").read_text()
 
 
+def _configure_block() -> dict:
+    """configure.yml's Tailscale block, as the configure play runs it."""
+    plays = yaml.safe_load((REPO / "playbooks" / "configure.yml").read_text())
+    play = next(play for play in plays if play.get("name") == "Configure Claude development VMs")
+    return play["tasks"][0]
+
+
+@pytest.fixture(scope="module")
+def switched_off(tmp_path_factory):
+    """configure.yml's own block with Tailscale off: a VM it never reached, one it installed it on, and one on.
+
+    The whole role runs here, main.yml and all, so nothing may reach this machine's apt, systemd or tailscaled:
+    check mode, which writes nothing; no tailscaled unit; the installed VM's marker without a package, as a run
+    that failed half way leaves it; and the VM that is on, a Tailscale installed by hand, which the role only reads.
+    The removal itself, apt's and systemd's, is the role's Molecule scenario's (side_effect.yml): here it is reached,
+    said, and rescued where check mode stops it.
+    """
+    root = tmp_path_factory.mktemp("tailscale-off")
+    hosts = _hosts(
+        root,
+        {
+            "never": {"ours": False, "package": False, "tailscale_enabled": False},
+            "installed": {"package": False, "tailscale_enabled": False},
+            "on": {"ours": False, "ts": _joined("on", hostname="mine")},
+        },
+    )
+    (root / "installed" / "markers" / "tailscale-installed").write_text("installed by the role\n")
+    playbook = root / "configure-tailscale.yml"
+    play = {
+        "name": "Configure's Tailscale",
+        "hosts": "claude_vms",
+        "gather_facts": False,
+        "tasks": [_configure_block()],
+    }
+    playbook.write_text(json.dumps([play]))
+    extra = EXTRA | {"tailscale_unit_path": str(root / "no-such-unit")}
+    report = _run(root, playbook, hosts, "-e", json.dumps(extra), "--forks", "3", "--check")
+    return root, report
+
+
+def test_off_runs_nothing_of_the_role_where_it_never_installed_tailscale(switched_off):
+    root, report = switched_off
+    assert report["rc"] == 0, _failures(report)
+    ran = [name for name, host, result in _results(report) if host == "never" and not result.get("skipped")]
+    assert ran == ["Look for a Tailscale this project installed, now that it is off"], ran
+    assert _calls(root, "never") == []
+
+
+def test_off_removes_a_tailscale_the_role_installed_and_says_so_first(switched_off):
+    root, report = switched_off
+    said = _messages(report, "absent | Say that Tailscale is being removed")
+    # Said as what would happen: the run is --check, which removes nothing.
+    assert said == {
+        "installed": (
+            "installed: tailscale_enabled is false, so the Tailscale this project installed here would be logged out"
+            " and removed; check mode changes nothing."
+        )
+    }, said
+    # On, the stat is skipped and the role runs as ever.
+    ran = {name for name, host, result in _results(report) if host == "on" and not result.get("skipped")}
+    assert "Look for a Tailscale this project installed, now that it is off" not in ran
+    assert any(name.startswith("tailscale : ") for name in ran), ran
+
+
 def test_configure_runs_the_role_last_in_a_rescued_block_and_deploy_defers_its_failure():
     plays = yaml.safe_load((REPO / "playbooks" / "configure.yml").read_text())
     play = next(play for play in plays if play.get("name") == "Configure Claude development VMs")
     block = play["tasks"][0]
+    assert block == _configure_block()
     assert block["tags"] == ["tailscale"]
-    assert block["block"][0]["ansible.builtin.import_role"] == {"name": "tailscale"}
+    # Off, one read decides whether the role runs at all: only where it installed Tailscale. On the task, not the
+    # block, whose condition its rescue would share.
+    marker, role = block["block"]
+    assert marker["ansible.builtin.stat"] == {"path": "{{ tailscale_installed_marker_path }}"}
+    assert marker["when"] == "not (tailscale_enabled | bool)"
+    assert role["ansible.builtin.import_role"] == {"name": "tailscale"}
+    assert role["when"] == "tailscale_enabled | bool or claude_vm_tailscale_marker.stat.exists | default(false)"
+    assert "when" not in block
     assert any("claude_vm_configure_failures" in json.dumps(task) for task in block["rescue"])
     assert "tailscale" not in [role["role"] for role in play["roles"]]
     last = plays[-1]
