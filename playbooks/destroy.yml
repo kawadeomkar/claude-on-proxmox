@@ -37,6 +37,11 @@
     # plain_text since a direct ansible-playbook -e skips the justfile's check.
     claude_vm_confirm_names: >-
       {{ (vm_name | default('', true) | string | plain_text).split(',') | map('trim') | select | list }}
+    # Seconds between two asks of a started VM's guest agent, 36 asks at most:
+    # three minutes for a VM to boot and take its address. A play var, so only
+    # -e changes it: tests/unit/test_release.py does, against a fake agent
+    # that answers on its third ask.
+    claude_vm_release_agent_delay: 5
 
   vars_prompt:
     - name: confirm_destroy
@@ -217,7 +222,7 @@
             and ((claude_vm_release_agent.json.data.result | default([], true)) | guest_ipv4(claude_vm_release_mac)
                  | default('', true)) | length > 0
           retries: 36
-          delay: 5
+          delay: "{{ claude_vm_release_agent_delay }}"
           failed_when: false
           no_log: true
           loop: "{{ claude_vm_release_configs.results | default([]) | selectattr('status', 'defined') | selectattr('status', 'equalto', 200) | list }}"
