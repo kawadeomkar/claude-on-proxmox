@@ -27,7 +27,8 @@ What these guard:
   answer, and fail the run only after every VM, those after them included, has
   had its turn.
 - No code at all (Enter, or a run with no terminal) ends the attempt - claude is
-  killed rather than left waiting on its pipe - and is not a failure.
+  ended rather than left waiting on its pipe, by a TERM, and by a KILL only
+  while it outlives that by a second - and is not a failure.
 - A VM whose API key is its login is never sent through the sign-in.
 - Several names are signed in one after another, never together, and the steps
   on this machine never run in a test.
@@ -56,6 +57,7 @@ import http.client
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -932,6 +934,47 @@ def test_the_code_is_handed_only_into_the_pipe(tmp_path):
         finally:
             os.close(reader)
             pipe.unlink()
+
+
+def test_claude_is_ended_with_a_term_and_killed_only_if_it_outlives_that_by_a_second(tmp_path):
+    # An attempt nobody completed is ended by its recorded pid: a TERM, on
+    # which claude exits at once, and a KILL only for a pid still there a
+    # second later - never one sent blindly, to a pid claude no longer holds.
+    # Run traced (sh -x), so the trace shows whether a KILL was sent.
+    (task,) = [t for t in _flow() if t["name"] == "browser_login | End the sign-in if claude still waits"]
+    pidfile = tmp_path / "claude-login.pid"
+    argv = [
+        str(pidfile) if arg == "{{ claude_code_login_pidfile }}" else arg
+        for arg in task["ansible.builtin.command"]["argv"]
+    ]
+    assert argv[:2] == ["sh", "-c"], argv
+    for ignores_term, ended_by in ((False, signal.SIGTERM), (True, signal.SIGKILL)):
+        ignore = "signal.signal(signal.SIGTERM, signal.SIG_IGN); " if ignores_term else ""
+        claude = subprocess.Popen(
+            [sys.executable, "-c", f"import signal, time; {ignore}print('up', flush=True); time.sleep(60)"],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert claude.stdout.readline() == "up\n"
+            # Reaped the moment it ends, as the async job's own process reaps claude.
+            reaper = threading.Thread(target=claude.wait, daemon=True)
+            reaper.start()
+            pidfile.write_text(f"{claude.pid}\n")
+            started = time.monotonic()
+            traced = subprocess.run(["sh", "-x", *argv[1:]], capture_output=True, text=True, check=False, timeout=30)
+            took = time.monotonic() - started
+            reaper.join(timeout=10)
+        finally:
+            claude.kill()
+            claude.wait()
+            claude.stdout.close()
+        assert traced.returncode == 0, traced.stderr
+        assert claude.returncode == -ended_by, (ignores_term, claude.returncode, traced.stderr)
+        assert ("kill -9" in traced.stderr) is ignores_term, traced.stderr
+        if ignores_term:
+            # The same bound as ever: about a second, then the KILL.
+            assert took >= 1, took
 
 
 def test_the_path_unit_watches_for_a_change_never_for_existence():
