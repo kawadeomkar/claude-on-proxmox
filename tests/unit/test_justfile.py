@@ -1123,9 +1123,11 @@ def _interrupted(started: Path, *command: str) -> tuple[int, str]:
 @pytest.mark.parametrize("continues", [True, False])
 def test_ctrl_c_that_the_playbook_survives_ends_the_run_well(tmp_path: Path, continues: bool) -> None:
     # Ansible's pause, Ctrl-C then C: the playbook catches the signal and finishes. just waits for it and, with
-    # [continue], exits as it does; the script's bash survives the signal too, which Ubuntu's dash would not.
+    # [continue], exits as it does; the script's bash survives the signal too, which Ubuntu's dash would not. The
+    # playbook lives a second past the signal, as a pause does: one that ended with it, within a millisecond, could
+    # be gone before just's signal thread read the signal, which then found no child running and exited 130.
     started = tmp_path / "started"
-    body = f'trap "echo caught" INT; touch "{started}"; sleep 3; echo finished'
+    body = f'trap "echo caught" INT; ( trap "" INT; touch "{started}"; exec sleep 1 ); echo finished'
     settings = _recording(tmp_path, playbook_body=body if continues else f'touch "{started}"; sleep 3; exit 1')
     returncode, output = _interrupted(started, *settings, "deploy", "alpha")
     if continues:
