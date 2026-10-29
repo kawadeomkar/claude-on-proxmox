@@ -149,9 +149,9 @@ help *RECIPE:
 # just install, the git hook, the local config files - copied from their
 # examples only where they are missing - then playbooks/init_settings.yml,
 # which asks, at a terminal, for each value a first deploy needs that is still
-# the example's: the Proxmox host's address, the API token's ID and secret,
-# the GitHub username - and whether to use Tailscale, with its auth key after
-# a y, which no deploy needs. Enter leaves one for the next just init, and the vault
+# the example's: the GitHub username, whether to use Tailscale (with its auth
+# key after a y, which no deploy needs), the Proxmox host's address, and the
+# API token's ID and secret. Enter leaves one for the next just init, and the vault
 # is written encrypted. Without a terminal it asks nothing, and writes only the
 # values given as options, so just init can be scripted. Then
 # playbooks/init_check.yml checks what just deploy will need of Proxmox - the
