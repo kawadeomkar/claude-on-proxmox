@@ -694,7 +694,7 @@ the same file after, would template none of its values.
 **No secret is printed.** A value is masked when `vault.yml` holds it; when Ansible marks it as decrypted from a
 vault (`VaultHelper.get_ciphertext`), an inline `!vault` anywhere included - values of the whole-file vault carry no
 mark, hence the first rule; when its role marks the variable `no_log`; or when its expression reads a name the
-vault holds or a `no_log` variable (`vm_password` has no `vault_` prefix). A masked row says set, not set, or the
+vault holds, whatever its name, or a `no_log` variable. A masked row says set, not set, or the
 example's placeholder - compared with `vault.yml.example`, as `just init` decides it - and that it changes with
 `just vault`. Last, every value about to be printed, in the text or the JSON, is checked against every secret
 Ansible decrypted; a match prints nothing and exits 1. The GitHub username and an OAuth client's ID are masked in

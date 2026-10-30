@@ -372,7 +372,7 @@ def test_no_key_suggests_one_from_the_ssh_directory(tmp_path: Path, fake_pve: st
     root = tmp_path / "run"
     (root / "ssh").mkdir(parents=True)
     (root / "ssh" / "id_test.pub").write_text("ssh-ed25519 AAAA test\n")
-    report = _check(root, fake_pve, "ssh", {"vm_ssh_public_keys": [], "vm_password": ""})
+    report = _check(root, fake_pve, "ssh", {"vm_ssh_public_keys": [], "vault_vm_password": ""})
     assert report["rc"] != 0
     assert f'vm_ssh_public_keys: ["<the line in {root / "ssh" / "id_test.pub"}>"]' in _said(report)
 
@@ -380,10 +380,20 @@ def test_no_key_suggests_one_from_the_ssh_directory(tmp_path: Path, fake_pve: st
 def test_a_password_alone_is_a_problem(tmp_path: Path, fake_pve: str) -> None:
     # The console takes it; SSH, which just deploy configures the VMs over, does not.
     root = tmp_path / "run"
-    report = _check(root, fake_pve, "ssh", {"vm_ssh_public_keys": [], "vm_password": "a-console-password"})
+    report = _check(root, fake_pve, "ssh", {"vm_ssh_public_keys": [], "vault_vm_password": "a-console-password"})
     assert report["rc"] != 0
-    assert "!!   the VMs get only vm_password, which is for the Proxmox console" in _said(report)
+    assert "!!   the VMs get only vault_vm_password, which is for the Proxmox console" in _said(report)
     assert "a-console-password" not in json.dumps(report)
+
+
+def test_a_password_under_its_old_name_is_a_problem_and_never_said(tmp_path: Path, fake_pve: str) -> None:
+    root = tmp_path / "run"
+    report = _check(root, fake_pve, "ssh", {"vm_password": "an-old-console-password"})
+    assert report["rc"] != 0
+    assert "!!   vault.yml sets vm_password, which is vault_vm_password from 1.0" in _said(report)
+    assert "an-old-console-password" not in json.dumps(report)
+    # Empty, as vault.yml.example had it, it sets nothing and is no problem.
+    assert "sets vm_password" not in _said(_check(tmp_path / "empty", fake_pve, "ssh", {"vm_password": ""}))
 
 
 def test_a_privilege_without_propagate_is_a_problem(tmp_path: Path, fake_pve: str) -> None:
@@ -667,7 +677,7 @@ def test_no_host_in_the_proxmox_group_is_said_not_a_crash(tmp_path: Path, fake_p
 # ------------------------------------------------------------------ NEXT STEPS ---
 def test_next_steps_keep_each_problem_with_its_fix_and_no_deploy(tmp_path: Path, fake_pve: str) -> None:
     root = tmp_path / "run"
-    keyless = {"vm_ssh_public_keys": [], "vm_password": ""}
+    keyless = {"vm_ssh_public_keys": [], "vault_vm_password": ""}
     report = _check(root, fake_pve, "ssh", keyless, vault="vault_proxmox_api_token_secret: x\n")
     assert report["rc"] != 0
     line = _next(report)["init_check"]

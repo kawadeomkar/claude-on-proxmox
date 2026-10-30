@@ -32,12 +32,20 @@ PASSWORD = "throwaway-password-0000\n"
 FAKE = {
     "vault_tailscale_auth_key": "tskey-auth-fakefakefake-0000000000000000",
     "vault_github_token": "ghp_000000000000000000000000000000000000",
-    "vm_password": "fake-vm-password-0000",
+    "vault_vm_password": "fake-vm-password-0000",
+    # A secret the vault holds without the vault_ prefix: masked as well.
+    "console_password": "fake-console-password-0000",
     # A username that is a common word, which a check of whole lines would find in every source column.
     "vault_github_username": "local",
 }
 INLINE = "INLINE-SECRET-0000-0000"
-SECRETS = (FAKE["vault_tailscale_auth_key"], FAKE["vault_github_token"], FAKE["vm_password"], INLINE)
+SECRETS = (
+    FAKE["vault_tailscale_auth_key"],
+    FAKE["vault_github_token"],
+    FAKE["vault_vm_password"],
+    FAKE["console_password"],
+    INLINE,
+)
 ROLES = sorted(path.parent.parent.name for path in (REPO / "roles").glob("*/meta/argument_specs.yml"))
 QUIET = {"ANSIBLE_VERBOSITY": "0", "ANSIBLE_DEBUG": "0"}
 
@@ -79,7 +87,7 @@ def _scenario(root: Path, name: str, local_extra: str, env: dict, address: str =
     local += (
         "\nvm_cores: 4\nlogin_desktop: false\ntailscale_ssh: true\n"
         'tailscale_daemon_flags: ["{{ claude_probe }}"]\n'
-        'tailscale_api_url: "{{ vm_password }}"\n'
+        'tailscale_api_url: "{{ console_password }}"\n'
         'vm_searchdomain: "\\e]0;retitled\\a.lan"\n' + local_extra
     )
     (inventory / "group_vars" / "all" / "local.yml").write_text(local)
@@ -227,7 +235,7 @@ def test_an_inline_vault_value_is_masked(scenarios) -> None:
 
 
 def test_a_setting_that_reads_any_name_the_vault_holds_is_masked(scenarios) -> None:
-    # vm_password has no vault_ prefix.
+    # console_password has no vault_ prefix.
     row = _report(scenarios, "--", "tailscale")["rows"]["tailscale_api_url"]
     assert row["kind"] == "secret" and row["value"] is None, row
 
@@ -576,7 +584,7 @@ def test_a_value_its_type_does_not_take_is_refused_and_nothing_written(scenarios
         "vault_tailscale_auth_key",
         "github_projects_token",
         "proxmox_vm_password",
-        "vm_password",
+        "vault_vm_password",
         "github_projects_username",
         "claude_code_anthropic_api_key",
     ],

@@ -24,12 +24,22 @@
       or digit - no spaces and no underscores. For example: just deploy alpha
     quiet: true
 
+# vault.yml's vm_password was renamed vault_vm_password in 1.0: one still set
+# would give the VM no password without a word.
+- name: Refuse the console password's old name
+  ansible.builtin.assert:
+    that: vm_password | default('', true) | length == 0
+    fail_msg: >-
+      vault.yml sets vm_password, which is vault_vm_password from 1.0: rename
+      it there, with just vault.
+    quiet: true
+
 - name: Validate the login credentials for the VM
   ansible.builtin.assert:
     that: proxmox_vm_ssh_public_keys | length > 0 or proxmox_vm_password | length > 0
     fail_msg: >-
       The VM would be unreachable: set vm_ssh_public_keys (it defaults to
-      ~/.ssh/id_ed25519.pub) or vm_password for the cloud-init user.
+      ~/.ssh/id_ed25519.pub) or vault_vm_password for the cloud-init user.
     quiet: true
 
 # 0 is Proxmox's "no balloon device", which also stops the VM reporting the

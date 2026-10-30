@@ -171,8 +171,8 @@ argument_specs:
         default: ""
         no_log: true
         description:
-          - Optional cloud-init password for the user (vm_password host var). Key-based login is the default. Either this
-            or proxmox_vm_ssh_public_keys must be set. Set through vm_password in local.yml.
+          - Optional cloud-init password for the user (vault_vm_password in vault.yml). Key-based login is the default. Either this
+            or proxmox_vm_ssh_public_keys must be set. Set through vault_vm_password in vault.yml.
       proxmox_vm_ssh_public_keys:
         type: list
         elements: str

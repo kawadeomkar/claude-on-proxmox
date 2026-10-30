@@ -456,7 +456,7 @@ Optional: a password for the VM user, for the Proxmox console. SSH stays key-onl
 
 | Secret, in `vault.yml` | Notes |
 |---|---|
-| `vm_password` | Sets `proxmox_vm_password` ([`proxmox_vm`](roles/proxmox_vm.md)): Optional cloud-init password for the user (vm_password host var). |
+| `vault_vm_password` | Sets `proxmox_vm_password` ([`proxmox_vm`](roles/proxmox_vm.md)): Optional cloud-init password for the user (vault_vm_password in vault.yml). |
 
 ### Secrets: GitHub
 

@@ -58,7 +58,7 @@ proxmox_vm_tags: [claude-on-proxmox]
 # Cloud-init: login user and credentials. At least one SSH key or a password
 # is required, otherwise the VM would be unreachable.
 proxmox_vm_user: dev
-proxmox_vm_password: "{{ vm_password | default('') }}"
+proxmox_vm_password: "{{ vault_vm_password | default('') }}"
 proxmox_vm_ssh_public_keys: []
 
 # Cloud-init: networking. DHCP by default - whatever already serves your LAN

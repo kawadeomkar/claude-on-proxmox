@@ -989,7 +989,7 @@ every task a read (held by `tests/unit/test_init_check.py`):
    Proxmox refuses is a problem. `--storage` and `--bridge` given are held to the same lists before anything is
    written, written whenever the token can use them, and refused while they cannot be checked; `--bridge` beside
    a template is nothing to do when it is the template's own, and refused otherwise.
-9. **A key for the VMs**: `vm_ssh_public_keys`. `vm_password` alone is a problem - it is for the Proxmox
+9. **A key for the VMs**: `vm_ssh_public_keys`. `vault_vm_password` alone is a problem - it is for the Proxmox
    console, and deploy configures the VMs over SSH, which takes a key; with neither, the public keys in
    `~/.ssh` are listed and the `local.yml` line suggested.
 
