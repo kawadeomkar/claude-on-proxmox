@@ -1,17 +1,16 @@
 # claude-on-proxmox
 
 Ansible that turns a Proxmox VE host into [Claude Code](https://code.claude.com/docs) development VMs.
-One command, `just deploy alpha`:
+One command, `just deploy alpha` (or any name you like):
 
-1. **Template** – builds a cloud-init Ubuntu 24.04 template on the Proxmox host, once.
-2. **Provision** – clones it into a VM named `alpha`, with your SSH key; your DHCP server gives it an
-   address, and the guest agent reports it back.
-3. **Configure** – installs a baseline, developer tooling (Node.js, Docker, GitHub CLI, uv, and optionally Rust),
+1. **Provision** – creates a VM named `alpha` on the Proxmox host from an Ubuntu 24.04 cloud image, with
+   your SSH key; your DHCP server gives it an address, and the guest agent reports it back.
+2. **Configure** – installs a baseline, developer tooling (Node.js, Docker, GitHub CLI, uv, and optionally Rust),
    Claude Code and Tailscale, and clones every repository of your GitHub account (or the ones you list)
-   into `~/projects`.
-4. **Sign in** – to Claude, which starts Remote Control so the session is on your phone too; `gh` to
-   GitHub, ready to push; and Tailscale, to reach the VM from anywhere. Each is a page in your browser.
-5. **Open** – the VM in VS Code, with a terminal running Claude.
+   into `~/projects`. Then it signs the VM in: to Claude, which starts Remote Control so the session is on
+   your phone too; `gh` to GitHub, ready to push; and Tailscale, to reach the VM from anywhere. Each
+   sign-in is a page in your browser.
+3. **VS Code** – opens the VM, with a terminal running Claude.
 
 Every step is idempotent, so the same command is how you apply a change later. Everything specific to
 your environment - the Proxmox address, tokens - lives in git-ignored files.
@@ -56,9 +55,10 @@ a first deploy.
 ssh-copy-id root@<proxmox-host>
 ```
 
-The template build uses it. `just init` uses it too, once: it offers to create the API user, role and token
-this project uses for everything else, with only the rights it needs, shows the commands it would run on the
-host, and runs them only if you answer `y`. To create them yourself instead, answer `n` and run
+Your first `just deploy` uses it to build the Ubuntu image every VM is cloned from, once per host.
+`just init` uses it too, once: it offers to create the API user, role and token this project uses for
+everything else, with only the rights it needs, shows the commands it would run on the host, and runs them
+only if you answer `y`. To create them yourself instead, answer `n` and run
 [`tools/proxmox-access.sh`](tools/proxmox-access.sh) on the host. [Proxmox access](docs/getting-started/proxmox-access.md)
 says how, and explains a datacenter setting that can block the project's tag and validating the host's
 certificate.
@@ -68,7 +68,7 @@ certificate.
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
-just init            # installs the tools, asks for your Proxmox host and GitHub username, and offers to make the API token
+just init            # installs the tools, asks for your GitHub username, Tailscale and your Proxmox host, and offers to make the API token
 ```
 
 pyenv, with its pyenv-virtualenv plugin, is the suggestion: `pyenv local` makes that environment this
@@ -82,12 +82,13 @@ the vault encrypted, with its password in `.vault_pass`: keep that file.
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise; a Tailscale auth key, which it asks for after a `y` to Tailscale. Optionally `vault_github_token` and `vault_anthropic_api_key`, with `just vault` |
+| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise; a Tailscale auth key, which it asks for after a `y` to Tailscale. Optionally `vault_github_token`, `vault_anthropic_api_key`, and a Tailscale API token or OAuth client, with which `just destroy` takes the VM off your tailnet - with `just vault` |
 | `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone - and what `just init` writes there: `tailscale_enabled` from your answer, a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
-Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md),
-and `just vault` edits the vault. [Your first deploy](docs/getting-started/first-deploy.md) has the same
-setup with no terminal, every answer an option of `just init`'s.
+Every setting the two files take, with its default, is in the [settings reference](docs/reference/settings.md);
+`just settings --all` shows the value each has now, and `just vault` edits the vault.
+[Your first deploy](docs/getting-started/first-deploy.md) has the same setup with no terminal, every answer
+an option of `just init`'s.
 
 **3. Deploy.**
 
@@ -95,14 +96,14 @@ setup with no terminal, every answer an option of `just init`'s.
 just deploy alpha
 ```
 
-The run stops for you three times, each at a page it opens in your browser:
+The run stops for you at most three times, each at a page it opens in your browser:
 
 1. **Claude** - authorise Claude Code; your browser comes back to the VM by itself. Skipped when the vault
    has an Anthropic API key.
 2. **GitHub** - the one-time code is on your clipboard: paste it and authorise. Skipped when the vault
    has a GitHub token.
-3. **Tailscale** - sign in and connect the VM. Skipped when the vault has a Tailscale auth key, or with
-   `tailscale_enabled: false`.
+3. **Tailscale** - sign in and connect the VM. Skipped when the vault has a Tailscale auth key, which
+   `just init` asks for after a `y` to Tailscale, or with `tailscale_enabled: false`.
 
 Then VS Code opens on the VM, in `~/projects`, with Claude running in a terminal. The first time, VS Code
 asks you to trust the folder and to allow automatic tasks; both are yours to answer.
