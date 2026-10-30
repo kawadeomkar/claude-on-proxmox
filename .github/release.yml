@@ -1,0 +1,23 @@
+---
+# The notes GitHub generates for a release (.github/workflows/release.yml): the pull requests merged since the
+# previous release, a section for each label .github/workflows/labels.yml gives a pull request from its title's tag
+# (CONTRIBUTING.md), in that order; Dependabot's, which it labels dependencies itself, after them; and any pull
+# request without one of these labels last. A pull request is listed in the first section whose labels it has.
+changelog:
+  categories:
+    - title: Features
+      labels: [enhancement]
+    - title: Fixes
+      labels: [bug]
+    - title: Cleanup
+      labels: [cleanup]
+    - title: Documentation
+      labels: [documentation]
+    - title: Tests
+      labels: [test]
+    - title: CI and build
+      labels: [ci, build]
+    - title: Dependencies
+      labels: [dependencies]
+    - title: Other changes
+      labels: ["*"]

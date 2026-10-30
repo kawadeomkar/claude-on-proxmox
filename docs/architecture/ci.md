@@ -38,8 +38,16 @@ A secret they find has already been pushed and is public: revoke it rather than 
 superset: CI also scans the working tree and the commits a push brings in with gitleaks, which a
 local run cannot reproduce from the git index alone.
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes a GitHub release with notes
-generated from the commits since the previous tag.
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It refuses a tag that is not an annotated
+`vMAJOR.MINOR.PATCH` (Semantic Versioning, a hyphen making a prerelease) on a commit of `main`, then
+publishes a GitHub release: the tag's message, then the notes GitHub generates - the pull requests merged
+since the previous release, in the sections `.github/release.yml` makes of their labels. Each pull request
+has that label from `.github/workflows/labels.yml`, which gives it the one its title's tag names
+(`[feat]` is `enhancement`, `[fix]` is `bug`) and runs again when the title changes. It runs on
+`pull_request_target`, so that a fork's pull request is labelled too: that event hands it a token that
+can write, so it checks nothing out, and the title reaches its script only as an environment variable.
+`tests/unit/test_ci.py` runs both scripts against a stand-in `gh`, the release's on a scratch repository's
+tags. `CONTRIBUTING.md` says how to cut a release.
 
 A push to `main` that changes the wiki runs `.github/workflows/docs.yml`, which builds the site
 strictly and deploys it to GitHub Pages; [This wiki](../development/docs.md#publishing) says how.
