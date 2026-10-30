@@ -28,6 +28,7 @@ from harness import (
     REPO,
     _certificate,
     _desktop,
+    _env,
     _failures,
     _free_port,
     _left_to_do,
@@ -791,11 +792,13 @@ def test_a_setting_is_written_only_at_a_terminal_or_as_given():
     )
 
 
-def test_the_playbook_has_no_duplicate_key():
-    # A YAML merge that redefines a key loads with a warning on every just init.
+def test_the_playbook_has_no_duplicate_key(tmp_path):
+    # A YAML merge that redefines a key loads with a warning on every just init. In the harness's environment, as
+    # every run here: the shell's ANSIBLE_* - just test unit's ANSIBLE_LOG_PATH among them - would log this check
+    # into the developer's run log.
     result = subprocess.run(
         [str(Path(sys.executable).with_name("ansible-playbook")), "--syntax-check", str(PLAYBOOK)],
-        env=os.environ | {"ANSIBLE_DUPLICATE_YAML_DICT_KEY": "error"},
+        env=_env(tmp_path, ANSIBLE_DUPLICATE_YAML_DICT_KEY="error"),
         capture_output=True,
         text=True,
         check=False,
