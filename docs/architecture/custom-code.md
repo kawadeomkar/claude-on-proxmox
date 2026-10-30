@@ -640,7 +640,7 @@ is drawn as one run, its parts in turn:
   line, which the terminal wraps, never the run.
 - **Nested recipes.** A recipe in parts that runs another runs it as `{{ self }} live_run=<its name> <recipe>`: that
   one exports no title or state of its own, sets no trap and takes the parent's, so its parts are a stage of the
-  parent's run. `live_run` is a just setting, which `self` passes on, never the environment, so a variable left
+  parent's run. `live_run` is a justfile setting, which `self` passes on, never the environment, so a variable left
   exported joins no run.
 
 Covered by `tests/unit/test_live_region.py` (the region against a stand-in `Display`, whose `display`,
@@ -649,3 +649,90 @@ Covered by `tests/unit/test_live_region.py` (the region against a stand-in `Disp
 recipe in parts at a pseudo-terminal: passed through piped, without a title, with a `-v` and without the engine's
 packages; drawn as one run, its failed part's end whole, its log every line, its state the run's alone, Ctrl-C, a
 playbook as a part, and an end with no state), and each output's own live tests.
+
+## 7.9 `tools/settings` — just settings
+
+`just settings` says what each setting is and where it was set, for one role (`just settings tailscale`), one
+variable or setting (`just settings tailscale_ssh`), or all of them (`--all`), and changes nothing but the one
+setting `--value` writes into `local.yml` and `--reset` takes out (below). Without a word
+it shows how to use it: the roles, read from their `argument_specs`, and the options; that needs no vault, so the
+recipe runs it before the vault's check.
+
+**The values are Ansible's.** Nothing of Ansible's precedence is written again: the tool loads the inventory, adds a
+host to the group the role's playbook runs it on - read from the playbooks, the play that runs the role's `main` and
+passes it nothing: `claude_vms` for the roles `configure.yml` runs, `claude_vm_pending` for `proxmox_vm` (from
+`provision.yml`, not `destroy.yml`, which passes `proxmox_vm_state`), the first `proxmox` host for
+`proxmox_template` - and asks `VariableManager` for a play naming the role, so its defaults sit at the bottom, then
+the templar for each value. `--all` adds a default that lives only in a role's `default()` (`vm_cores`), marked
+trusted as a template. What a setting is - each role's `argument_specs`, main's first, the wiring, the sections of
+`local.yml.example` - comes from `tools/docs.py`'s functions, the reference pages' own model.
+
+**Where a value was set** is the highest layer that holds the name - `hosts.yml`, `vault.yml`, `local.yml`, or a
+default - and, for a default that is an expression, the names it reads, followed through the wiring (Jinja's own
+parse) to the file a person edits: `claude_code_remote_control` is false because of `claude_remote_control` in
+`local.yml`. What a run sets above the inventory is read from the playbooks: a playbook no other imports is the run
+of the recipe of the same name, and the `vars:` it passes - on an import, a play, a role, an `add_host` - through
+every import; the justfile's `-e` objects too. The row keeps the value a run that sets nothing uses (`just deploy
+--only configure` runs `configure.yml` without `deploy.yml`'s vars) and adds "just deploy sets it from
+deploy_sign_in". A value made from the VM's name says so; one made from its facts is "worked out on the VM".
+
+**Reading changes nothing.** Every lookup goes through `lookup_loader.get`, which the tool wraps to load only `env`,
+`file`, `config`, `vars`, `first_found` and `fileglob`: `pipe` runs a command and `password` writes a file, and a
+scan of expressions misses one reached through a variable it does not read (a `hosts.yml` group var). The
+inventory is read by the `yaml` plugin alone (`ANSIBLE_INVENTORY_ENABLED`, set before Ansible reads its config):
+the default list has `script`, which runs an executable it finds. The tool's own reads of the files, to say which
+set what, use `cache="none"`: the loader caches a file without its trust as a template, and the inventory, reading
+the same file after, would template none of its values.
+
+**No secret is printed.** A value is masked when `vault.yml` holds it; when Ansible marks it as decrypted from a
+vault (`VaultHelper.get_ciphertext`), an inline `!vault` anywhere included - values of the whole-file vault carry no
+mark, hence the first rule; when its role marks the variable `no_log`; or when its expression reads a name the
+vault holds or a `no_log` variable (`vm_password` has no `vault_` prefix). A masked row says set, not set, or the
+example's placeholder - compared with `vault.yml.example`, as `just init` decides it - and that it changes with
+`just vault`. Last, every value about to be printed, in the text or the JSON, is checked against every secret
+Ansible decrypted; a match prints nothing and exits 1. The GitHub username and an OAuth client's ID are masked in
+their own rows but not looked for elsewhere, so a username that is a common word never refuses a report. The
+vault's password file is the one the recipe passes (`.vault_pass`, where there is one), else what
+`ansible-playbook` would take; the tool never looks for one, and a vault it cannot open is refused before anything
+is printed.
+
+**`--value` writes one setting into `local.yml`, and nothing else.** One function, `settable`, decides what a name
+can be set as, or why not, and the read view's `change` comes from it, so the report never names a command the
+writer refuses. A role variable a setting of the examples feeds is written as that setting
+(`claude_code_remote_control` as `claude_remote_control`). Refused, with nothing written: anything `vault.yml`
+holds, feeds or a role marks `no_log` - for `just vault`, the value given never said back, though the shell's
+history keeps it - a value vaulted inline in `local.yml`, a name made from each VM's own (one setting would give
+every VM the same), what a run sets for itself and no example names, the Proxmox host's address (`hosts.yml`),
+anything internal to the project, and a value equal to a secret the vault holds. The value is free text on the
+`just` line but for a control character, so just never says it back; the tool refuses an expression (`{{ }}`,
+`{% %}`, `{# #}`, which Ansible would template and a lookup run) and holds the rest to the type the role's
+`argument_specs` give, through Ansible's own `ArgumentSpecValidator`, as the role checks its arguments - a list as
+`a,b` or YAML, a path kept as typed, `~` and all. It is written as `just init` writes: JSON on one line, in place of
+the line that set it (with its value's further lines), else of its example's commented line, else at the end. The
+result is read back with every tag kept as text before it replaces the file - every other key as it was, an inline
+`!vault` included, or nothing is written (an alias whose anchor the edit removes, two lines of one name) - and it
+replaces it atomically, with its mode. Then the files are read again: what outranks `local.yml` (a `hosts.yml`
+variable, a run) is said, with what applies the change - `just deploy --only configure --tags <role>`, or a VM's
+creation for `proxmox_vm`.
+
+**`--reset` takes one setting out of `local.yml`.** Its line goes, with its value's further lines - a role
+variable's own too, where one is set by hand beside the setting that feeds it - and the example's commented line
+comes back in its place, as `just init` found it, unless the file still has one: a value set and then reset
+leaves a `local.yml` that has its example's line, as `just init` makes it, byte for byte as it was. Taking a line out can make no value wrong, so `settable` refuses it
+only what is secret (for `just vault`, or an inline `!vault`) and the host's address; a name made from each VM's
+own, set by hand, may go; a role variable still set by hand beside the setting is said to outrank it. A
+role variable set by hand is what `--value` writes too, in place of its line, since the setting would change
+nothing under it, and a key not on a line of its own (a quoted key) is refused rather than set twice. An empty
+`--value` is no value: just cannot tell it from none given, so `--reset` is the way back to a default. The
+same read back holds it, and the same second look says the value the setting has
+now and what applies it.
+
+**The report** is a line per variable under its role or section, every line within 100 columns, a value cut with
+"…" in the table and shown whole in the one-variable view, colour only at a terminal (`screen.py`'s palette and
+cut, §7.8), and each value one line of plain text (`one_line`, §7.4). `--json` gives the same rows, with `kind`
+(`value`, `secret`, `per_vm`, `on_the_vm`, `at_run_start`, `placeholder`), `set_in`, `via`, `set_by_run`,
+`evaluated_as` and `change`. A file in `inventory/host_vars/` is noted, since Ansible applies it to the VM of its
+name although no setting is per VM.
+
+Covered by `tests/unit/test_settings.py`, against inventories made from the example files with fake values, and the
+recipe by `tests/unit/test_justfile.py` against a stand-in `python`.

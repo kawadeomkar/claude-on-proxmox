@@ -5,6 +5,16 @@ Everything you can set lives in two git-ignored files that `just init` copies fr
 for secrets. Set only what differs from the default, so that a default this project changes later
 still reaches you.
 
+To see what yours are and where each was set, run `just settings`: `just settings tailscale` lists one
+role's variables, `just settings tailscale_ssh` explains one, `just settings --changed` lists everything
+you changed, and `--json` gives any of them to a script. `just settings tailscale_ssh --value true` sets
+one: it writes `tailscale_ssh: true` into `local.yml`, in place of its example's line, once the value is
+one the setting takes, and says what applies it. A role variable that a setting here feeds is written as
+that setting (`claude_code_remote_control` as `claude_remote_control`). `just settings tailscale_ssh
+--reset` puts it back to its default: it takes the line out of `local.yml` and puts the example's
+commented line back where it was. A secret is only ever said to be set or not set, never shown or written
+there: it changes with `just vault`.
+
 ## Variable layering
 
 ```

@@ -12,6 +12,10 @@ even if a guard regressed.
 - just holds each argument to its [arg] pattern before anything runs, so a
   quote, a space, a shell metacharacter or a newline never reaches a script;
   the script checks what goes into JSON again (tools/check names, project).
+  The one free-text value is what just settings --value writes, refused only
+  for a control character: it reaches the script as a positional argument
+  and is run by nothing (a test passes it $(...) and backticks), and
+  tools/settings holds it to the setting's type.
 - The names reach Ansible as one JSON extra-var. `-e vm_name=...` splits on
   whitespace and once silently provisioned half a fleet.
 - The rules - --tags beside names, --check with --only, a stage as a VM name
@@ -323,7 +327,10 @@ def test_the_collections_check_asks_galaxy_offline_whether_the_pins_are_installe
     assert _runs(tmp_path, "ansible-galaxy") == [["collection", "install", "-r", "requirements.yml", "--offline"]]
 
 
-@pytest.mark.parametrize("args", [["deploy"], ["code", "alpha"], ["login"], ["status"], ["destroy"], ["test", "unit"]])
+@pytest.mark.parametrize(
+    "args",
+    [["deploy"], ["code", "alpha"], ["login"], ["status"], ["destroy"], ["test", "unit"], ["settings", "tailscale"]],
+)
 def test_every_recipe_that_runs_ansible_stops_at_collections_that_are_not_the_pins(tmp_path: Path, args) -> None:
     settings = _safe(tmp_path, galaxy_rc=1)
     _stand_in(tmp_path / "bin", "ansible-playbook")
@@ -810,7 +817,14 @@ def test_every_word_a_recipe_takes_is_a_star_parameter() -> None:
 
 
 # Each recipe whose word is named in the singular, and a word it takes.
-ONE_WORD = {"help": "deploy", "code": "alpha", "docs": "build", "vagrant": "destroy", "clean": "logs"}
+ONE_WORD = {
+    "help": "deploy",
+    "code": "alpha",
+    "docs": "build",
+    "vagrant": "destroy",
+    "clean": "logs",
+    "settings": "tailscale",
+}
 
 
 def test_a_word_named_in_the_singular_is_one_word() -> None:
@@ -1251,7 +1265,8 @@ def test_install_refuses_the_base_python_of_the_tests_virtualenv() -> None:
 
 
 @pytest.mark.parametrize(
-    "args", [["status"], ["lint", "yaml"], ["docs"], ["vault"], ["test", "unit"], ["code", "alpha"]]
+    "args",
+    [["status"], ["lint", "yaml"], ["docs"], ["vault"], ["test", "unit"], ["code", "alpha"], ["settings", "tailscale"]],
 )
 def test_every_recipe_that_runs_a_tool_refuses_a_python_that_is_no_virtualenv(tmp_path: Path, args) -> None:
     # Its scripts directory would be /usr/local/bin or the like, where a system-wide Ansible lives.
@@ -1306,6 +1321,7 @@ def test_help_and_a_refusal_start_no_python(tmp_path: Path) -> None:
     assert _just("deploy", "--only", "bogus", settings=[f"PYTHON={python}"]).returncode != 0
     assert _just("deploy", "--tags", "claude_code", settings=[f"PYTHON={python}"]).returncode != 0
     assert _just("deploy", "configure", settings=[f"PYTHON={python}"]).returncode != 0
+    assert _just("settings", "--all", "tailscale", settings=[f"PYTHON={python}"]).returncode != 0
     assert not ran.exists()
 
 
@@ -2121,6 +2137,108 @@ def test_list_is_status_by_the_name_it_had_before(tmp_path: Path) -> None:
     run = _playbook(tmp_path, "list", "alpha")
     assert run[-1] == "playbooks/status.yml", run
     assert run[run.index('{"vm_name": "alpha"}') - 1] == "-e", run
+
+
+# ---------------------------------------------------------------- just settings ----
+
+
+def _settings(tmp_path: Path, *args: str, settings=()) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    """just settings with a python that only records its arguments: tools/settings itself would read this checkout's
+    own settings, which on a developer's machine are real. tests/unit/test_settings.py runs the tool."""
+    _stand_in(tmp_path / "bin", "python")
+    result = _just("settings", *args, settings=[*_safe(tmp_path), *settings])
+    return result, _runs(tmp_path, "python")
+
+
+def test_settings_alone_shows_how_to_use_it_before_any_check_of_the_vault(tmp_path: Path) -> None:
+    # How to use it needs no vault: a fresh checkout has none yet.
+    result, runs = _settings(tmp_path, settings=[f"VAULT_FILE={tmp_path / 'missing.yml'}"])
+    assert result.returncode == 0, _output(result)
+    assert runs == [["tools/settings", "--usage", "--json="]]
+    assert _runs(tmp_path, "ansible-galaxy") == []
+    result, runs = _settings(tmp_path / "json", "--json")
+    assert runs == [["tools/settings", "--usage", "--json=true"]], _output(result)
+
+
+def test_settings_passes_its_options_its_word_and_the_vault_password_file(tmp_path: Path) -> None:
+    password = tmp_path / "vault_pass"
+    password.write_text("not-a-password\n")
+    result, runs = _settings(tmp_path, "tailscale", "--changed", "--json", settings=[f"VAULT_PASS={password}"])
+    assert result.returncode == 0, _output(result)
+    expected = ["--vault-password-file", str(password), "--all=", "--changed=true", "--json=true", "--", "tailscale"]
+    assert runs == [["tools/settings", *expected]]
+    assert _runs(tmp_path, "ansible-galaxy") == [["collection", "install", "-r", "requirements.yml", "--offline"]]
+
+
+def test_settings_passes_no_password_file_where_there_is_none(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "--all", settings=[f"VAULT_PASS={tmp_path / 'none'}"])
+    assert result.returncode == 0, _output(result)
+    assert runs == [["tools/settings", "--all=true", "--changed=", "--json=", "--"]]
+
+
+def test_settings_all_beside_a_name_is_refused_before_python_starts(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "--all", "tailscale")
+    assert result.returncode != 0 and runs == []
+    assert "just settings --all lists every setting: give it no role or variable" in _output(result)
+
+
+def test_settings_passes_a_value_as_one_argument_and_runs_none_of_it(tmp_path: Path) -> None:
+    # The one free-text value on the just line: it reaches the script as a positional argument, never its text.
+    ran = tmp_path / "ran"
+    value = f"$(touch {ran}) `touch {ran}` 'single' \"double\" ; | & spaces"
+    result, runs = _settings(
+        tmp_path, "claude_vm_default_name", "--value", value, settings=[f"VAULT_PASS={tmp_path / 'none'}"]
+    )
+    assert result.returncode == 0, _output(result)
+    expected = [f"--value={value}", "--all=", "--changed=", "--json=", "--", "claude_vm_default_name"]
+    assert runs == [["tools/settings", *expected]]
+    assert not ran.exists()
+
+
+@pytest.mark.parametrize(
+    "args", [["--value", "x"], ["--all", "--value", "x"], ["vm_cores", "--changed", "--value", "8"]]
+)
+def test_settings_value_without_one_setting_named_is_refused_before_python_starts(tmp_path: Path, args) -> None:
+    result, runs = _settings(tmp_path, *args)
+    assert result.returncode != 0 and runs == []
+    assert "--value and --reset each change the one setting named beside it" in _output(result)
+
+
+def test_settings_reset_passes_on_with_its_one_setting(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "vm_cores", "--reset", settings=[f"VAULT_PASS={tmp_path / 'none'}"])
+    assert result.returncode == 0, _output(result)
+    assert runs == [["tools/settings", "--reset=true", "--all=", "--changed=", "--json=", "--", "vm_cores"]]
+
+
+@pytest.mark.parametrize("args", [["--reset"], ["--all", "--reset"], ["vm_cores", "--changed", "--reset"]])
+def test_settings_reset_without_one_setting_named_is_refused_before_python_starts(tmp_path: Path, args) -> None:
+    result, runs = _settings(tmp_path, *args)
+    assert result.returncode != 0 and runs == []
+    assert "--value and --reset each change the one setting named beside it" in _output(result)
+
+
+def test_settings_reset_beside_a_value_is_refused_before_python_starts(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "vm_cores", "--reset", "--value", "4")
+    assert result.returncode != 0 and runs == []
+    assert "one or the other" in _output(result)
+
+
+def test_settings_says_no_word_back_when_it_refuses_a_second(tmp_path: Path) -> None:
+    # A secret typed as a second word, --value forgotten, is not put on the screen again.
+    result, runs = _settings(tmp_path, "tailscale_auth_key", "notsaidback")
+    assert result.returncode != 0 and runs == []
+    assert "notsaidback" not in _output(result) and " one " in _output(result)
+
+
+def test_settings_refuses_a_control_character_in_a_value_before_anything_runs(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "vm_cores", "--value", "8\n9")
+    assert result.returncode != 0 and runs == [] and NOT_MATCHED in _output(result)
+
+
+def test_settings_checks_the_vault_before_it_reads_anything(tmp_path: Path) -> None:
+    result, runs = _settings(tmp_path, "tailscale", settings=[f"VAULT_FILE={tmp_path / 'missing.yml'}"])
+    assert result.returncode != 0 and runs == []
+    assert "missing.yml missing. Run: just init" in _output(result)
 
 
 def _live_recorded(tmp_path: Path, *args: str) -> tuple[list[list[str]], list[str]]:

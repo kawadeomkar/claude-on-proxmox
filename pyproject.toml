@@ -73,7 +73,7 @@ line-length = 120
 target-version = "py310"
 extend-exclude = [".venv", ".ansible", ".cache", ".vagrant"]
 # The tools that are Python with no .py, which ruff finds by extension only: just lint checks them as the rest.
-extend-include = ["tools/live", "tools/status-exit"]
+extend-include = ["tools/live", "tools/settings", "tools/status-exit"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
