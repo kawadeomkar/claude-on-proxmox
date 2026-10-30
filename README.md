@@ -1,7 +1,14 @@
 # claude-on-proxmox
 
+[![CI](https://github.com/kawadeomkar/claude-on-proxmox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kawadeomkar/claude-on-proxmox/actions/workflows/ci.yml)
+[![Docs](https://github.com/kawadeomkar/claude-on-proxmox/actions/workflows/docs.yml/badge.svg?branch=main)](https://kawadeomkar.github.io/claude-on-proxmox/)
+[![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fkawadeomkar%2Fclaude-on-proxmox%2Fmain%2Fpyproject.toml)](pyproject.toml)
+[![Proxmox VE 8.x | 9.x](https://img.shields.io/badge/Proxmox%20VE-8.x%20%7C%209.x-E57000?logo=proxmox&logoColor=white)](docs/getting-started/requirements.md)
+[![License: MIT](https://img.shields.io/github/license/kawadeomkar/claude-on-proxmox)](LICENSE)
+
 Ansible that turns a Proxmox VE host into [Claude Code](https://code.claude.com/docs) development VMs.
-One command, `just deploy alpha` (or any name you like):
+One command, `just deploy alpha`, where `alpha` is the name you give the VM - any name you like, as a host
+name would be:
 
 1. **Provision** – creates a VM named `alpha` on the Proxmox host from an Ubuntu 24.04 cloud image, with
    your SSH key; your DHCP server gives it an address, and the guest agent reports it back.
@@ -12,8 +19,8 @@ One command, `just deploy alpha` (or any name you like):
    sign-in is a page in your browser.
 3. **VS Code** – opens the VM, with a terminal running Claude.
 
-Every step is idempotent, so the same command is how you apply a change later. Everything specific to
-your environment - the Proxmox address, tokens - lives in git-ignored files.
+Every step is idempotent and everything specific to
+your environment (the Proxmox address, tokens, etc.), lives as git-ignored files, with secrets stored in Ansible vault.
 
 ![just deploy alpha: each stage drawn live as it runs, the sign-in pages above it, then a summary of the run](.github/assets/just-deploy.svg)
 
@@ -24,7 +31,8 @@ the command that fixes it. It only reads, and changes nothing.
 
 ![just status: the whole report drawn at once, each value filling in as it is read](.github/assets/just-status.svg)
 
-And `just settings claude_code` lists every variable of a role with its value and the file that set it.
+And `just settings claude_code` lists every variable of a role, here `claude_code`, with its value and the
+file that set it.
 `just settings <name> --value <value>` sets one in `local.yml`, held to its type; a secret is only said to
 be set or not, and changes with `just vault`.
 
@@ -93,6 +101,7 @@ an option of `just init`'s.
 **3. Deploy.**
 
 ```bash
+# alpha is the VM's name: choose your own
 just deploy alpha
 ```
 
@@ -117,6 +126,9 @@ rather than skipped. `just vault` changes a secret. The usual first-run snags ar
 
 ## Everyday commands
 
+In these commands `alpha` and `beta` are the names of your VMs, `tailscale` and `claude_code` are the names
+of roles, `tailscale_ssh` is a setting's, and `repo` a repository's on the VM.
+
 | Command | What it does |
 |---|---|
 | `just deploy alpha beta` | Create and configure VMs and sign them in, then open VS Code on a lone one. Re-run it after changing a setting (VM size applies when a VM is created) |
@@ -129,9 +141,9 @@ rather than skipped. `just vault` changes a secret. The usual first-run snags ar
 | `ssh alpha` | The alias `just deploy` and `just code` keep pointed at the VM's address, in `~/.ssh/claude-on-proxmox.conf` (one `Include` line added to `~/.ssh/config`) |
 
 `just deploy` does each of its parts on its own too: `just deploy alpha --tags claude_code` re-applies one
-role, and `just deploy --only configure` re-applies the whole configuration to every VM, creating none.
-`just` lists every recipe and `just help deploy` one's options; [the reference](docs/reference/commands.md)
-says what each does.
+role to one VM, and `just deploy --only configure` re-applies the whole configuration to every VM,
+creating none. `just` lists every recipe and `just help deploy` one's options;
+[the reference](docs/reference/commands.md) says what each does.
 
 ## Help and contributing
 

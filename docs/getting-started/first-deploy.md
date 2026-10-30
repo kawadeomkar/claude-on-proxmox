@@ -118,6 +118,7 @@ the vault (with the password in `.vault_pass`, if you made one).
 ## Deploy
 
 ```bash
+# alpha is the VM's name: choose your own
 just deploy alpha
 ```
 
