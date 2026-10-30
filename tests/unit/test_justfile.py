@@ -1611,7 +1611,7 @@ def test_init_logs_its_run_once(tmp_path: Path) -> None:
 
 
 GIVEN = [
-    "--host", "pve.lan", "--token-user", "deploy@pam", "--token-name", "claude", "--github-user", "octo-cat",
+    "--host", "pve.lan", "--token-user", "deploy@pam", "--token-id", "claude", "--github-user", "octo-cat",
     "--tailscale", "off", "--storage", "local-zfs", "--bridge", "vmbr1",
 ]  # fmt: skip
 
@@ -1661,7 +1661,7 @@ def test_an_exported_value_is_not_given(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "option", ["host", "token-user", "token-name", "token-secret-file", "github-user", "storage", "bridge"]
+    "option", ["host", "token-user", "token-id", "token-secret-file", "github-user", "storage", "bridge"]
 )
 @pytest.mark.parametrize("value", ["a'b", 'a"b', "a b", "$(x)", "a`b", "a;b", "a\nb", "ålpha"])
 def test_a_given_value_outside_its_characters_is_refused_before_anything_runs(

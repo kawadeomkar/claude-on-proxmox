@@ -52,7 +52,7 @@ environment where `python3` is not it.
 | `just init` | Set up this checkout, then ask for what a first deploy needs |
 | &emsp;`--host HOST` | The Proxmox host's address, for inventory/hosts.yml |
 | &emsp;`--token-user TOKEN_USER` | The API token's user, when it is not ansible@pve |
-| &emsp;`--token-name TOKEN_NAME` | The API token's name, when it is not ansible |
+| &emsp;`--token-id TOKEN_ID` | The API token's ID, the part after its user's !, when it is not ansible |
 | &emsp;`--token-secret-file TOKEN_SECRET_FILE` | A file holding the token's secret (or CLAUDE_ON_PROXMOX_TOKEN_SECRET in the environment; never on the command line) |
 | &emsp;`--github-user GITHUB_USER` | The GitHub account whose repositories are cloned |
 | &emsp;`--storage STORAGE` | The storage for VM disks, for local.yml: written when the token can use it there |

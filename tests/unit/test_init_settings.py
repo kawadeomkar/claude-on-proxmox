@@ -595,7 +595,7 @@ def test_given_values_that_break_their_rules_fail_without_a_prompt(tmp_path: Pat
     failure = "\n".join(_failures(report).values())
     assert "--host (https://pve.lan) is not" in failure
     assert "--github-user (octo--cat) is not" in failure
-    assert "--token-user and --token-name (ansible!ansible) are not" in failure
+    assert "--token-user and --token-id (ansible!ansible) are not" in failure
     assert "the secret in --token-secret-file" in failure and "36-character secret" in failure
     assert "not-it" not in json.dumps(report)
     assert _snapshot(files) == before
