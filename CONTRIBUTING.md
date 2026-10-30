@@ -146,9 +146,11 @@ and only that:
   `github_projects` and `tailscale`;
 - the settings every recipe takes from the environment or before its name: `ANSIBLE_ARGS`, `LOG_DIR`,
   `LOG_RETENTION_DAYS`, `PYTHON` and `UV`;
-- `just status`'s exit codes - 0 nothing is wrong, 1 a problem, 2 something could not be read, 3 the run
-  failed - and the JSON `just status --json` and `just settings --json` print, to which a release may add keys
-  but never removes or renames one (`test_status.py` and `test_settings.py` hold the keys there are).
+- `just status`'s exit codes for a run that reads the fleet - 0 nothing is wrong, 1 a problem, 2 something
+  could not be read, 3 the run failed - and the JSON `just status --json` and `just settings --json` print, to
+  which a release may add keys but never removes or renames one (`test_status.py` and `test_settings.py` hold
+  the keys there are). A command line or a setup that a recipe refuses before it reads anything prints an
+  error on standard error and nothing on standard output, `--json` or not, and exits non-zero.
 
 The contributor commands - `lint`, `test`, `docs`, `vagrant` and `clean` - the justfile's other settings, the
 role variables the example files do not list, and the wording of what any command prints are not part of it,

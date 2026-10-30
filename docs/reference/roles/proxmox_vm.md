@@ -98,7 +98,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 |---|---|---|
 | Validate the Proxmox connection settings | `ansible.builtin.assert` |  |
 | Validate the VM name | `ansible.builtin.assert` |  |
-| Refuse the console password's old name | `ansible.builtin.assert` |  |
+| Refuse the console password's old name | `ansible.builtin.assert` | <code>proxmox_vm_state == 'present'</code> |
 | Validate the login credentials for the VM | `ansible.builtin.assert` |  |
 | Validate the minimum memory | `ansible.builtin.assert` |  |
 | Validate the VM ID | `ansible.builtin.assert` |  |
@@ -127,7 +127,7 @@ classDef rescue stroke:#665352,stroke-width:2px;
 
   Start-->|Task| Validate_the_Proxmox_connection_settings0[validate the proxmox connection settings]:::task
   Validate_the_Proxmox_connection_settings0-->|Task| Validate_the_VM_name1[validate the vm name]:::task
-  Validate_the_VM_name1-->|Task| Refuse_the_console_password_s_old_name2[refuse the console password s old name]:::task
+  Validate_the_VM_name1-->|Task| Refuse_the_console_password_s_old_name2[refuse the console password s old name<br>When: **proxmox vm state     present**]:::task
   Refuse_the_console_password_s_old_name2-->|Task| Validate_the_login_credentials_for_the_VM3[validate the login credentials for the vm]:::task
   Validate_the_login_credentials_for_the_VM3-->|Task| Validate_the_minimum_memory4[validate the minimum memory]:::task
   Validate_the_minimum_memory4-->|Task| Validate_the_VM_ID5[validate the vm id]:::task

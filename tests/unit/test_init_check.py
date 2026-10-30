@@ -390,10 +390,13 @@ def test_a_password_under_its_old_name_is_a_problem_and_never_said(tmp_path: Pat
     root = tmp_path / "run"
     report = _check(root, fake_pve, "ssh", {"vm_password": "an-old-console-password"})
     assert report["rc"] != 0
-    assert "!!   vault.yml sets vm_password, which is vault_vm_password from 1.0" in _said(report)
+    assert "!!   vm_password is set, which is vault_vm_password from 1.0" in _said(report)
     assert "an-old-console-password" not in json.dumps(report)
     # Empty, as vault.yml.example had it, it sets nothing and is no problem.
-    assert "sets vm_password" not in _said(_check(tmp_path / "empty", fake_pve, "ssh", {"vm_password": ""}))
+    assert "vm_password is set" not in _said(_check(tmp_path / "empty", fake_pve, "ssh", {"vm_password": ""}))
+    # A password YAML reads as a number is a password all the same, and names no Python error.
+    number = _said(_check(tmp_path / "number", fake_pve, "ssh", {"vm_password": 12345678}))
+    assert "vm_password is set, which is vault_vm_password" in number and "has no len" not in number
 
 
 def test_a_privilege_without_propagate_is_a_problem(tmp_path: Path, fake_pve: str) -> None:

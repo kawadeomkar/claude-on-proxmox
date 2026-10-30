@@ -10,7 +10,8 @@
 # How every recipe runs (docs/architecture/decisions.md §15.3): a bash script
 # with no dependencies. Its first lines refuse a run started in another
 # checkout (tools/check checkout), then check its own arguments, then what it
-# needs - the environment (tools/env-run --bin), the vault, the collections -
+# needs - the environment (tools/env-run --bin), the vault, the collections,
+# and where it reads the settings no name 1.0 renamed (tools/check settings) -
 # and only then does it work, its last command exec'd - but in a recipe drawn
 # in parts (lint, init, test), whose trap must still run to say the run's end
 # (tools/live). Nothing is a dependency, which JUST_NO_DEPS or --no-deps would
@@ -75,7 +76,7 @@ VAULT_PASS := '.vault_pass'
 # renamed in them, which nothing would read.
 SETTINGS_FILES := 'inventory/hosts.yml inventory/group_vars/all/local.yml'
 # What `just init` copies from its .example beside it, where it is missing.
-INIT_FILES := SETTINGS_FILES + ' ' + VAULT_FILE
+INIT_FILES := 'inventory/hosts.yml inventory/group_vars/all/local.yml ' + VAULT_FILE
 
 # One run, one moment: every log of the run is named after it.
 stamp := datetime('%Y%m%d-%H%M%S')
@@ -224,7 +225,7 @@ init HOST='' TOKEN_USER='' TOKEN_ID='' TOKEN_SECRET_FILE='' GITHUB_USER='' STORA
       test -f "$file" || { cp "$file.example" "$file"; copied="$copied $file"; }
     done
     [ -z "$copied" ] || echo "Created$copied from their .example files (git-ignored)."
-    tools/check settings {{ SETTINGS_FILES }}
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     # Drawn live from here, after just install, as one run in two parts - the questions, then the checks - unless it
     # is a stage of another recipe's run (live_run), or there is no state to carry the run between them (LIVE_DIR=,
     # when each playbook prints as it did): its title, which no value given goes into, the state the two playbooks
@@ -402,7 +403,7 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
-    tools/check settings {{ SETTINGS_FILES }}
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     # Passed as JSON, not key=value: Ansible's key=value parser splits
@@ -457,7 +458,7 @@ code PROJECT='' SESSION='' *NAME:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
-    tools/check settings {{ SETTINGS_FILES }}
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -497,7 +498,7 @@ login SIGN_IN='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
-    tools/check settings {{ SETTINGS_FILES }}
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -538,7 +539,7 @@ status ONLY='' JSON='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
-    tools/check settings {{ SETTINGS_FILES }}
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -594,7 +595,7 @@ settings ALL='' CHANGED='' JSON='' RESET='' VALUE='' *NAME:
     if [ "$#" -eq 0 ] && [ -z "$all$changed" ]; then exec "$bin/python" tools/settings --usage --json="$json"; fi
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
-    tools/check settings {{ SETTINGS_FILES }}
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     name=${1:-}
     set --
     {{ vault_args }}
@@ -616,7 +617,7 @@ destroy *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
-    tools/check settings {{ SETTINGS_FILES }}
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"

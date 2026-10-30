@@ -991,7 +991,8 @@ every task a read (held by `tests/unit/test_init_check.py`):
    a template is nothing to do when it is the template's own, and refused otherwise.
 9. **A key for the VMs**: `vm_ssh_public_keys`. `vault_vm_password` alone is a problem - it is for the Proxmox
    console, and deploy configures the VMs over SSH, which takes a key; with neither, the public keys in
-   `~/.ssh` are listed and the `local.yml` line suggested.
+   `~/.ssh` are listed and the `local.yml` line suggested. A `vm_password` that holds a password, its name
+   before 1.0, is a problem too: nothing reads it, and the fix is to rename it in `vault.yml`.
 
 Each result is `ok`, `!!` with its fix, or `--` not checked, printed together at the end, and the run fails
 when any is `!!`. NEXT STEPS (`claude_vm_next`, under the key `just init`, matter `init_check`) then gives

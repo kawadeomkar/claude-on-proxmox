@@ -656,9 +656,9 @@
     - name: Record a console password under its old name
       ansible.builtin.set_fact:
         init_results: >-
-          {{ init_results + [{'ok': false, 'text': 'vault.yml sets vm_password, which is vault_vm_password from'
-             ~ ' 1.0: rename it there, with just vault'}] }}
-      when: vm_password | default('', true) | length > 0
+          {{ init_results + [{'ok': false, 'text': 'vm_password is set, which is vault_vm_password from 1.0: rename'
+             ~ ' it in vault.yml, with just vault'}] }}
+      when: vm_password | default('', true) | string | length > 0
 
     # ----------------------------------------------------------- the VM's key ---
     - name: Look for a public key, as the VMs would get none
@@ -666,7 +666,7 @@
         paths: "{{ init_ssh_dir }}"
         patterns: "*.pub"
       register: init_public_keys
-      when: vm_ssh_public_keys | length == 0 and vault_vm_password | default('', true) | length == 0
+      when: vm_ssh_public_keys | length == 0 and vault_vm_password | default('', true) | string | length == 0
 
     - name: Record the key's result
       ansible.builtin.set_fact:
@@ -684,7 +684,7 @@
              ('the VMs would get no SSH key, and ' ~ init_ssh_dir ~ ' has no public key: make one with ssh-keygen'
               ~ ' -t ed25519')}] }}
       vars:
-        init_keyless: "{{ vm_ssh_public_keys | length == 0 and vault_vm_password | default('', true) | length == 0 }}"
+        init_keyless: "{{ vm_ssh_public_keys | length == 0 and vault_vm_password | default('', true) | string | length == 0 }}"
 
     # ---------------------------------------------------------------- the end ---
     - name: Say what each check found

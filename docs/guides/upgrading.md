@@ -25,13 +25,14 @@ when you go back to it.
 | `vm_password` | `vault_vm_password` | `vault.yml`, with `just vault` |
 | `proxmox_vm_ipconfig` | `vm_ipconfig` | `local.yml`; the old name still works, as the role's own variable |
 | `common_extra_packages` | `vm_extra_packages` | `local.yml`; the old name still works, as the role's own variable |
-| `just init --token-name` | `just init --token-id` | the command line |
-| `just list` | `just status` | the command line |
+| `--token-name`, of `just init` | `--token-id` | the command line |
+| the `list` recipe | `just status` | the command line |
 
-Rename each in its file. Until you do, every recipe that reads the settings stops at the first five, naming the
-file and the new name (`tools/check settings`), and `just init`'s checks and provisioning stop at a `vm_password`
-that still holds a password: nothing would read them under the old name. One set to `""`, as `vault.yml.example`
-had `vm_password`, sets nothing and is left alone.
+Rename each in its file. Until you do, every recipe that reads the settings stops at any of the first six still
+set in `local.yml` or `hosts.yml`, naming the file and the new name (`tools/check settings`), and `just init`'s
+checks and provisioning stop at a `vm_password` in the vault that still holds a password: nothing would read them
+under the old name. One set to `""` or left empty, as `vault.yml.example` had `vm_password`, sets nothing and is
+left alone.
 
 ## A template built before its record
 

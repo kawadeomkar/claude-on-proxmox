@@ -11,7 +11,7 @@
 #   tools/check project <name>         one repository folder's name
 #   tools/check session <id>           one Claude Code session ID, or none
 #   tools/check sections <list>        just status's sections, comma-separated, or none
-#   tools/check settings <file>...     no setting under a name 1.0 renamed, in local.yml or hosts.yml
+#   tools/check settings <bin> <file>... no setting under a name 1.0 renamed, in local.yml or hosts.yml
 set -eu
 # The character sets below are spelt out rather than written as ranges, so
 # no locale can widen them (a UTF-8 one may collate accented letters into
@@ -116,31 +116,91 @@ sections)
   done
   ;;
 settings)
-  # A setting 1.0 renamed (docs/guides/upgrading.md), still set in local.yml
-  # or hosts.yml, would be read by nothing, without a word: each is named with
-  # the name it has now. One set to "" sets nothing and passes. vault.yml's
-  # vm_password is checked where it is read, since the vault is encrypted here.
-  shift
-  found=
-  for file in "$@"; do
-    [ -f "$file" ] || continue
-    for pair in claude_remote_control=claude_code_remote_control claude_login_args=claude_code_login_args \
-      claude_login_timeout=claude_code_login_timeout \
-      claude_login_approval_timeout=claude_code_login_approval_timeout claude_vm_default_name=vm_default_name; do
-      old=${pair%%=*} new=${pair#*=}
-      set_line="^[[:space:]]*$old:"
-      empty_line="^[[:space:]]*$old:[[:space:]]*(\"\"|'')[[:space:]]*(#.*)?\$"
-      if awk -v set_line="$set_line" -v empty_line="$empty_line" \
-        '$0 ~ set_line && $0 !~ empty_line { found = 1 } END { exit !found }' "$file"; then
-        echo "error: $file sets $old, which is $new from 1.0: rename it there (docs/guides/upgrading.md)" >&2
-        found=1
-      fi
-    done
-  done
-  [ -z "$found" ] || exit 1
+  # A setting 1.0 renamed (docs/guides/upgrading.md), still set in local.yml or
+  # hosts.yml, would be read by nothing, without a word: each is named with the
+  # name it has now. One set to "" or left empty sets nothing and passes. The
+  # files are read as YAML by the environment's Python (<bin>): at the top of
+  # local.yml, and in hosts.yml in every group's and host's vars. vault.yml is
+  # encrypted here, so its vm_password is checked where Ansible reads it.
+  bin=$2
+  shift 2
+  any=
+  for file in "$@"; do [ ! -e "$file" ] || any=1; done
+  [ -n "$any" ] || exit 0
+  exec "$bin/python" -I - "$@" << 'PYTHON'
+import sys
+
+import yaml
+
+# Each old name: its name from 1.0, and what to do.
+RENAMED = {
+    "claude_remote_control": ("claude_code_remote_control", "rename it there"),
+    "claude_login_args": ("claude_code_login_args", "rename it there"),
+    "claude_login_timeout": ("claude_code_login_timeout", "rename it there"),
+    "claude_login_approval_timeout": ("claude_code_login_approval_timeout", "rename it there"),
+    "claude_vm_default_name": ("vm_default_name", "rename it there"),
+    "vm_password": ("vault_vm_password", "it is a secret, so move it to vault.yml under that name, with just vault"),
+}
+
+
+class Loader(yaml.SafeLoader):
+    """YAML as Ansible writes it: a tag such as !vault is a value, never a key."""
+
+
+Loader.add_multi_constructor("!", lambda loader, suffix, node: None)
+
+
+def settings(data):
+    """Each (name, value) a file sets: its top level, and an inventory group's vars and hosts, all the way down."""
+    if not isinstance(data, dict):
+        return
+    for name, value in data.items():
+        yield name, value
+        if isinstance(value, dict) and value.keys() & {"hosts", "children", "vars"}:
+            yield from group(value)
+
+
+def group(data):
+    if isinstance(data.get("vars"), dict):
+        yield from data["vars"].items()
+    for host in (data.get("hosts") or {}).values() if isinstance(data.get("hosts"), dict) else ():
+        if isinstance(host, dict):
+            yield from host.items()
+    for child in (data.get("children") or {}).values() if isinstance(data.get("children"), dict) else ():
+        if isinstance(child, dict):
+            yield from group(child)
+
+
+found = False
+for path in sys.argv[1:]:
+    try:
+        with open(path, encoding="utf-8") as stream:
+            data = yaml.load(stream, Loader=Loader)
+    except FileNotFoundError:
+        continue
+    except yaml.YAMLError as error:
+        # Where, never what: the line could hold anything.
+        mark = getattr(error, "problem_mark", None)
+        where = f" at line {mark.line + 1}" if mark else ""
+        print(f"error: {path} is not YAML{where}, so it could not be checked for renamed settings", file=sys.stderr)
+        found = True
+        continue
+    except OSError as error:
+        print(f"error: {path} could not be read ({error.strerror}), so it could not be checked for renamed settings",
+              file=sys.stderr)
+        found = True
+        continue
+    for name, value in settings(data):
+        if name in RENAMED and value not in ("", None):
+            new, what = RENAMED[name]
+            print(f"error: {path} sets {name}, which is {new} from 1.0: {what} (docs/guides/upgrading.md)",
+                  file=sys.stderr)
+            found = True
+sys.exit(1 if found else 0)
+PYTHON
   ;;
 *)
-  echo "usage: tools/check checkout <directory> | vault <file> | collections <bin> | names <name>... | project <name> | session <id> | sections <list> | settings <file>..." >&2
+  echo "usage: tools/check checkout <directory> | vault <file> | collections <bin> | names <name>... | project <name> | session <id> | sections <list> | settings <bin> <file>..." >&2
   exit 2
   ;;
 esac

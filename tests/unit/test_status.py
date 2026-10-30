@@ -582,15 +582,15 @@ def test_status_reads_the_fleet_from_the_api_and_changes_nothing(tmp_path, fake_
     # What --json prints is this model, whole: every key 1.x promises is still there.
     held = {
         "report": model,
-        "vm": alpha,
         "attention": model["attention"][0],
         "proxmox": model["proxmox"],
         "template": model["template"],
         "settings": model["settings"],
     }
-    assert {
-        part: sorted(keys - set(held[part])) for part, keys in PROMISED_KEYS.items() if keys - set(held[part])
-    } == {}
+    # Every VM, running or stopped, read or not.
+    held |= {f"vm {vm['name']}": vm for vm in model["vms"]}
+    missing = {part: sorted(PROMISED_KEYS[part.split()[0]] - set(keys)) for part, keys in held.items()}
+    assert {part: keys for part, keys in missing.items() if keys} == {}
     # Read only: GETs, every one of them, and not one write.
     calls = [json.loads(line) for line in (tmp_path / "pve" / "calls.log").read_text().splitlines()]
     after_fixture = calls[[c["path"] for c in calls].index("/api2/json/cluster/resources") :]

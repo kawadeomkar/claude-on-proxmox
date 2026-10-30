@@ -25,14 +25,17 @@
     quiet: true
 
 # vault.yml's vm_password was renamed vault_vm_password in 1.0: one still set
-# would give the VM no password without a word.
+# would give a new VM no password without a word. Only where a VM is made:
+# just destroy deletes with this role after its release, which a refusal there
+# would leave done and the VM still running.
 - name: Refuse the console password's old name
   ansible.builtin.assert:
-    that: vm_password | default('', true) | length == 0
+    that: vm_password | default('', true) | string | length == 0
     fail_msg: >-
-      vault.yml sets vm_password, which is vault_vm_password from 1.0: rename
-      it there, with just vault.
+      vm_password is set, which is vault_vm_password from 1.0: rename it in
+      vault.yml, with just vault.
     quiet: true
+  when: proxmox_vm_state == 'present'
 
 - name: Validate the login credentials for the VM
   ansible.builtin.assert:

@@ -1510,7 +1510,8 @@ def _init_settings(tmp_path: Path, settings_body: str = "") -> list[str]:
         (tmp_path / f"{name}.example").write_text(f"# {name}\n")
         copies.append(str(tmp_path / name))
     settings = [f"BIN={bin_dir}", f"UV={bin_dir / 'uv'}", f"INIT_FILES={' '.join(copies)}"]
-    settings.append(f"SETTINGS_FILES={' '.join(copies[:2])}")
+    # Not the copies: tools/check settings reads its files with the environment's Python, which a stand-in has not.
+    settings.append(_settings_files(tmp_path / "settings"))
     settings += [
         f"VAULT_FILE={tmp_path / 'vault.yml'}",
         f"VAULT_PASS={tmp_path / '.vault_pass'}",
@@ -2147,14 +2148,27 @@ def test_status_takes_its_sections_as_one_json_extra_var(tmp_path: Path) -> None
 
 
 def test_a_setting_under_a_name_1_0_renamed_is_refused_by_its_new_name(tmp_path: Path) -> None:
-    (tmp_path / "local.yml").write_text('vm_cores: 4\nclaude_remote_control: false\nclaude_login_timeout: ""\n')
-    (tmp_path / "hosts.yml").write_text("all:\n  vars:\n    claude_vm_default_name: beta\n")
+    # The check reads YAML with the environment's Python: this one's, whole, in place of a stand-in.
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    (tmp_path / "bin" / "python").chmod(0o755)
+    (tmp_path / "local.yml").write_text(
+        'vm_cores: 4\n"claude_remote_control": false\nclaude_login_timeout: ""\nclaude_login_args:\n'
+        "vm_password: a-console-password\n"
+        "claude_code_global_instructions: |\n  claude_vm_default_name: words in the instructions\n"
+    )
+    (tmp_path / "hosts.yml").write_text("all: {children: {proxmox: {hosts: {pve: {claude_vm_default_name: beta}}}}}\n")
     output = _refused(tmp_path, "status")
     local, hosts = tmp_path / "local.yml", tmp_path / "hosts.yml"
     assert f"error: {local} sets claude_remote_control, which is claude_code_remote_control from 1.0" in output
+    assert f"error: {local} sets vm_password, which is vault_vm_password from 1.0: it is a secret" in output
     assert f"error: {hosts} sets claude_vm_default_name, which is vm_default_name from 1.0" in output
-    # Empty, it sets nothing: not said.
-    assert "claude_login_timeout" not in output
+    # Empty, or text in another setting's value, it sets nothing: not said; and a password is never said back.
+    assert "claude_login_timeout" not in output and "claude_login_args" not in output
+    assert f"{local} sets claude_vm_default_name" not in output and "a-console-password" not in output
+    # A file it cannot read is said, never passed.
+    (tmp_path / "hosts.yml").write_text("all: [unclosed\n")
+    assert f"error: {hosts} is not YAML at line 2" in _refused(tmp_path, "status")
     (tmp_path / "local.yml").write_text("claude_code_remote_control: false\n")
     (tmp_path / "hosts.yml").write_text("all: {}\n")
     assert _just("status", settings=_recording(tmp_path)).returncode == 0

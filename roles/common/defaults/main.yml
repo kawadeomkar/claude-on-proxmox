@@ -71,7 +71,7 @@ common_packages:
   - zip
   - zstd
 # Add your own without replacing the baseline.
-common_extra_packages: "{{ vm_extra_packages | default([]) }}"
+common_extra_packages: "{{ vm_extra_packages | default([], true) }}"
 
 # Services enabled at boot and started, where systemd runs. qemu-guest-agent
 # is started only on a VM that has its port: a Proxmox VM with its agent on.

@@ -67,7 +67,7 @@ proxmox_vm_ssh_public_keys: []
 # assign a fixed address instead - but it is one value, so set in local.yml or
 # with -e it gives every VM a run provisions that same address. Use it only
 # for a run that provisions a single VM.
-proxmox_vm_ipconfig: "{{ vm_ipconfig | default('ip=dhcp') }}"
+proxmox_vm_ipconfig: "{{ vm_ipconfig | default('ip=dhcp', true) }}"
 proxmox_vm_nameservers: "{{ vm_nameservers | default([]) }}"
 proxmox_vm_searchdomain: "{{ vm_searchdomain | default('') }}"
 

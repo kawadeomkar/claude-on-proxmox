@@ -33,8 +33,8 @@ FAKE = {
     "vault_tailscale_auth_key": "tskey-auth-fakefakefake-0000000000000000",
     "vault_github_token": "ghp_000000000000000000000000000000000000",
     "vault_vm_password": "fake-vm-password-0000",
-    # A secret the vault holds without the vault_ prefix: masked as well.
-    "console_password": "fake-console-password-0000",
+    # A setting someone keeps in the vault, which has no vault_ prefix: masked all the same.
+    "git_user_email": "fake-git-email-0000",
     # A username that is a common word, which a check of whole lines would find in every source column.
     "vault_github_username": "local",
 }
@@ -43,7 +43,7 @@ SECRETS = (
     FAKE["vault_tailscale_auth_key"],
     FAKE["vault_github_token"],
     FAKE["vault_vm_password"],
-    FAKE["console_password"],
+    FAKE["git_user_email"],
     INLINE,
 )
 ROLES = sorted(path.parent.parent.name for path in (REPO / "roles").glob("*/meta/argument_specs.yml"))
@@ -87,7 +87,7 @@ def _scenario(root: Path, name: str, local_extra: str, env: dict, address: str =
     local += (
         "\nvm_cores: 4\nlogin_desktop: false\ntailscale_ssh: true\n"
         'tailscale_daemon_flags: ["{{ claude_probe }}"]\n'
-        'tailscale_api_url: "{{ console_password }}"\n'
+        'tailscale_api_url: "{{ git_user_email }}"\n'
         'vm_searchdomain: "\\e]0;retitled\\a.lan"\n' + local_extra
     )
     (inventory / "group_vars" / "all" / "local.yml").write_text(local)
@@ -235,7 +235,7 @@ def test_an_inline_vault_value_is_masked(scenarios) -> None:
 
 
 def test_a_setting_that_reads_any_name_the_vault_holds_is_masked(scenarios) -> None:
-    # console_password has no vault_ prefix.
+    # git_user_email, which the vault holds here, has no vault_ prefix.
     row = _report(scenarios, "--", "tailscale")["rows"]["tailscale_api_url"]
     assert row["kind"] == "secret" and row["value"] is None, row
 
@@ -437,6 +437,8 @@ def test_a_per_vm_file_is_noted_since_ansible_would_apply_it(scenarios) -> None:
 
 # The keys of `just settings --json` that 1.x promises (CONTRIBUTING.md, Releasing): added to, never taken away.
 PROMISED_KEYS = {"changed_only", "notes", "settings", "target"}
+PROMISED_WRITE_KEYS = {"wrote", "now", "notes"}
+PROMISED_RESET_KEYS = {"reset", "now", "notes"}
 PROMISED_ROW_KEYS = {
     "change",
     "changed",
@@ -454,6 +456,30 @@ PROMISED_ROW_KEYS = {
     "wiring",
     "wiring_in",
 }
+
+
+def test_the_vm_settings_are_what_their_role_variables_read(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    _local(inventory).write_text(
+        _local(inventory).read_text() + 'vm_ipconfig: "ip=192.0.2.61/24"\nvm_extra_packages: [jq]\n'
+    )
+    ipconfig = _report_of(scenarios, inventory, "--", "proxmox_vm_ipconfig")["rows"]["proxmox_vm_ipconfig"]
+    packages = _report_of(scenarios, inventory, "--", "common_extra_packages")["rows"]["common_extra_packages"]
+    assert (ipconfig["value"], packages["value"]) == ("ip=192.0.2.61/24", ["jq"]), (ipconfig, packages)
+    # Empty, each falls back to its default.
+    _local(inventory).write_text(_local(inventory).read_text() + 'vm_ipconfig: ""\nvm_extra_packages:\n')
+    ipconfig = _report_of(scenarios, inventory, "--", "proxmox_vm_ipconfig")["rows"]["proxmox_vm_ipconfig"]
+    packages = _report_of(scenarios, inventory, "--", "common_extra_packages")["rows"]["common_extra_packages"]
+    assert (ipconfig["value"], packages["value"]) == ("ip=dhcp", []), (ipconfig, packages)
+
+
+def _report_of(scenarios: dict, inventory: Path, *args: str) -> dict:
+    """As _report, of an inventory of the test's own, never cached."""
+    result = _run(scenarios, inventory, "--json=true", *args)
+    assert result.returncode == 0, result.stderr[-2000:]
+    report = json.loads(result.stdout)
+    report["rows"] = {row["name"]: row for row in report["settings"]}
+    return report
 
 
 def test_the_json_keeps_every_key_1x_promises(scenarios) -> None:
@@ -503,6 +529,7 @@ def test_a_value_takes_the_place_of_its_examples_line(scenarios, tmp_path) -> No
     assert _only_change(before, after) == [("# vm_memory_mb: 4096", "vm_memory_mb: 8192")]
     assert before.splitlines().index("# vm_memory_mb: 4096") == after.splitlines().index("vm_memory_mb: 8192")
     report = json.loads(result.stdout)
+    assert PROMISED_WRITE_KEYS <= set(report), sorted(PROMISED_WRITE_KEYS - set(report))
     assert report["wrote"]["how"] == "in place of its example's line" and report["now"]["value"] == 8192
     assert any("a VM gets it when it is created" in note for note in report["notes"])
 
@@ -750,6 +777,7 @@ def test_reset_of_a_role_variable_takes_out_its_setting_and_its_own_line(scenari
     result = _reset(scenarios, inventory, "claude_code_login_desktop", "--json=true")
     assert result.returncode == 0, result.stderr[-2000:]
     report = json.loads(result.stdout)
+    assert PROMISED_RESET_KEYS <= set(report), sorted(PROMISED_RESET_KEYS - set(report))
     assert report["reset"]["removed"] == ["login_desktop", "claude_code_login_desktop"]
     assert report["now"]["value"] is True
     text = local.read_text()
