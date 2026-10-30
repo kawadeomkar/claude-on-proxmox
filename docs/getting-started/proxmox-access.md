@@ -86,15 +86,14 @@ It prints the token's secret last, once: give it to `just init`, which asks for 
 ### The guest agent's privilege
 
 `VM.GuestAgent.Audit` is what lets the token read the address DHCP gave the VM; without it provisioning
-creates the VM but cannot report where it is, and the API answers every address query with 403. Proxmox VE 8
-calls it `VM.Monitor`, and the script grants whichever the host's version has. On 9.x do not substitute
-`VM.GuestAgent.Unrestricted`: it also works, but lets the token run arbitrary commands inside the VM.
+creates the VM but cannot report where it is, and the API answers every address query with 403. Do not
+substitute `VM.GuestAgent.Unrestricted`: it also works, but lets the token run arbitrary commands inside the VM.
 
 A role made on 8.x loses `VM.Monitor` when the host is upgraded to 9.x. The script leaves an existing role as
 it is and names what it lacks, and `just init` names it too; add the privilege to the role:
 
 ```bash
-pveum role modify AnsibleVM --append 1 --privs VM.GuestAgent.Audit   # VM.Monitor on 8.x
+pveum role modify AnsibleVM --append 1 --privs VM.GuestAgent.Audit
 ```
 
 ### User Tag Access

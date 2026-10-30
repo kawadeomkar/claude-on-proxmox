@@ -3,7 +3,7 @@
 [![CI](https://github.com/kawadeomkar/claude-on-proxmox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kawadeomkar/claude-on-proxmox/actions/workflows/ci.yml)
 [![Docs](https://github.com/kawadeomkar/claude-on-proxmox/actions/workflows/docs.yml/badge.svg?branch=main)](https://kawadeomkar.github.io/claude-on-proxmox/)
 [![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fkawadeomkar%2Fclaude-on-proxmox%2Fmain%2Fpyproject.toml)](pyproject.toml)
-[![Proxmox VE 8.x | 9.x](https://img.shields.io/badge/Proxmox%20VE-8.x%20%7C%209.x-E57000?logo=proxmox&logoColor=white)](docs/getting-started/requirements.md)
+[![Proxmox VE 9.x](https://img.shields.io/badge/Proxmox%20VE-9.x-E57000?logo=proxmox&logoColor=white)](docs/getting-started/requirements.md)
 [![License: MIT](https://img.shields.io/github/license/kawadeomkar/claude-on-proxmox)](LICENSE)
 
 Ansible that turns a Proxmox VE host into [Claude Code](https://code.claude.com/docs) development VMs.
@@ -44,7 +44,7 @@ a first deploy.
 
 ## What you need
 
-- **A Proxmox VE 8.x or 9.x host** that already runs VMs: `apt` working, a bridge with a DHCP server on
+- **A Proxmox VE 9.x host** that already runs VMs: `apt` working, a bridge with a DHCP server on
   it, and a storage for VM disks ([what the project assumes](docs/getting-started/requirements.md)).
 - **On your machine** (macOS or Linux): Python 3.12+ in a virtualenv of its own for this project (pyenv's,
   or any other: `PYTHON=` names it), [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+,
