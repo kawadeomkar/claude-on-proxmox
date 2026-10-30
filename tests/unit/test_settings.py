@@ -435,6 +435,29 @@ def test_a_per_vm_file_is_noted_since_ansible_would_apply_it(scenarios) -> None:
     assert "host_vars/ holds alpha.yml" in _text(scenarios, "--", "tailscale").replace("\n", " ")
 
 
+# The keys of `just settings --json` that 1.x promises (CONTRIBUTING.md, Releasing): added to, never taken away.
+PROMISED_KEYS = {"changed_only", "notes", "settings", "target"}
+PROMISED_WRITE_KEYS = {"wrote", "now", "notes"}
+PROMISED_RESET_KEYS = {"reset", "now", "notes"}
+PROMISED_ROW_KEYS = {
+    "change",
+    "changed",
+    "entry_point",
+    "evaluated_as",
+    "kind",
+    "name",
+    "role",
+    "secret",
+    "set_by_run",
+    "set_in",
+    "value",
+    "via",
+    "why",
+    "wiring",
+    "wiring_in",
+}
+
+
 def test_the_vm_settings_are_what_their_role_variables_read(scenarios, tmp_path) -> None:
     inventory = _writable(scenarios, tmp_path)
     _local(inventory).write_text(
@@ -457,6 +480,13 @@ def _report_of(scenarios: dict, inventory: Path, *args: str) -> dict:
     report = json.loads(result.stdout)
     report["rows"] = {row["name"]: row for row in report["settings"]}
     return report
+
+
+def test_the_json_keeps_every_key_1x_promises(scenarios) -> None:
+    report = _report(scenarios, "--", "claude_code")
+    assert PROMISED_KEYS <= set(report), sorted(PROMISED_KEYS - set(report))
+    rows = set().union(*(set(row) for row in report["settings"]))
+    assert PROMISED_ROW_KEYS <= rows, sorted(PROMISED_ROW_KEYS - rows)
 
 
 def test_the_text_and_the_json_hold_the_same_rows(scenarios) -> None:
@@ -499,6 +529,7 @@ def test_a_value_takes_the_place_of_its_examples_line(scenarios, tmp_path) -> No
     assert _only_change(before, after) == [("# vm_memory_mb: 4096", "vm_memory_mb: 8192")]
     assert before.splitlines().index("# vm_memory_mb: 4096") == after.splitlines().index("vm_memory_mb: 8192")
     report = json.loads(result.stdout)
+    assert PROMISED_WRITE_KEYS <= set(report), sorted(PROMISED_WRITE_KEYS - set(report))
     assert report["wrote"]["how"] == "in place of its example's line" and report["now"]["value"] == 8192
     assert any("a VM gets it when it is created" in note for note in report["notes"])
 
@@ -746,6 +777,7 @@ def test_reset_of_a_role_variable_takes_out_its_setting_and_its_own_line(scenari
     result = _reset(scenarios, inventory, "claude_code_login_desktop", "--json=true")
     assert result.returncode == 0, result.stderr[-2000:]
     report = json.loads(result.stdout)
+    assert PROMISED_RESET_KEYS <= set(report), sorted(PROMISED_RESET_KEYS - set(report))
     assert report["reset"]["removed"] == ["login_desktop", "claude_code_login_desktop"]
     assert report["now"]["value"] is True
     text = local.read_text()
