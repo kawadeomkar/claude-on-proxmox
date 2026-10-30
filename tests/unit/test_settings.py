@@ -537,7 +537,7 @@ def test_a_role_variable_set_through_a_setting_is_written_as_the_setting(scenari
         ("tailscale_advertise_tags", "tag:a,tag:b", 'tailscale_advertise_tags: ["tag:a", "tag:b"]'),
         ("tailscale_advertise_tags", "[tag:a, tag:b]", 'tailscale_advertise_tags: ["tag:a", "tag:b"]'),
         ("tailscale_auth_method", "web", 'tailscale_auth_method: "web"'),
-        ("claude_vm_default_name", "a name with 'quotes' and $(dollars)", None),
+        ("vm_default_name", "a name with 'quotes' and $(dollars)", None),
     ],
 )
 def test_a_value_is_written_as_its_type_takes_it(scenarios, tmp_path, name, value, written) -> None:
@@ -614,9 +614,9 @@ def test_an_expression_or_a_control_character_is_refused(scenarios, tmp_path) ->
     inventory = _writable(scenarios, tmp_path)
     before = _local(inventory).read_bytes()
     ran = tmp_path / "ran"
-    expression = _set(scenarios, inventory, "claude_vm_default_name", "{{ lookup('pipe', 'touch " + str(ran) + "') }}")
+    expression = _set(scenarios, inventory, "vm_default_name", "{{ lookup('pipe', 'touch " + str(ran) + "') }}")
     assert expression.returncode == 1 and "never an expression" in expression.stderr
-    control = _set(scenarios, inventory, "claude_vm_default_name", "a\tb")
+    control = _set(scenarios, inventory, "vm_default_name", "a\tb")
     assert control.returncode == 1 and "without a control character" in control.stderr
     assert _local(inventory).read_bytes() == before and not ran.exists()
 
@@ -624,7 +624,7 @@ def test_an_expression_or_a_control_character_is_refused(scenarios, tmp_path) ->
 def test_a_vault_secret_given_as_a_plain_value_is_refused_unsaid(scenarios, tmp_path) -> None:
     inventory = _writable(scenarios, tmp_path)
     before = _local(inventory).read_bytes()
-    result = _set(scenarios, inventory, "claude_vm_default_name", FAKE["vault_github_token"])
+    result = _set(scenarios, inventory, "vm_default_name", FAKE["vault_github_token"])
     assert result.returncode == 1 and "a secret the vault holds" in result.stderr
     assert _local(inventory).read_bytes() == before
 

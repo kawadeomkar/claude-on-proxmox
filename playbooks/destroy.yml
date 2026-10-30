@@ -30,7 +30,7 @@
     claude_vm_reaching: "{{ destroy_release | default(true) | bool or destroy_save_sessions | default(true) | bool }}"
     # The names the prompt below says. A vars_prompt is templated before any
     # host is in scope, with the play's vars and the extra vars only: an
-    # inventory variable - claude_vm_names, claude_vm_default_name,
+    # inventory variable - claude_vm_names, vm_default_name,
     # destroy_release - is undefined there, and fails every run of this
     # playbook before it asks, even one that answers with -e. So this repeats
     # claude_vm_names' split on vm_name, the one value there is then, through
@@ -49,7 +49,7 @@
         {{ ('This deletes ' ~ claude_vm_confirm_names | join(', ')
             ~ (' and its disks.' if claude_vm_confirm_names | length == 1 else ' and their disks.')
             if claude_vm_confirm_names | length > 0
-            else 'This deletes the default VM, the one claude_vm_default_name names in your inventory, and its disks.')
+            else 'This deletes the default VM, the one vm_default_name names in your inventory, and its disks.')
            | banner('CONFIRM DELETION') ~ 'Type yes to continue' }}
       private: false
       # A run with no terminal - CI, a cron job, a nested playbook - takes the

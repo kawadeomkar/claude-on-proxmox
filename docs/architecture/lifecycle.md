@@ -451,7 +451,7 @@ asked for its VM list — unfiltered, one node that is down failed the run befor
 
 `configure.yml` is imported with `vars: {claude_vm_discovery: false}`, so it configures exactly the
 hosts provisioning's play 3 published. Running discovery there would disagree with provisioning
-about what omitted names mean: `claude_vm_names` falls back to `claude_vm_default_name`, but
+about what omitted names mean: `claude_vm_names` falls back to `vm_default_name`, but
 discovery tests `vm_name is defined` and falls back to the whole fleet, so a bare `just deploy`
 created the default VM and then configured every tagged VM. It also repeated, one VM at a time, the
 lookups provisioning had just made. Import `vars:` are play vars of every imported play, including

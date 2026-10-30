@@ -110,7 +110,7 @@ The VM a recipe acts on when no name is given.
 
 | Setting | Default | Notes |
 |---|---|---|
-| `claude_vm_default_name` | `claude-on-proxmox-default` |  |
+| `vm_default_name` | `claude-on-proxmox-default` |  |
 
 VM sizing. These apply to every VM a run creates - VMs are no longer listed in hosts.yml, so there is no per-VM override. Provision fleets that need different sizes in separate runs.
 

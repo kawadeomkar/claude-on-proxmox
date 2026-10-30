@@ -95,7 +95,7 @@ proxmox_template_name: ubuntu-24.04-cloudinit
 # and status.yml test `vm_name is defined` instead and, without it, cover every
 # tagged VM - so just status, just login and just deploy --only configure,
 # --check and --only ssh-config are fleet-wide.
-claude_vm_default_name: claude-on-proxmox-default
+vm_default_name: claude-on-proxmox-default
 # Applied to every VM this project creates, and how they are found again.
 claude_vm_tag: claude-on-proxmox
 # Matches claude_vm_tag as a whole tag in Proxmox's ";"-joined tag string (or
@@ -124,7 +124,7 @@ claude_vm_tagged: >-
      | selectattr('tags', 'regex', claude_vm_tag_pattern)
      | list }}
 claude_vm_names: >-
-  {{ (vm_name | default(claude_vm_default_name, true)) | split(',') | map('trim') | select | list }}
+  {{ (vm_name | default(vm_default_name, true)) | split(',') | map('trim') | select | list }}
 # The tagged VMs a fleet-wide recipe acts on: the ones named (vm_name), or all of
 # them without it. discover.yml and status.yml both narrow through this, so
 # `just deploy --only configure` and `just status` cannot disagree on what the names select.
