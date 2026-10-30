@@ -43,7 +43,7 @@ just deploy alpha --only configure   # one stage of it: template, provision, con
 just deploy alpha --tags claude_code # re-run one role, e.g. to push an API key (--tags beside names means --only configure)
 just destroy alpha                   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
 just login alpha                     # Claude, GitHub, Tailscale in deploy's order, one VM after another (--only claude, github or tailscale: one)
-just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed); just list too
+just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed)
 just settings tailscale              # a role's variables, each value and where it was set (a variable; --all; --changed; --json; none: usage)
 just settings vm_cores --value 4     # set one setting in local.yml, held to its type; never a secret (just vault)
 just settings vm_cores --reset       # back to its default: its line out of local.yml, its example's line back

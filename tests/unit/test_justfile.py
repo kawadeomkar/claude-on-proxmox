@@ -659,7 +659,7 @@ def test_deploy_without_options_runs_deploy_yml_with_the_no_terminal_switch(tmp_
         (["code", "alpha"], "code alpha"),
         (["code", "alpha", "--project", "demo"], "code --project demo alpha"),
         (["code", "alpha", "--session", "0a608ad8-1b2c-4d3e-8f90-123456789abc"], "code alpha"),
-        (["list"], "unset"),
+        (["status"], "unset"),
     ],
 )
 def test_each_recipe_drawn_live_is_drawn_under_what_was_run(tmp_path: Path, args: list[str], title: str) -> None:
@@ -2131,12 +2131,6 @@ def test_status_takes_its_sections_as_one_json_extra_var(tmp_path: Path) -> None
 @pytest.mark.parametrize("only", ["vms,,storage", "vms storage", "VMS", "access;id", ",vms"])
 def test_status_refuses_a_section_it_has_not_got(tmp_path: Path, only: str) -> None:
     assert NOT_MATCHED in _refused(tmp_path, "status", "--only", only)
-
-
-def test_list_is_status_by_the_name_it_had_before(tmp_path: Path) -> None:
-    run = _playbook(tmp_path, "list", "alpha")
-    assert run[-1] == "playbooks/status.yml", run
-    assert run[run.index('{"vm_name": "alpha"}') - 1] == "-e", run
 
 
 # ---------------------------------------------------------------- just settings ----

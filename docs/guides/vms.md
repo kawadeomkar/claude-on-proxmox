@@ -100,7 +100,6 @@ It exits 0 when nothing is wrong (things to do included), 1 for a problem, 2 whe
 read, and 3 when the run itself failed. `--only` takes `vms`, `storage`, `access`, `sign-ins`, `system` and
 `work`, comma-separated; `--only vms,storage` asks Proxmox alone and never connects to a VM, the quick form for a
 scheduled check. `--json` prints the report as JSON, with the same values the text shows, for a script.
-`just list` is the same command by its old name.
 
 ## Re-running
 

@@ -79,7 +79,6 @@ environment where `python3` is not it.
 | &emsp;`--only ONLY` | Only these sections, comma-separated: vms storage access sign-ins system work; vms,storage reads only the Proxmox API, never a VM |
 | &emsp;`--json` | The report as JSON, alone on standard output, with the same exit code |
 | &emsp;`<name>` | Only these VMs; none reads every VM this project created |
-| &emsp;`just list` | Another name for `just status`, and the same in every way |
 | `just settings [<name>]` | Each setting's value and where it was set, for a role, a variable or all of them; --value sets one in local.yml, --reset puts it back |
 | &emsp;`--all` | Every setting of local.yml, and which secrets of vault.yml are set |
 | &emsp;`--changed` | Only what local.yml or vault.yml changes from the defaults; alone, all of it |

@@ -144,7 +144,7 @@ def commands() -> str:
     layout is this script's own, so a newer just generates the same page."""
     justfile = json.loads(_just("--json"))
     recipes = justfile["recipes"]
-    # An alias is listed under its recipe: the name a recipe had before (just list for just status).
+    # An alias is listed under its recipe: the name a recipe had before.
     aliases: dict[str, list[str]] = {}
     for alias in sorted(justfile.get("aliases") or {}):
         aliases.setdefault(justfile["aliases"][alias]["target"], []).append(alias)

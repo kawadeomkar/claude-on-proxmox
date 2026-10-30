@@ -513,7 +513,6 @@ login SIGN_IN='' *NAMES:
 # removes: 0 nothing is wrong, 1 a problem, 2 something could not be read, 3
 # the run itself failed or wrote no report. ansible-playbook's own code is
 # caught, since -e would end the script at it: its 2 would read as "not read".
-# just list is the same recipe, by the name it had before.
 [arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output, with the same exit code')]
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='Only these VMs; none reads every VM this project created')]
 [arg('ONLY', long='only', pattern='((vms|storage|access|sign-ins|system|work)(,(vms|storage|access|sign-ins|system|work))*)?', help='Only these sections, comma-separated: vms storage access sign-ins system work; vms,storage reads only the Proxmox API, never a VM')]
@@ -551,8 +550,6 @@ status ONLY='' JSON='' *NAMES:
       exit 3
     fi
     exec "$bin/python" tools/status-exit "$report" "$json"
-
-alias list := status
 
 # Each setting's value and where it was set (tools/settings): Ansible's own
 # variables for a play of the role, on the group its playbook runs it on, with
