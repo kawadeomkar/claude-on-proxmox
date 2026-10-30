@@ -532,7 +532,8 @@ callbacks, `status.py`, `run_view.py` and `live_ansible.py` share one copy of ea
 `just login`, `just destroy` and `just code` have: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its title, as `deploy`'s
 does, and its declaration in `filter_plugins/live_recipes.py`, named by the title's first word, says what its run is
 made of - its stages, by playbook or by play, a quiet one counted but never drawn (discovery, a last play that only
-raises), and the VMs a fact names on a stage's row (`info`); each stage's steps, by playbook, by the blocks around
+raises), one whose hosts are not VMs (`vms=False`: the template's, on the Proxmox host), and the VMs a fact names on a
+stage's row (`info`); each stage's steps, by playbook, by the blocks around
 their tasks, by task file (`files`) or by the task each begins at (`starts`); each step's `outcomes`, or its stage's, the facts that mark each VM; the tasks that raise again what
 rescues took (`raises`, with their causes' blocks, their hosts, and the unreachable VMs a ping ignored); the tasks
 whose failure is a person's answer (`declines`, with the line said instead); how many tasks a window shows; the word for a step of a run of one stage (`noun`: `sign-in 2 of 3`) and the summary's columns;
