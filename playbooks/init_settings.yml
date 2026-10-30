@@ -457,85 +457,7 @@
           or set ANSIBLE_VAULT_PASSWORD_FILE, and run it again.
       when: not init_vault_readable and (init_secret_given or init_given.github_user is defined)
 
-    # ----------------------------------------------------------------- 1. host ---
-    - name: Ask for the Proxmox host's address
-      ansible.builtin.include_tasks: tasks/init_ask.yml
-      vars:
-        init_ask_name: host
-        init_ask_label: Proxmox host address
-        init_ask_kind: host
-        init_ask_hidden: false
-        init_ask_given: "{{ init_given.host | default('') }}"
-        init_ask_flag: --host
-        init_ask_text:
-          - "The address of your Proxmox host as this machine reaches it: an IP address or a"
-          - host name, without https:// or a port. Enter to decide later.
-      when: init_hosts_writable
-
-    - name: Write the address into hosts.yml
-      ansible.builtin.lineinfile:
-        path: "{{ init_hosts_file }}"
-        regexp: "{{ init_hosts_line }}"
-        backrefs: true
-        line: '\g<1>{{ init_answers.host | to_json }}\g<2>'
-        validate: "{{ ansible_playbook_python }} -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1]))' %s"
-      when: (init_ask | bool or init_given.host is defined) and init_answers.host is defined
-
-    - name: Read hosts.yml back
-      ansible.builtin.slurp:
-        src: "{{ init_hosts_file }}"
-      register: init_hosts_reread
-      when: (init_ask | bool or init_given.host is defined) and init_answers.host is defined and not ansible_check_mode
-
-    - name: Check that the Proxmox host now has the address
-      ansible.builtin.assert:
-        that: >-
-          init_answers.host in ((init_hosts_reread.content | b64decode | from_yaml).all.children.proxmox.hosts.values()
-          | map(attribute='ansible_host') | map('string') | list)
-        fail_msg: "{{ init_hosts_file }} does not read back ansible_host: {{ init_answers.host }} in the proxmox group."
-        quiet: true
-      when: (init_ask | bool or init_given.host is defined) and init_answers.host is defined and not ansible_check_mode
-
-    # ------------------------------------------------------------- 2. token ID ---
-    # Asked while there is no secret yet and local.yml names no other token, so
-    # it is asked once, beside the secret - and not when the secret is given,
-    # whose run gives the token's parts too where they are not the defaults.
-    # Given, as --token-user and --token-name,
-    # the parts not given are filled in from local.yml or the defaults, and the
-    # whole is held to the same rule.
-    - name: Ask for the API token's ID
-      ansible.builtin.include_tasks: tasks/init_ask.yml
-      vars:
-        init_ask_name: token_id
-        init_ask_label: API token ID
-        init_ask_kind: token_id
-        init_ask_hidden: false
-        init_ask_given: >-
-          {{ (init_given.token_user | default(init_token_user) ~ '!' ~ init_given.token_name | default(init_token_name))
-             if init_given.token_user is defined or init_given.token_name is defined else '' }}
-        init_ask_flag: >-
-          {{ ((['--token-user'] if init_given.token_user is defined else [])
-              + (['--token-name'] if init_given.token_name is defined else [])) | join(' and ') }}
-        init_ask_text:
-          - "The API token to use, as user@realm!name: one you made, or the one just init offers to make"
-          - next. Enter keeps {{ init_token_user_default }}!{{ init_token_name_default }}.
-      when: >-
-        init_given.token_user is defined or init_given.token_name is defined
-        or (init_vault_readable and not init_secret_set and not init_secret_given
-            and init_local_settings.proxmox_api_user is not defined
-            and init_local_settings.proxmox_api_token_id is not defined)
-
-    - name: Write the token's user and name into local.yml
-      ansible.builtin.include_tasks: tasks/init_local_setting.yml
-      vars:
-        init_setting_key: "{{ item.key }}"
-        init_setting_value: "{{ item.value }}"
-      loop: "{{ init_token_settings | dict2items }}"
-      loop_control:
-        label: "{{ item.key }}"
-      when: init_ask | bool or init_given.token_user is defined or init_given.token_name is defined
-
-    # ------------------------------------------------------- 3. GitHub username ---
+    # ------------------------------------------------------- 1. GitHub username ---
     - name: Ask for the GitHub username
       ansible.builtin.include_tasks: tasks/init_ask.yml
       vars:
@@ -613,6 +535,85 @@
              else "Tailscale's sign-in page during just deploy" }}. Without a Tailscale account, turn it off: answer n
           at just init, set tailscale_enabled: false in inventory/group_vars/all/local.yml, or just init --tailscale off.
       when: init_local_settings.tailscale_enabled is not defined and init_answers.tailscale is not defined
+
+    # ----------------------------------------------------------------- 2. host ---
+    - name: Ask for the Proxmox host's address
+      ansible.builtin.include_tasks: tasks/init_ask.yml
+      vars:
+        init_ask_name: host
+        init_ask_label: Proxmox host address
+        init_ask_kind: host
+        init_ask_hidden: false
+        init_ask_given: "{{ init_given.host | default('') }}"
+        init_ask_flag: --host
+        init_ask_text:
+          - "The address of your Proxmox host as this machine reaches it: an IP address or a"
+          - host name, without https:// or a port. Enter to decide later.
+      when: init_hosts_writable
+
+    - name: Write the address into hosts.yml
+      ansible.builtin.lineinfile:
+        path: "{{ init_hosts_file }}"
+        regexp: "{{ init_hosts_line }}"
+        backrefs: true
+        line: '\g<1>{{ init_answers.host | to_json }}\g<2>'
+        validate: "{{ ansible_playbook_python }} -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1]))' %s"
+      when: (init_ask | bool or init_given.host is defined) and init_answers.host is defined
+
+    - name: Read hosts.yml back
+      ansible.builtin.slurp:
+        src: "{{ init_hosts_file }}"
+      register: init_hosts_reread
+      when: (init_ask | bool or init_given.host is defined) and init_answers.host is defined and not ansible_check_mode
+
+    - name: Check that the Proxmox host now has the address
+      ansible.builtin.assert:
+        that: >-
+          init_answers.host in ((init_hosts_reread.content | b64decode | from_yaml).all.children.proxmox.hosts.values()
+          | map(attribute='ansible_host') | map('string') | list)
+        fail_msg: "{{ init_hosts_file }} does not read back ansible_host: {{ init_answers.host }} in the proxmox group."
+        quiet: true
+      when: (init_ask | bool or init_given.host is defined) and init_answers.host is defined and not ansible_check_mode
+
+    # ------------------------------------------------------------- 3. token ID ---
+    # Asked while there is no secret yet and local.yml names no other token, so
+    # it is asked once, beside the secret - and not when the secret is given,
+    # whose run gives the token's parts too where they are not the defaults.
+    # Given, as --token-user and --token-name,
+    # the parts not given are filled in from local.yml or the defaults, and the
+    # whole is held to the same rule.
+    - name: Ask for the API token's ID
+      ansible.builtin.include_tasks: tasks/init_ask.yml
+      vars:
+        init_ask_name: token_id
+        init_ask_label: API token ID
+        init_ask_kind: token_id
+        init_ask_hidden: false
+        init_ask_given: >-
+          {{ (init_given.token_user | default(init_token_user) ~ '!' ~ init_given.token_name | default(init_token_name))
+             if init_given.token_user is defined or init_given.token_name is defined else '' }}
+        init_ask_flag: >-
+          {{ ((['--token-user'] if init_given.token_user is defined else [])
+              + (['--token-name'] if init_given.token_name is defined else [])) | join(' and ') }}
+        init_ask_text:
+          - "The API token to use, as user@realm!name: one you made, or the one just init offers to make"
+          - "next. Its ID only: the secret is asked for after it, unless just init makes the token. Enter"
+          - "keeps {{ init_token_user_default }}!{{ init_token_name_default }}."
+      when: >-
+        init_given.token_user is defined or init_given.token_name is defined
+        or (init_vault_readable and not init_secret_set and not init_secret_given
+            and init_local_settings.proxmox_api_user is not defined
+            and init_local_settings.proxmox_api_token_id is not defined)
+
+    - name: Write the token's user and name into local.yml
+      ansible.builtin.include_tasks: tasks/init_local_setting.yml
+      vars:
+        init_setting_key: "{{ item.key }}"
+        init_setting_value: "{{ item.value }}"
+      loop: "{{ init_token_settings | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: init_ask | bool or init_given.token_user is defined or init_given.token_name is defined
 
     # ------------------------------------------------------------ 4. the token ---
     # Asked last, straight before the vault: a token the offer makes has its

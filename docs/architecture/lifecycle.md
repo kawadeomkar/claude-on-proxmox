@@ -852,23 +852,25 @@ It reads `hosts.yml` and `local.yml`, and the vault: as text when it is plaintex
 decrypt --output -` under `no_log` when it is encrypted and there is a password (`.vault_pass`, or
 `ANSIBLE_VAULT_PASSWORD_FILE`); an encrypted vault with neither is left alone, and said. Every `ansible-vault`
 it runs has `ANSIBLE_VERBOSITY` and `ANSIBLE_DEBUG` at 0 (`init_ansible_vault_env`), whatever the environment
-or `ansible.cfg` says: either adds lines to the stdout the vault's text is read from. Then four
-questions, each through `tasks/init_ask.yml` and only while its value is still the example's: the host's
-address (written at once, by one `lineinfile` on the example's `ansible_host: 192.0.2.10` line, comment
-kept, validated as YAML and read back); the token's ID, while there is no secret and `local.yml` names no
-token (only the parts that differ from `ansible@pve!ansible` are written, by `tasks/init_local_setting.yml`,
-in place of their commented example lines); the GitHub username; and last the secret, hidden - last so
-that a token the offer below makes has its secret written into the vault with no question between. Each answer is held
-to its kind by the `init_answer` filter (`filter_plugins/settings.py`); one that breaks the rule is asked
-for once more, saying it, and Enter leaves the value for the next run. The address in effect is the first
-`proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it. Before the offer, Tailscale:
-whether to use it, while `local.yml` does not set `tailscale_enabled` (`yes_no`; `--tailscale on` or `off`
-answers it, as `y` or `n`), written either way by `tasks/init_local_setting.yml` and so never asked again;
-then, for a Tailscale chosen - `y`, `on`, or `true` in `local.yml`, never the default nobody chose - and
-while the vault holds no key and `tailscale_auth_method` is not `web`, an auth key, hidden, kept with the
-hidden answers and written into the vault with the others (`auth_key`; never from the command line). While
-it is unanswered a `NOTICE` says Tailscale is on, by the vault's auth key or the sign-in page, and how to
-turn it off, writing nothing, so a later change to the default still reaches the person.
+or `ansible.cfg` says: either adds lines to the stdout the vault's text is read from. Then the questions,
+each through `tasks/init_ask.yml` and only while its value is still the example's - the person's accounts
+first, then every Proxmox question together, so that only the offer below comes between the token's ID and
+its secret: the GitHub username; Tailscale (below); the host's address (written at once, by one
+`lineinfile` on the example's `ansible_host: 192.0.2.10` line, comment kept, validated as YAML and read
+back); the token's ID, while there is no secret and `local.yml` names no token (only the parts that differ
+from `ansible@pve!ansible` are written, by `tasks/init_local_setting.yml`, in place of their commented
+example lines); and last the secret, hidden - last so that a token the offer makes has its secret written
+into the vault with no question between. Each answer is held to its kind by the `init_answer` filter
+(`filter_plugins/settings.py`); one that breaks the rule is asked for once more, saying it, and Enter leaves
+the value for the next run. The address in effect is the first `proxmox` host's `ansible_host`, else its
+name, as `defaults.yml` reads it. Tailscale's question is whether to use it, while `local.yml` does not set
+`tailscale_enabled` (`yes_no`; `--tailscale on` or `off` answers it, as `y` or `n`), written either way by
+`tasks/init_local_setting.yml` and so never asked again; then, for a Tailscale chosen - `y`, `on`, or
+`true` in `local.yml`, never the default nobody chose - and while the vault holds no key and
+`tailscale_auth_method` is not `web`, an auth key, hidden, kept with the hidden answers and written into the
+vault with the others (`auth_key`; never from the command line). While it is unanswered a `NOTICE` says
+Tailscale is on, by the vault's auth key or the sign-in page, and how to turn it off, writing nothing, so a
+later change to the default still reaches the person.
 
 Before the secret, at a terminal, while the vault has none and none was given, `tasks/init_access.yml`
 offers to make the token: the one change `just init` makes on Proxmox. It adds the first `proxmox` host as

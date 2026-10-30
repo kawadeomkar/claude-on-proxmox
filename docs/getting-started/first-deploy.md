@@ -24,19 +24,19 @@ virtualenv, which they refuse. It installs the versions `uv.lock` pins and remov
 `just init` then copies the three git-ignored files below from their examples and asks, at the terminal,
 for each value a first deploy needs that is still the example's:
 
-1. **The Proxmox host's address**, as this machine reaches it: an IP address or a host name, without
-   `https://` or a port.
-2. **The API token's ID**, `user@realm!name`. Enter keeps `ansible@pve!ansible`, the name
-   `tools/proxmox-access.sh` gives it.
-3. **Your GitHub username**, whose repositories are cloned onto each VM.
-4. **Whether to use Tailscale**, which puts each VM on your tailnet, so it is reached from anywhere and not
+1. **Your GitHub username**, whose repositories are cloned onto each VM.
+2. **Whether to use Tailscale**, which puts each VM on your tailnet, so it is reached from anywhere and not
    only from this LAN ([Tailscale](../guides/tailscale.md)). `y` needs a Tailscale account; `n` keeps it off
    every VM. Either is written into `local.yml` as `tailscale_enabled`, which you can change there any time,
    and never asked again. Until you answer, it is on.
-5. **A Tailscale auth key**, after a `y`, while the vault holds none: it joins each new VM by itself during
+3. **A Tailscale auth key**, after a `y`, while the vault holds none: it joins each new VM by itself during
    `just deploy`. It is not shown as you type. Enter goes without one, and each VM signs in on Tailscale's
    page during `just deploy` instead; the next `just init` asks again. To always sign in on the page and
    never be asked, set `tailscale_auth_method: web` in `local.yml`.
+4. **The Proxmox host's address**, as this machine reaches it: an IP address or a host name, without
+   `https://` or a port.
+5. **The API token's ID**, `user@realm!name` - its ID only: the secret is asked for after it, unless
+   `just init` makes the token. Enter keeps `ansible@pve!ansible`, the name `tools/proxmox-access.sh` gives it.
 6. **Whether to set up the API access.** `just init` reaches the host over root SSH, shows the `pveum`
    commands `tools/proxmox-access.sh` would run there to make the role, the user, its grants and the token,
    and runs them on `y`, putting the token's secret straight into the vault

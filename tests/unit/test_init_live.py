@@ -29,7 +29,7 @@ trap 'live_end $?' EXIT
 "{playbook}" -i "{init_inventory}" -e '{settings}' "{settings_playbook}"
 "{playbook}" -i "{proxmox}" -e '{checks}' "{check_playbook}"
 """
-# The questions, each typed once it has the terminal: the host, the token ID as it is, a GitHub user, no Tailscale,
+# The questions, each typed once it has the terminal: a GitHub user, no Tailscale, the host, the token ID as it is,
 # the secret.
 ANSWERS = {
     tis.HOST_PROMPT.decode(): b"pve.lan\r",

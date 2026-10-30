@@ -187,10 +187,10 @@ VS_CODE = (
 )
 # just init's questions, each a step from the include that asks it, and the vault the answers go into.
 INIT_QUESTIONS = (
-    Step("Proxmox host", starts=["Ask for the Proxmox host's address"]),
-    Step("API token", starts=["Ask for the API token's ID"]),
     Step("GitHub", starts=["Ask for the GitHub username"]),
     Step("Tailscale", starts=["Ask whether the VMs use Tailscale"]),
+    Step("Proxmox host", starts=["Ask for the Proxmox host's address"]),
+    Step("API token", starts=["Ask for the API token's ID"]),
     Step("access offer", starts=["Offer to set up the API access on the Proxmox host"]),
     Step("secret", starts=["Ask for the API token's secret"]),
     Step("vault", starts=["Put the answers into the vault's text"]),
