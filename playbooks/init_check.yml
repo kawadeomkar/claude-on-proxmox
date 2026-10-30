@@ -406,18 +406,19 @@
 
     - name: Record root SSH's result
       ansible.builtin.set_fact:
-        init_ssh_node: "{{ init_ssh.stdout | default('') | trim if init_ssh_ok | bool else '' }}"
+        init_ssh_node: "{{ init_ssh.stdout | default('') | trim if init_ssh_ok else '' }}"
         init_results: >-
-          {{ init_results + [{'ok': init_ssh_ok | bool, 'text':
+          {{ init_results + [{'ok': init_ssh_ok, 'text':
              ('root SSH to ' ~ init_ssh_address ~ ' works, and it is node ' ~ init_ssh.stdout | trim
               ~ (' (just deploy rebuilds the template)' if init_template_rebuilt | bool
                  else ' (the template is not built yet)' if init_listed | default(false) | bool
                  else ' (whether the template is built could not be checked)'))
-             if init_ssh_ok | bool else
+             if init_ssh_ok else
              ('root SSH to ' ~ init_ssh_address ~ ' failed (' ~ (init_ssh.msg | default(init_ssh.stderr | default('')))
               | plain_text | trim | truncate(300) ~ '): just deploy builds the template over it. Install your key'
               ~ ' with ssh-copy-id root@' ~ init_ssh_address)}] }}
       vars:
+        # A boolean already, so read as it is: under | bool, ansible-lint, which cannot render it, saw a string.
         init_ssh_ok: "{{ not (init_ssh.unreachable | default(false)) and init_ssh.rc | default(1) == 0 }}"
       when: init_ssh_wanted | bool
 
