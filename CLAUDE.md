@@ -457,7 +457,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   other answers - never from the command line. `playbooks/init_check.yml`, its second run, changes nothing but `local.yml`, through
   `tasks/init_local_setting.yml` and under `init_ask` or a value given: the node when it is the default and
   not the template's (worked out, never chosen), the storage or bridge chosen from what the node lists and
-  the token can use (`tasks/init_choose.yml`). Every other task is a read, its one command `hostname -s` over
+  the token can use (`tasks/init_choose.yml`). Every other task is a read - `proxmox_template`'s `drift`, which
+  says whether deploy will rebuild the template and so need root SSH, among them - its one command `hostname -s` over
   root SSH, and its tests give the Proxmox host a local stand-in or a refusing `ssh`, never a real one
   (`tests/unit/test_init_check.py` holds all three).
 - **`just init`'s offer to make the API token is the one change the project makes on Proxmox outside its
@@ -488,7 +489,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   holds every task in `playbooks/status.yml`, and in every task file and role entry point it reaches, to
   an allowlist - a `uri` only with `url` (under `{{ proxmox_api_url }}/`), `headers`, `validate_certs`,
   `ca_path` and `timeout`, `check_mode: false` and `no_log`; the shared listing; `proxmox_vm`'s
-  `settings_drift`; `stat`, `slurp`, `set_fact`, `assert`, `add_host`; the report's `file` and `copy` -
+  `settings_drift` and `proxmox_template`'s `drift`; `stat`, `slurp`, `set_fact`, `assert`, `add_host`; the report's `file` and `copy` -
   and checks that a run against the fake sent nothing but GETs. The recipe runs it as `--check`, which
   `uri` ignores, hence `check_mode: false` on every GET and the allowlist over everything. Every value a
   VM or Proxmox supplies is made one line of plain text (`one_line`, `status_clean`) before the model

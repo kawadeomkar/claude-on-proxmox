@@ -339,6 +339,32 @@ def test_a_clone_that_carries_the_templates_ctime_has_no_age() -> None:
     assert model["vms"][1]["created_ago"] == "11 d ago"
 
 
+def test_a_template_the_next_deploy_rebuilds_is_a_thing_to_do_and_said_on_its_line() -> None:
+    drift = ["bridge vmbr0 → vmbr1", "cpu host → x86-64-v2-AES"]
+    fleet = _fleet(template_drift=drift)
+    assert fleet["template"]["drift"] == drift and fleet["template"]["rebuild"] is True
+    model = S.status_report({"localhost": {"fleet": fleet}}, "now", 1_800_000_000)
+    (item,) = [it for it in model["attention"] if it["vm"] == "template"]
+    assert item["level"] == "todo" and item["command"] == "just deploy --only template rebuilds it now"
+    assert item["text"] == (
+        "the template ubuntu-24.04-cloudinit differs from its settings (bridge vmbr0 → vmbr1;"
+        " cpu host → x86-64-v2-AES), so the next just deploy rebuilds it, over root SSH"
+    )
+    said = "\n".join(S.plain(line) for line in S._storage_lines(model))
+    assert "ubuntu-24.04-cloudinit (9000) · next deploy rebuilds it" in said, said
+
+
+def test_a_template_kept_as_it_is_is_no_thing_to_do() -> None:
+    settings = {**SETTINGS, "template_rebuild": False, "names": []}
+    fleet = S.status_fleet(
+        LISTING, tagged=_tagged(), requested=_tagged(), settings=settings, template_drift=["vga std → serial0"]
+    )
+    model = S.status_report({"localhost": {"fleet": fleet}}, "now", 1_800_000_000)
+    assert not [it for it in model["attention"] if it["vm"] == "template"]
+    said = "\n".join(S.plain(line) for line in S._storage_lines(model))
+    assert "ubuntu-24.04-cloudinit (9000) · differs, kept" in said, said
+
+
 def test_every_line_of_the_report_fits_100_columns() -> None:
     fleet = _fleet()
     for vm in fleet["vms"]:
@@ -573,6 +599,7 @@ COMMANDS = {
 SHARED = {"tasks/cluster_vms.yml", "tasks/vm_addresses.yml"}
 ENTRY_POINTS = {
     ("proxmox_vm", "settings_drift"),
+    ("proxmox_template", "drift"),
     ("claude_code", "status"),
     ("github_projects", "status"),
     ("tailscale", "status"),

@@ -93,7 +93,13 @@
     init_vmid_holder: >-
       {{ init_listing | selectattr('vmid', 'equalto', proxmox_template_vmid | int) | list | first | default({}) }}
     init_down_nodes: "{{ init_nodes.json.data | default([]) | rejectattr('status', 'equalto', 'online') | map(attribute='node') | list }}"
-    init_ssh_wanted: "{{ init_proxmox_host | length > 0 and not init_template_built | bool }}"
+    # A template just deploy rebuilds, as it rebuilds one that differs from what its settings would build, unless
+    # proxmox_template_rebuild is off; it needs root SSH as a missing one does.
+    init_template_rebuilt: >-
+      {{ init_template_built | bool and proxmox_template_drift | default([]) | length > 0
+         and proxmox_template_rebuild | default(true) | bool }}
+    init_ssh_wanted: >-
+      {{ init_proxmox_host | length > 0 and (not init_template_built | bool or init_template_rebuilt | bool) }}
     init_ssh_address: "{{ hostvars[init_proxmox_host].ansible_host | default(init_proxmox_host) }}"
     init_local_settings: "{{ (init_local_read.content | b64decode | from_yaml) or {} }}"
 
@@ -314,6 +320,30 @@
       no_log: true
       when: init_api_ok | bool
 
+    # Read here, before root SSH is checked: a template that differs from what its settings would build is rebuilt
+    # by just deploy, over root SSH, as a missing one is built. Its bridge is checked from it below.
+    - name: Read the template's configuration
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_url }}/nodes/{{ init_template.node }}/qemu/{{ init_template.vmid }}/config"
+        headers: "{{ proxmox_api_headers }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+        timeout: 10
+      register: init_template_config
+      check_mode: false
+      failed_when: false
+      no_log: true
+      when: init_template_built | bool and init_template.node in init_online_nodes
+
+    # roles/proxmox_template's drift entry point, which deploy.yml runs too: a set_fact, changing nothing.
+    - name: Compare the template with what its settings would build
+      ansible.builtin.include_role:
+        name: proxmox_template
+        tasks_from: drift
+      vars:
+        proxmox_template_drift_config: "{{ init_template_config.json.data | default({}) }}"
+      when: init_template_built | bool and init_template_config.status | default(0) == 200
+
     - name: Record the template's result
       ansible.builtin.set_fact:
         init_results: "{{ init_results + [init_template_result] }}"
@@ -321,8 +351,18 @@
         init_holder_where: >-
           {{ init_vmid_holder.node | default('') ~ (', which is down' if init_vmid_holder.node | default('')
              in init_down_nodes else '') }}
+        init_template_differences: "{{ proxmox_template_drift | default([]) | join('; ') }}"
         init_template_result: >-
           {{ {'ok': true,
+              'text': 'the template ' ~ proxmox_template_name ~ ' on ' ~ init_template.node ~ ' differs from its'
+                      ~ ' settings (' ~ init_template_differences ~ '): just deploy rebuilds it, over root SSH'}
+             if init_template_rebuilt | bool else
+             {'ok': true,
+              'text': 'the template ' ~ proxmox_template_name ~ ' on ' ~ init_template.node ~ ' differs from its'
+                      ~ ' settings (' ~ init_template_differences ~ '), and is kept as it is since'
+                      ~ ' proxmox_template_rebuild is false, so just deploy needs no root SSH'}
+             if init_template_built | bool and init_template_differences | length > 0 else
+             {'ok': true,
               'text': 'the template ' ~ proxmox_template_name ~ ' is on ' ~ init_template.node
                       ~ ', so just deploy needs no root SSH'}
              if init_template_built | bool else
@@ -341,13 +381,16 @@
     - name: Record that no host can build the template
       ansible.builtin.set_fact:
         init_results: >-
-          {{ init_results + [{'ok': false, 'text': 'the template is not built yet, and just deploy builds it over'
-             ~ ' SSH to the host of the proxmox group in inventory/hosts.yml, which has none'}] }}
-      when: not init_template_built | bool and init_proxmox_host | length == 0
+          {{ init_results + [{'ok': false, 'text': 'the template '
+             ~ ('differs from its settings' if init_template_rebuilt | bool else 'is not built yet')
+             ~ ', and just deploy builds it over SSH to the host of the proxmox group in inventory/hosts.yml, which'
+             ~ ' has none'}] }}
+      when: (not init_template_built | bool or init_template_rebuilt | bool) and init_proxmox_host | length == 0
 
     # -------------------------------------------------------------- root SSH ---
-    # Only while the template is missing, or Proxmox would not say: the build
-    # is the one step that connects to the host, as root, with these settings.
+    # Only while the template is missing or is to be rebuilt, or Proxmox would not
+    # say: the build is the one step that connects to the host, as root, with
+    # these settings.
     # Its short host name is the host's Proxmox node name.
     - name: Run hostname on the Proxmox host over root SSH
       ansible.builtin.command:
@@ -367,7 +410,8 @@
         init_results: >-
           {{ init_results + [{'ok': init_ssh_ok | bool, 'text':
              ('root SSH to ' ~ init_ssh_address ~ ' works, and it is node ' ~ init_ssh.stdout | trim
-              ~ (' (the template is not built yet)' if init_listed | default(false) | bool
+              ~ (' (just deploy rebuilds the template)' if init_template_rebuilt | bool
+                 else ' (the template is not built yet)' if init_listed | default(false) | bool
                  else ' (whether the template is built could not be checked)'))
              if init_ssh_ok | bool else
              ('root SSH to ' ~ init_ssh_address ~ ' failed (' ~ (init_ssh.msg | default(init_ssh.stderr | default('')))
@@ -441,19 +485,6 @@
     # its net0's, and only SDN.Use on it is checked; without one, proxmox_bridge
     # is the one the build will use, listed and suggested as the storage is.
     # Bridges of the local zone only: an SDN VNet is neither listed nor checked.
-    - name: Read the template's configuration
-      ansible.builtin.uri:
-        url: "{{ proxmox_api_url }}/nodes/{{ init_template.node }}/qemu/{{ init_template.vmid }}/config"
-        headers: "{{ proxmox_api_headers }}"
-        validate_certs: "{{ proxmox_validate_certs }}"
-        ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
-        timeout: 10
-      register: init_template_config
-      check_mode: false
-      failed_when: false
-      no_log: true
-      when: init_template_built | bool and init_template.node in init_online_nodes
-
     - name: List the bridges on the node
       ansible.builtin.uri:
         url: "{{ proxmox_api_url }}/nodes/{{ init_node }}/network?type=any_local_bridge"

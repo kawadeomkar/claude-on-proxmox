@@ -281,6 +281,35 @@ def test_without_the_template_root_ssh_is_checked_and_reads_the_node(tmp_path: P
     assert facts[0]["init_ssh_node"] == "pve"
 
 
+# The fake's template is one this version builds; another CPU type makes it one the settings would build otherwise.
+DIFFERS = {"proxmox_template_cpu_type": "x86-64-v2-AES"}
+
+
+def test_a_template_that_differs_from_its_settings_is_said_and_root_ssh_checked(tmp_path: Path, fake_pve: str) -> None:
+    root = tmp_path / "run"
+    report = _check(root, fake_pve, "local", DIFFERS)
+    assert report["rc"] == 0, _failures(report)
+    said = _said(report)
+    assert (
+        "ok   the template ubuntu-24.04-cloudinit on pve differs from its settings (cpu host → x86-64-v2-AES):"
+        " just deploy rebuilds it, over root SSH" in said
+    ), said
+    assert "ok   root SSH to 127.0.0.1 works, and it is node pve (just deploy rebuilds the template)" in said
+    assert _hostname_calls(root).splitlines() == ["-s"]
+
+
+def test_a_template_kept_as_it_is_needs_no_root_ssh(tmp_path: Path, fake_pve: str) -> None:
+    root = tmp_path / "run"
+    report = _check(root, fake_pve, "ssh", {**DIFFERS, "proxmox_template_rebuild": False})
+    assert report["rc"] == 0, _failures(report)
+    said = _said(report)
+    assert (
+        "ok   the template ubuntu-24.04-cloudinit on pve differs from its settings (cpu host → x86-64-v2-AES), and is"
+        " kept as it is since proxmox_template_rebuild is false, so just deploy needs no root SSH" in said
+    ), said
+    assert not _ssh_calls(root)
+
+
 def test_root_ssh_that_fails_says_how_to_install_the_key(tmp_path: Path, fake_pve: str) -> None:
     root = tmp_path / "run"
     report = _check(root, fake_pve, "ssh", NO_TEMPLATE)
@@ -700,8 +729,11 @@ READ_ONLY = {
     "ansible.builtin.fail",
     "ansible.builtin.import_tasks",
     "ansible.builtin.include_tasks",
+    "ansible.builtin.include_role",
     "ansible.builtin.meta",
 }
+# The one role entry point included: the template's comparison, which only records what differs.
+ROLE_ENTRY_POINTS = {("proxmox_template", "drift")}
 TASK_KEYS = {
     "name", "when", "register", "vars", "no_log", "failed_when", "changed_when", "check_mode", "delegate_to",
     "ignore_unreachable", "loop", "loop_control", "until", "retries", "delay", "tags",
@@ -731,6 +763,13 @@ def test_every_task_is_a_read_but_the_settings_written():
             assert task[module] == {"argv": ["hostname", "-s"]}, task["name"]
         if module in ("ansible.builtin.import_tasks", "ansible.builtin.include_tasks"):
             assert task[module] in INCLUDED, task["name"]
+        if module == "ansible.builtin.include_role":
+            entry = (task[module]["name"], task[module]["tasks_from"])
+            assert set(task[module]) == {"name", "tasks_from"} and entry in ROLE_ENTRY_POINTS, task["name"]
+            path = REPO / "roles" / entry[0] / "tasks" / f"{entry[1]}.yml"
+            assert {next(iter(set(t) - TASK_KEYS)) for t in _tasks(yaml.safe_load(path.read_text()))} == {
+                "ansible.builtin.set_fact"
+            }, path
 
 
 def test_a_setting_is_written_only_at_a_terminal_or_as_given():
