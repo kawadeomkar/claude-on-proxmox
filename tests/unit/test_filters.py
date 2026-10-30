@@ -460,3 +460,134 @@ class TestSshConfigPrune:
     def test_rejects_non_lists(self):
         with pytest.raises(AnsibleFilterError, match="as lists"):
             ssh_config_prune({"name": "alpha"}, [], TAG)
+
+
+# ------------------------------------------------------------------------------- the template and its record ---
+
+import ast  # noqa: E402
+
+import yaml  # noqa: E402
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+qm_config = proxmox_filters.qm_config
+proxmox_template_record = proxmox_filters.proxmox_template_record
+proxmox_template_drift = proxmox_filters.proxmox_template_drift
+IMAGE = "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64.img"
+WANTED = {
+    "cpu": "host",
+    "ostype": "l26",
+    "bridge": "vmbr0",
+    "storage": "local-lvm",
+    "scsihw": "virtio-scsi-pci",
+    "agent": "1",
+    "serial0": "socket",
+    "vga": "serial0",
+    "build": "1",
+    "image": IMAGE,
+    "packages": "qemu-guest-agent",
+}
+RECORD = proxmox_template_record({"build": 1, "image": IMAGE, "packages": "qemu-guest-agent", "sha256": "ab12"})
+# As Proxmox VE 9.2's API gave a real template's config back, the record added.
+BUILT = {
+    "name": "ubuntu-24.04-cloudinit",
+    "agent": "enabled=1",
+    "cpu": "host",
+    "ostype": "l26",
+    "net0": "virtio=BC:24:11:40:CD:BD,bridge=vmbr0",
+    "scsi0": "local-lvm:base-9000-disk-0,discard=on,size=3584M",
+    "scsihw": "virtio-scsi-pci",
+    "serial0": "socket",
+    "vga": "serial0",
+    "template": 1,
+    "description": RECORD,
+}
+
+
+def test_a_template_its_settings_would_build_differs_in_nothing():
+    assert RECORD.startswith("Built by claude-on-proxmox: build=1; image=https://")
+    assert proxmox_template_drift(BUILT, WANTED) == []
+
+
+def test_qm_config_reads_as_the_api_gives_it():
+    text = "\n".join(f"{key}: {value}" for key, value in BUILT.items())
+    assert qm_config(text) == {key: str(value) for key, value in BUILT.items()}
+    assert proxmox_template_drift(qm_config(text), WANTED) == []
+
+
+def test_the_record_is_found_among_notes_a_person_added():
+    notes = f"Our homelab's template.\n{RECORD}\nDo not delete."
+    assert proxmox_template_drift({**BUILT, "description": notes}, WANTED) == []
+    # qm config prints a description's further lines as they are, under its key.
+    text = f"name: x\ndescription: Our homelab's template.\n{RECORD}\ncpu: host"
+    assert qm_config(text) == {"name": "x", "description": f"Our homelab's template.\n{RECORD}", "cpu": "host"}
+
+
+@pytest.mark.parametrize(
+    ("changed", "said"),
+    [
+        ({"net0": "virtio=BC:24:11:40:CD:BD,bridge=vmbr1"}, "bridge vmbr1 → vmbr0"),
+        ({"cpu": "x86-64-v2-AES"}, "cpu x86-64-v2-AES → host"),
+        ({"scsi0": "nfs-vms:9000/base-9000-disk-0.qcow2,size=3584M"}, "storage nfs-vms → local-lvm"),
+        ({"vga": "std"}, "vga std → serial0"),
+        ({"agent": "0"}, "agent 0 → 1"),
+        ({"ostype": None}, "ostype unset → l26"),
+        ({"description": RECORD.replace("build=1", "build=0")}, "build 0 → 1"),
+        (
+            {"description": RECORD.replace("packages=qemu-guest-agent", "packages=")},
+            "packages unset → qemu-guest-agent",
+        ),
+        ({"description": RECORD.replace("/minimal/", "/server/")}, "image " + IMAGE.replace("/minimal/", "/server/")),
+    ],
+)
+def test_each_difference_is_said_with_what_it_has_and_what_is_wanted(changed, said):
+    config = {key: value for key, value in {**BUILT, **changed}.items() if value is not None}
+    (difference,) = proxmox_template_drift(config, WANTED)
+    assert difference.startswith(said), difference
+
+
+def test_the_default_key_of_a_property_string_is_read_either_way():
+    # Proxmox may give a property string's default key bare or named.
+    assert proxmox_template_drift({**BUILT, "agent": "1", "cpu": "cputype=host"}, WANTED) == []
+
+
+def test_a_template_with_no_record_is_one_an_earlier_version_built():
+    assert proxmox_template_drift({**BUILT, "description": "Our homelab's template."}, WANTED) == [
+        "no record of how it was built, so it was built by an earlier version of this project"
+    ]
+    without = {key: value for key, value in BUILT.items() if key != "description"}
+    assert len(proxmox_template_drift(without, WANTED)) == 1
+
+
+def test_the_image_digest_is_kept_but_never_compared():
+    assert proxmox_template_drift({**BUILT, "description": RECORD.replace("ab12", "ffff")}, WANTED) == []
+
+
+def test_the_role_wants_each_field_the_filter_compares():
+    variables = yaml.safe_load((REPO / "roles" / "proxmox_template" / "vars" / "main.yml").read_text())
+    assert tuple(variables["proxmox_template_wanted"]) == proxmox_filters.TEMPLATE_FIELDS
+
+
+def test_the_fake_apis_template_is_what_the_role_builds_by_default():
+    """The scenarios' deploys find their template already built: one that differed would be rebuilt."""
+    tree = ast.parse((REPO / "tests" / "molecule" / "fake_pve_api.py").read_text())
+    (vms,) = [
+        node.value for node in tree.body if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "VMS"
+    ]
+    template = vms.values[[key.value for key in vms.keys].index(9000)]
+    config = ast.literal_eval(template.values[[key.value for key in template.keys].index("config")])
+    defaults = yaml.safe_load((REPO / "roles" / "proxmox_template" / "defaults" / "main.yml").read_text())
+    variables = yaml.safe_load((REPO / "roles" / "proxmox_template" / "vars" / "main.yml").read_text())
+    wanted = {
+        "cpu": defaults["proxmox_template_cpu_type"],
+        "ostype": defaults["proxmox_template_ostype"],
+        "bridge": defaults["proxmox_template_bridge"],
+        "storage": defaults["proxmox_template_storage"],
+        "scsihw": variables["proxmox_template_scsihw"],
+        "agent": "1",
+        "serial0": variables["proxmox_template_serial0"],
+        "vga": variables["proxmox_template_vga"],
+        "build": variables["proxmox_template_build"],
+        "image": defaults["proxmox_template_image_url"],
+        "packages": ",".join(defaults["proxmox_template_customize_packages"]),
+    }
+    assert proxmox_template_drift(config, wanted) == []

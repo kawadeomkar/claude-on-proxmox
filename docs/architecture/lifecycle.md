@@ -3,7 +3,8 @@
 ```mermaid
 stateDiagram-v2
     [*] --> NoTemplate
-    NoTemplate --> Template: playbooks/template.yml (once, over SSH)
+    NoTemplate --> Template: playbooks/template.yml (over SSH)
+    Template --> Template: rebuilt when it differs from its settings
     Template --> Cloned: provision.yml — clone (in parallel for a fleet)
     Cloned --> Configured: apply cloud-init + hardware, resize disk
     Configured --> Running: start
@@ -14,14 +15,31 @@ stateDiagram-v2
     Cloned --> Configured: re-run repairs a half-built VM
 ```
 
-## 4.1 `playbooks/template.yml` — one-time
+## 4.1 `playbooks/template.yml` — built, and rebuilt when it differs
 
 `hosts: proxmox`, over SSH, because importing a disk image needs `qm` on the node. Runs
-`roles/proxmox_template`. `deploy.yml` runs it only when the template is missing, deciding that
-through the API, and the import-level `when:` is what keeps a run that does not need to build it
-from opening an SSH connection to the hypervisor: it skips the implicit fact gather along with every
-task ([§4.7](#47-deployyml)). The play's `gather_facts: false` only saves a pointless gather on the
-run that does build.
+`roles/proxmox_template`. `deploy.yml` runs it only when the template is missing or differs from what
+its settings would build, deciding that through the API, and the import-level `when:` is what keeps a
+run that does not need to build it from opening an SSH connection to the hypervisor: it skips the
+implicit fact gather along with every task ([§4.7](#47-deployyml)). The play's `gather_facts: false`
+only saves a pointless gather on the run that does build.
+
+A template is compared, not just found. Its config says what every clone inherits - CPU type, OS type,
+bridge, storage, and the controller, agent, serial console and display the role always gives it - and is
+read as it is, so a change made in Proxmox's UI is seen too. What went into its disk, Proxmox cannot
+show, so the build records it in the template's notes, one line: the build steps' version
+(`proxmox_template_build` in the role's `vars/main.yml`, raised whenever a change to them changes what a
+template is), the image's URL, the packages put into it, and its SHA-256, kept but never compared. One
+definition of what a build makes, the role's `proxmox_template_wanted`, feeds both the build and the
+comparison (`proxmox_template_drift` in `filter_plugins/proxmox.py`): `deploy.yml` through the role's
+`drift` entry point, on the config the API gives, and the role itself on `qm config`'s, which
+`qm_config` reads as the API's. A template that differs, or keeps no record, as one an earlier version
+built, is rebuilt at the same VMID, each difference said first. The old one is removed only once the new
+image is downloaded and customised, so a download that fails leaves it; the customised copy goes either
+way. Proxmox refuses to remove a template a linked clone still uses; that refusal fails the run, naming
+`proxmox_template_rebuild: false`, which keeps a template as it is, the differences said. The build reads
+the new template back as the next run will, and fails if it still differs, rather than letting every run
+rebuild it.
 
 ## 4.2 `playbooks/provision.yml` — three plays
 

@@ -1,0 +1,40 @@
+---
+# What a build makes, in one place: the qm settings every clone inherits, and the record of what went into the disk,
+# which Proxmox cannot show and so is kept in the template's notes. tasks/main.yml builds from these and tasks/drift.yml
+# compares a template with them (proxmox_template_drift in filter_plugins/proxmox.py), so a template that differs from
+# them is rebuilt by the next run.
+
+# The build steps' own version. Raise it whenever a change to them changes what a template is - a qm option, a
+# virt-customize step, a package the role adds - and every template built before is rebuilt by the next just deploy.
+proxmox_template_build: 1
+
+# The qm settings the role gives every template, which no setting changes.
+proxmox_template_scsihw: virtio-scsi-pci
+proxmox_template_serial0: socket
+proxmox_template_vga: serial0
+
+# The packages put into the disk: none without the guest agent, which is what puts them there.
+proxmox_template_packages: >-
+  {{ proxmox_template_customize_packages | join(',') if proxmox_template_install_guest_agent | bool else '' }}
+
+# What a template built now is, field by field, as proxmox_template_drift compares it.
+proxmox_template_wanted:
+  cpu: "{{ proxmox_template_cpu_type }}"
+  ostype: "{{ proxmox_template_ostype }}"
+  bridge: "{{ proxmox_template_bridge }}"
+  storage: "{{ proxmox_template_storage }}"
+  scsihw: "{{ proxmox_template_scsihw }}"
+  agent: "1"
+  serial0: "{{ proxmox_template_serial0 }}"
+  vga: "{{ proxmox_template_vga }}"
+  build: "{{ proxmox_template_build }}"
+  image: "{{ proxmox_template_image_url }}"
+  packages: "{{ proxmox_template_packages }}"
+
+# How the template at proxmox_template_vmid differs from that, read from `qm config` (tasks/main.yml's first task):
+# nothing when there is no template there. Vars, not facts, so each run of the role reads its own register.
+proxmox_template_differences: >-
+  {{ (proxmox_template_existing.stdout | qm_config) | proxmox_template_drift(proxmox_template_wanted)
+     if proxmox_template_existing.rc | default(1) == 0 else [] }}
+# Whether that template is rebuilt: it differs, and proxmox_template_rebuild leaves rebuilding on.
+proxmox_template_rebuilding: "{{ proxmox_template_differences | length > 0 and proxmox_template_rebuild | bool }}"

@@ -44,7 +44,8 @@ the No-Subscription repository so the host keeps getting updates - see
 The installer creates `vmbr0`, bridged to your physical NIC. VMs attached to it sit on your LAN and
 get their addresses from whatever already serves it — normally your router. That is the arrangement
 this project expects, and it is the Proxmox default. The template's NIC is attached to `proxmox_bridge`
-(`vmbr0` unless set) when it is built, and every clone inherits it; before the template exists, `just init`
+(`vmbr0` unless set) when it is built, and every clone inherits it - change `proxmox_bridge`, and the next
+`just deploy` rebuilds the template on the new one; before the template exists, `just init`
 lists the bridges your token can use on the node and asks which, when `vmbr0` is not among them, and once
 it exists checks that the token holds `SDN.Use` on the template's.
 

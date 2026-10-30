@@ -1,0 +1,8 @@
+---
+# tasks_from: drift, for deploy.yml, which decides through the API whether to run the template's play at all. How the
+# template differs from what this role would build, read from the config the caller passes in,
+# proxmox_template_drift_config: Proxmox is asked nothing, and nothing is changed. What this role would build is its
+# own variables (vars/main.yml), the one definition both the build in main.yml and this read.
+- name: drift | Compare the template with what this role would build
+  ansible.builtin.set_fact:
+    proxmox_template_drift: "{{ proxmox_template_drift_config | proxmox_template_drift(proxmox_template_wanted) }}"

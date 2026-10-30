@@ -620,6 +620,20 @@ after a successful start removes it, so a re-run finishes that VM while a finish
 down stays stopped. Do not decide the start from `status` alone, and do not run the resize on every
 run: `proxmox_disk` compares size strings, and Proxmox cannot shrink a hand-grown disk.
 
+**A template is compared, not just found.** `deploy.yml` reads the template's config through the API
+(`proxmox_vm_info` with `config: current`) and runs the template play only when it is missing or
+differs from what its settings would build, as the role's `drift` entry point says
+(`proxmox_template_drift` in `filter_plugins/proxmox.py`, on `proxmox_template_wanted`, the one
+definition the build uses too; the role compares `qm config`'s output, read by `qm_config`, the same
+way). Proxmox cannot show what went into the disk, so the build records it on one line of the
+template's notes - build version, image URL, packages - and a template without that line, as every one
+an earlier version built, is rebuilt once. Raise `proxmox_template_build` (the role's `vars/main.yml`)
+whenever a change to the build steps changes what a template is, or the templates already built never
+get it. The old template is removed only once the new image is ready, and the build reads the new one
+back and fails if it still differs, so a mistake in the comparison fails one run rather than rebuilding
+every run. `tests/molecule/fake_pve_api.py`'s template is one this version builds, which
+`test_filters.py` holds, or every scenario's deploy would try to rebuild it.
+
 **Assert what sshd will apply to the editor's connection, not the file we wrote.** sshd keeps the
 first value it reads for a keyword, and a `Match` block sets its own for the connections it matches,
 so a drop-in sorted before `20-vscode-server.conf`, `/etc/ssh/sshd_config` itself or a `Match User`

@@ -28,6 +28,14 @@ case "$cmd" in
   template)
     [ -f "$STATE/$vmid.conf" ] || { echo "Configuration file for $vmid does not exist" >&2; exit 2; }
     echo "template: 1" >> "$STATE/$vmid.conf" ;;
+  destroy)
+    [ -f "$STATE/$vmid.conf" ] || { echo "Configuration file for $vmid does not exist" >&2; exit 2; }
+    # A test marks a template a linked clone still uses, which Proxmox will not remove.
+    if [ -f "$STATE/$vmid.linked" ]; then
+      echo "can't remove VM $vmid - base volume 'base-$vmid-disk-0' is still in use by linked clone vm-9010-disk-0" >&2
+      exit 255
+    fi
+    rm "$STATE/$vmid.conf" ;;
   *)
     echo "fake qm: unsupported command '$cmd'" >&2; exit 1 ;;
 esac
