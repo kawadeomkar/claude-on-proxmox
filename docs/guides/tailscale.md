@@ -2,9 +2,12 @@
 
 You can reach a VM over [Tailscale](https://tailscale.com): it puts each VM on your tailnet - the private
 network your other devices are on - so `ssh`, VS Code's Remote - SSH and a dev server on any port reach the
-VM from anywhere, not only from the LAN Proxmox sits on. It is on by default; `tailscale_enabled: false` in
-`local.yml` turns it off. `just init` reminds you until `local.yml` sets it either way, and
-`just init --tailscale off` writes it.
+VM from anywhere, not only from the LAN Proxmox sits on. It is optional: `just init` asks whether to use it
+and writes your answer into `local.yml` as `tailscale_enabled`, which every VM deployed from then on
+follows, and which you can change there any time; after a `y` it asks for an auth key for the vault
+(below). Until it is answered, it is on, and `just init` says so; `just init --tailscale on` or `off`
+answers it without a terminal. Off, no VM gets anything of Tailscale's: configuration only looks for what
+this project installed earlier, to remove it.
 
 ## Joining a VM to your tailnet
 
@@ -12,7 +15,7 @@ There are two ways in. `tailscale_auth_method` picks: `auto` (the default) is th
 one and the web login otherwise, `key` is the key only (an empty one fails by name, and no VM is ever sent
 to a browser), and `web` is the web login only, with a key in the vault left unused.
 
-- **An auth key** (`vault_tailscale_auth_key`). Configuration - `just deploy`, or `just deploy --only configure` - joins each new
+- **An auth key** (`vault_tailscale_auth_key`, which `just init` asks for after a `y`). Configuration - `just deploy`, or `just deploy --only configure` - joins each new
   VM by itself, with nothing to click. Make the key in Tailscale's admin console (Settings, Keys):
   **reusable** for a fleet, or one-off for one VM; **pre-approved** if your tailnet has device approval
   on; and **tagged** (`tag:claude-vm`, below). Never ephemeral: Tailscale removes an ephemeral node within
@@ -97,8 +100,9 @@ Tailscale setting, with its default, is in [Settings](../reference/settings.md#t
 ## What the role touches
 
 Only the Tailscale it installed. A Tailscale you installed on a VM yourself -
-the package, the snap or Tailscale's static binaries - is reported and left exactly as it is,
-`tailscale_enabled: false` included. To hand one to this project, run `sudo tailscale logout` on the VM
+the package, the snap or Tailscale's static binaries - is left exactly as it is,
+`tailscale_enabled: false` included, and reported while Tailscale is on; off, `just deploy` says nothing of
+it. To hand one to this project, run `sudo tailscale logout` on the VM
 and remove it the way you installed it; for the package that is `sudo apt purge tailscale` - purge, so the
 next install does not start under the old login.
 
@@ -120,9 +124,11 @@ works as before.
 
 ## Turning it off
 
-`tailscale_enabled: false`, then `just deploy --only configure`: each VM is logged out - a
-`tailscaled` you stopped is started for that - and `tailscaled`, the package and its repository are
-removed. The device stays in your tailnet, expired, until you delete it in the admin console (Machines),
+`tailscale_enabled: false`, then `just deploy --only configure`: on each VM this project installed
+Tailscale on, the run says it is removing it, then logs it out - a `tailscaled` you stopped is started for
+that - and removes `tailscaled`, the package and its repository. A VM it never installed Tailscale on gets
+one check for the marker an install leaves, and nothing else; a Tailscale you installed yourself is left
+alone. The device stays in your tailnet, expired, until you delete it in the admin console (Machines),
 unless the project can delete it for you (below). A logout that fails - Tailscale's servers out of the VM's
 reach - is said and the rest removed anyway; its login then stays valid until you delete the device.
 

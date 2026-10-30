@@ -34,6 +34,11 @@ proxmox_template_customize_packages:
 # Off in tests, where libguestfs is faked rather than installed.
 proxmox_template_manage_libguestfs: true
 
+# Rebuild the template when it differs from these settings - or from this version's build, or carries no record of
+# its build, as one an earlier version built - at the same VMID. Off, it is kept as it is and the differences said:
+# for a template a linked clone still uses, which Proxmox will not remove, or one changed by hand on purpose.
+proxmox_template_rebuild: true
+
 # Paths on the PVE host (overridable for tests).
 proxmox_template_qm: /usr/sbin/qm
 proxmox_template_virt_customize: /usr/bin/virt-customize

@@ -35,6 +35,7 @@ just lint                            # uv lock --check, yamllint --strict, ansib
 just lint syntax                     # some of them: lock, yaml, ansible, python, just, syntax, hooks
 just test                            # lint, then every test: unit and every Molecule scenario — the CI gate
 just test unit                       # pytest over tests/unit/, a worker per CPU (pytest-xdist loadgroup)
+just test unit --shard 2/3           # one of the three shards CI runs (tests/unit/durations.json balances them)
 just test --role proxmox_vm          # one role scenario (role: every role; molecule: every scenario)
 just test provision                  # one playbook scenario (integration is the configure scenario)
 just deploy                          # template (if missing) + provision + configure + the three sign-ins + VS Code, all idempotent (just deploy alpha: that VM)
@@ -43,6 +44,9 @@ just deploy alpha --tags claude_code # re-run one role, e.g. to push an API key 
 just destroy alpha                   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
 just login alpha                     # Claude, GitHub, Tailscale in deploy's order, one VM after another (--only claude, github or tailscale: one)
 just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed); just list too
+just settings tailscale              # a role's variables, each value and where it was set (a variable; --all; --changed; --json; none: usage)
+just settings vm_cores --value 4     # set one setting in local.yml, held to its type; never a secret (just vault)
+just settings vm_cores --reset       # back to its default: its line out of local.yml, its example's line back
 just code alpha [--project repo] [--session <id>]   # refresh one alias, copy recent Claude sessions, open the VM in VS Code with a Claude terminal
 just logs                            # the run logs, newest first: read these instead of asking for terminal output
 just docs                            # regenerate the wiki's reference pages; serve previews the site, build builds it strictly
@@ -184,7 +188,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   its failure is recorded in `claude_vm_configure_failures` and raised even under `just deploy`, by
   deploy's last play, since it is not a failed sign-in and the VM is not done.
   `tests/unit/test_sign_in_plays.py` runs both playbooks, and deploy's sign-ins as deploy.yml has them,
-  against stand-ins, a VM whose ssh exits 255 among them. `just deploy --only configure` never prompts.
+  against stand-ins, a VM whose ssh exits 255 among them; `claude_login.yml` run alone with such a VM is
+  `test_claude_login.py`'s, on its one run of every sign-in case. `just deploy --only configure` never prompts.
 - **Claude's sign-in comes back over a forward, or hands the code over a pipe, and nothing decides from a
   terminal probe.** Given `BROWSER`, `claude auth login` runs it with a page that redirects to
   `http://localhost:<port>/callback`, listens on the VM's `127.0.0.1:<port>`, and takes a code from that
@@ -244,7 +249,8 @@ token; `github_auth_method: token` still fails. The status JSON carries
   and record it as the role's; an expired login of the role's keeps its node key, which the marker holds. `/var/lib/claude-on-proxmox/tailscale-installed`, written before the
   repository, marks the Tailscale as the role's: only then are the package, service, log switch and
   removal its business, and a Tailscale installed any other way - by dpkg, or as one dpkg does not know:
-  static binaries, the snap - is reported and left alone, off too. `tailscale-joined` holds the node key
+  static binaries, the snap - is left alone, off too, and reported while on (off, configure runs the role
+  only where the marker is, so it says nothing of one). `tailscale-joined` holds the node key
   of the role's own login: only that login's settings are changed, by one `tailscale set` naming what
   differs. It holds `pending` while a sign-in the role started has not ended (written before the page is
   shown, and after a key join that ran out of time - that one only: `up`'s timeout line and no `invalid key:`;
@@ -256,7 +262,9 @@ token; `github_auth_method: token` still fails. The status JSON carries
   package - never a pre-created `/etc/default/tailscaled`, which dpkg keeps as the conffile without
   `PORT`, and the daemon fails. Tags are compared only when configured and never "fixed" by a web login.
   `playbooks/configure.yml` runs the role last, from `tasks:` through `import_role` in a block whose
-  rescue appends to `claude_vm_configure_failures`; a last play raises it, skipped under deploy
+  rescue appends to `claude_vm_configure_failures` - off, only where a `stat` before it finds the installed
+  marker, to remove what it installed, said first: a VM without one gets nothing of the role, the condition
+  on the import, never the block; a last play raises it, skipped under deploy
   (`claude_vm_configure_in_deploy`), whose own last play raises it after VS Code. A failed install takes
   its repository back out (an unreachable source fails every apt refresh, `common`'s first), and the role
   has no handlers (one would run outside the rescue). Check mode skips what needs the package: `apt`
@@ -444,10 +452,13 @@ token; `github_auth_method: token` still fails. The status JSON carries
   `_init_at_a_terminal` in `tests/unit/test_init_settings.py`, which holds that statically. The token
   secret is never taken from the command line (`just init` refuses any word after its options without
   printing it, make's `TOKEN_SECRET=...` among them): only from `--token-secret-file`'s file or `CLAUDE_ON_PROXMOX_TOKEN_SECRET`, read in the playbook, so it is on no
-  argv. `playbooks/init_check.yml`, its second run, changes nothing but `local.yml`, through
+  argv. Tailscale is asked about while `local.yml` does not set `tailscale_enabled`, the answer written
+  either way, and its auth key only after a `y` (or `on`, or `true` set), hidden, into the vault with the
+  other answers - never from the command line. `playbooks/init_check.yml`, its second run, changes nothing but `local.yml`, through
   `tasks/init_local_setting.yml` and under `init_ask` or a value given: the node when it is the default and
   not the template's (worked out, never chosen), the storage or bridge chosen from what the node lists and
-  the token can use (`tasks/init_choose.yml`). Every other task is a read, its one command `hostname -s` over
+  the token can use (`tasks/init_choose.yml`). Every other task is a read - `proxmox_template`'s `drift`, which
+  says whether deploy will rebuild the template and so need root SSH, among them - its one command `hostname -s` over
   root SSH, and its tests give the Proxmox host a local stand-in or a refusing `ssh`, never a real one
   (`tests/unit/test_init_check.py` holds all three).
 - **`just init`'s offer to make the API token is the one change the project makes on Proxmox outside its
@@ -478,7 +489,7 @@ token; `github_auth_method: token` still fails. The status JSON carries
   holds every task in `playbooks/status.yml`, and in every task file and role entry point it reaches, to
   an allowlist - a `uri` only with `url` (under `{{ proxmox_api_url }}/`), `headers`, `validate_certs`,
   `ca_path` and `timeout`, `check_mode: false` and `no_log`; the shared listing; `proxmox_vm`'s
-  `settings_drift`; `stat`, `slurp`, `set_fact`, `assert`, `add_host`; the report's `file` and `copy` -
+  `settings_drift` and `proxmox_template`'s `drift`; `stat`, `slurp`, `set_fact`, `assert`, `add_host`; the report's `file` and `copy` -
   and checks that a run against the fake sent nothing but GETs. The recipe runs it as `--check`, which
   `uri` ignores, hence `check_mode: false` on every GET and the allowlist over everything. Every value a
   VM or Proxmox supplies is made one line of plain text (`one_line`, `status_clean`) before the model
@@ -490,6 +501,33 @@ token; `github_auth_method: token` still fails. The status JSON carries
   into its own directory and gets a refusing stand-in `ssh` (`status_root`); the reads inside a VM run
   against stand-in VMs (`tests/unit/test_status_vms.py`), which hold that every file there is unchanged.
   See docs/architecture/lifecycle.md §4.6.
+
+- **`just settings` reads without changing anything, but for the one setting `--value` writes into `local.yml` or
+  `--reset` takes out, and never prints or writes a secret.** `tools/settings` asks Ansible's own `VariableManager`
+  and templar, in-process, for a play of the role on a host of the group its playbook runs it on (read from the
+  playbooks), and never writes Ansible's precedence again by hand. Every lookup goes through `lookup_loader.get`,
+  wrapped to load only `env`, `file`, `config`, `vars`, `first_found` and `fileglob` - never decided by scanning
+  expressions, which miss one reached through a variable in `hosts.yml` - and the inventory is read by the `yaml`
+  plugin alone, never `script`. A value is masked when `vault.yml` holds it, when Ansible marks it decrypted
+  (`VaultHelper.get_ciphertext`: an inline `!vault`, which the file's values do not carry), when its role marks the
+  variable `no_log`, or when its expression reads a name the vault holds or a `no_log` variable; then every value
+  about to be printed is checked against every secret decrypted, and a match prints nothing and exits 1 - the GitHub
+  username and an OAuth client's ID masked in their rows but never looked for elsewhere. It never changes the vault:
+  a secret's row points at `just vault`. `--value` writes one setting into `local.yml` and nothing else: what a
+  name can be set as comes from one function (`settable`), which the read view's hint uses too; anything the
+  vault holds or feeds, a `no_log` variable, an inline `!vault`, a name made from each VM's own, what a run sets
+  for itself, the host's address, an internal value, an expression (`{{ }}`) and a value equal to a vault secret
+  are refused, a secret's value never said back. The rest is held to its `argument_specs` type by Ansible's
+  `ArgumentSpecValidator`, written as `just init` writes (JSON in place of its line or its example's line), read
+  back with every other key unchanged before it replaces the file atomically, or nothing is written. `--reset`
+  takes the setting's line out and puts its example's commented line back (set then reset leaves a file that has
+  its example's line, as `just init` makes it, byte for byte as it was), refused only a secret and the host's address, since taking a line out makes no value wrong. The vault's
+  password file is the recipe's (`vault_args`),
+  never looked for by the tool. Its tests (`tests/unit/test_settings.py`) run it only against inventories made from
+  the example files with fake secrets, each run with a `HOME` of its own and the collections' path pinned, and fail
+  if any fake secret is printed, every write into a copy of its own; the recipe's run against a stand-in `python`,
+  since the tool in the checkout would read, and write, the developer's real settings. See
+  docs/architecture/custom-code.md §7.9.
 
 ## Architecture, and why it looks like this
 
@@ -582,6 +620,20 @@ settings call adds `claude-on-proxmox-unfinished` (`proxmox_vm_unfinished_tag`) 
 after a successful start removes it, so a re-run finishes that VM while a finished VM someone shut
 down stays stopped. Do not decide the start from `status` alone, and do not run the resize on every
 run: `proxmox_disk` compares size strings, and Proxmox cannot shrink a hand-grown disk.
+
+**A template is compared, not just found.** `deploy.yml` reads the template's config through the API
+(`proxmox_vm_info` with `config: current`) and runs the template play only when it is missing or
+differs from what its settings would build, as the role's `drift` entry point says
+(`proxmox_template_drift` in `filter_plugins/proxmox.py`, on `proxmox_template_wanted`, the one
+definition the build uses too; the role compares `qm config`'s output, read by `qm_config`, the same
+way). Proxmox cannot show what went into the disk, so the build records it on one line of the
+template's notes - build version, image URL, packages - and a template without that line, as every one
+an earlier version built, is rebuilt once. Raise `proxmox_template_build` (the role's `vars/main.yml`)
+whenever a change to the build steps changes what a template is, or the templates already built never
+get it. The old template is removed only once the new image is ready, and the build reads the new one
+back and fails if it still differs, so a mistake in the comparison fails one run rather than rebuilding
+every run. `tests/molecule/fake_pve_api.py`'s template is one this version builds, which
+`test_filters.py` holds, or every scenario's deploy would try to rebuild it.
 
 **Assert what sshd will apply to the editor's connection, not the file we wrote.** sshd keeps the
 first value it reads for a keyword, and a `Match` block sets its own for the connections it matches,
@@ -688,6 +740,9 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   Ctrl-C this way, sent the moment the VMs were drawn, just as the next task's workers were forked. A test
   that interrupts a run sends it while the run waits on something held and nothing forks; a Linux pty also
   buffers about 64 KB without blocking the run, so a run can end before its test reads the frame it acts on.
+  Filed upstream as ansible/ansible#87812. A Ctrl-C can still hang a run there now and then (CI's deploy
+  Ctrl-C test once sat in a browser wait for two minutes after one), so that test runs a hung run once more,
+  until the pinned ansible-core has the fix.
 - **pytest-xdist's groups are made in xdist's own `pytest_collection_modifyitems`.** The hook in
   `tests/unit/conftest.py` that marks them is `tryfirst`; run after xdist's, it marked nothing and loadgroup
   quietly became plain load, rebuilding every module-scoped fixture test by test (37.5 minutes against 9.8). It
@@ -707,6 +762,11 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   (`tests/unit/interrupts.py`; one ignored on the way in, nohup's SIGHUP, stays so), since `tools/live` and CI's
   cancel send them and the default ended a worker at once, its run and that run's tree left behind.
   `test_processes.py` holds all three, under xdist too.
+- **Ansible's loader caches a file without its trust as a template.** `tools/settings` read `local.yml` through the
+  same `DataLoader` the inventory uses, to say which file set what; the inventory, reading the file after, got the
+  cached, untrusted copy, and no value of `local.yml` or `defaults.yml` was templated - nor any lookup in them run,
+  so the checks of the lookup guard and of a copied secret passed without ever being reached. A read of a file the
+  inventory also loads is `cache="none"`, and a value a tool supplies is `trust_as_template`d.
 - **A skipped task still overwrites its register.** A `when` on destroy's second cluster listing left
   `claude_vm_all` without its listing whenever no VM had been started, and destroy failed before it
   began; register only in a task that always runs, or read it with a `default`.
@@ -721,7 +781,9 @@ the error text and `VM 4013 is not running` otherwise reads as a 401.
   before anything runs, and an option or word a recipe does not have is refused. A value reaches its
   script only as a positional argument (`[positional-arguments]`), never as its text, and what goes into
   JSON is checked again there (`tools/check names`, `project` and `session`, `init`'s `only`), then
-  travels to Ansible as JSON. VM names start with a letter or a digit: a recipe without options takes a
+  travels to Ansible as JSON. The one free-text value is `just settings --value`'s, refused by its pattern only
+  for a control character, so just never says a value back, and held to the setting's type by `tools/settings`;
+  no refusal of `just settings` says the words given back, in case a secret was typed as one. VM names start with a letter or a digit: a recipe without options takes a
   word that starts with `-` as a name, so `--project x` after `just destroy` would otherwise name a VM
   `--project`. A recipe's words are a `*` parameter, even where it takes one: a parameter with a default
   lists as `help RECIPE=''`, make's spelling, which just refuses, and leaves the next word to run as a

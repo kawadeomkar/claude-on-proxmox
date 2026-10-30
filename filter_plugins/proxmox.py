@@ -305,9 +305,109 @@ def proxmox_vm_drift(config, wanted):
     return {"hardware": hardware, "cloud_init": cloud_init}
 
 
+# What roles/proxmox_template records in a template's notes when it builds one: the version of its build steps and
+# what went into the disk, none of which the template's config shows. One line, so that `qm config` prints it as one,
+# found by this marker wherever it is among the notes a person may have added. A full clone copies its template's
+# notes, so each VM keeps the line too, which reads true of it as well: what it was built from.
+TEMPLATE_RECORD = "Built by claude-on-proxmox:"
+_TEMPLATE_RECORD_RE = re.compile(re.escape(TEMPLATE_RECORD) + r"\s*(.*)$")
+# What the record holds, in its order: the build steps' version, the image's URL, the packages put into it (empty
+# when none were), and the image's SHA-256, kept to say which image it was but never compared.
+TEMPLATE_RECORD_KEYS = ("build", "image", "packages", "sha256")
+# What a template is compared on, in the order its differences are said: the settings every clone inherits from it,
+# then the record. Not cores or memory, which each VM sets for itself.
+TEMPLATE_FIELDS = (
+    "cpu",
+    "ostype",
+    "bridge",
+    "storage",
+    "scsihw",
+    "agent",
+    "serial0",
+    "vga",
+    "build",
+    "image",
+    "packages",
+)
+
+
+def qm_config(text):
+    """`qm config`'s output as the dict /nodes/<node>/qemu/<vmid>/config gives: each "key: value" line, and a line
+    that is none (more of a description's lines) added to the key before it."""
+    config, key = {}, None
+    for line in str(text or "").splitlines():
+        match = re.match(r"^([a-z][a-z0-9_-]*): ?(.*)$", line)
+        if match:
+            key = match.group(1)
+            config[key] = match.group(2)
+        elif key is not None:
+            config[key] = f"{config[key]}\n{line}"
+    return config
+
+
+def _option(value, key):
+    """One option of a Proxmox property string (``virtio=BC:..,bridge=vmbr0``): ``key``'s value, or the first item
+    when it names none, which is the default key's (``cpu: host`` is ``cputype=host``, ``agent: 1`` ``enabled=1``)."""
+    items = [item for item in str(value or "").split(",") if item]
+    for item in items:
+        name, _, rest = item.partition("=")
+        if name == key and rest:
+            return rest
+    return items[0] if items and "=" not in items[0] else ""
+
+
+def proxmox_template_record(values):
+    """The one line a template's notes keep: ``values`` has TEMPLATE_RECORD_KEYS."""
+    return TEMPLATE_RECORD + " " + "; ".join(f"{key}={values.get(key, '')}" for key in TEMPLATE_RECORD_KEYS)
+
+
+def _template_record(config):
+    for line in str(config.get("description") or "").splitlines():
+        match = _TEMPLATE_RECORD_RE.search(line)
+        if match:
+            return dict(part.split("=", 1) for part in match.group(1).split("; ") if "=" in part)
+    return None
+
+
+def proxmox_template_drift(config, wanted):
+    """How a template differs from what roles/proxmox_template would build: a line for each difference, "<field>
+    <has> → <wanted>" in TEMPLATE_FIELDS' order; one line alone when its notes keep no record of how it was built;
+    [] when it is what the role would build.
+
+    ``config`` is the template's config, as /nodes/<node>/qemu/<vmid>/config gives it or as ``qm config`` prints it
+    (through qm_config); ``wanted`` has TEMPLATE_FIELDS, as the role's own variables make them (vars/main.yml). The
+    qm settings are read from the config, so a change made in Proxmox's UI is seen; what went into the disk is read
+    from the record the build left in the notes, since Proxmox cannot show it.
+    """
+    if not isinstance(config, dict) or not isinstance(wanted, dict):
+        raise AnsibleFilterError("proxmox_template_drift expects the template's config and what is wanted, as dicts")
+    record = _template_record(config)
+    if record is None:
+        return ["no record of how it was built, so it was built by an earlier version of this project"]
+    has = {
+        "cpu": _option(config.get("cpu"), "cputype"),
+        "ostype": str(config.get("ostype") or ""),
+        "bridge": _option(config.get("net0"), "bridge"),
+        "storage": str(config.get("scsi0") or "").split(":", 1)[0] if ":" in str(config.get("scsi0") or "") else "",
+        "scsihw": str(config.get("scsihw") or ""),
+        "agent": _option(config.get("agent"), "enabled"),
+        "serial0": str(config.get("serial0") or ""),
+        "vga": _option(config.get("vga"), "type"),
+        **{key: record.get(key, "") for key in ("build", "image", "packages")},
+    }
+    return [
+        f"{field} {has[field] or 'unset'} → {wanted.get(field) or 'unset'}"
+        for field in TEMPLATE_FIELDS
+        if str(has[field]) != str(wanted.get(field) or "")
+    ]
+
+
 class FilterModule:
     def filters(self):
         return {
+            "qm_config": qm_config,
+            "proxmox_template_record": proxmox_template_record,
+            "proxmox_template_drift": proxmox_template_drift,
             "proxmox_vm_drift": proxmox_vm_drift,
             "ssh_config_blocks": ssh_config_blocks,
             "ssh_config_prune": ssh_config_prune,

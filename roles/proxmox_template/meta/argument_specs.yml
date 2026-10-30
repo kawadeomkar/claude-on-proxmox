@@ -5,8 +5,10 @@ argument_specs:
     description:
       - Runs on the PVE node over SSH. Downloads a cloud image, creates a VM with
         `qm`, imports the image as its root disk, adds a cloud-init drive and
-        converts the VM to a template. Skipped entirely if the VMID already holds
-        the finished template on this node; refused if it holds anything else, on
+        converts the VM to a template, recording in its notes what went into the
+        disk. Skipped if the VMID already holds the finished template and it is
+        what these settings would build; rebuilt at the same VMID when it differs
+        (proxmox_template_rebuild); refused if the VMID holds anything else, on
         this node or another.
     options:
       proxmox_template_vmid:
@@ -79,3 +81,27 @@ argument_specs:
         type: path
         default: /usr/bin/virt-customize
         description: Path of virt-customize on the node. Tests point it at a stand-in.
+      proxmox_template_rebuild:
+        type: bool
+        default: true
+        description:
+          - Rebuild the template at the same VMID when it differs from what these settings would build - its CPU
+            type, OS type, bridge, storage, image, packages or this version's build - or keeps no record of its
+            build, as one an earlier version built does. VMs are full clones, which do not depend on it.
+          - Off, it is kept as it is and the differences are said, for a template a linked clone still uses, which
+            Proxmox will not remove, or one changed by hand on purpose.
+
+  # tasks_from: drift, which deploy.yml runs to decide through the API whether to build the template.
+  drift:
+    short_description: Say how the template differs from what this role would build, changing nothing
+    description:
+      - Compares the template's config, as the caller read it from Proxmox, with what this role would build - the qm
+        settings every clone inherits and, from the record in its notes, the image, packages and build version - and
+        records the differences in proxmox_template_drift, empty when there are none. Proxmox is asked nothing, and
+        nothing is changed.
+    options:
+      proxmox_template_drift_config:
+        type: dict
+        required: true
+        description:
+          - The template's config, as /nodes/<node>/qemu/<vmid>/config gives it.

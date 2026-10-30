@@ -199,9 +199,11 @@ def test_nothing_is_checked_while_a_value_is_the_examples(tmp_path: Path, fake_p
     assert _left_to_do(report) == {}
 
 
-def test_every_check_passes_on_a_host_with_its_template(tmp_path: Path, fake_pve: str) -> None:
+def test_every_check_passes_on_a_host_with_its_template_and_every_default_fits(tmp_path: Path, fake_pve: str) -> None:
+    # As just init runs it at a terminal: every default fits, so nothing is
+    # asked or written.
     root = tmp_path / "run"
-    report = _check(root, fake_pve, "ssh")
+    report = _check(root, fake_pve, "ssh", extra={"init_ask": True})
     assert report["rc"] == 0, _failures(report)
     said = _said(report)
     assert f"ok   Proxmox VE 8.2.4 at 127.0.0.1:{_port(fake_pve)} accepted ansible@pve!ansible" in said
@@ -210,6 +212,14 @@ def test_every_check_passes_on_a_host_with_its_template(tmp_path: Path, fake_pve
     assert "ok   the VMs get 1 SSH key" in said and "!!" not in said
     # The template exists: no SSH at all.
     assert _ssh_calls(root) == ""
+    assert "ok   node pve: it holds the template, and just deploy creates the VMs there" in said
+    assert "ok   storage local-lvm: the token can use it" in said
+    assert "ok   bridge vmbr0, the template's: the token has SDN.Use on it" in said
+    assert "written" not in said
+    asked = [
+        name for name, _, result in _results(report) if name.startswith("init_ask | Ask") and not result.get("skipped")
+    ]
+    assert asked == []
     # The one step left, said last and kept for NEXT STEPS.
     assert said.rstrip().endswith("\n" + DEPLOY_NEXT)
     assert _next(report) == {"init_check": DEPLOY_NEXT}
@@ -256,15 +266,48 @@ NO_TEMPLATE = {"proxmox_template_name": "not-built-yet", "proxmox_template_vmid"
 
 
 def test_without_the_template_root_ssh_is_checked_and_reads_the_node(tmp_path: Path, fake_pve: str) -> None:
+    # With the log at -vvv and every module's arguments injected, as the most a
+    # run can print or log: the token's secret appears nowhere.
     root = tmp_path / "run"
-    report = _check(root, fake_pve, "local", NO_TEMPLATE)
+    env = {"ANSIBLE_LOG_PATH": str(tmp_path / "run.log"), "ANSIBLE_LOG_VERBOSITY": "3"}
+    report = _check(root, fake_pve, "local", NO_TEMPLATE, "-e", '{"ansible_inject_invocation": true}', env=env)
     assert report["rc"] == 0, _failures(report)
+    assert PVE_SECRET not in json.dumps(report) + (tmp_path / "run.log").read_text()
     said = _said(report)
     assert "ok   there is no template not-built-yet yet: just deploy builds it at VMID 9999, over root SSH" in said
     assert "ok   root SSH to 127.0.0.1 works, and it is node pve (the template is not built yet)" in said
     assert _hostname_calls(root).splitlines() == ["-s"]
     facts = [r.get("ansible_facts", {}) for name, _, r in _results(report) if name == "Record root SSH's result"]
     assert facts[0]["init_ssh_node"] == "pve"
+
+
+# The fake's template is one this version builds; another CPU type makes it one the settings would build otherwise.
+DIFFERS = {"proxmox_template_cpu_type": "x86-64-v2-AES"}
+
+
+def test_a_template_that_differs_from_its_settings_is_said_and_root_ssh_checked(tmp_path: Path, fake_pve: str) -> None:
+    root = tmp_path / "run"
+    report = _check(root, fake_pve, "local", DIFFERS)
+    assert report["rc"] == 0, _failures(report)
+    said = _said(report)
+    assert (
+        "ok   the template ubuntu-24.04-cloudinit on pve differs from its settings (cpu host → x86-64-v2-AES):"
+        " just deploy rebuilds it, over root SSH" in said
+    ), said
+    assert "ok   root SSH to 127.0.0.1 works, and it is node pve (just deploy rebuilds the template)" in said
+    assert _hostname_calls(root).splitlines() == ["-s"]
+
+
+def test_a_template_kept_as_it_is_needs_no_root_ssh(tmp_path: Path, fake_pve: str) -> None:
+    root = tmp_path / "run"
+    report = _check(root, fake_pve, "ssh", {**DIFFERS, "proxmox_template_rebuild": False})
+    assert report["rc"] == 0, _failures(report)
+    said = _said(report)
+    assert (
+        "ok   the template ubuntu-24.04-cloudinit on pve differs from its settings (cpu host → x86-64-v2-AES), and is"
+        " kept as it is since proxmox_template_rebuild is false, so just deploy needs no root SSH" in said
+    ), said
+    assert not _ssh_calls(root)
 
 
 def test_root_ssh_that_fails_says_how_to_install_the_key(tmp_path: Path, fake_pve: str) -> None:
@@ -388,12 +431,7 @@ def test_a_plaintext_vault_is_a_problem(tmp_path: Path, fake_pve: str) -> None:
     }
 
 
-def test_the_token_secret_appears_nowhere(tmp_path: Path, fake_pve: str) -> None:
-    root = tmp_path / "run"
-    env = {"ANSIBLE_LOG_PATH": str(tmp_path / "run.log"), "ANSIBLE_LOG_VERBOSITY": "3"}
-    report = _check(root, fake_pve, "local", NO_TEMPLATE, "-e", '{"ansible_inject_invocation": true}', env=env)
-    assert report["rc"] == 0, _failures(report)
-    assert PVE_SECRET not in json.dumps(report) + (tmp_path / "run.log").read_text()
+# The token's secret nowhere in the output or the log: test_without_the_template_root_ssh_is_checked_and_reads_the_node.
 
 
 # ------------------------------------------------- the node, storage and bridge ---
@@ -401,19 +439,7 @@ def _local(root: Path) -> str:
     return (root / "group_vars" / "all" / "local.yml").read_text()
 
 
-def test_every_default_fits_and_nothing_is_written(tmp_path: Path, fake_pve: str) -> None:
-    root = tmp_path / "run"
-    report = _check(root, fake_pve, "ssh", extra={"init_ask": True})
-    assert report["rc"] == 0, _failures(report)
-    said = _said(report)
-    assert "ok   node pve: it holds the template, and just deploy creates the VMs there" in said
-    assert "ok   storage local-lvm: the token can use it" in said
-    assert "ok   bridge vmbr0, the template's: the token has SDN.Use on it" in said
-    assert "written" not in said
-    asked = [
-        name for name, _, result in _results(report) if name.startswith("init_ask | Ask") and not result.get("skipped")
-    ]
-    assert asked == []
+# Every default fitting, nothing written: test_every_check_passes_on_a_host_with_its_template_and_every_default_fits.
 
 
 @pytest.mark.parametrize("terminal", [True, False], ids=["terminal", "no-terminal"])
@@ -452,13 +478,26 @@ def test_without_a_template_two_nodes_take_the_node_ssh_reaches(tmp_path: Path, 
     assert '\nproxmox_node: "pve2"\n' in _local(root)
 
 
-def test_two_nodes_and_no_ssh_cannot_tell_the_node(tmp_path: Path, fake_pve: str) -> None:
+def test_two_nodes_and_no_ssh_cannot_tell_the_node_and_nothing_is_asked_for_storage(
+    tmp_path: Path, fake_pve: str
+) -> None:
+    # And while the node is unknown, a storage the default is not is neither
+    # asked about nor written.
     _pve(fake_pve, "PUT", "fake/nodes/pve2", status="online")
+    _pve(fake_pve, "PUT", "fake/storages", node="pve", storages="local-zfs:zfspool")
     root = tmp_path / "run"
     report = _check(root, fake_pve, "ssh", NO_TEMPLATE, extra={"init_ask": True})
     assert report["rc"] != 0
-    assert "!!   which node 127.0.0.1 is cannot be told until root SSH to it works" in _said(report)
+    said = _said(report)
+    assert "!!   which node 127.0.0.1 is cannot be told until root SSH to it works" in said
     assert "proxmox_node:" not in _local(root).replace("# proxmox_node:", "")
+    assert "--   the storage is not checked: the node is not known yet" in said
+    assert "--   the bridge is not checked: the node is not known yet" in said
+    assert "\nproxmox_storage:" not in _local(root)
+    asked = [
+        name for name, _, result in _results(report) if name.startswith("init_ask | Ask") and not result.get("skipped")
+    ]
+    assert asked == []
 
 
 def test_a_storage_is_chosen_among_those_the_token_can_use(tmp_path: Path, fake_pve: str) -> None:
@@ -574,20 +613,8 @@ def test_a_bridge_given_equal_to_the_templates_is_nothing_to_do(tmp_path: Path, 
     assert "\nproxmox_bridge:" not in _local(root)
 
 
-def test_while_the_node_is_unknown_nothing_is_asked_or_written_for_storage(tmp_path: Path, fake_pve: str) -> None:
-    _pve(fake_pve, "PUT", "fake/nodes/pve2", status="online")
-    _pve(fake_pve, "PUT", "fake/storages", node="pve", storages="local-zfs:zfspool")
-    root = tmp_path / "run"
-    report = _check(root, fake_pve, "ssh", NO_TEMPLATE, extra={"init_ask": True})
-    assert report["rc"] != 0
-    said = _said(report)
-    assert "--   the storage is not checked: the node is not known yet" in said
-    assert "--   the bridge is not checked: the node is not known yet" in said
-    assert "\nproxmox_storage:" not in _local(root)
-    asked = [
-        name for name, _, result in _results(report) if name.startswith("init_ask | Ask") and not result.get("skipped")
-    ]
-    assert asked == []
+# Nothing asked or written for storage while the node is unknown:
+# test_two_nodes_and_no_ssh_cannot_tell_the_node_and_nothing_is_asked_for_storage.
 
 
 def test_a_storage_given_while_the_node_is_unknown_is_refused(tmp_path: Path, fake_pve: str) -> None:
@@ -702,8 +729,11 @@ READ_ONLY = {
     "ansible.builtin.fail",
     "ansible.builtin.import_tasks",
     "ansible.builtin.include_tasks",
+    "ansible.builtin.include_role",
     "ansible.builtin.meta",
 }
+# The one role entry point included: the template's comparison, which only records what differs.
+ROLE_ENTRY_POINTS = {("proxmox_template", "drift")}
 TASK_KEYS = {
     "name", "when", "register", "vars", "no_log", "failed_when", "changed_when", "check_mode", "delegate_to",
     "ignore_unreachable", "loop", "loop_control", "until", "retries", "delay", "tags",
@@ -733,6 +763,13 @@ def test_every_task_is_a_read_but_the_settings_written():
             assert task[module] == {"argv": ["hostname", "-s"]}, task["name"]
         if module in ("ansible.builtin.import_tasks", "ansible.builtin.include_tasks"):
             assert task[module] in INCLUDED, task["name"]
+        if module == "ansible.builtin.include_role":
+            entry = (task[module]["name"], task[module]["tasks_from"])
+            assert set(task[module]) == {"name", "tasks_from"} and entry in ROLE_ENTRY_POINTS, task["name"]
+            path = REPO / "roles" / entry[0] / "tasks" / f"{entry[1]}.yml"
+            assert {next(iter(set(t) - TASK_KEYS)) for t in _tasks(yaml.safe_load(path.read_text()))} == {
+                "ansible.builtin.set_fact"
+            }, path
 
 
 def test_a_setting_is_written_only_at_a_terminal_or_as_given():

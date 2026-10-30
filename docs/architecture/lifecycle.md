@@ -3,7 +3,8 @@
 ```mermaid
 stateDiagram-v2
     [*] --> NoTemplate
-    NoTemplate --> Template: playbooks/template.yml (once, over SSH)
+    NoTemplate --> Template: playbooks/template.yml (over SSH)
+    Template --> Template: rebuilt when it differs from its settings
     Template --> Cloned: provision.yml — clone (in parallel for a fleet)
     Cloned --> Configured: apply cloud-init + hardware, resize disk
     Configured --> Running: start
@@ -14,14 +15,31 @@ stateDiagram-v2
     Cloned --> Configured: re-run repairs a half-built VM
 ```
 
-## 4.1 `playbooks/template.yml` — one-time
+## 4.1 `playbooks/template.yml` — built, and rebuilt when it differs
 
 `hosts: proxmox`, over SSH, because importing a disk image needs `qm` on the node. Runs
-`roles/proxmox_template`. `deploy.yml` runs it only when the template is missing, deciding that
-through the API, and the import-level `when:` is what keeps a run that does not need to build it
-from opening an SSH connection to the hypervisor: it skips the implicit fact gather along with every
-task ([§4.7](#47-deployyml)). The play's `gather_facts: false` only saves a pointless gather on the
-run that does build.
+`roles/proxmox_template`. `deploy.yml` runs it only when the template is missing or differs from what
+its settings would build, deciding that through the API, and the import-level `when:` is what keeps a
+run that does not need to build it from opening an SSH connection to the hypervisor: it skips the
+implicit fact gather along with every task ([§4.7](#47-deployyml)). The play's `gather_facts: false`
+only saves a pointless gather on the run that does build.
+
+A template is compared, not just found. Its config says what every clone inherits - CPU type, OS type,
+bridge, storage, and the controller, agent, serial console and display the role always gives it - and is
+read as it is, so a change made in Proxmox's UI is seen too. What went into its disk, Proxmox cannot
+show, so the build records it in the template's notes, one line: the build steps' version
+(`proxmox_template_build` in the role's `vars/main.yml`, raised whenever a change to them changes what a
+template is), the image's URL, the packages put into it, and its SHA-256, kept but never compared. One
+definition of what a build makes, the role's `proxmox_template_wanted`, feeds both the build and the
+comparison (`proxmox_template_drift` in `filter_plugins/proxmox.py`): `deploy.yml` through the role's
+`drift` entry point, on the config the API gives, and the role itself on `qm config`'s, which
+`qm_config` reads as the API's. A template that differs, or keeps no record, as one an earlier version
+built, is rebuilt at the same VMID, each difference said first. The old one is removed only once the new
+image is downloaded and customised, so a download that fails leaves it; the customised copy goes either
+way. Proxmox refuses to remove a template a linked clone still uses; that refusal fails the run, naming
+`proxmox_template_rebuild: false`, which keeps a template as it is, the differences said. The build reads
+the new template back as the next run will, and fails if it still differs, rather than letting every run
+rebuild it.
 
 ## 4.2 `playbooks/provision.yml` — three plays
 
@@ -170,8 +188,11 @@ alias, and under `just deploy` its sign-ins and VS Code; a fourth play, tagged `
 VM with such a failure - skipped when `claude_vm_configure_in_deploy` is set, as `deploy.yml`'s configure
 import sets it, since deploy's own last play raises the same list (§4.7). `import_role`, not
 `include_role`: a static import takes the block's tag, so `just deploy <vm> --tags tailscale` runs the role's
-tasks, where an include's tag reaches only the include. Tailscale is optional, which is why only it gets
-this treatment: a failure in it is the VM's last, not its first
+tasks, where an include's tag reaches only the include. Off (`tailscale_enabled: false`), a `stat` first
+looks for the marker the role's install writes, and the import, whose condition each of the role's tasks
+carries, runs only where it is there - to log out and remove what the role installed, said first - so a VM
+it never installed Tailscale on gets that one read and nothing of the role. Tailscale is optional, which is
+why only it gets this treatment: a failure in it is the VM's last, not its first
 ([§5.8](roles.md#58-tailscale--join-the-vm-to-a-tailnet)).
 
 > `when:` on an `import_playbook` propagates to the imported plays' tasks rather than skipping the
@@ -205,7 +226,9 @@ against 41 s.
    sessions would put a relative one wherever it ran - then start each stopped VM through the API (`status/start`), wait
    for its agent to report an IPv4 address on `proxmox_nic` - by the MAC its config gives, as
    `vm_addresses.yml` pairs them, so a bridge the guest grew (`docker0`, `tailscale0`) cannot end the wait
-   before DHCP has answered - list the cluster again and read every requested VM's address
+   before DHCP has answered; asked 36 times at most, `claude_vm_release_agent_delay` (5) seconds apart, a
+   play variable only `-e` changes, which `tests/unit/test_release.py` sets to 0.2 against the fake agent
+   that answers on its third ask - list the cluster again and read every requested VM's address
    (`tasks/vm_addresses.yml`). The listing gives the status Proxmox last polled, up to ten seconds old,
    so a VM started seconds before is still "stopped" there: the VMs started are passed as
    `claude_vm_just_started` and asked whatever it says. Read by the listing alone, a VM that booted
@@ -847,19 +870,25 @@ It reads `hosts.yml` and `local.yml`, and the vault: as text when it is plaintex
 decrypt --output -` under `no_log` when it is encrypted and there is a password (`.vault_pass`, or
 `ANSIBLE_VAULT_PASSWORD_FILE`); an encrypted vault with neither is left alone, and said. Every `ansible-vault`
 it runs has `ANSIBLE_VERBOSITY` and `ANSIBLE_DEBUG` at 0 (`init_ansible_vault_env`), whatever the environment
-or `ansible.cfg` says: either adds lines to the stdout the vault's text is read from. Then four
-questions, each through `tasks/init_ask.yml` and only while its value is still the example's: the host's
-address (written at once, by one `lineinfile` on the example's `ansible_host: 192.0.2.10` line, comment
-kept, validated as YAML and read back); the token's ID, while there is no secret and `local.yml` names no
-token (only the parts that differ from `ansible@pve!ansible` are written, by `tasks/init_local_setting.yml`,
-in place of their commented example lines); the GitHub username; and last the secret, hidden - last so
-that a token the offer below makes has its secret written into the vault with no question between. Each answer is held
-to its kind by the `init_answer` filter (`filter_plugins/settings.py`); one that breaks the rule is asked
-for once more, saying it, and Enter leaves the value for the next run. The address in effect is the first
-`proxmox` host's `ansible_host`, else its name, as `defaults.yml` reads it. Tailscale is not asked about:
-while `local.yml` does not set `tailscale_enabled`, a `NOTICE` says it is on, by the vault's auth key or the
-sign-in page, and how to turn it off, writing nothing, so a later change to the default still reaches the
-person; `--tailscale on` or `off` writes the setting, by `tasks/init_local_setting.yml`.
+or `ansible.cfg` says: either adds lines to the stdout the vault's text is read from. Then the questions,
+each through `tasks/init_ask.yml` and only while its value is still the example's - the person's accounts
+first, then every Proxmox question together, so that only the offer below comes between the token's ID and
+its secret: the GitHub username; Tailscale (below); the host's address (written at once, by one
+`lineinfile` on the example's `ansible_host: 192.0.2.10` line, comment kept, validated as YAML and read
+back); the token's ID, while there is no secret and `local.yml` names no token (only the parts that differ
+from `ansible@pve!ansible` are written, by `tasks/init_local_setting.yml`, in place of their commented
+example lines); and last the secret, hidden - last so that a token the offer makes has its secret written
+into the vault with no question between. Each answer is held to its kind by the `init_answer` filter
+(`filter_plugins/settings.py`); one that breaks the rule is asked for once more, saying it, and Enter leaves
+the value for the next run. The address in effect is the first `proxmox` host's `ansible_host`, else its
+name, as `defaults.yml` reads it. Tailscale's question is whether to use it, while `local.yml` does not set
+`tailscale_enabled` (`yes_no`; `--tailscale on` or `off` answers it, as `y` or `n`), written either way by
+`tasks/init_local_setting.yml` and so never asked again; then, for a Tailscale chosen - `y`, `on`, or
+`true` in `local.yml`, never the default nobody chose - and while the vault holds no key and
+`tailscale_auth_method` is not `web`, an auth key, hidden, kept with the hidden answers and written into the
+vault with the others (`auth_key`; never from the command line). While it is unanswered a `NOTICE` says
+Tailscale is on, by the vault's auth key or the sign-in page, and how to turn it off, writing nothing, so a
+later change to the default still reaches the person.
 
 Before the secret, at a terminal, while the vault has none and none was given, `tasks/init_access.yml`
 offers to make the token: the one change `just init` makes on Proxmox. It adds the first `proxmox` host as
@@ -930,8 +959,12 @@ every task a read (held by `tests/unit/test_init_check.py`):
 5. **The template**, from the cluster listing, as `deploy.yml` finds it: a VM named `proxmox_template_name`
    that is a template. Found, it must be on `proxmox_node`, where the clones are made. Missing, deploy builds
    it at `proxmox_template_vmid`, so a guest there - any, on any node, one that is down included - is a
-   problem naming it. A listing that fails is a problem said with the rest.
-6. **Root SSH**, only while the template is missing (or the listing would not say): `hostname -s`, delegated
+   problem naming it. A listing that fails is a problem said with the rest. Found, its config is read and
+   compared with what its settings would build, through `roles/proxmox_template`'s `drift` entry point as
+   `deploy.yml` does ([§4.1](#41-playbookstemplateyml--built-and-rebuilt-when-it-differs)): one that differs is
+   said with each difference, and deploy rebuilds it, unless `proxmox_template_rebuild` is off.
+6. **Root SSH**, only while the template is missing or will be rebuilt (or the listing would not say):
+   `hostname -s`, delegated
    to the `proxmox` group's host with `ignore_unreachable`, which proves the connection the build will use
    and reads the host's short name, its node name (`init_ssh_node`), which must be `proxmox_node`, since the
    template is built there. No host in the group is a problem too. `accept-new` may add its host key to

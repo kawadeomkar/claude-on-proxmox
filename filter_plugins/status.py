@@ -161,6 +161,7 @@ def status_fleet(
     lists=None,
     contents=None,
     template_config=None,
+    template_drift=None,
     aliases=None,
     settings=None,
     unread="",
@@ -173,8 +174,10 @@ def status_fleet(
     ``addressed`` the requested VMs with an address (vm_addresses.yml), ``configs`` its config results, each with
     the VM it read as ``claude_vm_item``; ``lists`` the results of reading /version and the storages' listing;
     ``contents`` the results of reading each storage's disks, each with its ``item``; ``template_config`` the result
-    of reading the template's config; ``aliases`` the names the managed SSH config holds, or None with the aliases
-    off; ``settings`` what the inventory says; ``unread`` why Proxmox could not be read, if it could not.
+    of reading the template's config, and ``template_drift`` how it differs from what its settings would build
+    (roles/proxmox_template's drift entry point), which the next just deploy rebuilds; ``aliases`` the names the
+    managed SSH config holds, or None with the aliases off; ``settings`` what the inventory says; ``unread`` why
+    Proxmox could not be read, if it could not.
     """
     settings = dict(settings or {})
     if not settings.get("discovery", True):
@@ -238,6 +241,8 @@ def status_fleet(
                 "node": entry.get("node"),
                 "storage": _disk(template_config or {}).get("storage", ""),
                 "ctime": _ctime(template_config or {}),
+                "drift": [str(d) for d in template_drift or []],
+                "rebuild": bool(settings.get("template_rebuild", True)),
             }
     vms = []
     for entry in sorted(requested, key=lambda e: ("name" not in e, str(e.get("name", "")), e.get("vmid", 0))):
@@ -923,6 +928,19 @@ def _ssh_items(vm, settings, live, now):
     return items
 
 
+def _template_items(template):
+    """The template, when the next just deploy rebuilds it: it differs from what its settings would build, and
+    proxmox_template_rebuild leaves rebuilding on. Kept as it is, it is only said on its line."""
+    drift = template.get("drift") or []
+    if template.get("missing") or not drift or not template.get("rebuild", True):
+        return []
+    text = (
+        f"the template {template.get('name')} differs from its settings ({'; '.join(drift)}), so the next just"
+        " deploy rebuilds it, over root SSH"
+    )
+    return [_item("todo", "template", "template", text, "just deploy --only template rebuilds it now")]
+
+
 def _storage_items(storages):
     items = []
     for s in storages:
@@ -1044,6 +1062,7 @@ def status_report(found, read_at="", now=None, live=False):
         items += _vm_items(vm, settings, live)
         items += _ssh_items(vm, settings, live, now)
     items += _storage_items(fleet.get("storages") or [])
+    items += _template_items(fleet.get("template") or {})
     # Two VMs of one name each say the same thing about it: once is enough.
     seen = set()
     items = [it for it in items if (key := (it["level"], it["vm"], it["text"])) not in seen and not seen.add(key)]
@@ -1213,7 +1232,14 @@ def _storage_lines(model):
     elif template:
         built = f" · built {template['built_ago']}" if template.get("built_ago") else ""
         where = f" on {template['storage']}" if template.get("storage") else ""
-        lines.append([seg(f" {'template':<10} {template.get('name')} ({template.get('vmid')}){where}{built}")])
+        line = [seg(f" {'template':<10} {template.get('name')} ({template.get('vmid')}){where}{built}")]
+        # How it differs is said under ATTENTION; here only what the next deploy does with it.
+        if template.get("drift"):
+            line += [
+                seg(" · "),
+                seg("next deploy rebuilds it", "y") if template.get("rebuild", True) else seg("differs, kept", "d"),
+            ]
+        lines.append(line)
     return lines
 
 

@@ -5,7 +5,8 @@
 
 | Job | Contents |
 |---|---|
-| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → `just test unit`, four workers (`PYTEST_XDIST_AUTO_NUM_WORKERS`, so it never depends on psutil) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
+| `lint` | tracked-file guard → `just lint` (the linters, `--syntax-check`, then the pre-commit hooks they do not cover: private-key detection, the large-file check and the whitespace hooks) → gitleaks in `dir` mode → gitleaks in `git` mode over the commits the push or pull request brings in (full clone, `fetch-depth: 0`) |
+| `unit` | `Unit tests (1/3)` … `(3/3)`: `just test unit --shard <n>/3`, four workers each (`PYTEST_XDIST_AUTO_NUM_WORKERS`, so it never depends on psutil). Each module that shares a fixture stays whole in one shard; the shards are balanced by `tests/unit/durations.json` (`tools/unit_durations.py` writes it from a run's JUnit report), a test it lacks counting as the mean. 7.9–8.4 minutes for the slowest shard on hosted runners, against 44 for the whole suite one test at a time |
 | `dependency-review` | PRs only, fails on moderate severity |
 | `molecule` | matrix over all eight roles, `just test --role <role>`, from the start of the run: behind `lint` a run took the unit suite's time plus the slowest scenario's |
 | `playbooks` | matrix over the `configure` and `provision` scenarios, `just test integration` and `provision`, from the start of the run too |
@@ -37,8 +38,16 @@ A secret they find has already been pushed and is public: revoke it rather than 
 superset: CI also scans the working tree and the commits a push brings in with gitleaks, which a
 local run cannot reproduce from the git index alone.
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes a GitHub release with notes
-generated from the commits since the previous tag.
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It refuses a tag that is not an annotated
+`vMAJOR.MINOR.PATCH` (Semantic Versioning, a hyphen making a prerelease) on a commit of `main`, then
+publishes a GitHub release: the tag's message, then the notes GitHub generates - the pull requests merged
+since the previous release, in the sections `.github/release.yml` makes of their labels. Each pull request
+has that label from `.github/workflows/labels.yml`, which gives it the one its title's tag names
+(`[feat]` is `enhancement`, `[fix]` is `bug`) and runs again when the title changes. It runs on
+`pull_request_target`, so that a fork's pull request is labelled too: that event hands it a token that
+can write, so it checks nothing out, and the title reaches its script only as an environment variable.
+`tests/unit/test_ci.py` runs both scripts against a stand-in `gh`, the release's on a scratch repository's
+tags. `CONTRIBUTING.md` says how to cut a release.
 
 A push to `main` that changes the wiki runs `.github/workflows/docs.yml`, which builds the site
 strictly and deploys it to GitHub Pages; [This wiki](../development/docs.md#publishing) says how.

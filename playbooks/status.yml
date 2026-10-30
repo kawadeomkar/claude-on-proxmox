@@ -25,6 +25,7 @@
       sections: "{{ status_only | default('') | status_sections }}"
       tag: "{{ claude_vm_tag }}"
       template_name: "{{ proxmox_template_name }}"
+      template_rebuild: "{{ proxmox_template_rebuild | default(true) | bool }}"
       storage: "{{ proxmox_storage }}"
       nic: "{{ proxmox_nic }}"
       tailscale_enabled: "{{ tailscale_enabled | bool }}"
@@ -86,6 +87,16 @@
           check_mode: false
           no_log: true
           failed_when: false
+
+        # What the next just deploy does with it: roles/proxmox_template's drift entry point, as deploy.yml runs it,
+        # on the config just read - a set_fact, asking and changing nothing.
+        - name: Compare the template with what its settings would build
+          ansible.builtin.include_role:
+            name: proxmox_template
+            tasks_from: drift
+          vars:
+            proxmox_template_drift_config: "{{ status_template_config.json.data }}"
+          when: status_template_config.status | default(0) == 200
 
         # Which disks each storage of this project's holds, and of what size: the project's share of it, and how
         # far a thin pool is provisioned past what it holds.
@@ -150,6 +161,7 @@
                    lists=status_proxmox_lists.results | default([]),
                    contents=status_storage_content.results | default([]),
                    template_config=status_template_config | default({}),
+                   template_drift=proxmox_template_drift | default([]),
                    aliases=(status_ssh_config_text.content | default('') | b64decode)
                      | status_aliases(claude_ssh_config | bool),
                    settings=status_settings | combine({'proxmox_hint': status_proxmox_hint | default('')}),

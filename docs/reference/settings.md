@@ -5,6 +5,16 @@ Everything you can set lives in two git-ignored files that `just init` copies fr
 for secrets. Set only what differs from the default, so that a default this project changes later
 still reaches you.
 
+To see what yours are and where each was set, run `just settings`: `just settings tailscale` lists one
+role's variables, `just settings tailscale_ssh` explains one, `just settings --changed` lists everything
+you changed, and `--json` gives any of them to a script. `just settings tailscale_ssh --value true` sets
+one: it writes `tailscale_ssh: true` into `local.yml`, in place of its example's line, once the value is
+one the setting takes, and says what applies it. A role variable that a setting here feeds is written as
+that setting (`claude_code_remote_control` as `claude_remote_control`). `just settings tailscale_ssh
+--reset` puts it back to its default: it takes the line out of `local.yml` and puts the example's
+commented line back where it was. A secret is only ever said to be set or not set, never shown or written
+there: it changes with `just vault`.
+
 ## Variable layering
 
 ```
@@ -69,6 +79,12 @@ The template every VM is cloned from. On a cluster, build one per node with a VM
 |---|---|---|
 | `proxmox_template_vmid` | `9000` | VMID the template is built under. A variable of [`proxmox_template`](roles/proxmox_template.md). |
 | `proxmox_template_name` | `ubuntu-24.04-cloudinit` | Template name. A variable of [`proxmox_template`](roles/proxmox_template.md). |
+
+just deploy rebuilds the template when it differs from what its settings would build - CPU type, OS type, bridge, storage, image, packages - or carries no record of its build, as one an earlier version built. VMs are full clones and do not depend on it. false keeps it as it is, the differences said: for a template a linked clone still uses, which Proxmox will not remove.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `proxmox_template_rebuild` | `true` | Rebuild the template at the same VMID when it differs from what these settings would build - its CPU type, OS type, bridge, storage, image, packages or this version's build - or keeps no record of its build, as one an earlier version built does. A variable of [`proxmox_template`](roles/proxmox_template.md). |
 
 Which NIC of the template carries the LAN address: its MAC is how a VM's own address is told apart from bridges the guest grows later (docker0). Change it only if the template was built with something other than a single net0.
 
@@ -347,7 +363,7 @@ Open the sign-in pages (and copy GitHub's code) on this machine. Off, the run on
 
 ### Tailscale
 
-Tailscale: each VM joins your tailnet ([docs/guides/tailscale.md](../guides/tailscale.md)). On by default; false turns it off again where this project installed it, and leaves a Tailscale installed by hand alone.
+Tailscale: each VM joins your tailnet ([docs/guides/tailscale.md](../guides/tailscale.md)). just init asks, and writes your answer here; on until it is answered. Every VM deployed from then on follows it: false installs nothing of Tailscale's, takes it off again where this project installed it, saying so, and leaves a Tailscale installed by hand alone.
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -466,7 +482,7 @@ Optional: skip interactive `claude` login on the VM. Billing for Claude Code on 
 
 ### Secrets: Tailscale
 
-Optional: a Tailscale auth key, so each new VM joins your tailnet during configuration with nothing to click. Make it reusable (one key for the whole fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale removes an ephemeral node within the hour of it going offline, and a VM left stopped would be. Leave it empty to sign each VM in by Tailscale's web login instead (just login &lt;name&gt; --only tailscale), with no secret here. Only ever used for a VM's first join. [docs/guides/tailscale.md](../guides/tailscale.md).
+Optional: a Tailscale auth key, so each new VM joins your tailnet during configuration with nothing to click; just init asks for it after a y to Tailscale. Make it reusable (one key for the whole fleet) or one-off, pre-approved and tagged - never ephemeral, since Tailscale removes an ephemeral node within the hour of it going offline, and a VM left stopped would be. Leave it empty to sign each VM in by Tailscale's web login instead (just login &lt;name&gt; --only tailscale), with no secret here. Only ever used for a VM's first join. [docs/guides/tailscale.md](../guides/tailscale.md).
 
 | Secret, in `vault.yml` | Notes |
 |---|---|

@@ -1,0 +1,67 @@
+---
+name: Labels
+
+# A pull request's title starts with the kind of change it is - [feat], [fix], [cleanup], [docs], [test], [ci] or
+# [build] (CONTRIBUTING.md) - and a release's notes group the pull requests merged since the last one by label
+# (.github/release.yml), so each pull request is labelled from its title, and labelled again when the title changes.
+#
+# pull_request_target, not pull_request: under pull_request a fork's pull request gets a read-only token and could
+# not be labelled. pull_request_target runs this file as the base branch has it, with a token that can write, so the
+# job checks nothing out and runs nothing of the pull request's: the title reaches the script only as an environment
+# variable, never inside it, where a title could become a command.
+"on":
+  pull_request_target:
+    types: [opened, edited, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label:
+    name: Label from the title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Label the pull request as its title's tag says
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          # Dependabot's titles are its own (build(deps): ...), and it labels its pull requests itself.
+          [ "$AUTHOR" != "dependabot[bot]" ] || exit 0
+          # The label each tag gives, which .github/release.yml makes a section of the notes.
+          label_of() {
+            case "$1" in
+              feat) echo enhancement ;;
+              fix) echo bug ;;
+              docs) echo documentation ;;
+              cleanup | test | ci | build) echo "$1" ;;
+            esac
+          }
+          has() { printf '%s' "$LABELS" | jq -e --arg label "$1" 'index($label) != null' > /dev/null; }
+          # The first tag in the title: a stacked pull request's starts [1/2] [Topic] [feat].
+          kind=$(printf '%s\n' "$TITLE" | grep -o -E '\[(feat|fix|cleanup|docs|test|ci|build)\]' | head -n 1 | tr -d '[]' || true)
+          want=$(label_of "$kind")
+          # A title retagged: the label of its old tag goes.
+          for other in feat fix cleanup docs test ci build; do
+            label=$(label_of "$other")
+            if [ "$label" != "$want" ] && has "$label"; then
+              gh api --method DELETE "repos/$REPO/issues/$NUMBER/labels/$label" > /dev/null
+              echo "took $label off"
+            fi
+          done
+          if [ -z "$want" ]; then
+            tags='[feat], [fix], [cleanup], [docs], [test], [ci] or [build]'
+            echo "::warning::The title has none of $tags (CONTRIBUTING.md), so no label and no section of the release notes"
+            exit 0
+          fi
+          if has "$want"; then
+            echo "labelled $want already"
+          else
+            gh api --method POST "repos/$REPO/issues/$NUMBER/labels" -f "labels[]=$want" > /dev/null
+            echo "labelled $want"
+          fi

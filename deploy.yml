@@ -46,10 +46,12 @@
     # By name, so that only the node holding the template is asked for its VM
     # list. Unfiltered, proxmox_vm_info asks every node that owns any VM, and
     # one node that is down failed the run before anything was built.
+    # With its config, which says whether it is still what its settings would build.
     - name: Look up the template by name
       community.proxmox.proxmox_vm_info: # noqa: args[module] - api_* come from module_defaults
         type: qemu
         name: "{{ proxmox_template_name }}"
+        config: current
       register: claude_deploy_template
       changed_when: false
 
@@ -87,17 +89,47 @@
         quiet: true
       when: claude_template_exists | bool
 
+    # A template that differs from what its settings would build - a setting changed, this version's build, or no
+    # record of its build at all - is rebuilt by the template play, which runs only then or when there is none:
+    # through the API, so a run that needs neither still opens no SSH connection to the Proxmox host.
+    - name: Compare the template with what its settings would build
+      ansible.builtin.include_role:
+        name: proxmox_template
+        tasks_from: drift
+      vars:
+        proxmox_template_drift_config: >-
+          {{ claude_deploy_template.proxmox_vms
+             | selectattr('name', 'equalto', proxmox_template_name)
+             | selectattr('template', 'defined') | selectattr('template', 'truthy')
+             | map(attribute='config') | first | default({}) }}
+      when: claude_template_exists | bool
+
+    - name: Record whether the template is to be rebuilt
+      ansible.builtin.set_fact:
+        claude_template_rebuild: >-
+          {{ claude_template_exists | bool and proxmox_template_drift | default([]) | length > 0
+             and proxmox_template_rebuild | default(true) | bool }}
+
     # Said up front, because the run stops for the person after the minutes of
     # configuration, and a prompt left waiting long enough has a sign-in page
     # behind it that expires. Built in vars, so the message is one line; named
     # apart from the lookup's register, which would outrank a task var.
     - name: Report what this run will do
       vars:
+        claude_deploy_root: "{{ groups['proxmox'][0] | default('the proxmox host') }}"
         claude_deploy_template_said: >-
-          {{ 'Template "' ~ proxmox_template_name ~ '" is already built, so this run needs no SSH to the Proxmox host.'
+          {{ 'Template "' ~ proxmox_template_name ~ '" differs from its settings ('
+                  ~ proxmox_template_drift | join('; ') ~ '), so this run rebuilds it first, over SSH as root@'
+                  ~ claude_deploy_root ~ '.'
+             if claude_template_rebuild | bool
+             else 'Template "' ~ proxmox_template_name ~ '" differs from its settings ('
+                  ~ proxmox_template_drift | join('; ') ~ '), and is kept as it is since proxmox_template_rebuild is'
+                  ~ ' false, so this run needs no SSH to the Proxmox host.'
+             if claude_template_exists | bool and proxmox_template_drift | default([]) | length > 0
+             else 'Template "' ~ proxmox_template_name ~ '" is already built, so this run needs no SSH to the Proxmox host.'
              if claude_template_exists | bool
              else 'Template "' ~ proxmox_template_name ~ '" does not exist yet; building it first, over SSH as root@'
-                  ~ (groups['proxmox'][0] | default('the proxmox host')) ~ '.' }}
+                  ~ claude_deploy_root ~ '.' }}
         claude_deploy_vms: >-
           {{ (claude_vm_names[:-1] | join(', ') ~ ' and ' ~ claude_vm_names[-1]) if claude_vm_names | length > 1
              else claude_vm_names | join }}
@@ -136,7 +168,9 @@
 
 - name: Build the cloud-init VM template
   ansible.builtin.import_playbook: playbooks/template.yml
-  when: not (hostvars['localhost'].claude_template_exists | default(false)) | bool
+  when: >-
+    not (hostvars['localhost'].claude_template_exists | default(false)) | bool
+    or (hostvars['localhost'].claude_template_rebuild | default(false)) | bool
 
 - name: Provision VMs on Proxmox
   ansible.builtin.import_playbook: playbooks/provision.yml

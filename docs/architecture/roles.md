@@ -383,10 +383,13 @@ refuses anything at that path but a pipe, since `<>` would otherwise create a pl
 code into it; `wait_for` any answer after claude's prompt (`prompted > \s*\S`), not three known ones, so
 a refusal nobody listed (an account on hold, a managed policy) ends the wait at once; on `Invalid code`,
 which a code copied only up to its `#` gets while claude goes on waiting on the same page, ask once more
-for the whole code; then, in an `always`, give claude a moment, kill the recorded pid if the job still
-runs (an attempt nobody completes, or a malformed code it is still waiting on), collect and clean up the
-job, and remove the files. The outcome is `claude auth status` again, not what claude printed. A pasted
-code is never written as a bare newline, which claude would answer `Invalid code` and go on waiting.
+for the whole code; then, in an `always`, give claude a moment, end the recorded pid if the job still
+runs (an attempt nobody completes, or a malformed code it is still waiting on) - a TERM, on which claude
+exits at once, and a KILL only if `kill -0`, asked every tenth of a second, still finds the pid a second
+later, so none goes to a pid claude no longer holds and the attempt ends the moment claude has - collect
+and clean up the job, and remove the files. The outcome is `claude auth status` again, not what claude
+printed. A pasted code is never written as a bare newline, which claude would answer `Invalid code` and
+go on waiting.
 Before any of it, a sign-in of the same VM still waiting - a run left at its prompt, a second `just
 login --only claude` - is refused by name: its pidfile names a live process whose command line `ps` shows as
 `auth login`, and taking over its pipe and pidfile would hand one run's code to the other's claude. What
@@ -655,7 +658,8 @@ plan's research record.
   Tailscale with it, or none at all, is the role's to install, maintain and remove; a package dpkg has
   without it, or a Tailscale dpkg does not know (a `tailscaled` of Tailscale's static binaries in
   `/usr/sbin` or under `/usr/local`, the snap's `/snap/bin/tailscale`), was installed some other way and
-  is only reported - on and off: the package beside it would start a second `tailscaled`. Written first, so
+  is left alone, on and off, and reported while on - off, `configure.yml` runs the role only where the
+  marker is: the package beside it would start a second `tailscaled`. Written first, so
   a run that fails halfway leaves something the role knows to finish or remove. `tailscale-joined` holds
   the node key of the login the role's own join produced (`Self.PublicKey`): only that login's settings are
   changed, so a login made by hand keeps its own, as a gh login made by hand does (§5.6). It holds
@@ -742,7 +746,9 @@ plan's research record.
   `destroy.yml` runs before deleting a VM: start a stopped `tailscaled`, read the node's ID, log it out,
   delete the device, and record a clause in `tailscale_release_said` - whatever Tailscale the VM has,
   since the VM itself is going.
-- **Off** (`absent.yml`), only with the installed marker: `tailscaled` started where the unit exists -
+- **Off** (`absent.yml`), only with the installed marker - `configure.yml` runs the role at all, off, only
+  where its `stat` finds the marker ([§4.4](lifecycle.md#44-playbooksconfigureyml)) - said first, as removing
+  what this project installed: `tailscaled` started where the unit exists -
   logging out takes the daemon, and one stopped by hand would leave the node's key valid in the tailnet -
   then logout where it answers with a node key, stop - never disable: the package's postinst re-enables
   tailscaled on a reinstall only while its enable link survives, so a disable kept a Tailscale installed

@@ -9,7 +9,7 @@ the host.
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
-just init            # installs the tools, asks for your Proxmox host and GitHub username, and offers to make the API token
+just init            # installs the tools, asks for your GitHub username, Tailscale and your Proxmox host, and offers to make the API token
 ```
 
 The project keeps no environment of its own, and needs no particular tool to make one: pyenv, above, is a
@@ -24,18 +24,26 @@ virtualenv, which they refuse. It installs the versions `uv.lock` pins and remov
 `just init` then copies the three git-ignored files below from their examples and asks, at the terminal,
 for each value a first deploy needs that is still the example's:
 
-1. **The Proxmox host's address**, as this machine reaches it: an IP address or a host name, without
+1. **Your GitHub username**, whose repositories are cloned onto each VM.
+2. **Whether to use Tailscale**, which puts each VM on your tailnet, so it is reached from anywhere and not
+   only from this LAN ([Tailscale](../guides/tailscale.md)). `y` needs a Tailscale account; `n` keeps it off
+   every VM. Either is written into `local.yml` as `tailscale_enabled`, which you can change there any time,
+   and never asked again. Until you answer, it is on.
+3. **A Tailscale auth key**, after a `y`, while the vault holds none: it joins each new VM by itself during
+   `just deploy`. It is not shown as you type. Enter goes without one, and each VM signs in on Tailscale's
+   page during `just deploy` instead; the next `just init` asks again. To always sign in on the page and
+   never be asked, set `tailscale_auth_method: web` in `local.yml`.
+4. **The Proxmox host's address**, as this machine reaches it: an IP address or a host name, without
    `https://` or a port.
-2. **The API token's ID**, `user@realm!name`. Enter keeps `ansible@pve!ansible`, the name
-   `tools/proxmox-access.sh` gives it.
-3. **Your GitHub username**, whose repositories are cloned onto each VM.
-4. **Whether to set up the API access.** `just init` reaches the host over root SSH, shows the `pveum`
+5. **The API token's ID**, `user@realm!name` - its ID only: the secret is asked for after it, unless
+   `just init` makes the token. Enter keeps `ansible@pve!ansible`, the name `tools/proxmox-access.sh` gives it.
+6. **Whether to set up the API access.** `just init` reaches the host over root SSH, shows the `pveum`
    commands `tools/proxmox-access.sh` would run there to make the role, the user, its grants and the token,
    and runs them on `y`, putting the token's secret straight into the vault
    ([Letting `just init` set it up](proxmox-access.md#letting-just-init-set-it-up)). It asks first which
    storage or bridge to use when the host has no `local-lvm` or `vmbr0`. It changes nothing on the host on `n`
    or Enter, and asks nothing when the host is set up already or root SSH fails.
-5. **The token's secret**, unless `just init` just made the token: the one `tools/proxmox-access.sh` printed,
+7. **The token's secret**, unless `just init` just made the token: the one `tools/proxmox-access.sh` printed,
    when you ran it yourself. It is not shown as you type.
 
 Enter at a question leaves it for the next `just init`, which asks again for what is still missing; an
@@ -44,8 +52,9 @@ What you answered is never asked again. The vault is written encrypted, and its 
 `just init` makes, is in `.vault_pass`: keep that file, since the vault cannot be opened without it.
 
 Then `just init` checks what `just deploy` will need of Proxmox: that the API answers and takes the token,
-that the token holds every privilege the project uses on `/vms`, that the template exists or, while it does
-not, that root SSH to the host works, and that the VMs will get an SSH key. It works out the node - the one
+that the token holds every privilege the project uses on `/vms`, that the template exists and is what its
+settings would build or, while it is missing or will be rebuilt, that root SSH to the host works, and that the
+VMs will get an SSH key. It works out the node - the one
 that holds the template, the only one, or the one `inventory/hosts.yml` reaches - and lists the storages for
 VM disks and the bridges the token can use there. Where a default does not fit (`pve`, `local-lvm`,
 `vmbr0`), it writes the node, and asks which storage or bridge to use, into `local.yml`; the ones the token
@@ -63,14 +72,13 @@ summary and one `NEXT STEPS` block.
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise. Optionally `vault_github_token`, `vault_anthropic_api_key` and `vault_tailscale_auth_key`, with `just vault` |
-| `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone, `tailscale_enabled: false` without a Tailscale account - and what `just init` writes there: a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
+| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise; a Tailscale auth key, which it asks for after a `y` to Tailscale. Optionally `vault_github_token`, `vault_anthropic_api_key`, and a Tailscale API token or OAuth client, with which `just destroy` takes the VM off your tailnet - with `just vault` |
+| `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone - and what `just init` writes there: `tailscale_enabled` from your answer, a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
 Every setting the two files take, with its default, is in the [settings reference](../reference/settings.md),
-and `just vault` opens the vault in your editor. Tailscale is on by default: without a Tailscale account,
-set `tailscale_enabled: false` in `local.yml`, or every deploy opens Tailscale's sign-in page and waits
-for it. `just init` reminds you while `local.yml` does not set it either way, and asks nothing about it:
-`just init --tailscale off` writes the setting.
+and `just vault` opens the vault in your editor. Tailscale stays on, the default, while `local.yml` does
+not set `tailscale_enabled` - every deploy then opens Tailscale's sign-in page and waits for it - so
+`just init` says so until you answer its question; `just init --tailscale off` answers it without one.
 
 ### Without a terminal, or scripted
 
@@ -94,7 +102,7 @@ $ just init --host pve.lan --github-user octocat --token-secret-file ~/.config/p
 | `--github-user` | Your GitHub username |
 | `--storage` | The storage for VM disks: written whenever the token can use it, the default's fitting or not |
 | `--bridge` | The bridge the template is built on, before it is: clones take the template's |
-| `--tailscale` | `on` or `off`: `tailscale_enabled`, which is on by default |
+| `--tailscale` | `on` or `off`: whether to use Tailscale, written as `tailscale_enabled`. Its auth key is asked for at a terminal only; scripted, put it in the vault with `just vault` |
 | `--no-prompt` | Ask nothing, even at a terminal |
 
 A value given is held to the same rules as one typed, and fills only what is still the example's: one
@@ -111,6 +119,7 @@ the vault (with the password in `.vault_pass`, if you made one).
 ## Deploy
 
 ```bash
+# alpha is the VM's name: choose your own
 just deploy alpha
 ```
 
@@ -158,16 +167,19 @@ signs them in one after another. For more than one VM it opens no window, and en
 `just deploy` with `--only`, then `just login` and `just code`:
 
 ```bash
-just deploy --only template             # once per Proxmox host   (over SSH, as root)
+just deploy --only template             # build it, or rebuild it (over SSH, as root)
 just deploy alpha --only provision      # create + start a VM     (via the API)
 just deploy alpha --only configure      # set it up               (over SSH, as the VM user)
 just login alpha                        # sign Claude, gh and Tailscale in; --only claude, github or tailscale for one
 just code alpha                         # open it in VS Code
 ```
 
-A second `just deploy` rebuilds nothing. It checks through the API whether the template exists and
-skips that play when it does — and because a skipped import takes its fact-gathering step with it, a
-run that does not need to build the template opens **no SSH connection to the Proxmox host at all**.
+A second `just deploy` rebuilds nothing. It checks through the API whether the template exists and is
+what its settings would build, and skips that play when it is — and because a skipped import takes its
+fact-gathering step with it, a run that does not need to build the template opens **no SSH connection
+to the Proxmox host at all**. Change one of the template's settings - its bridge, storage, CPU type or
+image - and the next `just deploy` says so and rebuilds it first; the VMs you have are full clones,
+which do not depend on it.
 Provisioning finds the VMs by name instead of creating them, and configuration re-applies only what
 has drifted.
 

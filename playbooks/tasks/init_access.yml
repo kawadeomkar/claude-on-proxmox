@@ -125,9 +125,8 @@
 
 - name: init_access | Say that the access is set up already
   ansible.builtin.debug:
-    msg: >-
-      NOTICE  The API access is set up on {{ init_access_address }} already:
-      {{ init_access_plan.stderr_lines | map('plain_text') | join(' ') }}
+    msg: "{{ (['NOTICE  The API access is set up on ' ~ init_access_address ~ ' already:']
+              + init_access_plan.stderr_lines | map('plain_text') | map('regex_replace', '^', '  ') | list) | join('\n') }}"
   when: >-
     init_access_plan is not skipped and init_access_plan.rc | default(1) == 0
     and init_access_plan.stdout_lines | length == 0

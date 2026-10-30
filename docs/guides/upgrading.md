@@ -11,28 +11,29 @@ naming `just install`, while one differs. They live in `~/.ansible/collections`,
 on the machine shares, so another clone or worktree on a different version needs `just install` again
 when you go back to it.
 
+## A template built before its record
+
+From PR #126, `just deploy` compares the template with what its settings would build, and rebuilds it when it
+differs: its CPU type, OS type, bridge or storage, and the image, packages and build steps it was made with,
+which the build now records in the template's notes. A template an earlier version built keeps no such record,
+so the first `just deploy` after upgrading says so and rebuilds it once, over SSH as root, as your first deploy
+built it: a few minutes, at the same VMID. That rebuild also brings it up to date with the two sections below.
+The VMs you have are full clones, so they do not depend on it and are not touched. A linked clone
+(`proxmox_vm_full_clone: false`) does: Proxmox will not remove its template, and the run says so - set
+`proxmox_template_rebuild: false` in `local.yml` to keep the template as it is.
+
 ## A template built before the guest agent
 
 From PR #6, which finds each VM's address through its guest agent. Provisioning now needs `qemu-guest-agent` **inside** the image: it is what
 reports the VM's DHCP address back. `just deploy --only template` bakes it in, but a template
-built before this change does not have it, and re-running `just deploy --only template` will
-**not** fix that - the role skips the whole build when the VMID already exists.
+built before this change does not have it. The first `just deploy` after upgrading rebuilds it, with
+the guest agent ([A template built before its record](#a-template-built-before-its-record)).
 A VM cloned from such a template never reports an address, so `just deploy --only provision`
 polls its guest agent 60 times, five seconds apart (`proxmox_vm_agent_retries`,
 `proxmox_vm_agent_delay`), and then fails. That is five minutes of waiting plus
 the time each poll takes, and on a running VM with no agent Proxmox spends a few
 seconds pinging the agent before it answers each one, so expect closer to nine
 minutes before the failure.
-
-Rebuild the template once, on the Proxmox host:
-
-```bash
-qm destroy 9000        # the template's VMID (proxmox_template_vmid)
-```
-
-```bash
-just deploy --only template   # rebuilds it, this time with the guest agent
-```
 
 The build keeps the pristine download under `/var/lib/vz/claude-on-proxmox` on the node
 (`proxmox_template_image_dir`) and removes the customised copy it imports once the template is
@@ -97,6 +98,10 @@ not signed in - or joins it, with `vault_tailscale_auth_key` set. Set `tailscale
 `local.yml` first to keep your VMs as they are, and `just deploy --check` beforehand says what would be installed.
 A VM where you installed Tailscale yourself is left exactly as it is either way.
 
+Since `just init` asks whether to use Tailscale, the next `just init` asks it of a checkout whose `local.yml`
+does not set `tailscale_enabled`: `y` keeps your VMs as they are, `n` takes Tailscale off them at the next
+`just deploy`, which says so VM by VM, and Enter leaves it on, unanswered.
+
 ## Adopting VMs created before tagging
 
 From PR #6 as well, which recognises this project's VMs by their tag. This project now recognises its VMs by one Proxmox tag, `claude-on-proxmox`, and
@@ -127,18 +132,11 @@ ANSIBLE_ARGS='-e proxmox_vm_allow_untagged_delete=true' just destroy old-dev
 From PR #35, the template is built from Ubuntu's minimal cloud image. A template built before keeps the
 server image, and so do the VMs cloned from it; they work as before, and the next `just deploy --only configure` masks
 the services the minimal image leaves out anyway (fwupd, multipathd, ModemManager, udisks2, and snapd
-while no snap is installed) and empties apt's download cache. To build new VMs from the minimal image,
-rebuild the template once, on the Proxmox host. The VMs you have are full clones, so they do not depend on
-it. VMs built from the minimal image have no manual pages or package documentation, as on Ubuntu's other
-minimal images; `sudo unminimize` puts them back.
-
-```bash
-qm destroy 9000        # the template's VMID (proxmox_template_vmid)
-```
-
-```bash
-just deploy --only template   # rebuilds it from the minimal image
-```
+while no snap is installed) and empties apt's download cache. New VMs are built from the minimal image
+once the template is: the first `just deploy` after upgrading rebuilds it from that image
+([A template built before its record](#a-template-built-before-its-record)). The VMs you have are full
+clones, so they do not depend on it. VMs built from the minimal image have no manual pages or package
+documentation, as on Ubuntu's other minimal images; `sudo unminimize` puts them back.
 
 The minimum memory a VM may be left with (`vm_memory_min_mb`, from the same PR) is applied when a VM is
 created; `proxmox_vm_force_update: true` applies it to the VMs you have

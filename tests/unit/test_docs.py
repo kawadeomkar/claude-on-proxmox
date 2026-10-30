@@ -374,7 +374,8 @@ def test_links_from_the_root_files_resolve(name):
 def test_every_docs_page_the_repository_names_exists():
     """Comments and messages point readers at the wiki by path (docs/guides/vscode.md)."""
     named = re.compile(r"\bdocs/[\w./-]+\.md\b")
-    fixtures = {REPO / "tests" / "unit" / "test_tracked_files.py"}  # paths the guard must refuse
+    # Paths the guard must refuse, and test IDs that name them.
+    fixtures = {REPO / "tests" / "unit" / "test_tracked_files.py", REPO / "tests" / "unit" / "durations.json"}
     missing = []
     for path, text in _texts("."):
         if path in fixtures:

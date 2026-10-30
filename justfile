@@ -149,8 +149,9 @@ help *RECIPE:
 # just install, the git hook, the local config files - copied from their
 # examples only where they are missing - then playbooks/init_settings.yml,
 # which asks, at a terminal, for each value a first deploy needs that is still
-# the example's: the Proxmox host's address, the API token's ID and secret,
-# the GitHub username. Enter leaves one for the next just init, and the vault
+# the example's: the GitHub username, whether to use Tailscale (with its auth
+# key after a y, which no deploy needs), the Proxmox host's address, and the
+# API token's ID and secret. Enter leaves one for the next just init, and the vault
 # is written encrypted. Without a terminal it asks nothing, and writes only the
 # values given as options, so just init can be scripted. Then
 # playbooks/init_check.yml checks what just deploy will need of Proxmox - the
@@ -168,7 +169,7 @@ help *RECIPE:
 [arg('PROMPT', long='no-prompt', value='no', help='Ask nothing, even at a terminal')]
 [arg('HOST', long='host', pattern='[A-Za-z0-9.:-]*', help="The Proxmox host's address, for inventory/hosts.yml")]
 [arg('BRIDGE', long='bridge', pattern='[A-Za-z0-9._-]*', help='The bridge the template is built on, for local.yml (before the template exists)')]
-[arg('TAILSCALE', long='tailscale', pattern='(on|off)?', help='on: each VM joins your tailnet, the default; off: no Tailscale, for a setup without an account (tailscale_enabled in local.yml)')]
+[arg('TAILSCALE', long='tailscale', pattern='(on|off)?', help="Answers init's Tailscale question: on, each VM joins your tailnet; off, no Tailscale, for a setup without an account (tailscale_enabled in local.yml)")]
 [arg('STORAGE', long='storage', pattern='[A-Za-z0-9._-]*', help='The storage for VM disks, for local.yml: written when the token can use it there')]
 [arg('TOKEN_NAME', long='token-name', pattern='[A-Za-z0-9._-]*', help="The API token's name, when it is not ansible")]
 [arg('GITHUB_USER', long='github-user', pattern='[A-Za-z0-9-]*', help='The GitHub account whose repositories are cloned')]
@@ -553,6 +554,48 @@ status ONLY='' JSON='' *NAMES:
 
 alias list := status
 
+# Each setting's value and where it was set (tools/settings): Ansible's own
+# variables for a play of the role, on the group its playbook runs it on, with
+# what a run sets beside them. A secret is said set or not set, never shown,
+# and changes with just vault. Read without changing anything, but for
+# --value, which writes the one setting named into local.yml, and --reset,
+# which takes it out again - never a secret.
+# How to use it needs no vault, so it comes before the vault's check; the
+# rules before any Python. The vault's password file is the one every recipe
+# passes. A value is free text, refused only for a control character, so just
+# never says it back: it reaches the script as a positional argument, and the
+# tool holds it to the setting's type. No refusal here says the words given,
+# in case a secret was typed as one.
+[arg('ALL', long='all', value='true', help='Every setting of local.yml, and which secrets of vault.yml are set')]
+[arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output')]
+[arg('NAME', pattern='[a-z][a-z0-9_]*', help='A role (tailscale) or one variable or setting (tailscale_ssh); none shows how to use this')]
+[arg('RESET', long='reset', value='true', help="Put the one setting named back to its default: its line out of local.yml, its example's back")]
+[arg('CHANGED', long='changed', value='true', help='Only what local.yml or vault.yml changes from the defaults; alone, all of it')]
+[arg('VALUE', long='value', pattern='[^\x00-\x1f\x7f]*', help='Set the one setting named to this value, in local.yml (never a secret: just vault; an empty value is none: --reset)')]
+[doc("Each setting's value and where it was set, for a role, a variable or all of them; --value sets one in local.yml, --reset puts it back")]
+[group('use')]
+[no-exit-message]
+[positional-arguments]
+[script]
+settings ALL='' CHANGED='' JSON='' RESET='' VALUE='' *NAME:
+    {{ guard }}
+    all=$1 changed=$2 json=$3 reset=$4 value=$5
+    shift 5
+    [ "$#" -le 1 ] || { echo "error: just settings takes one role or variable, and --value its value" >&2; exit 1; }
+    [ -z "$all" ] || [ "$#" -eq 0 ] || { echo "error: just settings --all lists every setting: give it no role or variable" >&2; exit 1; }
+    [ -z "$reset$value" ] || { [ "$#" -eq 1 ] && [ -z "$all$changed" ]; } || { echo "error: --value and --reset each change the one setting named beside it: just settings <name> --value <value>, or --reset" >&2; exit 1; }
+    [ -z "$reset" ] || [ -z "$value" ] || { echo "error: --value sets a value and --reset takes one out: one or the other" >&2; exit 1; }
+    {{ find_bin }}
+    if [ "$#" -eq 0 ] && [ -z "$all$changed" ]; then exec "$bin/python" tools/settings --usage --json="$json"; fi
+    tools/check vault {{ quote(VAULT_FILE) }}
+    tools/check collections "$bin"
+    name=${1:-}
+    set --
+    {{ vault_args }}
+    [ -z "$value" ] || set -- "$@" --value="$value"
+    [ -z "$reset" ] || set -- "$@" --reset=true
+    exec "$bin/python" tools/settings "$@" --all="$all" --changed="$changed" --json="$json" -- ${name:+"$name"}
+
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default')]
 [continue]
 [doc("Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them")]
@@ -577,7 +620,7 @@ destroy *NAMES:
     exec {{ run_logged }} destroy "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/destroy.yml
 
 # Only files named the way tools/run-logged names its logs, and only in
-# LOG_DIR, which a just setting puts into the script's text rather than its
+# LOG_DIR, which as a justfile setting goes into the script's text rather than its
 # environment, so `just LOG_DIR=<dir> logs` reads that directory.
 [doc('List the run logs in .logs/, newest first')]
 [group('use')]
@@ -671,18 +714,27 @@ lint ALL_HOOKS='' *PARTS:
 # index alone. The Molecule scenarios each run a Docker container and build
 # images into one small disk, so they run one after another.
 [arg('ROLES', long='role', pattern='[a-z_,]*', help="Only these roles' scenarios, comma-separated: on its own it means the role part (just test --role common,claude_code)")]
+[arg('SHARD', long='shard', pattern='([1-9][0-9]*/[1-9][0-9]*)?', help='Only the I-th of N shards of the unit tests, each group of tests whole, as CI splits them: on its own it means the unit part (just test unit --shard 2/3)')]
 [arg('PARTS', pattern='unit|molecule|role|integration|provision', help="unit (pytest over tests/unit/, a worker per CPU, no network), molecule (every Molecule scenario: role, integration, provision), role (the roles' own scenarios), integration (the full configure playbook against a Docker container), provision (provision.yml and discover.yml against a fake Proxmox API)")]
 [doc('Lint, then every test: unit and Molecule (the local quality gate)')]
 [group('develop')]
 [no-exit-message]
 [positional-arguments]
 [script]
-test ROLES='' *PARTS:
+test ROLES='' SHARD='' *PARTS:
     {{ guard }}
-    roles=$1
-    shift
-    # The words as typed, for the run's title: --role below stands for the role part.
+    roles=$1 shard=$2
+    shift 2
+    # The words as typed, for the run's title: --role and --shard below stand for the parts they choose.
     asked=$*
+    if [ -n "$shard" ]; then
+      [ "${shard%/*}" -le "${shard#*/}" ] || { echo "error: --shard takes I/N with I no more than N (got: [$shard])" >&2; exit 1; }
+      [ -z "$roles" ] || { echo "error: --shard splits the unit tests and --role narrows the role scenarios: one at a time" >&2; exit 1; }
+      for part in "$@"; do
+        [ "$part" = unit ] || { echo "error: --shard splits the unit tests, which $part is not: just test unit --shard $shard" >&2; exit 1; }
+      done
+      set -- unit
+    fi
     if [ -n "$roles" ]; then
       case ",$roles," in *,,*) echo "error: --role names roles separated by single commas (got: [$roles])" >&2; exit 1 ;; esac
       for role in $(printf %s "$roles" | tr , ' '); do
@@ -715,7 +767,7 @@ test ROLES='' *PARTS:
       for part in unit role integration provision; do
         if runs "$part"; then stages="$stages $part"; fi
       done
-      CLAUDE_ON_PROXMOX_LIVE="test${roles:+ --role $roles}${asked:+ $asked}"
+      CLAUDE_ON_PROXMOX_LIVE="test${roles:+ --role $roles}${shard:+ --shard $shard}${asked:+ $asked}"
       state={{ quote(live_state) }}
       CLAUDE_ON_PROXMOX_LIVE_STATE=${state:+$state-test-$$.json}
       CLAUDE_ON_PROXMOX_LIVE_STAGES=$stages
@@ -726,8 +778,14 @@ test ROLES='' *PARTS:
     part() { {{ live }} --log="$name" run "$@"; }
     [ -z "$lint" ] || {{ self }} live_run=test lint
     # A worker per CPU, each module whose tests share a fixture kept on one (tests/unit/conftest.py); tests/unit
-    # named, so that conftest.py is read before the options are.
-    if runs unit; then part unit --read pytest -- "$bin/pytest" -p live_pytest tests/unit -n auto --dist loadgroup; fi
+    # named, so that conftest.py, which adds --shard, is read before the options are.
+    if runs unit; then
+      if [ -n "$shard" ]; then
+        part unit --read pytest -- "$bin/pytest" -p live_pytest tests/unit -n auto --dist loadgroup --shard "$shard"
+      else
+        part unit --read pytest -- "$bin/pytest" -p live_pytest tests/unit -n auto --dist loadgroup
+      fi
+    fi
     if runs role; then
       list={{ quote(scenario_roles) }}
       [ -z "$roles" ] || list=$(printf %s "$roles" | tr , ' ')
