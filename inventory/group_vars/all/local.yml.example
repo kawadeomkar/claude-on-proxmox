@@ -71,7 +71,7 @@
 # also fleet-wide: every VM a run provisions gets this same address, so use it
 # only for a single VM, or one VM per run with a new value each time. (A router
 # DHCP reservation is no substitute across rebuilds - every clone gets a new MAC.)
-# proxmox_vm_ipconfig: "ip=192.0.2.60/24,gw=192.0.2.1"
+# vm_ipconfig: "ip=192.0.2.60/24,gw=192.0.2.1"
 
 # ----------------------------------------------------------------- GitHub ---
 # Which of your GitHub repositories to clone. The username itself lives in vault.yml.
@@ -101,7 +101,7 @@
 
 # ----------------------------------------------------- Packages and tools ---
 # Packages/tools installed on the VM. See roles/*/defaults/main.yml for the full lists.
-# common_extra_packages: [postgresql-client]
+# vm_extra_packages: [postgresql-client]
 # dev_tools_install_docker: true
 # dev_tools_install_node: true
 # dev_tools_install_uv: true

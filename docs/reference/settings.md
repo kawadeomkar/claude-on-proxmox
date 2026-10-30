@@ -137,7 +137,7 @@ Addressing is DHCP by default and the guest agent reports back what it got. To p
 
 | Setting | Default | Notes |
 |---|---|---|
-| `proxmox_vm_ipconfig` | `ip=dhcp` | Proxmox ipconfig0 string. A variable of [`proxmox_vm`](roles/proxmox_vm.md). For example `ip=192.0.2.60/24,gw=192.0.2.1`. |
+| `vm_ipconfig` | `ip=dhcp` | Sets `proxmox_vm_ipconfig` ([`proxmox_vm`](roles/proxmox_vm.md)): Proxmox ipconfig0 string. For example `ip=192.0.2.60/24,gw=192.0.2.1`. |
 
 ### GitHub
 
@@ -183,7 +183,7 @@ Packages/tools installed on the VM. See roles/*/defaults/main.yml for the full l
 
 | Setting | Default | Notes |
 |---|---|---|
-| `common_extra_packages` | `[]` | More packages to install on top of common_packages. A variable of [`common`](roles/common.md). For example `[postgresql-client]`. |
+| `vm_extra_packages` | `[]` | Sets `common_extra_packages` ([`common`](roles/common.md)): More packages to install on top of common_packages. For example `[postgresql-client]`. |
 | `dev_tools_install_docker` | `true` | Install Docker Engine from Docker's repository and add dev_tools_user to the docker group. A variable of [`dev_tools`](roles/dev_tools.md). |
 | `dev_tools_install_node` | `true` | Install Node.js from NodeSource, and the packages in dev_tools_npm_global_packages. A variable of [`dev_tools`](roles/dev_tools.md). |
 | `dev_tools_install_uv` | `true` | Install uv and uvx, a pinned release checked against dev_tools_uv_sha256, into dev_tools_uv_install_dir. A variable of [`dev_tools`](roles/dev_tools.md). |
