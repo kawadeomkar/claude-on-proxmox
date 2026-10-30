@@ -427,6 +427,34 @@ def test_a_per_vm_file_is_noted_since_ansible_would_apply_it(scenarios) -> None:
     assert "host_vars/ holds alpha.yml" in _text(scenarios, "--", "tailscale").replace("\n", " ")
 
 
+# The keys of `just settings --json` that 1.x promises (CONTRIBUTING.md, Releasing): added to, never taken away.
+PROMISED_KEYS = {"changed_only", "notes", "settings", "target"}
+PROMISED_ROW_KEYS = {
+    "change",
+    "changed",
+    "entry_point",
+    "evaluated_as",
+    "kind",
+    "name",
+    "role",
+    "secret",
+    "set_by_run",
+    "set_in",
+    "value",
+    "via",
+    "why",
+    "wiring",
+    "wiring_in",
+}
+
+
+def test_the_json_keeps_every_key_1x_promises(scenarios) -> None:
+    report = _report(scenarios, "--", "claude_code")
+    assert PROMISED_KEYS <= set(report), sorted(PROMISED_KEYS - set(report))
+    rows = set().union(*(set(row) for row in report["settings"]))
+    assert PROMISED_ROW_KEYS <= rows, sorted(PROMISED_ROW_KEYS - rows)
+
+
 def test_the_text_and_the_json_hold_the_same_rows(scenarios) -> None:
     names = set(_report(scenarios, "--", "tailscale")["rows"])
     printed = {line.split()[0] for line in _text(scenarios, "--", "tailscale").splitlines() if line.startswith("  t")}

