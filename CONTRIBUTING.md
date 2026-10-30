@@ -127,4 +127,29 @@ imperative summary: `[feat] create VMs by name, find them by tag, and let DHCP a
 `[fix] ...`, `[cleanup] ...`, `[docs] ...`, `[test] ...`, `[ci] ...`, `[build] ...`. The tag is
 the same vocabulary as the commit types, in brackets rather than with a colon, so the PR list reads
 as a changelog; pick one tag for the PR as a whole, and keep the summary in the same voice as the
-commit subjects (what the change does, not what you did).
+commit subjects (what the change does, not what you did). `.github/workflows/labels.yml` labels each PR
+from its tag - `enhancement`, `bug`, `cleanup`, `documentation`, `test`, `ci` or `build` - and labels it
+again when the title changes, and a release's notes list each PR under its label: the title is what the
+release notes say.
+
+## Releasing
+
+A release is an annotated tag on `main`, named `vMAJOR.MINOR.PATCH` by
+[Semantic Versioning](https://semver.org). What a version number promises about is the project's interface:
+the `just` commands and their options, and the settings `local.yml.example` and `vault.yml.example` list. A
+release that removes or renames one of those, or changes what an existing setup does, takes a new major
+version (a new minor one while the version is `0.y.z`); one that only adds, a minor version; one that only
+fixes, a patch. A hyphen makes a prerelease: `v1.0.0-rc.1`.
+
+Once CI has passed on the `main` commit you are releasing, tag it and push the tag:
+
+```bash
+git switch main && git pull --ff-only
+git tag -a v0.2.0 -m "A summary of the release, above its notes"
+git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` then publishes the release: the tag's message first, then the PRs merged
+since the previous release, in the sections `.github/release.yml` makes of their labels. It refuses a
+lightweight tag, a name that is not a version, and a commit `main` does not have, before it publishes
+anything; delete such a tag (`git push origin :refs/tags/<tag>`, then `git tag -d <tag>`) and tag again.
