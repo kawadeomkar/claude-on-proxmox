@@ -87,8 +87,9 @@ def _in_flight(playbook: int, marker: Path) -> int:
 
 
 def _by_argv(word: str) -> list[int]:
-    """The pids of every process whose command line holds word, this one and ps aside."""
-    table = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+    """The pids of every process whose command line holds word, this one and ps aside. ww: Linux's ps cut each line
+    at 80 columns under pytest, before a playbook's file name, while macOS's prints it whole."""
+    table = subprocess.run(["ps", "-axwwo", "pid=,command="], capture_output=True, text=True).stdout
     found = []
     for line in table.splitlines():
         pid, _, command = line.strip().partition(" ")
