@@ -3,8 +3,12 @@
 | Where | What |
 |-------|------|
 | Controller (your machine) | Python 3.12+ (required by the pinned ansible-core) in a virtualenv of its own for this project, [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12+, [just](https://github.com/casey/just) 1.59+ (from its own releases: `brew install just`, `cargo install just`, or the release archive, checked against its `SHA256SUMS`), `git`, SSH key at `~/.ssh/id_ed25519.pub` (or set `vm_ssh_public_keys`); VS Code with the `code` command on `PATH` for `just code` (optional), and `rsync` for the Claude Code sessions it copies to the VM (macOS has it; a Linux controller may need `apt install rsync`) |
-| Proxmox VE 8.x or 9.x | Root SSH access (template build only) and an API token, see [Proxmox access](proxmox-access.md) |
+| Proxmox VE 9.x | Root SSH access (template build only) and an API token, see [Proxmox access](proxmox-access.md) |
 | Testing (optional) | Docker Engine for Molecule; Vagrant + VirtualBox for a full VM test |
+
+Proxmox VE 8.x is not supported: it reached its end of life in August 2026, and nothing here is tested on it.
+Upgrade the host first ([Upgrade from 8 to 9](https://pve.proxmox.com/wiki/Upgrade_from_8_to_9)); a token role
+made on 8.x then lacks the guest agent's privilege ([Proxmox access](proxmox-access.md#the-guest-agents-privilege)).
 
 ## What this project assumes of your Proxmox host
 
@@ -22,7 +26,7 @@ VMs with a repository that fails `apt update`, or with static addresses and no D
 | The host can run VMs | hardware virtualization is on |
 | A bridge exists, and something on it hands out DHCP leases | every VM takes its address from DHCP |
 | A storage for VM disks, named in `proxmox_storage` | the template and every clone go there |
-| Root SSH once, then an API token that can read the guest agent (`VM.Monitor` on 8.x, `VM.GuestAgent.Audit` on 9.x) | [Proxmox access](proxmox-access.md) |
+| Root SSH once, then an API token that can read the guest agent (`VM.GuestAgent.Audit`) | [Proxmox access](proxmox-access.md) |
 | VMs may be created, tagged, started and deleted | the token's privileges |
 
 A freshly installed host needs the ordinary post-install setup first; the

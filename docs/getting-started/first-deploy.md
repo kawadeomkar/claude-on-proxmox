@@ -267,7 +267,7 @@ run:
 | `just init` marks a check `!!` | The line says what to fix - an address, the token's name or secret, a privilege for the role, root SSH: [Failure modes](../architecture/failure-modes.md#a-problem-just-init-finds) |
 | `just deploy --only template` cannot refresh the package lists | An enterprise repository enabled on the host without a subscription: [Package repositories](requirements.md#package-repositories) |
 | The token is refused (401 or 403) | `proxmox_api_user`, `proxmox_api_token_id` and `vault_proxmox_api_token_secret`, and the role's privileges: [The API token](proxmox-access.md#the-api-token) |
-| A VM never reports an address | The token's guest-agent privilege (`VM.Monitor` on 8.x, `VM.GuestAgent.Audit` on 9.x), and a template built with the guest agent: [Upgrading](../guides/upgrading.md) |
+| A VM never reports an address | The token's guest-agent privilege (`VM.GuestAgent.Audit`), and a template built with the guest agent: [Upgrading](../guides/upgrading.md) |
 | The VM is created untagged, or `just deploy --only configure` finds no VM | Datacenter → Options → User Tag Access: [User Tag Access](proxmox-access.md#user-tag-access) |
 | The clone fails, or the disk cannot be created | `proxmox_storage` (an install on ZFS has `local-zfs`, not `local-lvm`) and `proxmox_node`, which must be the node that holds the template: [Requirements](requirements.md#storage) |
 | A sign-in fails | The run names the command that retries it - `just login` with the VM's name and `--only` the sign-in - and the rest of the deploy goes on |

@@ -9,6 +9,7 @@ import statistics
 import sys
 from pathlib import Path
 
+import interrupts
 import pytest
 from ansible.module_utils import basic
 from ansible.module_utils.testing import patch_module_args
@@ -67,6 +68,13 @@ def load_module(relative_path):
 
 # Each test's serial duration, by node ID, that --shard balances by; a test it lacks counts as the mean.
 DURATIONS = ROOT / "tests" / "unit" / "durations.json"
+
+
+def pytest_configure(config):
+    # A kill or a hangup ends this process as Ctrl-C would, in the controller and in every worker: the test running
+    # gets a KeyboardInterrupt, its run and everything under it ended by the harness on the way out, where the default
+    # ended the process at once and left them (tests/unit/interrupts.py).
+    interrupts.install()
 
 
 def pytest_addoption(parser):
