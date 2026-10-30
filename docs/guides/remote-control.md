@@ -24,7 +24,7 @@ So `just deploy --only configure` derives what to do from the credentials it fin
 | No key, no login yet | Everything installed, service left stopped with a path unit waiting to start it when you sign in, and you are told how |
 | No key, signed in | The session starts and shows up in the app |
 | No key configured, but Claude Code on the VM still uses one | Service left stopped, and you are told where that key comes from (`claude auth status` reports it as `apiKeySource`) |
-| No key, signed in, but `~/.claude/settings.json` switches the feature off | Service left stopped, and the keys are named. A telemetry opt-out (`DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK`), an `apiKeyHelper`, a token or provider in `env`, or an `ANTHROPIC_BASE_URL` pointing anywhere but `api.anthropic.com` each disable Remote Control. Remove it, or keep it and set `claude_remote_control: false` |
+| No key, signed in, but `~/.claude/settings.json` switches the feature off | Service left stopped, and the keys are named. A telemetry opt-out (`DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK`), an `apiKeyHelper`, a token or provider in `env`, or an `ANTHROPIC_BASE_URL` pointing anywhere but `api.anthropic.com` each disable Remote Control. Remove it, or keep it and set `claude_code_remote_control: false` |
 
 How each of these is decided is in
 [Remote Control, step by step](../architecture/roles.md#remote-control-step-by-step).
@@ -42,7 +42,7 @@ just login alpha --only claude     # the sign-in page opens in your browser: aut
 
 The run starts `claude auth login` on the VM, forwards the one port it listens on from this machine to
 the VM over SSH, and opens Claude's sign-in page here. You authorise, the browser comes back to claude
-through the forward, and the run carries on by itself, waiting up to `claude_login_approval_timeout`
+through the forward, and the run carries on by itself, waiting up to `claude_code_login_approval_timeout`
 (300 seconds). The page opens only when it is Claude's own sign-in page. How the page and the forward
 work is in [the browser sign-in](../architecture/roles.md#the-browser-sign-in).
 
@@ -60,16 +60,16 @@ which shows a code once you authorise: paste it at the `Code:` prompt and the ru
 through a pipe. The code is read with the run log's no_log, so it never lands in `.logs/`. Enter alone
 at the prompt skips a VM, and a code claude refuses fails that VM by name once the others have had their
 turn (under `just deploy`, which goes on, NEXT STEPS keeps it, with the command that retries it); a code copied only up to its `#` (a double-click stops there) is asked for again, and Ctrl-C then
-`A` at the prompt ends the run. A sign-in page lasts `claude_login_timeout` plus half an hour: a code
+`A` at the prompt ends the run. A sign-in page lasts `claude_code_login_timeout` plus half an hour: a code
 pasted later is said to be too late at once, with the command for a fresh page.
 
 ### Sign-in settings
 
-Three variables tune it: `claude_login_args` passes extra arguments to `claude auth login` (`[--sso]`
-for a single sign-on login, say), `claude_login_approval_timeout` (300) is how long the run waits for
-your browser to come back, and `claude_login_timeout` (120) is how many seconds claude may take to answer
+Three variables tune it: `claude_code_login_args` passes extra arguments to `claude auth login` (`[--sso]`
+for a single sign-on login, say), `claude_code_login_approval_timeout` (300) is how long the run waits for
+your browser to come back, and `claude_code_login_timeout` (120) is how many seconds claude may take to answer
 a code you paste. A VM whose Remote Control is off on purpose - `vault_anthropic_api_key`
-set, or `claude_remote_control: false` - is reported as such, with nothing to fix.
+set, or `claude_code_remote_control: false` - is reported as such, with nothing to fix.
 
 ## Signing in another way
 
@@ -90,7 +90,7 @@ what is in the way, and never signed in over it.
 
 ## Turning it off
 
-Set `claude_remote_control: false` in `local.yml` to turn it off. Like adding a key, that stops,
+Set `claude_code_remote_control: false` in `local.yml` to turn it off. Like adding a key, that stops,
 disables and removes a server an earlier run installed. It is also the right answer when a privacy
 setting in `claude_code_settings.env` is there on purpose: none of the above fails the run, so the
 other roles still run, but the service stays stopped until one or the other changes.

@@ -51,15 +51,15 @@ argument_specs:
             claude_code_anthropic_api_key is set, because a key outranks the claude.ai login Remote Control requires; and
             it prepares but does not start the service when no login exists yet, because nothing can create one non-
             interactively. Set false to turn it off. Either way off, the service an earlier run installed is stopped,
-            disabled and its unit removed. Set through claude_remote_control in local.yml.
+            disabled and its unit removed.
       claude_code_remote_control_name: &cc_remote_control_name
         type: str
-        description: Session title at claude.ai/code. Defaults to the VM name. Set through claude_remote_control in local.yml.
+        description: Session title at claude.ai/code. Defaults to the VM name.
       claude_code_remote_control_dir: &cc_remote_control_dir
         type: str
         description:
           - Directory the sessions open in. Empty resolves to ~/projects. Not the home directory - Claude Code never saves
-            workspace trust for one. Set through claude_remote_control in local.yml.
+            workspace trust for one.
       claude_code_remote_control_permission_mode: &cc_remote_control_permission_mode
         type: str
         default: default
@@ -68,16 +68,16 @@ argument_specs:
             mode, which outranks permissions.defaultMode in claude_code_settings, so that setting does not reach these
             sessions. Deliberately not constrained to a list of choices here. Claude Code validates the mode at startup
             and prints the ones it accepts, so a mode added upstream works without a change to this role - whereas a hard-
-            coded list would reject it before Claude Code ever saw it. Set through claude_remote_control in local.yml.
+            coded list would reject it before Claude Code ever saw it.
       claude_code_remote_control_spawn: &cc_remote_control_spawn
         type: str
         default: same-dir
         choices: [same-dir, worktree, session]
-        description: How the server creates sessions. Set through claude_remote_control in local.yml.
+        description: How the server creates sessions.
       claude_code_remote_control_service: &cc_remote_control_service
         type: str
         default: claude-remote-control
-        description: Name of the systemd unit installed for the server. Set through claude_remote_control in local.yml.
+        description: Name of the systemd unit installed for the server.
       claude_code_sign_in_follows:
         type: bool
         default: false
@@ -133,17 +133,16 @@ argument_specs:
         type: int
         default: 300
         description:
-          - Seconds the run waits for you to authorise in the browser when it comes back by itself. Set through
-            claude_login_approval_timeout in local.yml.
+          - Seconds the run waits for you to authorise in the browser when it comes back by itself.
       claude_code_login_args:
         type: list
         elements: str
         default: []
-        description: Extra arguments for `claude auth login`, such as --sso or --email. Set through claude_login_args in local.yml.
+        description: Extra arguments for `claude auth login`, such as --sso or --email.
       claude_code_login_timeout:
         type: int
         default: 120
-        description: Seconds to wait, once the code is pasted, for claude to accept it. Set through claude_login_timeout in local.yml.
+        description: Seconds to wait, once the code is pasted, for claude to accept it.
       claude_code_login_code:
         type: str
         default: ""
@@ -164,7 +163,7 @@ argument_specs:
       claude_code_remote_control:
         type: bool
         default: true
-        description: Run a Remote Control server on the VM. See the main entry point. Set through claude_remote_control in local.yml.
+        description: Run a Remote Control server on the VM. See the main entry point.
       claude_code_remote_control_name: *cc_remote_control_name
       claude_code_remote_control_dir: *cc_remote_control_dir
       claude_code_remote_control_permission_mode: *cc_remote_control_permission_mode
@@ -177,8 +176,7 @@ argument_specs:
     short_description: Stop Remote Control and sign Claude Code out before the VM is destroyed
     description:
       - Stops the Remote Control service and the path unit that starts it, then runs `claude auth logout` as
-        claude_code_user. Records what became of the login in claude_code_release_said, for destroy's report. Set
-        through claude_remote_control in local.yml.
+        claude_code_user. Records what became of the login in claude_code_release_said, for destroy's report.
     options:
       claude_code_user:
         type: str

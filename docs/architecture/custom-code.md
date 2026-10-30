@@ -676,7 +676,7 @@ trusted as a template. What a setting is - each role's `argument_specs`, main's 
 
 **Where a value was set** is the highest layer that holds the name - `hosts.yml`, `vault.yml`, `local.yml`, or a
 default - and, for a default that is an expression, the names it reads, followed through the wiring (Jinja's own
-parse) to the file a person edits: `claude_code_remote_control` is false because of `claude_remote_control` in
+parse) to the file a person edits: `claude_code_login_desktop` is false because of `login_desktop` in
 `local.yml`. What a run sets above the inventory is read from the playbooks: a playbook no other imports is the run
 of the recipe of the same name, and the `vars:` it passes - on an import, a play, a role, an `add_host` - through
 every import; the justfile's `-e` objects too. The row keeps the value a run that sets nothing uses (`just deploy
@@ -706,7 +706,7 @@ is printed.
 **`--value` writes one setting into `local.yml`, and nothing else.** One function, `settable`, decides what a name
 can be set as, or why not, and the read view's `change` comes from it, so the report never names a command the
 writer refuses. A role variable a setting of the examples feeds is written as that setting
-(`claude_code_remote_control` as `claude_remote_control`). Refused, with nothing written: anything `vault.yml`
+(`claude_code_login_desktop` as `login_desktop`). Refused, with nothing written: anything `vault.yml`
 holds, feeds or a role marks `no_log` - for `just vault`, the value given never said back, though the shell's
 history keeps it - a value vaulted inline in `local.yml`, a name made from each VM's own (one setting would give
 every VM the same), what a run sets for itself and no example names, the Proxmox host's address (`hosts.yml`),

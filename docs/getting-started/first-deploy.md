@@ -132,7 +132,7 @@ else take them: each opens a page in your browser, and the run waits for you the
 
 1. **Claude.** Authorise Claude Code on the page. Your browser then comes back to the VM by itself, with
    nothing to paste: the run forwards Claude's sign-in port from this machine to the VM over SSH for the
-   length of the sign-in, and waits up to five minutes (`claude_login_approval_timeout`). Where that port
+   length of the sign-in, and waits up to five minutes (`claude_code_login_approval_timeout`). Where that port
    is taken here, no browser can open on this machine, or you run `just` over SSH from another one, the
    page shows a code instead, which you paste at the run's `Code:` prompt. Remote Control starts in the same run, so the session is on your phone
    too.

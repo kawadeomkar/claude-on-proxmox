@@ -22,7 +22,7 @@ configure scenario's side effect starts it for real, in its container.
 What these guard:
 - A VM is signed in from a code given in place of the prompt, its files and
   async job are gone afterwards, the code reaches no output, and
-  claude_login_args reach `claude auth login`.
+  claude_code_login_args reach `claude auth login`.
 - A rejected code and a malformed one are named failures that quote claude's
   answer, said in their own turn, and fail the run only after every VM, those
   after them included, has had its turn.
@@ -273,7 +273,7 @@ CASES = {
     "already": {"signed_in": True},
     # An API key and no claude.ai login: the key is the login on the API path.
     "keyed": {"api_key": API_KEY},
-    # claude_login_args, such as --sso, for claude auth login.
+    # claude_code_login_args, such as --sso, for claude auth login.
     "sso": {"code": CODES["sso"], "args": ["--sso"]},
 }
 # The VMs that show a sign-in page: no login, and no key.

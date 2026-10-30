@@ -83,7 +83,7 @@
 # Control's own one-time "Enable Remote Control? (y/n)". That last one reads
 # stdin, which systemd points at /dev/null, and anything but "y" exits 0 - so
 # the unit would start, print the question to the journal and quietly stop.
-# All three answers live in ~/.claude.json. Enabling claude_remote_control is
+# All three answers live in ~/.claude.json. Enabling claude_code_remote_control is
 # the user's answer to the confirmation; seeding it records that.
 - name: remote_control | Read the Claude Code config
   ansible.builtin.slurp:

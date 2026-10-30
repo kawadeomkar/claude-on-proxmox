@@ -174,13 +174,13 @@
 # the answer when claude_code_settings.env carries a privacy setting such as
 # DISABLE_TELEMETRY or DO_NOT_TRACK on purpose: those disable Remote Control,
 # so the role leaves the service stopped and says so until one or the other goes.
-# claude_remote_control: true
+# claude_code_remote_control: true
 # Extra arguments for the Claude sign-in's `claude auth login`, such as [--sso],
 # how long it may take to accept a code you paste, and how long the run waits
 # for your browser to come back to the VM by itself once you authorise.
-# claude_login_args: []
-# claude_login_timeout: 120
-# claude_login_approval_timeout: 300
+# claude_code_login_args: []
+# claude_code_login_timeout: 120
+# claude_code_login_approval_timeout: 300
 # Session title in the list at claude.ai/code; defaults to the VM name.
 # claude_code_remote_control_name: "{{ inventory_hostname }}"
 # Where sessions open. Empty means ~/projects of the VM user, where

@@ -738,7 +738,7 @@ WINDOWS = {
         "show": ARGS,
         "local": {
             "github_auth": False,
-            "claude_remote_control": False,
+            "claude_code_remote_control": False,
             "github_login_scopes": ["workflow", "read:packages"],
         },
         **OPENED,

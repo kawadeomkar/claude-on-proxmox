@@ -265,7 +265,7 @@ The role automates everything around the login and stops at it:
    but `api.anthropic.com`. The names found
    (`claude_code_remote_control_settings_blockers`, never the values) are part of eligibility in
    step 5, so a VM with one takes the same path as a VM with an unusable credential: unit installed,
-   service stopped, the keys and the `claude_remote_control: false` switch named. It used to be an
+   service stopped, the keys and the `claude_code_remote_control: false` switch named. It used to be an
    `assert`, which failed the host for a privacy setting its owner had chosen and kept
    `github_projects` from running behind it.
 3. **Resolve the binary.** `command -v claude` under a login shell, because the native installer and
@@ -275,7 +275,7 @@ The role automates everything around the login and stops at it:
    (y/n)` confirmation (`remoteDialogSeen`) — by seeding `~/.claude.json`. The confirmation is the
    one that matters most: it reads stdin, which systemd points at `/dev/null`, and anything but `y`
    exits 0, so without the seed the unit starts, prints the question to the journal and stops without
-   ever registering. Enabling `claude_remote_control` is the user's answer to it. Written only when a
+   ever registering. Enabling `claude_code_remote_control` is the user's answer to it. Written only when a
    flag is actually missing: Claude Code owns that file and rewrites it constantly, so reasserting the
    whole document every run would report `changed` forever.
 5. **Check `claude auth status`**, which returns JSON carrying `loggedIn`, `authMethod`,
@@ -339,7 +339,7 @@ Given names, or from `just deploy`, it signs a VM with no login and no API key i
 (`browser_login.yml`). Once every VM has had its turn at the prompt, a follow-on play includes
 `after_login.yml` for each VM signed in just now, which runs `remote_control.yml` as root, as `just deploy
 --only configure` would, to start the server in the same run. The report says how each VM is signed in, and a
-VM whose Remote Control is off on purpose (an API key from the vault, or `claude_remote_control: false`)
+VM whose Remote Control is off on purpose (an API key from the vault, or `claude_code_remote_control: false`)
 is said to be so, with nothing to fix; `just deploy <vm> --tags claude_code` is named only for a
 VM signed in in a way Remote Control cannot use, which a fix by hand then needs started.
 
