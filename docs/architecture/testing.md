@@ -25,8 +25,21 @@ in canonical mode (a step marked `canonical`), as soon as it asks. Every fake AP
 system picks and prints it (`harness._start`), so no port is probed, freed and then taken by another worker's fake;
 and starts with `socket.getfqdn` answering at once (`harness.FAKE_START`): for the fake Proxmox's `0.0.0.0`, macOS
 spent five seconds on it.
+A run a test gives up on - a timeout, a Ctrl-C, a failure on the way -
+is ended whole (`harness._end`): its process group, and every process found under it before any is signalled
+(`filter_plugins/processes.py`), since ansible-core's task worker detaches into a session of its own
+(`WorkerProcess._detach`: `setsid`, stdio on `/dev/null`) - a SIGINT or SIGTERM the playbook sends on to it
+itself, a SIGKILL or a SIGHUP it does not - and the group's SIGKILL alone left the task in flight behind,
+reparented to PID 1 and idle for good, 46 of them after a suite that hung; though not an async job's wrapper,
+which daemonises itself and leaves. The interrupts are held off while a tree is read and signalled, and a table
+that cannot be read is a warning, the group still ended. And every pytest process, the
+controller's and each worker's, takes SIGTERM and SIGHUP as a Ctrl-C (`tests/unit/interrupts.py`, installed by
+`conftest.py`): `tools/live` sends its part's group one when `just test` is killed or its terminal closes, CI's
+cancel sends one, and Python's default ended the worker at once, its run and that run's tree left behind. Once
+only, since a second - a hangup moments after a kill - would end the harness's kill half way; and one ignored
+on the way in stays ignored, so a suite under nohup still survives its terminal closing.
 
-pytest over `tests/unit/`: 2229 tests. By file:
+pytest over `tests/unit/`: 2244 tests. By file:
 
 - **Filters** (`test_filters.py` 84, `test_vscode_filters.py` 41, `test_desktop_filter.py` 24,
   `test_text_filter.py` 33): the guest-agent readers, `guest_ipv4` among them refusing anything that
@@ -140,7 +153,8 @@ pytest over `tests/unit/`: 2229 tests. By file:
   a run's own states pruned; a playbook as a part, whose NEXT STEPS wait for the run's end, and one Ctrl-C ended
   before its stats said stopped; an end with no state saying nothing, and one that fails leaving the recipe's
   status; a Ctrl-C pending before any handler taken, the part running nothing; a second Ctrl-C ending a part whose
-  child's group would not end; SIGTERM and SIGHUP ending the child, the echo back; a command that asks at the
+  child's group would not end, and a grandchild in a session of its own with it; SIGTERM and SIGHUP ending the
+  child with everything it started, the echo back; a command that asks at the
   terminal failing at once; a passing part's warnings above; a command named past `env`, a shell's by its step; a
   signal's exit as a shell's; no bar falling between parts; ansible-playbook's 99 said stopped; a run that ended
   well before the steps it listed said stopped; and NEXT STEPS keeping a record's lines whole, as the stream does.
@@ -165,6 +179,16 @@ pytest over `tests/unit/`: 2229 tests. By file:
   names - each play, block and task it matches is there, each fact it reads, a stage's checklist among them, is set
   by a task, and a VM's address and ID are where the engine reads them - and every live test that runs a real
   playbook to the paths its own tests pin, read from its code, so a pin in a comment is none.
+- **Processes** (`test_processes.py` 15): `filter_plugins/processes.py` listing a grandchild in a session of its own
+  and ending it with its parent, where a kill of the group left it reparented; a child of pytest's own group
+  ended alone, never the group; a pid remembered by its start signalled only while the process of that start is
+  at it, never once another has it; a root exited, a zombie or reaped, its group still ended - its children moved
+  on the moment it exited, and a zombie no longer answers for its group; a table that cannot be read said, the
+  group still ended; `harness._end` on a real playbook with a task in flight, its detached worker gone with it;
+  `interrupts.install` leaving a SIGHUP ignored on the way in, nohup's, as it is, and its handler raising once;
+  and a pytest run with `interrupts.py`'s conftest sent SIGTERM and SIGHUP to its whole group mid-task - one
+  process, and a controller with two xdist workers each holding a playbook - ending as interrupted with every
+  playbook and its task's worker gone.
 - **`github_repos`** (`test_github_repos.py` 32) and the **tracked-file guard** (`test_tracked_files.py`
   98), both ways.
 - **The CI gate** (`test_ci.py` 8): `CI result` needs every job of `ci.yml` but the canary, runs `if:
