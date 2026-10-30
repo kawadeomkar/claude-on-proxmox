@@ -63,7 +63,8 @@ a first deploy.
 ssh-copy-id root@<proxmox-host>
 ```
 
-Your first `just deploy` uses it to build the Ubuntu image every VM is cloned from, once per host.
+Your first `just deploy` uses it to build the Ubuntu image every VM is cloned from, and a later one to
+rebuild it when its settings change.
 `just init` uses it too, once: it offers to create the API user, role and token this project uses for
 everything else, with only the rights it needs, shows the commands it would run on the host, and runs them
 only if you answer `y`. To create them yourself instead, answer `n` and run

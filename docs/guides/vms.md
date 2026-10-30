@@ -72,7 +72,8 @@ in as each value is read; piped, or in `just logs`, only the finished report app
   guest agent reports it, and when it was made - its disk's age, since a clone keeps the template's
   creation time; the other VMs on the cluster as one line of totals, never by name.
 - **STORAGE** - the storage your VMs' disks are on, how full it is and this project's share of it, and
-  the template and when it was built.
+  the template and when it was built, or that the next `just deploy` rebuilds it: it differs from what its
+  settings would build, each difference said under ATTENTION.
 - **ACCESS** - each VM's LAN address, whether it has its SSH alias, and its tailnet name and address.
 - **SIGN-INS** - Claude Code's version and whether it is signed in, Remote Control, gh's GitHub account,
   and Tailscale.

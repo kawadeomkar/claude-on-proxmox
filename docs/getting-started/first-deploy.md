@@ -52,8 +52,9 @@ What you answered is never asked again. The vault is written encrypted, and its 
 `just init` makes, is in `.vault_pass`: keep that file, since the vault cannot be opened without it.
 
 Then `just init` checks what `just deploy` will need of Proxmox: that the API answers and takes the token,
-that the token holds every privilege the project uses on `/vms`, that the template exists or, while it does
-not, that root SSH to the host works, and that the VMs will get an SSH key. It works out the node - the one
+that the token holds every privilege the project uses on `/vms`, that the template exists and is what its
+settings would build or, while it is missing or will be rebuilt, that root SSH to the host works, and that the
+VMs will get an SSH key. It works out the node - the one
 that holds the template, the only one, or the one `inventory/hosts.yml` reaches - and lists the storages for
 VM disks and the bridges the token can use there. Where a default does not fit (`pve`, `local-lvm`,
 `vmbr0`), it writes the node, and asks which storage or bridge to use, into `local.yml`; the ones the token

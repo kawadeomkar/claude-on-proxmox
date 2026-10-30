@@ -959,8 +959,12 @@ every task a read (held by `tests/unit/test_init_check.py`):
 5. **The template**, from the cluster listing, as `deploy.yml` finds it: a VM named `proxmox_template_name`
    that is a template. Found, it must be on `proxmox_node`, where the clones are made. Missing, deploy builds
    it at `proxmox_template_vmid`, so a guest there - any, on any node, one that is down included - is a
-   problem naming it. A listing that fails is a problem said with the rest.
-6. **Root SSH**, only while the template is missing (or the listing would not say): `hostname -s`, delegated
+   problem naming it. A listing that fails is a problem said with the rest. Found, its config is read and
+   compared with what its settings would build, through `roles/proxmox_template`'s `drift` entry point as
+   `deploy.yml` does ([§4.1](#41-playbookstemplateyml--built-and-rebuilt-when-it-differs)): one that differs is
+   said with each difference, and deploy rebuilds it, unless `proxmox_template_rebuild` is off.
+6. **Root SSH**, only while the template is missing or will be rebuilt (or the listing would not say):
+   `hostname -s`, delegated
    to the `proxmox` group's host with `ignore_unreachable`, which proves the connection the build will use
    and reads the host's short name, its node name (`init_ssh_node`), which must be `proxmox_node`, since the
    template is built there. No host in the group is a problem too. `accept-new` may add its host key to
