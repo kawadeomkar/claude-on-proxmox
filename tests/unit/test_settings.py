@@ -32,12 +32,20 @@ PASSWORD = "throwaway-password-0000\n"
 FAKE = {
     "vault_tailscale_auth_key": "tskey-auth-fakefakefake-0000000000000000",
     "vault_github_token": "ghp_000000000000000000000000000000000000",
-    "vm_password": "fake-vm-password-0000",
+    "vault_vm_password": "fake-vm-password-0000",
+    # A setting someone keeps in the vault, which has no vault_ prefix: masked all the same.
+    "git_user_email": "fake-git-email-0000",
     # A username that is a common word, which a check of whole lines would find in every source column.
     "vault_github_username": "local",
 }
 INLINE = "INLINE-SECRET-0000-0000"
-SECRETS = (FAKE["vault_tailscale_auth_key"], FAKE["vault_github_token"], FAKE["vm_password"], INLINE)
+SECRETS = (
+    FAKE["vault_tailscale_auth_key"],
+    FAKE["vault_github_token"],
+    FAKE["vault_vm_password"],
+    FAKE["git_user_email"],
+    INLINE,
+)
 ROLES = sorted(path.parent.parent.name for path in (REPO / "roles").glob("*/meta/argument_specs.yml"))
 QUIET = {"ANSIBLE_VERBOSITY": "0", "ANSIBLE_DEBUG": "0"}
 
@@ -77,9 +85,9 @@ def _scenario(root: Path, name: str, local_extra: str, env: dict, address: str =
     probe.chmod(0o755)
     local = (REPO / "inventory" / "group_vars" / "all" / "local.yml.example").read_text()
     local += (
-        "\nvm_cores: 4\nclaude_remote_control: false\ntailscale_ssh: true\n"
+        "\nvm_cores: 4\nlogin_desktop: false\ntailscale_ssh: true\n"
         'tailscale_daemon_flags: ["{{ claude_probe }}"]\n'
-        'tailscale_api_url: "{{ vm_password }}"\n'
+        'tailscale_api_url: "{{ git_user_email }}"\n'
         'vm_searchdomain: "\\e]0;retitled\\a.lan"\n' + local_extra
     )
     (inventory / "group_vars" / "all" / "local.yml").write_text(local)
@@ -227,7 +235,7 @@ def test_an_inline_vault_value_is_masked(scenarios) -> None:
 
 
 def test_a_setting_that_reads_any_name_the_vault_holds_is_masked(scenarios) -> None:
-    # vm_password has no vault_ prefix.
+    # git_user_email, which the vault holds here, has no vault_ prefix.
     row = _report(scenarios, "--", "tailscale")["rows"]["tailscale_api_url"]
     assert row["kind"] == "secret" and row["value"] is None, row
 
@@ -321,11 +329,11 @@ def test_each_role_is_evaluated_where_its_playbook_runs_it(scenarios) -> None:
 
 
 def test_a_role_variable_fed_by_a_short_setting_names_the_setting(scenarios) -> None:
-    row = _report(scenarios, "--", "claude_code")["rows"]["claude_code_remote_control"]
+    row = _report(scenarios, "--", "claude_code")["rows"]["claude_code_login_desktop"]
     assert (row["value"], row["set_in"], row["via"]) == (
         False,
         "local.yml",
-        [{"name": "claude_remote_control", "file": "local.yml"}],
+        [{"name": "login_desktop", "file": "local.yml"}],
     ), row
 
 
@@ -378,7 +386,7 @@ def test_the_tool_asks_no_private_module_of_ansibles() -> None:
 
 def test_changed_alone_lists_every_setting_changed_and_no_secret_left_unset(scenarios) -> None:
     rows = _report(scenarios, "--changed=true")["rows"]
-    assert {"vm_cores", "claude_remote_control", "tailscale_ssh", "vault_tailscale_auth_key"} <= set(rows), sorted(rows)
+    assert {"vm_cores", "login_desktop", "tailscale_ssh", "vault_tailscale_auth_key"} <= set(rows), sorted(rows)
     assert "vault_tailscale_api_token" not in rows and "vault_proxmox_api_token_secret" not in rows
     assert "vm_memory_mb" not in rows
 
@@ -398,12 +406,12 @@ def test_how_to_use_it_needs_no_vault_and_lists_every_role(scenarios) -> None:
 
 
 def test_one_variable_names_the_chain_of_files_and_where_to_change_it(scenarios) -> None:
-    printed = _text(scenarios, "--", "claude_code_remote_control")
-    assert "claude_remote_control in local.yml" in printed
+    printed = _text(scenarios, "--", "claude_code_login_desktop")
+    assert "login_desktop in local.yml" in printed
     # The wiring line wraps within 100 columns: read as one.
-    wiring = 'claude_code_remote_control: "{{ claude_remote_control }}" in inventory/group_vars/all/defaults.yml'
+    wiring = 'claude_code_login_desktop: "{{ login_desktop }}" in inventory/group_vars/all/defaults.yml'
     assert wiring in " ".join(printed.split())
-    assert "change    just settings claude_remote_control --value <value>" in printed
+    assert "change    just settings login_desktop --value <value>" in printed
     secret = _text(scenarios, "--", "tailscale_auth_key")
     assert "set (secret)" in secret and "change    just vault" in secret
 
@@ -425,6 +433,30 @@ def test_a_name_that_is_no_role_variable_or_setting_is_refused(scenarios) -> Non
 def test_a_per_vm_file_is_noted_since_ansible_would_apply_it(scenarios) -> None:
     assert any("host_vars/ holds alpha.yml" in note for note in _report(scenarios, "--", "tailscale")["notes"])
     assert "host_vars/ holds alpha.yml" in _text(scenarios, "--", "tailscale").replace("\n", " ")
+
+
+def test_the_vm_settings_are_what_their_role_variables_read(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    _local(inventory).write_text(
+        _local(inventory).read_text() + 'vm_ipconfig: "ip=192.0.2.61/24"\nvm_extra_packages: [jq]\n'
+    )
+    ipconfig = _report_of(scenarios, inventory, "--", "proxmox_vm_ipconfig")["rows"]["proxmox_vm_ipconfig"]
+    packages = _report_of(scenarios, inventory, "--", "common_extra_packages")["rows"]["common_extra_packages"]
+    assert (ipconfig["value"], packages["value"]) == ("ip=192.0.2.61/24", ["jq"]), (ipconfig, packages)
+    # Empty, each falls back to its default.
+    _local(inventory).write_text(_local(inventory).read_text() + 'vm_ipconfig: ""\nvm_extra_packages:\n')
+    ipconfig = _report_of(scenarios, inventory, "--", "proxmox_vm_ipconfig")["rows"]["proxmox_vm_ipconfig"]
+    packages = _report_of(scenarios, inventory, "--", "common_extra_packages")["rows"]["common_extra_packages"]
+    assert (ipconfig["value"], packages["value"]) == ("ip=dhcp", []), (ipconfig, packages)
+
+
+def _report_of(scenarios: dict, inventory: Path, *args: str) -> dict:
+    """As _report, of an inventory of the test's own, never cached."""
+    result = _run(scenarios, inventory, "--json=true", *args)
+    assert result.returncode == 0, result.stderr[-2000:]
+    report = json.loads(result.stdout)
+    report["rows"] = {row["name"]: row for row in report["settings"]}
+    return report
 
 
 def test_the_text_and_the_json_hold_the_same_rows(scenarios) -> None:
@@ -493,12 +525,12 @@ def test_a_setting_with_no_line_goes_at_the_end_and_an_inline_secret_stays_as_it
 
 def test_a_role_variable_set_through_a_setting_is_written_as_the_setting(scenarios, tmp_path) -> None:
     inventory = _writable(scenarios, tmp_path)
-    result = _set(scenarios, inventory, "claude_code_remote_control", "yes", "--json=true")
+    result = _set(scenarios, inventory, "claude_code_login_desktop", "yes", "--json=true")
     assert result.returncode == 0, result.stderr[-2000:]
     report = json.loads(result.stdout)
-    assert report["wrote"]["wrote"] == "claude_remote_control: true" and report["now"]["value"] is True
-    assert "\nclaude_remote_control: true\n" in _local(inventory).read_text()
-    assert "claude_code_remote_control:" not in _local(inventory).read_text()
+    assert report["wrote"]["wrote"] == "login_desktop: true" and report["now"]["value"] is True
+    assert "\nlogin_desktop: true\n" in _local(inventory).read_text()
+    assert "claude_code_login_desktop:" not in _local(inventory).read_text()
 
 
 @pytest.mark.parametrize(
@@ -509,7 +541,7 @@ def test_a_role_variable_set_through_a_setting_is_written_as_the_setting(scenari
         ("tailscale_advertise_tags", "tag:a,tag:b", 'tailscale_advertise_tags: ["tag:a", "tag:b"]'),
         ("tailscale_advertise_tags", "[tag:a, tag:b]", 'tailscale_advertise_tags: ["tag:a", "tag:b"]'),
         ("tailscale_auth_method", "web", 'tailscale_auth_method: "web"'),
-        ("claude_vm_default_name", "a name with 'quotes' and $(dollars)", None),
+        ("vm_default_name", "a name with 'quotes' and $(dollars)", None),
     ],
 )
 def test_a_value_is_written_as_its_type_takes_it(scenarios, tmp_path, name, value, written) -> None:
@@ -548,7 +580,7 @@ def test_a_value_its_type_does_not_take_is_refused_and_nothing_written(scenarios
         "vault_tailscale_auth_key",
         "github_projects_token",
         "proxmox_vm_password",
-        "vm_password",
+        "vault_vm_password",
         "github_projects_username",
         "claude_code_anthropic_api_key",
     ],
@@ -586,9 +618,9 @@ def test_an_expression_or_a_control_character_is_refused(scenarios, tmp_path) ->
     inventory = _writable(scenarios, tmp_path)
     before = _local(inventory).read_bytes()
     ran = tmp_path / "ran"
-    expression = _set(scenarios, inventory, "claude_vm_default_name", "{{ lookup('pipe', 'touch " + str(ran) + "') }}")
+    expression = _set(scenarios, inventory, "vm_default_name", "{{ lookup('pipe', 'touch " + str(ran) + "') }}")
     assert expression.returncode == 1 and "never an expression" in expression.stderr
-    control = _set(scenarios, inventory, "claude_vm_default_name", "a\tb")
+    control = _set(scenarios, inventory, "vm_default_name", "a\tb")
     assert control.returncode == 1 and "without a control character" in control.stderr
     assert _local(inventory).read_bytes() == before and not ran.exists()
 
@@ -596,7 +628,7 @@ def test_an_expression_or_a_control_character_is_refused(scenarios, tmp_path) ->
 def test_a_vault_secret_given_as_a_plain_value_is_refused_unsaid(scenarios, tmp_path) -> None:
     inventory = _writable(scenarios, tmp_path)
     before = _local(inventory).read_bytes()
-    result = _set(scenarios, inventory, "claude_vm_default_name", FAKE["vault_github_token"])
+    result = _set(scenarios, inventory, "vm_default_name", FAKE["vault_github_token"])
     assert result.returncode == 1 and "a secret the vault holds" in result.stderr
     assert _local(inventory).read_bytes() == before
 
@@ -654,7 +686,7 @@ def test_a_layout_the_read_back_does_not_hold_writes_nothing(scenarios, tmp_path
 
 def test_the_read_views_change_says_what_the_writer_takes(scenarios) -> None:
     rows = _report(scenarios, "--", "claude_code")["rows"]
-    assert rows["claude_code_remote_control"]["change"] == "just settings claude_remote_control --value <value>"
+    assert rows["claude_code_login_desktop"]["change"] == "just settings login_desktop --value <value>"
     assert rows["claude_code_anthropic_api_key"]["change"] == "just vault"
     tailscale = _report(scenarios, "--", "tailscale")["rows"]
     assert (
@@ -706,19 +738,19 @@ def test_reset_says_the_value_the_setting_has_now(scenarios, tmp_path) -> None:
 
 
 def test_reset_of_a_role_variable_takes_out_its_setting_and_its_own_line(scenarios, tmp_path) -> None:
-    # The base scenario sets claude_remote_control at the end, its example's line still in place; the role
+    # The base scenario sets login_desktop at the end, its example's line still in place; the role
     # variable itself is set by hand beside it.
     inventory = _writable(scenarios, tmp_path)
     local = _local(inventory)
-    local.write_text(local.read_text() + "claude_code_remote_control: false\n")
-    result = _reset(scenarios, inventory, "claude_code_remote_control", "--json=true")
+    local.write_text(local.read_text() + "claude_code_login_desktop: false\n")
+    result = _reset(scenarios, inventory, "claude_code_login_desktop", "--json=true")
     assert result.returncode == 0, result.stderr[-2000:]
     report = json.loads(result.stdout)
-    assert report["reset"]["removed"] == ["claude_remote_control", "claude_code_remote_control"]
+    assert report["reset"]["removed"] == ["login_desktop", "claude_code_login_desktop"]
     assert report["now"]["value"] is True
     text = local.read_text()
-    assert "\nclaude_remote_control:" not in text and "claude_code_remote_control:" not in text
-    assert text.count("# claude_remote_control: true") == 1
+    assert "\nlogin_desktop:" not in text and "claude_code_login_desktop:" not in text
+    assert text.count("# login_desktop: true") == 1
 
 
 def test_reset_of_what_local_yml_does_not_set_writes_nothing(scenarios, tmp_path) -> None:
@@ -804,21 +836,21 @@ def test_a_role_variable_set_by_hand_is_written_where_it_is(scenarios, tmp_path)
     # The setting that feeds it would change nothing: local.yml's own line of the role variable outranks it.
     inventory = _writable(scenarios, tmp_path)
     local = _local(inventory)
-    local.write_text(local.read_text() + "claude_code_remote_control: false\n")
-    result = _set(scenarios, inventory, "claude_code_remote_control", "true", "--json=true")
+    local.write_text(local.read_text() + "claude_code_login_desktop: false\n")
+    result = _set(scenarios, inventory, "claude_code_login_desktop", "true", "--json=true")
     assert result.returncode == 0, result.stderr[-2000:]
     report = json.loads(result.stdout)
-    assert report["wrote"]["wrote"] == "claude_code_remote_control: true" and report["now"]["value"] is True
-    assert any("sets claude_code_remote_control itself" in note for note in report["notes"])
-    assert "\nclaude_remote_control: false\n" in local.read_text()
+    assert report["wrote"]["wrote"] == "claude_code_login_desktop: true" and report["now"]["value"] is True
+    assert any("sets claude_code_login_desktop itself" in note for note in report["notes"])
+    assert "\nlogin_desktop: false\n" in local.read_text()
 
 
 def test_reset_of_a_setting_says_a_role_variable_set_by_hand_still_outranks_it(scenarios, tmp_path) -> None:
     inventory = _writable(scenarios, tmp_path)
     local = _local(inventory)
-    local.write_text(local.read_text() + "claude_code_remote_control: false\n")
-    said = " ".join(_reset(scenarios, inventory, "claude_remote_control").stdout.split())
-    assert "sets claude_code_remote_control itself, which outranks claude_remote_control" in said
+    local.write_text(local.read_text() + "claude_code_login_desktop: false\n")
+    said = " ".join(_reset(scenarios, inventory, "login_desktop").stdout.split())
+    assert "sets claude_code_login_desktop itself, which outranks login_desktop" in said
 
 
 def test_a_key_not_on_a_line_of_its_own_is_never_written_twice(scenarios, tmp_path) -> None:

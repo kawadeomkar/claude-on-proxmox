@@ -650,13 +650,23 @@
       loop_control:
         label: "{{ item.text }}"
 
+    # ---------------------------------------------------- a renamed password ---
+    # vault.yml's vm_password is vault_vm_password from 1.0; one still set would
+    # give the VMs no password, so it is named here, before any deploy.
+    - name: Record a console password under its old name
+      ansible.builtin.set_fact:
+        init_results: >-
+          {{ init_results + [{'ok': false, 'text': 'vm_password is set, which is vault_vm_password from 1.0: rename'
+             ~ ' it in vault.yml, with just vault'}] }}
+      when: vm_password | default('', true) | string | length > 0
+
     # ----------------------------------------------------------- the VM's key ---
     - name: Look for a public key, as the VMs would get none
       ansible.builtin.find:
         paths: "{{ init_ssh_dir }}"
         patterns: "*.pub"
       register: init_public_keys
-      when: vm_ssh_public_keys | length == 0 and vm_password | default('', true) | length == 0
+      when: vm_ssh_public_keys | length == 0 and vault_vm_password | default('', true) | string | length == 0
 
     - name: Record the key's result
       ansible.builtin.set_fact:
@@ -664,7 +674,7 @@
           {{ init_results + [{'ok': vm_ssh_public_keys | length > 0, 'text':
              ('the VMs get ' ~ vm_ssh_public_keys | length ~ ' SSH key' ~ ('' if vm_ssh_public_keys | length == 1 else 's'))
              if vm_ssh_public_keys | length > 0 else
-             ('the VMs get only vm_password, which is for the Proxmox console: SSH to them takes a key, and just'
+             ('the VMs get only vault_vm_password, which is for the Proxmox console: SSH to them takes a key, and just'
               ~ ' deploy configures them over SSH. Put yours in local.yml as vm_ssh_public_keys')
              if not init_keyless | bool else
              ('the VMs would get no SSH key, so just deploy refuses them: put yours in local.yml, as'
@@ -674,7 +684,7 @@
              ('the VMs would get no SSH key, and ' ~ init_ssh_dir ~ ' has no public key: make one with ssh-keygen'
               ~ ' -t ed25519')}] }}
       vars:
-        init_keyless: "{{ vm_ssh_public_keys | length == 0 and vm_password | default('', true) | length == 0 }}"
+        init_keyless: "{{ vm_ssh_public_keys | length == 0 and vault_vm_password | default('', true) | string | length == 0 }}"
 
     # ---------------------------------------------------------------- the end ---
     - name: Say what each check found

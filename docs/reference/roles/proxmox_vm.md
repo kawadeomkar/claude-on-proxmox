@@ -51,9 +51,9 @@ All API calls are delegated to the controller.
 | `proxmox_vm_onboot` | bool | `true` | Start the VM when its Proxmox node boots. |
 | `proxmox_vm_tags` | list of `str` | `["claude-on-proxmox"]` | Tags stamped on every VM this role creates. The first one is the ownership marker - discovery finds VMs by it, and both deleting and provisioning refuse to touch an existing VM that does not carry it. |
 | `proxmox_vm_user` | str | `dev` | Cloud-init user created on the VM. The playbooks also log in as it. Set through vm_user in local.yml. |
-| `proxmox_vm_password` | str | `""` | Optional cloud-init password for the user (vm_password host var). Key-based login is the default. Either this or proxmox_vm_ssh_public_keys must be set. Set through vm_password in local.yml. A secret: never logged. |
+| `proxmox_vm_password` | str | `""` | Optional cloud-init password for the user (vault_vm_password in vault.yml). Key-based login is the default. Either this or proxmox_vm_ssh_public_keys must be set. Set through vault_vm_password in vault.yml. A secret: never logged. |
 | `proxmox_vm_ssh_public_keys` | list of `str` | `[]` | Public keys cloud-init authorises for proxmox_vm_user. These or proxmox_vm_password must be set. Set through vm_ssh_public_keys in local.yml. |
-| `proxmox_vm_ipconfig` | str | `ip=dhcp` | Proxmox ipconfig0 string. DHCP by default, with the address read back from the guest agent. Set to something like "ip=192.0.2.50/24,gw=192.0.2.1" to assign a fixed address. One value for every VM it applies to. Set fleet-wide (local.yml, -e), every VM a run provisions is given that same address, so use it only for a single VM. |
+| `proxmox_vm_ipconfig` | str | `ip=dhcp` | Proxmox ipconfig0 string. DHCP by default, with the address read back from the guest agent. Set to something like "ip=192.0.2.50/24,gw=192.0.2.1" to assign a fixed address. One value for every VM it applies to. Set fleet-wide (local.yml, -e), every VM a run provisions is given that same address, so use it only for a single VM. Set through vm_ipconfig in local.yml. |
 | `proxmox_vm_nameservers` | list of `str` | `[]` | Defaults to the vm_nameservers host var. Set through vm_nameservers in local.yml. |
 | `proxmox_vm_searchdomain` | str | `""` | Defaults to the vm_searchdomain host var. Set through vm_searchdomain in local.yml. |
 | `proxmox_vm_agent_retries` | int | `60` | How many times to poll the guest agent for an address. A count, not a wall-clock budget. With the defaults the wait is five minutes of delay plus the time each poll takes; a running VM with no agent answers each poll only after Proxmox's own ~3 s agent ping, so the role gives up on it after about nine minutes. |
@@ -98,6 +98,7 @@ each file. Generated from the task files, so a task added, renamed or removed sh
 |---|---|---|
 | Validate the Proxmox connection settings | `ansible.builtin.assert` |  |
 | Validate the VM name | `ansible.builtin.assert` |  |
+| Refuse the console password's old name | `ansible.builtin.assert` | <code>proxmox_vm_state == 'present'</code> |
 | Validate the login credentials for the VM | `ansible.builtin.assert` |  |
 | Validate the minimum memory | `ansible.builtin.assert` |  |
 | Validate the VM ID | `ansible.builtin.assert` |  |
@@ -126,11 +127,12 @@ classDef rescue stroke:#665352,stroke-width:2px;
 
   Start-->|Task| Validate_the_Proxmox_connection_settings0[validate the proxmox connection settings]:::task
   Validate_the_Proxmox_connection_settings0-->|Task| Validate_the_VM_name1[validate the vm name]:::task
-  Validate_the_VM_name1-->|Task| Validate_the_login_credentials_for_the_VM2[validate the login credentials for the vm]:::task
-  Validate_the_login_credentials_for_the_VM2-->|Task| Validate_the_minimum_memory3[validate the minimum memory]:::task
-  Validate_the_minimum_memory3-->|Task| Validate_the_VM_ID4[validate the vm id]:::task
-  Validate_the_VM_ID4-->|Block Start| Manage_the_VM5_block_start_0[[manage the vm]]:::block
-  Manage_the_VM5_block_start_0-->|Task| Look_up_Proxmox_VM_proxmox_vm_name0[look up proxmox vm proxmox vm name]:::task
+  Validate_the_VM_name1-->|Task| Refuse_the_console_password_s_old_name2[refuse the console password s old name<br>When: **proxmox vm state     present**]:::task
+  Refuse_the_console_password_s_old_name2-->|Task| Validate_the_login_credentials_for_the_VM3[validate the login credentials for the vm]:::task
+  Validate_the_login_credentials_for_the_VM3-->|Task| Validate_the_minimum_memory4[validate the minimum memory]:::task
+  Validate_the_minimum_memory4-->|Task| Validate_the_VM_ID5[validate the vm id]:::task
+  Validate_the_VM_ID5-->|Block Start| Manage_the_VM6_block_start_0[[manage the vm]]:::block
+  Manage_the_VM6_block_start_0-->|Task| Look_up_Proxmox_VM_proxmox_vm_name0[look up proxmox vm proxmox vm name]:::task
   Look_up_Proxmox_VM_proxmox_vm_name0-->|Task| Refuse_to_act_on_a_duplicated_VM_name1[refuse to act on a duplicated vm name]:::task
   Refuse_to_act_on_a_duplicated_VM_name1-->|Task| Record_whether_the_VM_already_exists2[record whether the vm already exists]:::task
   Record_whether_the_VM_already_exists2-->|Task| Refuse_to_configure_a_template3[refuse to configure a template<br>When: **proxmox vm state     present  and proxmox vm<br>exists**]:::task
@@ -139,7 +141,7 @@ classDef rescue stroke:#665352,stroke-width:2px;
   Create_the_VM_present_yml_5-->|Task| Refuse_to_delete_a_template6[refuse to delete a template<br>When: **proxmox vm state     absent  and proxmox vm exists**]:::task
   Refuse_to_delete_a_template6-->|Task| Refuse_to_delete_a_VM_this_project_does_not_own7[refuse to delete a vm this project does not own<br>When: **proxmox vm state     absent  and proxmox vm exists<br>and not  proxmox vm allow untagged delete   bool**]:::task
   Refuse_to_delete_a_VM_this_project_does_not_own7-->|Include task| Delete_the_VM_absent_yml_8[delete the vm<br>When: **proxmox vm state     absent**<br>include_task: absent yml]:::includeTasks
-  Delete_the_VM_absent_yml_8-.->|End of Block| Manage_the_VM5_block_start_0
+  Delete_the_VM_absent_yml_8-.->|End of Block| Manage_the_VM6_block_start_0
   Delete_the_VM_absent_yml_8-->End
 ```
 

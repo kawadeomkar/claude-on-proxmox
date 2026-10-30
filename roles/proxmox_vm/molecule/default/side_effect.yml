@@ -431,7 +431,7 @@
     side_effect_headers:
       Authorization: "PVEAPIToken=ansible@pve!ansible=molecule-test-secret"
   tasks:
-    # proxmox_vm_ipconfig is documented as the way to give a single VM a fixed
+    # vm_ipconfig, which feeds this, is documented as the way to give a single VM a fixed
     # address (one value, so every VM a run provisions would share it), but
     # converge only ever asserts the literal default "ip=dhcp" - which passes
     # even if the value were hardcoded. Prove it reaches Proxmox. The VMID is

@@ -66,7 +66,8 @@ each problem `!!` with its fix; `just init` then fails, so a scripted one exits 
 | `the template's net0 has no bridge` | every clone inherits that NIC: rebuild the template with `proxmox_bridge` set |
 | `--   ... is not checked` | not a problem in itself: what stopped it (the node, the API) is said on its own line |
 | `bridge X, the template's ... lacks SDN.Use` | every clone inherits the template's NIC: grant `SDN.Use` on that bridge |
-| `the VMs would get no SSH key`, or only `vm_password` | `vm_ssh_public_keys` in `local.yml`: deploy configures the VMs over SSH, which takes a key |
+| `the VMs would get no SSH key`, or only `vault_vm_password` | `vm_ssh_public_keys` in `local.yml`: deploy configures the VMs over SSH, which takes a key |
+| `vm_password is set, which is vault_vm_password from 1.0` | the vault still holds the console password under its old name, which nothing reads: rename it with `just vault` |
 
 Storage and bridge are checked on the node worked out, among what it lists: a default `local-lvm` on a ZFS
 host is a name to replace, which `just init` offers, not a missing privilege.

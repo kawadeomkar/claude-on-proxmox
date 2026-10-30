@@ -69,7 +69,7 @@ address to a MAC, and that only lasts as long as the VM: Proxmox gives every clo
 and this project cannot choose one, so a destroyed and re-provisioned VM is a new MAC and a new
 lease. You never need to know the address in advance anyway — `just status` shows it.
 
-`proxmox_vm_ipconfig` in `local.yml` skips DHCP and assigns an address directly, for example
+`vm_ipconfig` in `local.yml` skips DHCP and assigns an address directly, for example
 `ip=192.0.2.50/24,gw=192.0.2.1`. It is one value applied to **every VM a run provisions**, so with
 more than one VM they would all be given the same address. Use it only for a single VM, or provision
 one VM per run and change the value in between.

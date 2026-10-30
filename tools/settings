@@ -29,8 +29,8 @@ Settings.reset):
 - Never a secret: anything the vault holds, feeds or a role marks no_log, and a value vaulted inline in local.yml,
   is refused for just vault, the value unsaid. Nor what is not one setting for every VM: a name made from each VM's
   own, what a run sets for itself, the Proxmox host's address (hosts.yml).
-- A role variable fed by a setting of local.yml.example is written as that setting (claude_remote_control for
-  claude_code_remote_control). The value is held to its type as the role's argument_specs give it, by Ansible's own
+- A role variable fed by a setting of local.yml.example is written as that setting (login_desktop for
+  claude_code_login_desktop). The value is held to its type as the role's argument_specs give it, by Ansible's own
   validator, and is a value, never an expression: {{ }}, {% %} and {# #} are refused.
 - As just init writes: JSON on one line, in place of the line that set it (and its value's further lines), else of
   its example's commented line, else at the end. The file is read back before it replaces the old one, atomically,
@@ -416,7 +416,7 @@ class Settings:
     # ------------------------------------------------------------------------------------------- --value ---
     def fed_by(self, name: str) -> str | None:
         """The setting of the examples a role variable is set through, following settings that set settings:
-        claude_remote_control for claude_code_remote_control, login_desktop for tailscale_login_desktop."""
+        vm_cores for proxmox_vm_cores, login_desktop for tailscale_login_desktop."""
         documented = self.example_settings | set(self.example_vault)
         for setting, fed in self.feeds.items():
             if name in fed:

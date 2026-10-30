@@ -133,7 +133,7 @@ restate them are not treated as vulnerabilities:
   the key instead would only trade this for a failure every time a lease is recycled, so the removal is
   deliberate. On a network where you do not trust every device, put the VMs on a bridge that only
   trusted devices can reach (`proxmox_bridge`, set before `just deploy --only template`, since every clone inherits
-  the template's NIC). A fixed address from `proxmox_vm_ipconfig`, outside the DHCP pool, keeps the
+  the template's NIC). A fixed address from `vm_ipconfig`, outside the DHCP pool, keeps the
   address from being leased to anything else, but only for a single VM: that one value applies to every
   VM a run provisions, so a second VM would be given the same address.
 

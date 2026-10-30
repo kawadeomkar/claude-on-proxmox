@@ -2187,10 +2187,10 @@ def test_settings_passes_a_value_as_one_argument_and_runs_none_of_it(tmp_path: P
     ran = tmp_path / "ran"
     value = f"$(touch {ran}) `touch {ran}` 'single' \"double\" ; | & spaces"
     result, runs = _settings(
-        tmp_path, "claude_vm_default_name", "--value", value, settings=[f"VAULT_PASS={tmp_path / 'none'}"]
+        tmp_path, "vm_default_name", "--value", value, settings=[f"VAULT_PASS={tmp_path / 'none'}"]
     )
     assert result.returncode == 0, _output(result)
-    expected = [f"--value={value}", "--all=", "--changed=", "--json=", "--", "claude_vm_default_name"]
+    expected = [f"--value={value}", "--all=", "--changed=", "--json=", "--", "vm_default_name"]
     assert runs == [["tools/settings", *expected]]
     assert not ran.exists()
 

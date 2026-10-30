@@ -64,7 +64,7 @@
 # The login command ends its line, with no full stop after it: one after the
 # closing quote is pasted along with it and ends up in the remote command.
 # Remote Control off on purpose - an API key from the vault, or
-# claude_remote_control: false - is said as such, not as something to fix;
+# claude_code_remote_control: false - is said as such, not as something to fix;
 # just deploy --only configure is named only where it is what starts Remote Control, after a
 # login fixed by hand, for which no path unit waits. The text is built in vars
 # so the message is one line.
@@ -85,7 +85,7 @@
          else 'signed in. Remote Control is off on this VM on purpose: '
               ~ ('Claude Code uses the API key from vault_anthropic_api_key. Clear the key and re-run just deploy'
                  ~ ' to use a claude.ai login and Remote Control instead.'
-                 if claude_code_anthropic_api_key | length > 0 else 'claude_remote_control is false.')
+                 if claude_code_anthropic_api_key | length > 0 else 'claude_code_remote_control is false.')
          if not claude_code_remote_control_wanted | bool
          else 'signed in, but not in a way Remote Control can use: ' ~ claude_code_remote_control_blocker
               ~ ' Then just deploy ' ~ inventory_hostname ~ ' --tags claude_code starts it. If that'
