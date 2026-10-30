@@ -11,6 +11,7 @@
 #   tools/check project <name>         one repository folder's name
 #   tools/check session <id>           one Claude Code session ID, or none
 #   tools/check sections <list>        just status's sections, comma-separated, or none
+#   tools/check settings <file>...     no setting under a name 1.0 renamed, in local.yml or hosts.yml
 set -eu
 # The character sets below are spelt out rather than written as ranges, so
 # no locale can widen them (a UTF-8 one may collate accented letters into
@@ -114,8 +115,32 @@ sections)
     esac
   done
   ;;
+settings)
+  # A setting 1.0 renamed (docs/guides/upgrading.md), still set in local.yml
+  # or hosts.yml, would be read by nothing, without a word: each is named with
+  # the name it has now. One set to "" sets nothing and passes. vault.yml's
+  # vm_password is checked where it is read, since the vault is encrypted here.
+  shift
+  found=
+  for file in "$@"; do
+    [ -f "$file" ] || continue
+    for pair in claude_remote_control=claude_code_remote_control claude_login_args=claude_code_login_args \
+      claude_login_timeout=claude_code_login_timeout \
+      claude_login_approval_timeout=claude_code_login_approval_timeout claude_vm_default_name=vm_default_name; do
+      old=${pair%%=*} new=${pair#*=}
+      set_line="^[[:space:]]*$old:"
+      empty_line="^[[:space:]]*$old:[[:space:]]*(\"\"|'')[[:space:]]*(#.*)?\$"
+      if awk -v set_line="$set_line" -v empty_line="$empty_line" \
+        '$0 ~ set_line && $0 !~ empty_line { found = 1 } END { exit !found }' "$file"; then
+        echo "error: $file sets $old, which is $new from 1.0: rename it there (docs/guides/upgrading.md)" >&2
+        found=1
+      fi
+    done
+  done
+  [ -z "$found" ] || exit 1
+  ;;
 *)
-  echo "usage: tools/check checkout <directory> | vault <file> | collections <bin> | names <name>... | project <name> | session <id> | sections <list>" >&2
+  echo "usage: tools/check checkout <directory> | vault <file> | collections <bin> | names <name>... | project <name> | session <id> | sections <list> | settings <file>..." >&2
   exit 2
   ;;
 esac

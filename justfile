@@ -71,8 +71,11 @@ LIVE_DIR := env('LIVE_DIR', justfile_directory() / '.cache' / 'live')
 BIN := ''
 VAULT_FILE := 'inventory/group_vars/all/vault.yml'
 VAULT_PASS := '.vault_pass'
+# Where a person sets the settings: tools/check settings refuses a name 1.0
+# renamed in them, which nothing would read.
+SETTINGS_FILES := 'inventory/hosts.yml inventory/group_vars/all/local.yml'
 # What `just init` copies from its .example beside it, where it is missing.
-INIT_FILES := 'inventory/hosts.yml inventory/group_vars/all/local.yml ' + VAULT_FILE
+INIT_FILES := SETTINGS_FILES + ' ' + VAULT_FILE
 
 # One run, one moment: every log of the run is named after it.
 stamp := datetime('%Y%m%d-%H%M%S')
@@ -84,7 +87,7 @@ live_run := ''
 # recipe that includes another's work (test lints, init installs) runs it by.
 # A recursive just would otherwise start without the command line's BIN= and
 # the rest; tests/unit/test_justfile.py holds this to every setting above.
-self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' INIT_FILES=' + quote(INIT_FILES) + ' LIVE_DIR=' + quote(LIVE_DIR) + ' stamp=' + quote(stamp) + ' live_run=' + quote(live_run)
+self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' SETTINGS_FILES=' + quote(SETTINGS_FILES) + ' INIT_FILES=' + quote(INIT_FILES) + ' LIVE_DIR=' + quote(LIVE_DIR) + ' stamp=' + quote(stamp) + ' live_run=' + quote(live_run)
 # The first line of every recipe but help.
 guard := quote(justfile_directory() / 'tools/check') + ' checkout ' + quote(invocation_directory())
 # The scripts directory of PYTHON's environment, or BIN: refused, with how to
@@ -221,6 +224,7 @@ init HOST='' TOKEN_USER='' TOKEN_ID='' TOKEN_SECRET_FILE='' GITHUB_USER='' STORA
       test -f "$file" || { cp "$file.example" "$file"; copied="$copied $file"; }
     done
     [ -z "$copied" ] || echo "Created$copied from their .example files (git-ignored)."
+    tools/check settings {{ SETTINGS_FILES }}
     # Drawn live from here, after just install, as one run in two parts - the questions, then the checks - unless it
     # is a stage of another recipe's run (live_run), or there is no state to carry the run between them (LIVE_DIR=,
     # when each playbook prints as it did): its title, which no value given goes into, the state the two playbooks
@@ -398,6 +402,7 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     # Passed as JSON, not key=value: Ansible's key=value parser splits
@@ -452,6 +457,7 @@ code PROJECT='' SESSION='' *NAME:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -491,6 +497,7 @@ login SIGN_IN='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -531,6 +538,7 @@ status ONLY='' JSON='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -586,6 +594,7 @@ settings ALL='' CHANGED='' JSON='' RESET='' VALUE='' *NAME:
     if [ "$#" -eq 0 ] && [ -z "$all$changed" ]; then exec "$bin/python" tools/settings --usage --json="$json"; fi
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings {{ SETTINGS_FILES }}
     name=${1:-}
     set --
     {{ vault_args }}
@@ -607,6 +616,7 @@ destroy *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"

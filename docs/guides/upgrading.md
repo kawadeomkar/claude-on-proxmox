@@ -1,8 +1,8 @@
 # Upgrading
 
-What to do when you update an install made by an earlier version of this project. There are no release
-versions yet, so each section names the pull request that brought the change; an install made after it
-needs nothing.
+What to do when you update an install made by an earlier version of this project. Each section names the
+release, or before the first release the pull request, that brought the change; an install made after it needs
+nothing.
 
 After pulling a new version, run `just install` before anything else. It syncs your environment to
 `uv.lock` and installs the Galaxy collections `requirements.yml` pins, and a pull changes neither.
@@ -10,6 +10,28 @@ Every target that runs Ansible compares the installed collections with those pin
 naming `just install`, while one differs. They live in `~/.ansible/collections`, which every checkout
 on the machine shares, so another clone or worktree on a different version needs `just install` again
 when you go back to it.
+
+## Names 1.0 changed
+
+1.0 settles the names the project promises to keep (`CONTRIBUTING.md`, Releasing), and changed these before it did:
+
+| Before | From 1.0 | Where |
+|---|---|---|
+| `claude_remote_control` | `claude_code_remote_control` | `local.yml` |
+| `claude_login_args` | `claude_code_login_args` | `local.yml` |
+| `claude_login_timeout` | `claude_code_login_timeout` | `local.yml` |
+| `claude_login_approval_timeout` | `claude_code_login_approval_timeout` | `local.yml` |
+| `claude_vm_default_name` | `vm_default_name` | `local.yml` |
+| `vm_password` | `vault_vm_password` | `vault.yml`, with `just vault` |
+| `proxmox_vm_ipconfig` | `vm_ipconfig` | `local.yml`; the old name still works, as the role's own variable |
+| `common_extra_packages` | `vm_extra_packages` | `local.yml`; the old name still works, as the role's own variable |
+| `just init --token-name` | `just init --token-id` | the command line |
+| `just list` | `just status` | the command line |
+
+Rename each in its file. Until you do, every recipe that reads the settings stops at the first five, naming the
+file and the new name (`tools/check settings`), and `just init`'s checks and provisioning stop at a `vm_password`
+that still holds a password: nothing would read them under the old name. One set to `""`, as `vault.yml.example`
+had `vm_password`, sets nothing and is left alone.
 
 ## A template built before its record
 
