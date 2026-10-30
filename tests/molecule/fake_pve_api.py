@@ -112,13 +112,27 @@ VMS = {
         "node": NODE,
         "status": "stopped",
         "template": 1,
+        # As this version of roles/proxmox_template builds it with its defaults, as Proxmox VE 9.2 gives its config
+        # back (read from a real one, 2026-10-30): deploy.yml rebuilds a template that differs, so one that did here
+        # would send every deploy the scenarios run to the template play. test_filters.py holds it to the role.
         "config": {
             "name": "ubuntu-24.04-cloudinit",
             "cores": 2,
             "memory": 2048,
+            "cpu": "host",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-pci",
+            "agent": "enabled=1",
+            "serial0": "socket",
+            "vga": "serial0",
+            "boot": "order=scsi0",
+            "ipconfig0": "ip=dhcp",
             "scsi0": "local-lvm:base-9000-disk-0,discard=on,size=3584M",
             "ide2": "local-lvm:vm-9000-cloudinit,media=cdrom",
             "net0": "virtio=BC:24:11:00:23:28,bridge=vmbr0",
+            "description": "Built by claude-on-proxmox: build=1;"
+            " image=https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64.img;"
+            " packages=qemu-guest-agent; sha256=0000000000000000000000000000000000000000000000000000000000000000",
             "template": 1,
             "meta": "creation-qemu=8.1.5,ctime=1760000000",
         },

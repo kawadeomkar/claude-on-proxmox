@@ -80,6 +80,12 @@ The template every VM is cloned from. On a cluster, build one per node with a VM
 | `proxmox_template_vmid` | `9000` | VMID the template is built under. A variable of [`proxmox_template`](roles/proxmox_template.md). |
 | `proxmox_template_name` | `ubuntu-24.04-cloudinit` | Template name. A variable of [`proxmox_template`](roles/proxmox_template.md). |
 
+just deploy rebuilds the template when it differs from what its settings would build - CPU type, OS type, bridge, storage, image, packages - or carries no record of its build, as one an earlier version built. VMs are full clones and do not depend on it. false keeps it as it is, the differences said: for a template a linked clone still uses, which Proxmox will not remove.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `proxmox_template_rebuild` | `true` | Rebuild the template at the same VMID when it differs from what these settings would build - its CPU type, OS type, bridge, storage, image, packages or this version's build - or keeps no record of its build, as one an earlier version built does. A variable of [`proxmox_template`](roles/proxmox_template.md). |
+
 Which NIC of the template carries the LAN address: its MAC is how a VM's own address is told apart from bridges the guest grows later (docker0). Change it only if the template was built with something other than a single net0.
 
 | Setting | Default | Notes |

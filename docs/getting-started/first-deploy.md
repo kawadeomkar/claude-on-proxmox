@@ -165,16 +165,19 @@ signs them in one after another. For more than one VM it opens no window, and en
 `just deploy` with `--only`, then `just login` and `just code`:
 
 ```bash
-just deploy --only template             # once per Proxmox host   (over SSH, as root)
+just deploy --only template             # build it, or rebuild it (over SSH, as root)
 just deploy alpha --only provision      # create + start a VM     (via the API)
 just deploy alpha --only configure      # set it up               (over SSH, as the VM user)
 just login alpha                        # sign Claude, gh and Tailscale in; --only claude, github or tailscale for one
 just code alpha                         # open it in VS Code
 ```
 
-A second `just deploy` rebuilds nothing. It checks through the API whether the template exists and
-skips that play when it does — and because a skipped import takes its fact-gathering step with it, a
-run that does not need to build the template opens **no SSH connection to the Proxmox host at all**.
+A second `just deploy` rebuilds nothing. It checks through the API whether the template exists and is
+what its settings would build, and skips that play when it is — and because a skipped import takes its
+fact-gathering step with it, a run that does not need to build the template opens **no SSH connection
+to the Proxmox host at all**. Change one of the template's settings - its bridge, storage, CPU type or
+image - and the next `just deploy` says so and rebuilds it first; the VMs you have are full clones,
+which do not depend on it.
 Provisioning finds the VMs by name instead of creating them, and configuration re-applies only what
 has drifted.
 

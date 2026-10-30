@@ -52,8 +52,20 @@
     quiet: true
   when: proxmox_template_existing.rc != 0
 
+# The finished template is compared with what this build would make (proxmox_template_differences, vars/main.yml):
+# the same, it is left as it is; different, it is rebuilt at the same VMID, the old one removed only once the new
+# one's image is ready, and said here first, with each difference.
+- name: Say how the template differs from its settings
+  ansible.builtin.debug:
+    msg: >-
+      Template "{{ proxmox_template_name }}" ({{ proxmox_template_vmid }}) differs from its settings:
+      {{ proxmox_template_differences | join('; ') }}.
+      {{ 'Rebuilding it, at the same VMID.' if proxmox_template_rebuilding | bool
+         else 'Kept as it is, since proxmox_template_rebuild is false.' }}
+  when: proxmox_template_differences | length > 0
+
 - name: Build the template
-  when: proxmox_template_existing.rc != 0
+  when: proxmox_template_existing.rc != 0 or proxmox_template_rebuilding | bool
   block:
     - name: Ensure image directory exists
       ansible.builtin.file:
@@ -73,6 +85,14 @@
         mode: "0644"
         timeout: 300
       register: proxmox_template_image
+
+    # Kept in the template's record, to say which image it was built from.
+    - name: Read the image's SHA-256
+      ansible.builtin.stat:
+        path: "{{ proxmox_template_image.dest }}"
+        checksum_algorithm: sha256
+        get_checksum: true
+      register: proxmox_template_image_digest
 
     # The pristine download is left untouched so get_url stays idempotent;
     # virt-customize edits a copy, which is what gets imported and is removed
@@ -126,7 +146,39 @@
             LIBGUESTFS_BACKEND: direct
           changed_when: true
 
+    # The template that differs goes only now, with the new image ready, so a download or virt-customize that
+    # fails leaves it as it was. Proxmox keeps a template a linked clone still uses (proxmox_vm_full_clone: false),
+    # and says so: that is a refusal, and the template stays.
+    - name: Remove the template that differs from its settings
+      ansible.builtin.command:
+        argv:
+          - "{{ proxmox_template_qm }}"
+          - destroy
+          - "{{ proxmox_template_vmid }}"
+      register: proxmox_template_removed
+      changed_when: proxmox_template_removed.rc == 0
+      failed_when: false
+      when: proxmox_template_existing.rc == 0
+
+    - name: Fail when Proxmox kept the template
+      ansible.builtin.assert:
+        that:
+          - proxmox_template_removed.rc == 0
+        fail_msg: >-
+          Template "{{ proxmox_template_name }}" ({{ proxmox_template_vmid }}) differs from its settings, but Proxmox
+          would not remove it to rebuild it: {{ proxmox_template_removed.stderr | default('') | trim }}. A linked
+          clone (proxmox_vm_full_clone: false) keeps its template: set proxmox_template_rebuild to false in
+          local.yml to keep this one as it is until no VM is one.
+        quiet: true
+      when: proxmox_template_existing.rc == 0
+
     - name: Create VM {{ proxmox_template_vmid }}
+      vars:
+        proxmox_template_record:
+          build: "{{ proxmox_template_build }}"
+          image: "{{ proxmox_template_image_url }}"
+          packages: "{{ proxmox_template_packages }}"
+          sha256: "{{ proxmox_template_image_digest.stat.checksum }}"
       ansible.builtin.command:
         argv:
           - "{{ proxmox_template_qm }}"
@@ -145,13 +197,15 @@
           - --net0
           - "virtio,bridge={{ proxmox_template_bridge }}"
           - --scsihw
-          - virtio-scsi-pci
+          - "{{ proxmox_template_scsihw }}"
           - --agent
           - enabled=1
           - --serial0
-          - socket
+          - "{{ proxmox_template_serial0 }}"
           - --vga
-          - serial0
+          - "{{ proxmox_template_vga }}"
+          - --description
+          - "{{ proxmox_template_record | proxmox_template_record }}"
       changed_when: true
 
     - name: Import the cloud image as the root disk
@@ -186,12 +240,39 @@
           - "{{ proxmox_template_vmid }}"
       changed_when: true
 
-    # import-from has copied the disk into the storage, so the customised
-    # image is derived data now: a rebuild makes it again from the download.
-    # Left behind, it was ~600 MB per node, forever. Only the copy: without
-    # the guest agent the import path is the download itself, which stays.
+    # Read back as the next run will read it: a template that still differs would be rebuilt by every run, so that
+    # is a failure here, said, rather than a rebuild each deploy.
+    - name: Read the template as it was built
+      ansible.builtin.command:
+        argv:
+          - "{{ proxmox_template_qm }}"
+          - config
+          - "{{ proxmox_template_vmid }}"
+      register: proxmox_template_built
+      changed_when: false
+
+    - name: Fail when the template differs from its settings as built
+      vars:
+        proxmox_template_built_differences: >-
+          {{ (proxmox_template_built.stdout | qm_config) | proxmox_template_drift(proxmox_template_wanted) }}
+      ansible.builtin.assert:
+        that:
+          - proxmox_template_built_differences | length == 0
+        fail_msg: >-
+          Template "{{ proxmox_template_name }}" ({{ proxmox_template_vmid }}) was built but reads back as different
+          from its settings - {{ proxmox_template_built_differences | join('; ') }} - so every run would rebuild it.
+        quiet: true
+
+  # Once import-from has copied the disk into the storage, the customised image is derived data: a rebuild makes it
+  # again from the download. Left behind, it was ~600 MB per node, forever, and a build that fails after making it -
+  # a rebuild Proxmox refuses, say - would leave it too, so it goes either way. Only the copy: without the guest agent
+  # the import path is the download itself, which stays.
+  always:
     - name: Remove the customised image
       ansible.builtin.file:
         path: "{{ proxmox_template_import_path }}"
         state: absent
-      when: proxmox_template_import_path != proxmox_template_image.dest
+      when:
+        - proxmox_template_import_path is defined
+        - proxmox_template_image.dest is defined
+        - proxmox_template_import_path != proxmox_template_image.dest

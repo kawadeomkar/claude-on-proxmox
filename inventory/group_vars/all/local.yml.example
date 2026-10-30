@@ -29,6 +29,12 @@
 # VMID and a name of its own (docs/getting-started/requirements.md).
 # proxmox_template_vmid: 9000
 # proxmox_template_name: ubuntu-24.04-cloudinit
+# just deploy rebuilds the template when it differs from what its settings would
+# build - CPU type, OS type, bridge, storage, image, packages - or carries no
+# record of its build, as one an earlier version built. VMs are full clones and
+# do not depend on it. false keeps it as it is, the differences said: for a
+# template a linked clone still uses, which Proxmox will not remove.
+# proxmox_template_rebuild: true
 # Which NIC of the template carries the LAN address: its MAC is how a VM's own
 # address is told apart from bridges the guest grows later (docker0). Change it
 # only if the template was built with something other than a single net0.

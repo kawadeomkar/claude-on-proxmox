@@ -28,12 +28,29 @@ REPORT = "Report what this run will do"
 WAITS = "opens a page in your browser, and the run waits for you there."
 
 
-def _said(tmp_path: Path, built: bool, **extra) -> str:
+# The template as roles/proxmox_template builds it with its defaults, as Proxmox gives its config back.
+IMAGE = "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64.img"
+BUILT = {
+    "name": "ubuntu-24.04-cloudinit",
+    "agent": "enabled=1",
+    "cpu": "host",
+    "ostype": "l26",
+    "net0": "virtio=BC:24:11:40:CD:BD,bridge=vmbr0",
+    "scsi0": "local-lvm:base-9000-disk-0,discard=on,size=3584M",
+    "scsihw": "virtio-scsi-pci",
+    "serial0": "socket",
+    "vga": "serial0",
+    "template": 1,
+    "description": f"Built by claude-on-proxmox: build=1; image={IMAGE}; packages=qemu-guest-agent; sha256=ab12",
+}
+
+
+def _said(tmp_path: Path, built: bool, config: dict | None = None, **extra) -> str:
     first = yaml.safe_load((REPO / "deploy.yml").read_text())[0]
     tasks = first["tasks"]
     assert [t["name"] for t in tasks][0] == LOOKUP
     lookup = tasks[0]["register"]
-    template = {"name": "ubuntu-24.04-cloudinit", "node": "pve", "template": 1}
+    template = {"name": "ubuntu-24.04-cloudinit", "node": "pve", "template": 1, "config": config or BUILT}
     canned = {"proxmox_vms": [template] if built else []}
     play = {
         "hosts": "localhost",
@@ -51,7 +68,13 @@ def _said(tmp_path: Path, built: bool, **extra) -> str:
         **extra,
     }
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
-    env.update(ANSIBLE_CONFIG=ansible_config(tmp_path), ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json")
+    # The template role's comparison, which the play includes, and its filter.
+    env.update(
+        ANSIBLE_CONFIG=ansible_config(tmp_path),
+        ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json",
+        ANSIBLE_ROLES_PATH=str(REPO / "roles"),
+        ANSIBLE_FILTER_PLUGINS=str(REPO / "filter_plugins"),
+    )
     result = subprocess.run(
         [str(ANSIBLE_PLAYBOOK), "-i", "localhost,", "-c", "local", "-e", json.dumps(variables), str(playbook)],
         cwd=tmp_path,
@@ -84,6 +107,32 @@ def test_a_built_template_is_said_in_words(tmp_path):
 def test_a_missing_template_is_said_to_be_built_first(tmp_path):
     said = _said(tmp_path, built=False)
     assert said.startswith('Template "ubuntu-24.04-cloudinit" does not exist yet; building it first'), said
+
+
+def test_a_template_that_differs_from_its_settings_is_said_to_be_rebuilt_with_each_difference(tmp_path):
+    config = {**BUILT, "net0": "virtio=BC:24:11:40:CD:BD,bridge=vmbr1", "cpu": "x86-64-v2-AES"}
+    said = _said(tmp_path, built=True, config=config)
+    assert said.startswith(
+        'Template "ubuntu-24.04-cloudinit" differs from its settings (cpu x86-64-v2-AES → host; bridge vmbr1 → vmbr0),'
+        " so this run rebuilds it first, over SSH as root@"
+    ), said
+
+
+def test_a_template_an_earlier_version_built_is_said_to_be_rebuilt(tmp_path):
+    said = _said(tmp_path, built=True, config={k: v for k, v in BUILT.items() if k != "description"})
+    assert said.startswith(
+        'Template "ubuntu-24.04-cloudinit" differs from its settings (no record of how it was built, so it was built'
+        " by an earlier version of this project), so this run rebuilds it first"
+    ), said
+
+
+def test_a_template_kept_as_it_is_is_said_to_differ_and_needs_no_ssh(tmp_path):
+    config = {**BUILT, "vga": "std"}
+    said = _said(tmp_path, built=True, config=config, proxmox_template_rebuild=False)
+    assert said.startswith(
+        'Template "ubuntu-24.04-cloudinit" differs from its settings (vga std → serial0), and is kept as it is since'
+        " proxmox_template_rebuild is false, so this run needs no SSH to the Proxmox host."
+    ), said
 
 
 @pytest.mark.parametrize("sign_in", [True, False])

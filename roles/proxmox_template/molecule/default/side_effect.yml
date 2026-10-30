@@ -135,3 +135,114 @@
       failed_when: >-
         (proxmox_template_other_template.content | b64decode).splitlines()
         != ['name: other-template', 'template: 1']
+
+# A template is compared with what its settings would build, and rebuilt at the same VMID when it differs. One an
+# earlier version built keeps no record of its build in its notes, so it is rebuilt once, and keeps one after.
+- name: Rebuild a template that keeps no record of its build
+  hosts: all
+  become: true
+  vars:
+    proxmox_template_converged: &converged
+      proxmox_template_qm: /usr/local/bin/qm
+      proxmox_template_virt_customize: /usr/local/bin/virt-customize
+      proxmox_template_manage_libguestfs: false
+      proxmox_template_image_url: http://127.0.0.1:8080/noble-server-cloudimg-amd64.img
+      proxmox_template_image_checksum: sha256:http://127.0.0.1:8080/SHA256SUMS
+      proxmox_template_storage: local-zfs
+      proxmox_template_bridge: vmbr1
+  tasks:
+    - name: Take the record out of 9000's notes, as an earlier version built it
+      ansible.builtin.lineinfile:
+        path: /var/lib/fake-qm/9000.conf
+        regexp: "^description: "
+        state: absent
+
+    - name: Run the role with the settings it was built with
+      ansible.builtin.include_role:
+        name: proxmox_template
+      vars: *converged
+
+    - name: Read 9000 as rebuilt
+      ansible.builtin.slurp:
+        src: /var/lib/fake-qm/9000.conf
+      register: proxmox_template_rebuilt_conf
+      failed_when: >-
+        (proxmox_template_rebuilt_conf.content | b64decode) is not search(
+          '(?m)^description: Built by claude-on-proxmox: build=1; image=http://127.0.0.1:8080/noble-server-cloudimg-amd64.img;'
+          ~ ' packages=qemu-guest-agent; sha256=[0-9a-f]{64}$')
+
+# Proxmox keeps a template a linked clone still uses. A rebuild it refuses fails with the setting that keeps the
+# template as it is, and leaves it, and no customised image, behind.
+- name: Refuse to rebuild a template a linked clone still uses
+  hosts: all
+  become: true
+  tasks:
+    - name: Mark 9000 as a linked clone's template
+      ansible.builtin.file:
+        path: /var/lib/fake-qm/9000.linked
+        state: touch
+        mode: "0644"
+
+    - name: Try to rebuild it on another bridge
+      block:
+        - name: Run the role with a bridge 9000 does not have
+          ansible.builtin.include_role:
+            name: proxmox_template
+          vars:
+            proxmox_template_qm: /usr/local/bin/qm
+            proxmox_template_virt_customize: /usr/local/bin/virt-customize
+            proxmox_template_manage_libguestfs: false
+            proxmox_template_image_url: http://127.0.0.1:8080/noble-server-cloudimg-amd64.img
+            proxmox_template_image_checksum: sha256:http://127.0.0.1:8080/SHA256SUMS
+            proxmox_template_storage: local-zfs
+            proxmox_template_bridge: vmbr2
+
+        - name: The role should not have got this far
+          ansible.builtin.fail:
+            msg: proxmox_template rebuilt 9000, which Proxmox would not remove.
+      rescue:
+        - name: Assert it refused for the right reason
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('would not remove it to rebuild it')
+              - ansible_failed_result.msg is search('still in use by linked clone')
+              - ansible_failed_result.msg is search('proxmox_template_rebuild to false')
+            fail_msg: >-
+              Expected the linked-clone refusal, got: {{ ansible_failed_result.msg }}
+            quiet: true
+      always:
+        - name: Unmark 9000
+          ansible.builtin.file:
+            path: /var/lib/fake-qm/9000.linked
+            state: absent
+
+    - name: Stat the customised copy the refused rebuild made
+      ansible.builtin.stat:
+        path: /var/lib/vz/claude-on-proxmox/claude-on-proxmox-9000.img
+      register: proxmox_template_refused_copy
+      failed_when: proxmox_template_refused_copy.stat.exists
+
+# Off, a template that differs is kept as it is, and said.
+- name: Keep a template that differs when rebuilding is off
+  hosts: all
+  become: true
+  tasks:
+    - name: Run the role on another bridge with rebuilding off
+      ansible.builtin.include_role:
+        name: proxmox_template
+      vars:
+        proxmox_template_qm: /usr/local/bin/qm
+        proxmox_template_virt_customize: /usr/local/bin/virt-customize
+        proxmox_template_manage_libguestfs: false
+        proxmox_template_image_url: http://127.0.0.1:8080/noble-server-cloudimg-amd64.img
+        proxmox_template_image_checksum: sha256:http://127.0.0.1:8080/SHA256SUMS
+        proxmox_template_storage: local-zfs
+        proxmox_template_bridge: vmbr2
+        proxmox_template_rebuild: false
+
+    - name: Read 9000, kept
+      ansible.builtin.slurp:
+        src: /var/lib/fake-qm/9000.conf
+      register: proxmox_template_kept_conf
+      failed_when: >-
+        (proxmox_template_kept_conf.content | b64decode) is not search('(?m)^net0: virtio,bridge=vmbr1$')
