@@ -713,6 +713,45 @@ def test_the_head_says_done_failed_on_some_vms_or_failed_and_where():
     assert "· failed after 1 min 57 s at common · " in head, head
 
 
+def _template_on_the_proxmox_host(script, outcome="skipped"):
+    """The template's play as deploy.yml runs it: on the Proxmox host, its tasks skipped while the template is
+    built and as it should be."""
+    script.task("plan", "plan-say", "Report what this run will do", hosts=("localhost",), took=0.2)
+    for key, name in (("t1", "Check for the template"), ("t2", "Build the template")):
+        script.task("template", key, name, "proxmox_template", hosts=("pve",), took=0.1, outcome=outcome)
+    return script
+
+
+def test_the_proxmox_host_the_template_is_built_on_is_never_one_of_the_runs_vms():
+    # One VM: no marks on its rows, and its failure is the run's, not "1 VM failed" of two.
+    alone = _template_on_the_proxmox_host(Script(plays=_finish_plays()))
+    alone.task("create", "p1", "present | Clone from template", "proxmox_vm", took=12.0, outcome="changed")
+    alone.run.fact("alpha", "proxmox_vm_resolved_id", 104)
+    alone.task("configure", "c1", "Refresh apt cache", "common", outcome=None, took=0)
+    text = "\n".join(alone.run.frame(alone.now + 1, 100, 40, "⠋", color=False))
+    assert "pve" not in text, text
+    alone.run.result("c1", "alpha", "failed", alone.now + 1)
+    alone.task("raise", "r1", "Fail where the work after a sign-in failed", hosts=("localhost",), outcome="ok")
+    alone.run.end(alone.now)
+    summary = alone.run.summary(alone.now, 100, color=False, failed_hosts=["alpha"])
+    assert "· failed after " in summary[0] and "VM failed" not in summary[0], summary[0]
+    assert "pve" not in "\n".join(summary)
+    # A fleet: each VM marked on its own steps, and none on the template's, which builds on the Proxmox host.
+    fleet = _template_on_the_proxmox_host(Script(), outcome=None)
+    fleet.run.names = ["alpha", "beta"]
+    template = next(line for line in fleet.run.frame(fleet.now, 100, 40, "⠋", color=False) if "template" in line)
+    assert "alpha" not in template and "beta" not in template and "pve" not in template, template
+    for key in ("t1", "t2"):
+        fleet.run.result(key, "pve", "changed", fleet.now)
+    fleet.task("configure", "c1", "Refresh apt cache", "common", hosts=("alpha", "beta"), outcome=None, took=0)
+    row = next(
+        line
+        for line in fleet.run.frame(fleet.now, 100, 40, "⠋", color=False)
+        if line.startswith("     ") and "common" in line
+    )
+    assert "alpha ⠋ · beta ⠋" in row and "pve" not in row, row
+
+
 def test_the_summary_says_a_long_report_by_its_first_sentence_and_leaves_next_steps_to_next_steps():
     script = Script().to_configure()
     script.run.result("c6", "alpha", "ok", script.now)

@@ -60,9 +60,11 @@ class Stage:
     names. A quiet stage's tasks are counted but never shown: its row appears only once one of them fails - a last
     play that only raises again what failed earlier. outcomes: as a step's, for each of its steps that has none of
     its own. checklist: the fact its playbook keeps its checks in as it makes them, a list of {ok, text, skipped},
-    each drawn as it is recorded and said in the summary - only whether each passed, and its text made one line."""
+    each drawn as it is recorded and said in the summary - only whether each passed, and its text made one line.
+    vms False: its hosts are not the run's VMs - the template's play runs on the Proxmox host, and its tasks reach
+    that host even when the template is not built, skipped - so none of them is counted or marked as a VM."""
 
-    def __init__(self, key, plays=(), steps=(), info="", quiet=False, outcomes=(), checklist=""):
+    def __init__(self, key, plays=(), steps=(), info="", quiet=False, outcomes=(), checklist="", vms=True):
         self.key = key
         self.plays = tuple(plays) + tuple(play for step in steps for play in step.plays)
         self.steps = tuple(steps)
@@ -70,6 +72,7 @@ class Stage:
         self.quiet = quiet
         self.outcomes = tuple(outcomes)
         self.checklist = checklist
+        self.vms = vms
 
 
 class Causes:
@@ -205,7 +208,7 @@ RECIPES = {
     # just deploy, every form of it: the whole of deploy.yml, and each --only stage's playbook alone.
     "deploy": Recipe(
         stages=[
-            Stage("template", plays=["template.yml"]),
+            Stage("template", plays=["template.yml"], vms=False),
             Stage("provision", plays=["provision.yml"], info="vm"),
             Stage("configure", plays=["configure.yml"]),
             Stage("SSH aliases", plays=["ssh_config.yml"]),

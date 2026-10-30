@@ -532,7 +532,8 @@ callbacks, `status.py`, `run_view.py` and `live_ansible.py` share one copy of ea
 `just login`, `just destroy` and `just code` have: its recipe exports `CLAUDE_ON_PROXMOX_LIVE` with its title, as `deploy`'s
 does, and its declaration in `filter_plugins/live_recipes.py`, named by the title's first word, says what its run is
 made of - its stages, by playbook or by play, a quiet one counted but never drawn (discovery, a last play that only
-raises), and the VMs a fact names on a stage's row (`info`); each stage's steps, by playbook, by the blocks around
+raises), one whose hosts are not VMs (`vms=False`: the template's, on the Proxmox host), and the VMs a fact names on a
+stage's row (`info`); each stage's steps, by playbook, by the blocks around
 their tasks, by task file (`files`) or by the task each begins at (`starts`); each step's `outcomes`, or its stage's, the facts that mark each VM; the tasks that raise again what
 rescues took (`raises`, with their causes' blocks, their hosts, and the unreachable VMs a ping ignored); the tasks
 whose failure is a person's answer (`declines`, with the line said instead); how many tasks a window shows; the word for a step of a run of one stage (`noun`: `sign-in 2 of 3`) and the summary's columns;
@@ -572,8 +573,14 @@ is drawn as one run, its parts in turn:
   re-run instead, and the run's end says it stopped) - and the part reads it once its own handler is in, so a part
   interrupted before its command runs none and says it stopped. The part sends Ctrl-C to its child's group, reads
   the pipe to its end, so the child's last words reach the log, marks its task stopped (`■`) and exits 130; a second
-  Ctrl-C ends the whole group and reads no more of it, whatever a grandchild still holds. SIGTERM or SIGHUP - a
-  kill, a timeout, the tab closing - is sent on to the child's session, which no terminal signals; the region goes,
+  Ctrl-C ends everything the child started and reads no more of it: its group, and every process the part found
+  under the child before the first Ctrl-C went out (`filter_plugins/processes.py`, which reads the table `ps`
+  prints, each process with its start, so a pid another process has by then is left alone), since one in a
+  session of its own - ansible-core's task worker, detached by `WorkerProcess._detach`; a nested run's part -
+  outlives the group, and a child that ended at the first leaves them under PID 1 or a subreaper, where no walk
+  from it finds them. SIGTERM or SIGHUP - a kill, a timeout, the tab closing - is sent on to the child's session,
+  which no terminal signals, and to everything under it, since a playbook sends its task worker a SIGTERM on but
+  not a SIGHUP, which would leave the worker behind; the region goes,
   the echo comes back, the state is saved said stopped, and the part dies of the same signal. A child a signal ended
   exits as the shell says it, 128 and the signal.
 - **The state.** Each part takes over the run's model from the parts before it (`Run.dump` and `Run.adopt`: every

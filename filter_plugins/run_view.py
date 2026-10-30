@@ -741,13 +741,19 @@ class Run:
         return steps + [stage.key for stage in self.stages.values() if stage.planned and not stage.tasks]
 
     def _vms(self):
-        """The run's VMs: those it was given, then those it learned of, then every host it touched but this one."""
+        """The run's VMs: those it was given, then those it learned of, then every host it touched but this one and
+        those of a stage whose hosts are not VMs (the template's Proxmox host)."""
         if self.frame_vms is not None:
             return self.frame_vms
         hosts = [*self.names]
         hosts += [host for host in self.facts if host not in hosts]
-        hosts += sorted({h for t in self.order for h in t.hosts} - set(hosts))
+        hosts += sorted({h for t in self.order if self._on_vms(t.stage) for h in t.hosts} - set(hosts))
         return [host for host in hosts if host != "localhost"]
+
+    def _on_vms(self, stage):
+        """Whether a stage's hosts are the run's VMs, as its declaration says."""
+        spec = self.specs.get(stage)
+        return spec is None or spec.vms
 
     def _about(self, note, vms):
         """The VM a note is about: its own host's, or for a play on this machine, the one VM it names, else the run's
@@ -1112,7 +1118,7 @@ class Run:
         batch is still to come, and each its play left or failed as so - and none it never reached once it ended;
         empty for a run of fewer than two VMs."""
         vms = self._vms()
-        if len(vms) < 2 or not step.tasks:
+        if len(vms) < 2 or not step.tasks or not self._on_vms(stage_key):
             return []
         spec = self.step_specs.get((stage_key, step.key)) or self.specs.get(stage_key)
         states = step.vm_states(now, vms, self.outcomes, spec)
