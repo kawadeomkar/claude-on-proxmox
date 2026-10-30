@@ -164,7 +164,7 @@ its name, and settings (`ANSIBLE_ARGS`, `LOG_DIR`, `PYTHON`) are exported or go 
 | `make code alpha PROJECT=repo` | `just code alpha --project repo` |
 | `make code alpha SESSION=<id>` | `just code alpha --session <id>` |
 | `make login alpha TYPE=github` | `just login alpha --only github` |
-| `make list`, `make destroy alpha`, `make logs`, `make vault` | `just status` (`just list` still works), `just destroy alpha`, `just logs`, `just vault` |
+| `make list`, `make destroy alpha`, `make logs`, `make vault` | `just status`, `just destroy alpha`, `just logs`, `just vault` |
 | `make init HOST=pve.lan GITHUB_USER=octocat PROMPT=no` | `just init --host pve.lan --github-user octocat --no-prompt` (each `NAME=` is a `--name`) |
 | `make install TYPE=lock` | `just install --lock` |
 | `make lint TYPE=yaml`, `make test TYPE=unit`, `make docs TYPE=serve` | `just lint yaml`, `just test unit`, `just docs serve` |

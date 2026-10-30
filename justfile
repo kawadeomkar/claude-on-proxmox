@@ -171,7 +171,7 @@ help *RECIPE:
 [arg('BRIDGE', long='bridge', pattern='[A-Za-z0-9._-]*', help='The bridge the template is built on, for local.yml (before the template exists)')]
 [arg('TAILSCALE', long='tailscale', pattern='(on|off)?', help="Answers init's Tailscale question: on, each VM joins your tailnet; off, no Tailscale, for a setup without an account (tailscale_enabled in local.yml)")]
 [arg('STORAGE', long='storage', pattern='[A-Za-z0-9._-]*', help='The storage for VM disks, for local.yml: written when the token can use it there')]
-[arg('TOKEN_NAME', long='token-name', pattern='[A-Za-z0-9._-]*', help="The API token's name, when it is not ansible")]
+[arg('TOKEN_ID', long='token-id', pattern='[A-Za-z0-9._-]*', help="The API token's ID, the part after its user's !, when it is not ansible")]
 [arg('GITHUB_USER', long='github-user', pattern='[A-Za-z0-9-]*', help='The GitHub account whose repositories are cloned')]
 [arg('TOKEN_USER', long='token-user', pattern='[A-Za-z0-9._@-]*', help="The API token's user, when it is not ansible@pve")]
 [arg('TOKEN_SECRET_FILE', long='token-secret-file', pattern='[A-Za-z0-9._/~+-]*', help="A file holding the token's secret (or CLAUDE_ON_PROXMOX_TOKEN_SECRET in the environment; never on the command line)")]
@@ -181,7 +181,7 @@ help *RECIPE:
 [no-exit-message]
 [positional-arguments]
 [script]
-init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STORAGE='' BRIDGE='' TAILSCALE='' PROMPT='' *EXTRA:
+init HOST='' TOKEN_USER='' TOKEN_ID='' TOKEN_SECRET_FILE='' GITHUB_USER='' STORAGE='' BRIDGE='' TAILSCALE='' PROMPT='' *EXTRA:
     {{ guard }}
     {{ if EXTRA == '' { '' } else { init_extra_refused } }}
     host=$1 token_user=$2 token_name=$3 token_secret_file=$4 github_user=$5 storage=$6 bridge=$7 tailscale=$8 prompt=$9
@@ -197,7 +197,7 @@ init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STO
     letters=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
     only host "$host" "$letters.:-" 'letters, digits and . : -'
     only token-user "$token_user" "$letters._@-" 'letters, digits and . _ - @'
-    only token-name "$token_name" "$letters._-" 'letters, digits and . _ -'
+    only token-id "$token_name" "$letters._-" 'letters, digits and . _ -'
     only token-secret-file "$token_secret_file" "$letters._/~+-" 'letters, digits and . _ - / ~ + (give an absolute path where the directory has others)'
     only github-user "$github_user" "$letters-" 'letters, digits and -'
     only storage "$storage" "$letters._-" 'letters, digits and . _ -'
@@ -513,7 +513,6 @@ login SIGN_IN='' *NAMES:
 # removes: 0 nothing is wrong, 1 a problem, 2 something could not be read, 3
 # the run itself failed or wrote no report. ansible-playbook's own code is
 # caught, since -e would end the script at it: its 2 would read as "not read".
-# just list is the same recipe, by the name it had before.
 [arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output, with the same exit code')]
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='Only these VMs; none reads every VM this project created')]
 [arg('ONLY', long='only', pattern='((vms|storage|access|sign-ins|system|work)(,(vms|storage|access|sign-ins|system|work))*)?', help='Only these sections, comma-separated: vms storage access sign-ins system work; vms,storage reads only the Proxmox API, never a VM')]
@@ -551,8 +550,6 @@ status ONLY='' JSON='' *NAMES:
       exit 3
     fi
     exec "$bin/python" tools/status-exit "$report" "$json"
-
-alias list := status
 
 # Each setting's value and where it was set (tools/settings): Ansible's own
 # variables for a play of the role, on the group its playbook runs it on, with

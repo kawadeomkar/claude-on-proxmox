@@ -438,7 +438,7 @@ its own and reads the bytes back through a small terminal (`tests/unit/vt.py`).
 refused by `tests/check_no_local_files.sh`, since the report holds addresses), then `tools/status-exit`,
 which prints the report under `--json`, removes it and exits with its code. `--only` takes `vms`,
 `storage`, `access`, `sign-ins`, `system` and `work`; `--only vms,storage` reads the API alone and never
-opens SSH. `just list` is the same recipe by the name it had before.
+opens SSH.
 
 ## 4.7 `deploy.yml`
 

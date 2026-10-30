@@ -400,7 +400,7 @@
         init_given_broken: >-
           {{ (['--host (' ~ init_given.host ~ ') is not ' ~ ('host' | init_answer_rule) ~ '.']
               if init_given.host is defined and init_given.host | init_answer('host') | length == 0 else [])
-             + (['--token-user and --token-name (' ~ init_given_token ~ ') are not ' ~ ('token_id' | init_answer_rule)
+             + (['--token-user and --token-id (' ~ init_given_token ~ ') are not ' ~ ('token_id' | init_answer_rule)
                  ~ '.']
                 if (init_given.token_user is defined or init_given.token_name is defined)
                    and init_given_token | init_answer('token_id') | length == 0 else [])
@@ -426,7 +426,7 @@
                  ~ init_local_settings.proxmox_api_user ~ '.']
                 if init_given.token_user is defined and init_local_settings.proxmox_api_user is defined
                    and init_given.token_user != init_local_settings.proxmox_api_user else [])
-             + (['--token-name ' ~ init_given.token_name ~ ', but inventory/group_vars/all/local.yml already sets '
+             + (['--token-id ' ~ init_given.token_name ~ ', but inventory/group_vars/all/local.yml already sets '
                  ~ init_local_settings.proxmox_api_token_id ~ '.']
                 if init_given.token_name is defined and init_local_settings.proxmox_api_token_id is defined
                    and init_given.token_name != init_local_settings.proxmox_api_token_id else [])
@@ -579,7 +579,7 @@
     # Asked while there is no secret yet and local.yml names no other token, so
     # it is asked once, beside the secret - and not when the secret is given,
     # whose run gives the token's parts too where they are not the defaults.
-    # Given, as --token-user and --token-name,
+    # Given, as --token-user and --token-id,
     # the parts not given are filled in from local.yml or the defaults, and the
     # whole is held to the same rule.
     - name: Ask for the API token's ID
@@ -594,7 +594,7 @@
              if init_given.token_user is defined or init_given.token_name is defined else '' }}
         init_ask_flag: >-
           {{ ((['--token-user'] if init_given.token_user is defined else [])
-              + (['--token-name'] if init_given.token_name is defined else [])) | join(' and ') }}
+              + (['--token-id'] if init_given.token_name is defined else [])) | join(' and ') }}
         init_ask_text:
           - "The API token to use, as user@realm!name: one you made, or the one just init offers to make"
           - "next. Its ID only: the secret is asked for after it, unless just init makes the token. Enter"

@@ -97,7 +97,7 @@ $ just init --host pve.lan --github-user octocat --token-secret-file ~/.config/p
 | Option | Answers |
 |---|---|
 | `--host` | The Proxmox host's address |
-| `--token-user`, `--token-name` | The token's user (`ansible@pve`) and name (`ansible`), each only when it differs |
+| `--token-user`, `--token-id` | The token's user (`ansible@pve`) and ID (`ansible`), each only when it differs |
 | `--token-secret-file` | A file holding the token's secret, a relative path from where you run `just`; or `CLAUDE_ON_PROXMOX_TOKEN_SECRET` exported in the environment, from a CI secret or `read -rs`, never typed into a command |
 | `--github-user` | Your GitHub username |
 | `--storage` | The storage for VM disks: written whenever the token can use it, the default's fitting or not |
