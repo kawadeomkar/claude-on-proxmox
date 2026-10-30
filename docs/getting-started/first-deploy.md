@@ -9,7 +9,7 @@ the host.
 ```bash
 git clone https://github.com/kawadeomkar/claude-on-proxmox.git && cd claude-on-proxmox
 pyenv virtualenv 3.12 claude-on-proxmox && pyenv local claude-on-proxmox   # a Python environment of its own
-just init            # installs the tools, asks for your Proxmox host and GitHub username, and offers to make the API token
+just init            # installs the tools, asks for your GitHub username, Tailscale and your Proxmox host, and offers to make the API token
 ```
 
 The project keeps no environment of its own, and needs no particular tool to make one: pyenv, above, is a
@@ -71,7 +71,7 @@ summary and one `NEXT STEPS` block.
 | File | Contents |
 |------|----------|
 | `inventory/hosts.yml` | The address of your Proxmox host, which `just init` asks for. VMs are **not** listed here |
-| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise; a Tailscale auth key, which it asks for after a `y` to Tailscale. Optionally `vault_github_token` and `vault_anthropic_api_key`, with `just vault` |
+| `inventory/group_vars/all/vault.yml` | Encrypted: your GitHub username, which `just init` asks for, and the token's secret, which it writes when it makes the token and asks for otherwise; a Tailscale auth key, which it asks for after a `y` to Tailscale. Optionally `vault_github_token`, `vault_anthropic_api_key`, and a Tailscale API token or OAuth client, with which `just destroy` takes the VM off your tailnet - with `just vault` |
 | `inventory/group_vars/all/local.yml` | Only your preferences - VM size, which repositories to clone - and what `just init` writes there: `tailscale_enabled` from your answer, a token not named `ansible@pve!ansible`, and the node, storage and bridge when the defaults (`pve`, `local-lvm`, `vmbr0`) do not fit your host |
 
 Every setting the two files take, with its default, is in the [settings reference](../reference/settings.md),
@@ -118,6 +118,7 @@ the vault (with the password in `.vault_pass`, if you made one).
 ## Deploy
 
 ```bash
+# alpha is the VM's name: choose your own
 just deploy alpha
 ```
 
