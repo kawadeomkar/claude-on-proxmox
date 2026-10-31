@@ -508,18 +508,34 @@ def test_a_template_its_settings_would_build_differs_in_nothing():
     assert proxmox_template_drift(BUILT, WANTED) == []
 
 
+def _qm(value) -> str:
+    """A description as qm config prints it: encoded, on one line, as the VM's config file keeps it."""
+    return str(value).replace(":", "%3A").replace("\n", "%0A")
+
+
 def test_qm_config_reads_as_the_api_gives_it():
-    text = "\n".join(f"{key}: {value}" for key, value in BUILT.items())
+    text = "\n".join(f"{key}: {_qm(value) if key == 'description' else value}" for key, value in BUILT.items())
     assert qm_config(text) == {key: str(value) for key, value in BUILT.items()}
     assert proxmox_template_drift(qm_config(text), WANTED) == []
+
+
+def test_qm_config_decodes_the_description_proxmox_ve_9_2_printed():
+    # As qm config 9000 printed a template this role built, on Proxmox VE 9.2.24; the API gave it decoded.
+    line = (
+        "description: Built by claude-on-proxmox%3A build=1; image=https%3A//cloud-images.ubuntu.com/minimal/releases/"
+        "noble/release/ubuntu-24.04-minimal-cloudimg-amd64.img; packages=qemu-guest-agent; sha256=3839f148c5a3"
+    )
+    config = qm_config(f"name: ubuntu-24.04-cloudinit\n{line}\ncpu: host")
+    assert config["description"].startswith(f"Built by claude-on-proxmox: build=1; image={IMAGE}; packages=")
+    assert "no record" not in " ".join(proxmox_template_drift({**BUILT, "description": config["description"]}, WANTED))
 
 
 def test_the_record_is_found_among_notes_a_person_added():
     notes = f"Our homelab's template.\n{RECORD}\nDo not delete."
     assert proxmox_template_drift({**BUILT, "description": notes}, WANTED) == []
-    # qm config prints a description's further lines as they are, under its key.
-    text = f"name: x\ndescription: Our homelab's template.\n{RECORD}\ncpu: host"
-    assert qm_config(text) == {"name": "x", "description": f"Our homelab's template.\n{RECORD}", "cpu": "host"}
+    # qm config prints the notes on one line, each newline as %0A.
+    text = f"name: x\ndescription: {_qm(notes)}\ncpu: host"
+    assert qm_config(text) == {"name": "x", "description": notes, "cpu": "host"}
 
 
 @pytest.mark.parametrize(

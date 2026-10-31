@@ -58,6 +58,7 @@ names)
   for name in "$@"; do
     # A name starts as a DNS name does, with a letter or a digit: a word that
     # starts with - is an option, which a recipe without options takes as a word.
+    # An underscore passes: the recipe puts a hyphen in its place (hyphenate_names).
     case "$name" in
     '' | [!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._,-]*)
       echo "error: VM names start with a letter or a digit and may contain only letters, digits and . _ - , (got: [$name])" >&2

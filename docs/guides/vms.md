@@ -13,8 +13,10 @@ just destroy beta
 
 `deploy`, `login`, `status` and `destroy` take any number of names, `code` exactly one; comma-separated in
 one word (`alpha,beta`) is the same. A name is 1-63 letters, digits, dots and hyphens, starting and ending with a
-letter or a digit, as a host name is. A word holding anything but letters, digits and `. _ - ,`, or not
-starting with a letter or a digit, is refused before anything runs; `proxmox_vm` refuses the rest. `deploy` also asks
+letter or a digit, as a host name is. Proxmox refuses an underscore in a name, so one is taken as a hyphen, with a
+warning: `just deploy my_vm` makes `my-vm`, and `just code my_vm` opens it. A word holding anything but letters,
+digits and `. _ - ,`, or not starting with a letter or a digit, is refused before anything runs; `proxmox_vm`
+refuses the rest. `deploy` also asks
 about a name that is one of its stages, as in `just deploy configure`, which could mean the stage or a VM
 to create: it runs whichever you say, and without a terminal to ask at runs nothing. A stage
 is given as `--only configure`, and beside `--only` or `--check` such a word is a VM's name

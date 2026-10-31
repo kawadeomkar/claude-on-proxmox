@@ -414,7 +414,7 @@ NAME_WORDS = [
     (["alpha"], "alpha"),
     (["alpha", "beta"], "alpha,beta"),
     (["alpha,beta"], "alpha,beta"),
-    (["a.b-c_d"], "a.b-c_d"),
+    (["a.b-c-d"], "a.b-c-d"),
 ]
 
 
@@ -481,7 +481,20 @@ def test_the_names_check_holds_the_json_whatever_reaches_it() -> None:
             [str(REPO / "tools" / "check"), "names", name], capture_output=True, text=True, check=False
         )
         assert result.returncode != 0 and "VM names start with a letter or a digit" in result.stderr, name
-    assert subprocess.run([str(REPO / "tools" / "check"), "names", "alpha", "b-2.c_d,e"], check=False).returncode == 0
+    assert subprocess.run([str(REPO / "tools" / "check"), "names", "alpha", "b-2.c-d,e"], check=False).returncode == 0
+
+
+@pytest.mark.parametrize("recipe", ["deploy", "status", "login", "destroy", "code"])
+def test_an_underscore_in_a_vm_name_is_taken_as_a_hyphen_and_said(tmp_path: Path, recipe: str) -> None:
+    # Proxmox names a VM as it does a host and refuses an underscore: duscope_1 would have failed at provisioning.
+    result = _just(recipe, "duscope_1", *(["beta"] if recipe != "code" else []), settings=_recording(tmp_path))
+    assert result.returncode == 0, _output(result)
+    run = _runs(tmp_path, "ansible-playbook")[-1]
+    names = "duscope-1" if recipe == "code" else "duscope-1,beta"
+    assert json.dumps({"vm_name": names}) in run, run
+    said = _output(result)
+    assert "warning: Proxmox does not allow underscores in VM names, so duscope_1 was changed to duscope-1" in said
+    assert "beta was changed" not in said
 
 
 # ---------------------------------------------------------------- a stage where the names go ----

@@ -12,6 +12,11 @@ cmd="${1:-}"; vmid="${2:-}"
 write_opts() { # --key value ... -> key: value lines
   while [ $# -gt 0 ]; do
     key="${1#--}"; val="${2:-}"; shift 2 || break
+    # Proxmox keeps a description encoded, and qm config prints it so: a colon and
+    # each newline as %3A and %0A (and any other control or non-ASCII byte as %XX).
+    if [ "$key" = description ]; then
+      val=$(printf '%s' "$val" | awk 'BEGIN { ORS = "" } NR > 1 { print "%0A" } { gsub(":", "%3A"); print }')
+    fi
     printf '%s: %s\n' "$key" "$val" >> "$STATE/$vmid.conf"
   done
 }

@@ -333,7 +333,9 @@ TEMPLATE_FIELDS = (
 
 def qm_config(text):
     """`qm config`'s output as the dict /nodes/<node>/qemu/<vmid>/config gives: each "key: value" line, and a line
-    that is none (more of a description's lines) added to the key before it."""
+    that is none added to the key before it. qm prints the description encoded, on one line, as the VM's config file
+    keeps it - a colon, a newline and any byte outside printable ASCII as %XX (PVE::Tools::encode_text; "Built by
+    claude-on-proxmox%3A build=1" on Proxmox VE 9.2) - which the API gives decoded, and so does this."""
     config, key = {}, None
     for line in str(text or "").splitlines():
         match = re.match(r"^([a-z][a-z0-9_-]*): ?(.*)$", line)
@@ -342,6 +344,8 @@ def qm_config(text):
             config[key] = match.group(2)
         elif key is not None:
             config[key] = f"{config[key]}\n{line}"
+    if "description" in config:
+        config["description"] = unquote(config["description"])
     return config
 
 

@@ -93,6 +93,9 @@ self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON
 guard := quote(justfile_directory() / 'tools/check') + ' checkout ' + quote(invocation_directory())
 # The scripts directory of PYTHON's environment, or BIN: refused, with how to
 # make one, for a Python that is no virtualenv's.
+# A VM name with an underscore, which Proxmox refuses in a name, is taken with a hyphen in its place, and said.
+# The names are held to their pattern, which has no space or wildcard, so splitting $names on , is safe.
+hyphenate_names := 'for name in $(printf %s "$names" | tr , " "); do case "$name" in *_*) echo "warning: Proxmox does not allow underscores in VM names, so $name was changed to $(printf %s "$name" | tr _ -)" >&2 ;; esac; done; names=$(printf %s "$names" | tr _ -)'
 find_bin := 'bin=' + quote(BIN) + '; [ -n "$bin" ] || bin=$(PYTHON=' + quote(PYTHON) + ' tools/env-run --bin)'
 # tools/run-logged with the run's logging settings; its first argument is the
 # log's name.
@@ -331,6 +334,7 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
     shift 4
     tools/check names "$@"
     names=$(IFS=,; printf %s "$*")
+    {{ hyphenate_names }}
     # A stage typed where the names go, by habit from just test unit, would
     # create a VM so named: at a terminal deploy asks which was meant, and
     # without one takes it for neither. Beside --only or --check the stage is
@@ -452,6 +456,7 @@ code PROJECT='' SESSION='' *NAME:
     [ "$#" -gt 0 ] || { echo "error: code opens one VM: just code <name>" >&2; exit 1; }
     tools/check names "$@"
     names=$(IFS=,; printf %s "$*")
+    {{ hyphenate_names }}
     case "$names" in *,*) echo "error: code opens one VM at a time, not [$*]" >&2; exit 1 ;; esac
     tools/check project "$project"
     tools/check session "$session"
@@ -495,6 +500,7 @@ login SIGN_IN='' *NAMES:
     shift
     tools/check names "$@"
     names=$(IFS=,; printf %s "$*")
+    {{ hyphenate_names }}
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
@@ -536,6 +542,7 @@ status ONLY='' JSON='' *NAMES:
     tools/check names "$@"
     tools/check sections "$only"
     names=$(IFS=,; printf %s "$*")
+    {{ hyphenate_names }}
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
@@ -614,6 +621,7 @@ destroy *NAMES:
     {{ guard }}
     tools/check names "$@"
     names=$(IFS=,; printf %s "$*")
+    {{ hyphenate_names }}
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"

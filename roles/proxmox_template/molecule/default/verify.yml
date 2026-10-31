@@ -42,10 +42,11 @@
           - "'local-zfs:cloudinit' in proxmox_template_verify_conf"
           - "'order=scsi0' in proxmox_template_verify_conf"
           - "'template: 1' in proxmox_template_verify_conf"
-          # the record of the build, in its notes, which a template is compared on with its settings
+          # the record of the build, in its notes, which a template is compared on with its settings - kept
+          # encoded, as Proxmox keeps a description and qm config prints it: a colon as %3A
           - >-
-            proxmox_template_verify_conf is search('(?m)^description: Built by claude-on-proxmox: build=1;'
-            ~ ' image=http://127.0.0.1:8080/noble-server-cloudimg-amd64.img; packages=qemu-guest-agent;'
+            proxmox_template_verify_conf is search('(?m)^description: Built by claude-on-proxmox%3A build=1;'
+            ~ ' image=http%3A//127.0.0.1%3A8080/noble-server-cloudimg-amd64.img; packages=qemu-guest-agent;'
             ~ ' sha256=[0-9a-f]{64}$')
           # converge, then side_effect's rebuild of the template that kept no record: two builds. Idempotence and
           # the run after the rebuild found it as its settings would build it, and built nothing
