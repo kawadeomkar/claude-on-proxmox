@@ -7,7 +7,7 @@
 #   tools/check checkout <directory>   just was started there: refuse another checkout
 #   tools/check vault <file>           the vault exists and is encrypted
 #   tools/check collections <bin>      the Galaxy collections are requirements.yml's pins
-#   tools/check names <name>...        VM names: letters, digits and . _ - , only, from a letter or digit
+#   tools/check names <name>...        VM names: letters, digits and . - , only, from a letter or digit
 #   tools/check project <name>         one repository folder's name
 #   tools/check session <id>           one Claude Code session ID, or none
 #   tools/check sections <list>        just status's sections, comma-separated, or none
@@ -58,9 +58,10 @@ names)
   for name in "$@"; do
     # A name starts as a DNS name does, with a letter or a digit: a word that
     # starts with - is an option, which a recipe without options takes as a word.
+    # No underscore: Proxmox names a VM as it does a host, and refuses one.
     case "$name" in
-    '' | [!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._,-]*)
-      echo "error: VM names start with a letter or a digit and may contain only letters, digits and . _ - , (got: [$name])" >&2
+    '' | [!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,-]*)
+      echo "error: VM names start with a letter or a digit and may contain only letters, digits and . - , - no underscore, which Proxmox refuses (got: [$name])" >&2
       exit 1
       ;;
     esac

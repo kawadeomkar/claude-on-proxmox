@@ -316,7 +316,7 @@ vault:
 # mean either. just deploy test is the VM test.
 [arg('START', long='start', value='true', help='Start a VM this run would leave stopped (proxmox_vm_start_existing)')]
 [arg('CHECK', long='check', value='check', help='Dry-run configuration: ansible-playbook --check --diff (every tagged VM, unless named)')]
-[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default, or every VM this project created for --only configure, --check and --only ssh-config')]
+[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9.,-]*', help='The VMs; none means claude-on-proxmox-default, or every VM this project created for --only configure, --check and --only ssh-config')]
 [arg('ROLES', long='tags', short='t', pattern='[a-z_,]*', help='Configure only these roles, comma-separated: beside VM names it means --only configure (just deploy alpha --tags claude_code)')]
 [arg('STAGE', long='only', pattern='(template|provision|configure|ssh-config)?', help='Run one stage and nothing after it: template (the cloud-init template, if missing), provision (create and start), configure (every tagged VM, unless named) or ssh-config (refresh the SSH aliases; without names, also prune those of VMs that are gone)')]
 [continue]
@@ -436,7 +436,7 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
 # Code sessions to continue there: its ID, the name of its transcript in
 # ~/.claude/projects/, lowercase hex in groups of 8-4-4-4-12 and nothing else.
 # Without it the folder's latest conversation continues, as before.
-[arg('NAME', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The one VM to open')]
+[arg('NAME', pattern='[A-Za-z0-9][A-Za-z0-9.,-]*', help='The one VM to open')]
 [arg('PROJECT', long='project', pattern='([A-Za-z0-9._-]{1,100})?', help='Open one project folder on the VM rather than the whole projects directory')]
 [arg('SESSION', long='session', pattern='([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?', help="Continue one of this machine's Claude Code sessions there, by its ID as /resume lists it: its checkout brought to the session's pushed commit, then claude --resume")]
 [continue]
@@ -481,7 +481,7 @@ code PROJECT='' SESSION='' *NAME:
 # it reports every VM's state. Without --only, playbooks/login.yml runs all
 # three in just deploy's order and by its rules; just deploy runs them for its
 # VMs.
-[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs to sign in, one after another; none reports every VM this project created')]
+[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9.,-]*', help='The VMs to sign in, one after another; none reports every VM this project created')]
 [arg('SIGN_IN', long='only', pattern='(claude|github|tailscale)?', help='One sign-in: claude (by the browser, then Remote Control), github (the device flow, then the private repositories) or tailscale (its web login)')]
 [continue]
 [doc('Sign the VM(s) in to Claude, GitHub and Tailscale, or report how each is signed in')]
@@ -522,7 +522,7 @@ login SIGN_IN='' *NAMES:
 # the run itself failed or wrote no report. ansible-playbook's own code is
 # caught, since -e would end the script at it: its 2 would read as "not read".
 [arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output, with the same exit code')]
-[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='Only these VMs; none reads every VM this project created')]
+[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9.,-]*', help='Only these VMs; none reads every VM this project created')]
 [arg('ONLY', long='only', pattern='((vms|storage|access|sign-ins|system|work)(,(vms|storage|access|sign-ins|system|work))*)?', help='Only these sections, comma-separated: vms storage access sign-ins system work; vms,storage reads only the Proxmox API, never a VM')]
 [doc('What every VM this project created is doing, and what needs doing next, read without changing anything')]
 [group('use')]
@@ -603,7 +603,7 @@ settings ALL='' CHANGED='' JSON='' RESET='' VALUE='' *NAME:
     [ -z "$reset" ] || set -- "$@" --reset=true
     exec "$bin/python" tools/settings "$@" --all="$all" --changed="$changed" --json="$json" -- ${name:+"$name"}
 
-[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='The VMs; none means claude-on-proxmox-default')]
+[arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9.,-]*', help='The VMs; none means claude-on-proxmox-default')]
 [continue]
 [doc("Save the VM(s)' own Claude sessions here, release them from Claude, GitHub and Tailscale, then delete them")]
 [group('use')]

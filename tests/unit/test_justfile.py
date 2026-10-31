@@ -59,7 +59,7 @@ PLAYBOOK_RECIPES = {
     "status": "playbooks/status.yml",
     "destroy": "playbooks/destroy.yml",
 }
-NAMES_PATTERN = "[A-Za-z0-9][A-Za-z0-9._,-]*"
+NAMES_PATTERN = "[A-Za-z0-9][A-Za-z0-9.,-]*"
 NOT_MATCHED = "does not match pattern"
 
 
@@ -414,7 +414,7 @@ NAME_WORDS = [
     (["alpha"], "alpha"),
     (["alpha", "beta"], "alpha,beta"),
     (["alpha,beta"], "alpha,beta"),
-    (["a.b-c_d"], "a.b-c_d"),
+    (["a.b-c-d"], "a.b-c-d"),
 ]
 
 
@@ -476,12 +476,24 @@ def test_a_name_is_never_run_as_code(tmp_path: Path) -> None:
 
 def test_the_names_check_holds_the_json_whatever_reaches_it() -> None:
     # The script's own check, behind the pattern: tools/check names.
-    for name in ('a"b', "a b", "a\\b", "", "-x", ",a"):
+    for name in ('a"b', "a b", "a\\b", "", "-x", ",a", "duscope_1"):
         result = subprocess.run(
             [str(REPO / "tools" / "check"), "names", name], capture_output=True, text=True, check=False
         )
         assert result.returncode != 0 and "VM names start with a letter or a digit" in result.stderr, name
-    assert subprocess.run([str(REPO / "tools" / "check"), "names", "alpha", "b-2.c_d,e"], check=False).returncode == 0
+    assert subprocess.run([str(REPO / "tools" / "check"), "names", "alpha", "b-2.c-d,e"], check=False).returncode == 0
+
+
+def test_a_vm_name_with_an_underscore_is_refused_before_anything_runs(tmp_path: Path) -> None:
+    # Proxmox names a VM as it does a host and refuses an underscore; provisioning did, after a template rebuild.
+    for recipe in ("deploy", "status", "login", "destroy"):
+        assert NOT_MATCHED in _refused(tmp_path, recipe, "duscope_1"), recipe
+    assert (
+        "no underscore, which Proxmox refuses"
+        in subprocess.run(
+            [str(REPO / "tools" / "check"), "names", "duscope_1"], capture_output=True, text=True, check=False
+        ).stderr
+    )
 
 
 # ---------------------------------------------------------------- a stage where the names go ----
