@@ -59,7 +59,7 @@ PLAYBOOK_RECIPES = {
     "status": "playbooks/status.yml",
     "destroy": "playbooks/destroy.yml",
 }
-NAMES_PATTERN = "[A-Za-z0-9][A-Za-z0-9.,-]*"
+NAMES_PATTERN = "[A-Za-z0-9][A-Za-z0-9._,-]*"
 NOT_MATCHED = "does not match pattern"
 
 
@@ -476,7 +476,7 @@ def test_a_name_is_never_run_as_code(tmp_path: Path) -> None:
 
 def test_the_names_check_holds_the_json_whatever_reaches_it() -> None:
     # The script's own check, behind the pattern: tools/check names.
-    for name in ('a"b', "a b", "a\\b", "", "-x", ",a", "duscope_1"):
+    for name in ('a"b', "a b", "a\\b", "", "-x", ",a"):
         result = subprocess.run(
             [str(REPO / "tools" / "check"), "names", name], capture_output=True, text=True, check=False
         )
@@ -484,16 +484,17 @@ def test_the_names_check_holds_the_json_whatever_reaches_it() -> None:
     assert subprocess.run([str(REPO / "tools" / "check"), "names", "alpha", "b-2.c-d,e"], check=False).returncode == 0
 
 
-def test_a_vm_name_with_an_underscore_is_refused_before_anything_runs(tmp_path: Path) -> None:
-    # Proxmox names a VM as it does a host and refuses an underscore; provisioning did, after a template rebuild.
-    for recipe in ("deploy", "status", "login", "destroy"):
-        assert NOT_MATCHED in _refused(tmp_path, recipe, "duscope_1"), recipe
-    assert (
-        "no underscore, which Proxmox refuses"
-        in subprocess.run(
-            [str(REPO / "tools" / "check"), "names", "duscope_1"], capture_output=True, text=True, check=False
-        ).stderr
-    )
+@pytest.mark.parametrize("recipe", ["deploy", "status", "login", "destroy", "code"])
+def test_an_underscore_in_a_vm_name_is_taken_as_a_hyphen_and_said(tmp_path: Path, recipe: str) -> None:
+    # Proxmox names a VM as it does a host and refuses an underscore: duscope_1 would have failed at provisioning.
+    result = _just(recipe, "duscope_1", *(["beta"] if recipe != "code" else []), settings=_recording(tmp_path))
+    assert result.returncode == 0, _output(result)
+    run = _runs(tmp_path, "ansible-playbook")[-1]
+    names = "duscope-1" if recipe == "code" else "duscope-1,beta"
+    assert json.dumps({"vm_name": names}) in run, run
+    said = _output(result)
+    assert "warning: Proxmox does not allow underscores in VM names, so duscope_1 was changed to duscope-1" in said
+    assert "beta was changed" not in said
 
 
 # ---------------------------------------------------------------- a stage where the names go ----
