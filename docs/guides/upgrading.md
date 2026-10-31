@@ -1,8 +1,8 @@
 # Upgrading
 
-What to do when you update an install made by an earlier version of this project. There are no release
-versions yet, so each section names the pull request that brought the change; an install made after it
-needs nothing.
+What to do when you update an install made by an earlier version of this project. Each section names the
+release, or before the first release the pull request, that brought the change; an install made after it needs
+nothing.
 
 After pulling a new version, run `just install` before anything else. It syncs your environment to
 `uv.lock` and installs the Galaxy collections `requirements.yml` pins, and a pull changes neither.
@@ -10,6 +10,29 @@ Every target that runs Ansible compares the installed collections with those pin
 naming `just install`, while one differs. They live in `~/.ansible/collections`, which every checkout
 on the machine shares, so another clone or worktree on a different version needs `just install` again
 when you go back to it.
+
+## Names 1.0 changed
+
+1.0 settles the names the project promises to keep (`CONTRIBUTING.md`, Releasing), and changed these before it did:
+
+| Before | From 1.0 | Where |
+|---|---|---|
+| `claude_remote_control` | `claude_code_remote_control` | `local.yml` |
+| `claude_login_args` | `claude_code_login_args` | `local.yml` |
+| `claude_login_timeout` | `claude_code_login_timeout` | `local.yml` |
+| `claude_login_approval_timeout` | `claude_code_login_approval_timeout` | `local.yml` |
+| `claude_vm_default_name` | `vm_default_name` | `local.yml` |
+| `vm_password` | `vault_vm_password` | `vault.yml`, with `just vault` |
+| `proxmox_vm_ipconfig` | `vm_ipconfig` | `local.yml`; the old name still works, as the role's own variable |
+| `common_extra_packages` | `vm_extra_packages` | `local.yml`; the old name still works, as the role's own variable |
+| `--token-name`, of `just init` | `--token-id` | the command line |
+| the `list` recipe | `just status` | the command line |
+
+Rename each in its file. Until you do, every recipe that reads the settings stops at any of the first six still
+set in `local.yml` or `hosts.yml`, naming the file and the new name (`tools/check settings`), and `just init`'s
+checks and provisioning stop at a `vm_password` in the vault that still holds a password: nothing would read them
+under the old name. One set to `""` or left empty, as `vault.yml.example` had `vm_password`, sets nothing and is
+left alone.
 
 ## A template built before its record
 
@@ -164,7 +187,7 @@ its name, and settings (`ANSIBLE_ARGS`, `LOG_DIR`, `PYTHON`) are exported or go 
 | `make code alpha PROJECT=repo` | `just code alpha --project repo` |
 | `make code alpha SESSION=<id>` | `just code alpha --session <id>` |
 | `make login alpha TYPE=github` | `just login alpha --only github` |
-| `make list`, `make destroy alpha`, `make logs`, `make vault` | `just status` (`just list` still works), `just destroy alpha`, `just logs`, `just vault` |
+| `make list`, `make destroy alpha`, `make logs`, `make vault` | `just status`, `just destroy alpha`, `just logs`, `just vault` |
 | `make init HOST=pve.lan GITHUB_USER=octocat PROMPT=no` | `just init --host pve.lan --github-user octocat --no-prompt` (each `NAME=` is a `--name`) |
 | `make install TYPE=lock` | `just install --lock` |
 | `make lint TYPE=yaml`, `make test TYPE=unit`, `make docs TYPE=serve` | `just lint yaml`, `just test unit`, `just docs serve` |

@@ -10,7 +10,7 @@ role's variables, `just settings tailscale_ssh` explains one, `just settings --c
 you changed, and `--json` gives any of them to a script. `just settings tailscale_ssh --value true` sets
 one: it writes `tailscale_ssh: true` into `local.yml`, in place of its example's line, once the value is
 one the setting takes, and says what applies it. A role variable that a setting here feeds is written as
-that setting (`claude_code_remote_control` as `claude_remote_control`). `just settings tailscale_ssh
+that setting (`claude_code_login_desktop` as `login_desktop`). `just settings tailscale_ssh
 --reset` puts it back to its default: it takes the line out of `local.yml` and puts the example's
 commented line back where it was. A secret is only ever said to be set or not set, never shown or written
 there: it changes with `just vault`.
@@ -28,7 +28,7 @@ inventory/hosts.yml                       the Proxmox host's address, nothing el
 Files in `group_vars/all/` load alphabetically, so `defaults` < `local` < `vault`.
 
 Many settings are short names that `defaults.yml` wires into a role's own variable, so you set
-`claude_remote_control` rather than `claude_code_remote_control`; the table says which role variable
+`login_desktop` rather than `claude_code_login_desktop`; the table says which role variable
 each one sets, and what it does. A role variable can be set directly too, and each role's page lists
 them all: [Roles](roles/README.md). A variable in neither these tables nor a role's page is internal;
 changing it is [Architecture § 6](../architecture/variables.md)'s business.
@@ -110,7 +110,7 @@ The VM a recipe acts on when no name is given.
 
 | Setting | Default | Notes |
 |---|---|---|
-| `claude_vm_default_name` | `claude-on-proxmox-default` |  |
+| `vm_default_name` | `claude-on-proxmox-default` |  |
 
 VM sizing. These apply to every VM a run creates - VMs are no longer listed in hosts.yml, so there is no per-VM override. Provision fleets that need different sizes in separate runs.
 
@@ -137,7 +137,7 @@ Addressing is DHCP by default and the guest agent reports back what it got. To p
 
 | Setting | Default | Notes |
 |---|---|---|
-| `proxmox_vm_ipconfig` | `ip=dhcp` | Proxmox ipconfig0 string. A variable of [`proxmox_vm`](roles/proxmox_vm.md). For example `ip=192.0.2.60/24,gw=192.0.2.1`. |
+| `vm_ipconfig` | `ip=dhcp` | Sets `proxmox_vm_ipconfig` ([`proxmox_vm`](roles/proxmox_vm.md)): Proxmox ipconfig0 string. For example `ip=192.0.2.60/24,gw=192.0.2.1`. |
 
 ### GitHub
 
@@ -183,7 +183,7 @@ Packages/tools installed on the VM. See roles/*/defaults/main.yml for the full l
 
 | Setting | Default | Notes |
 |---|---|---|
-| `common_extra_packages` | `[]` | More packages to install on top of common_packages. A variable of [`common`](roles/common.md). For example `[postgresql-client]`. |
+| `vm_extra_packages` | `[]` | Sets `common_extra_packages` ([`common`](roles/common.md)): More packages to install on top of common_packages. For example `[postgresql-client]`. |
 | `dev_tools_install_docker` | `true` | Install Docker Engine from Docker's repository and add dev_tools_user to the docker group. A variable of [`dev_tools`](roles/dev_tools.md). |
 | `dev_tools_install_node` | `true` | Install Node.js from NodeSource, and the packages in dev_tools_npm_global_packages. A variable of [`dev_tools`](roles/dev_tools.md). |
 | `dev_tools_install_uv` | `true` | Install uv and uvx, a pinned release checked against dev_tools_uv_sha256, into dev_tools_uv_install_dir. A variable of [`dev_tools`](roles/dev_tools.md). |
@@ -289,15 +289,15 @@ Remote Control: put each VM's Claude Code session in the list at claude.ai/code 
 
 | Setting | Default | Notes |
 |---|---|---|
-| `claude_remote_control` | `true` | Sets `claude_code_remote_control` ([`claude_code`](roles/claude_code.md)): Run a Claude Code Remote Control server on the VM, so its session appears at claude.ai/code and in the Claude mobile app while executing here. |
+| `claude_code_remote_control` | `true` | Run a Claude Code Remote Control server on the VM, so its session appears at claude.ai/code and in the Claude mobile app while executing here. A variable of [`claude_code`](roles/claude_code.md). |
 
 Extra arguments for the Claude sign-in's `claude auth login`, such as [--sso], how long it may take to accept a code you paste, and how long the run waits for your browser to come back to the VM by itself once you authorise.
 
 | Setting | Default | Notes |
 |---|---|---|
-| `claude_login_args` | `[]` | Sets `claude_code_login_args` ([`claude_code`](roles/claude_code.md)): Extra arguments for `claude auth login`, such as --sso or --email. |
-| `claude_login_timeout` | `120` | Sets `claude_code_login_timeout` ([`claude_code`](roles/claude_code.md)): Seconds to wait, once the code is pasted, for claude to accept it. |
-| `claude_login_approval_timeout` | `300` | Sets `claude_code_login_approval_timeout` ([`claude_code`](roles/claude_code.md)): Seconds the run waits for you to authorise in the browser when it comes back by itself. |
+| `claude_code_login_args` | `[]` | Extra arguments for `claude auth login`, such as --sso or --email. A variable of [`claude_code`](roles/claude_code.md). |
+| `claude_code_login_timeout` | `120` | Seconds to wait, once the code is pasted, for claude to accept it. A variable of [`claude_code`](roles/claude_code.md). |
+| `claude_code_login_approval_timeout` | `300` | Seconds the run waits for you to authorise in the browser when it comes back by itself. A variable of [`claude_code`](roles/claude_code.md). |
 
 Session title in the list at claude.ai/code; defaults to the VM name.
 
@@ -456,7 +456,7 @@ Optional: a password for the VM user, for the Proxmox console. SSH stays key-onl
 
 | Secret, in `vault.yml` | Notes |
 |---|---|
-| `vm_password` | Sets `proxmox_vm_password` ([`proxmox_vm`](roles/proxmox_vm.md)): Optional cloud-init password for the user (vm_password host var). |
+| `vault_vm_password` | Sets `proxmox_vm_password` ([`proxmox_vm`](roles/proxmox_vm.md)): Optional cloud-init password for the user (vault_vm_password in vault.yml). |
 
 ### Secrets: GitHub
 
@@ -474,7 +474,7 @@ Optional. With it, private repositories are listed and cloned and gh on each VM 
 
 ### Secrets: Claude Code
 
-Optional: skip interactive `claude` login on the VM. Billing for Claude Code on the VM via Anthropic API credits. Leave empty to log in with your Claude account instead - and leave it empty if you want Remote Control (claude_remote_control), which an API key would override.
+Optional: skip interactive `claude` login on the VM. Billing for Claude Code on the VM via Anthropic API credits. Leave empty to log in with your Claude account instead - and leave it empty if you want Remote Control (claude_code_remote_control), which an API key would override.
 
 | Secret, in `vault.yml` | Notes |
 |---|---|

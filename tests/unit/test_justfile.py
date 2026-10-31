@@ -160,6 +160,11 @@ def _vault(tmp_path: Path, content: str = VAULT_HEADER) -> Path:
     return vault
 
 
+def _settings_files(tmp_path: Path) -> str:
+    """Where tools/check settings looks for a renamed setting: the test's own files, never the checkout's."""
+    return f"SETTINGS_FILES={tmp_path / 'hosts.yml'} {tmp_path / 'local.yml'}"
+
+
 def _safe(tmp_path: Path, galaxy_rc: int = 0) -> list[str]:
     """A run nothing can harm: tools with no ansible-playbook among them, a vault stub, logs in tmp_path."""
     _stand_in(tmp_path / "bin", "ansible-galaxy", rc=galaxy_rc)
@@ -169,6 +174,7 @@ def _safe(tmp_path: Path, galaxy_rc: int = 0) -> list[str]:
     return [
         f"BIN={tmp_path / 'bin'}",
         f"VAULT_FILE={_vault(tmp_path)}",
+        _settings_files(tmp_path),
         f"LOG_DIR={tmp_path / 'logs'}",
         f"STATUS_DIR={tmp_path / 'status'}",
         f"LIVE_DIR={tmp_path / 'live'}",
@@ -342,7 +348,9 @@ def test_every_recipe_that_runs_ansible_stops_at_collections_that_are_not_the_pi
 
 
 def test_a_recipe_without_the_tools_says_just_install(tmp_path: Path) -> None:
-    result = _just("status", settings=[f"BIN={tmp_path / 'empty'}", f"VAULT_FILE={_vault(tmp_path)}"])
+    result = _just(
+        "status", settings=[f"BIN={tmp_path / 'empty'}", f"VAULT_FILE={_vault(tmp_path)}", _settings_files(tmp_path)]
+    )
     assert result.returncode != 0
     assert f"no ansible-galaxy in [{tmp_path / 'empty'}]" in _output(result)
     assert "Run: just install" in _output(result)
@@ -659,7 +667,7 @@ def test_deploy_without_options_runs_deploy_yml_with_the_no_terminal_switch(tmp_
         (["code", "alpha"], "code alpha"),
         (["code", "alpha", "--project", "demo"], "code --project demo alpha"),
         (["code", "alpha", "--session", "0a608ad8-1b2c-4d3e-8f90-123456789abc"], "code alpha"),
-        (["list"], "unset"),
+        (["status"], "unset"),
     ],
 )
 def test_each_recipe_drawn_live_is_drawn_under_what_was_run(tmp_path: Path, args: list[str], title: str) -> None:
@@ -1272,7 +1280,13 @@ def test_every_recipe_that_runs_a_tool_refuses_a_python_that_is_no_virtualenv(tm
     # Its scripts directory would be /usr/local/bin or the like, where a system-wide Ansible lives.
     python = _not_a_virtualenv(tmp_path)
     result = _just(
-        *args, settings=[f"PYTHON={python}", f"VAULT_FILE={_vault(tmp_path)}", f"LOG_DIR={tmp_path / 'logs'}"]
+        *args,
+        settings=[
+            f"PYTHON={python}",
+            f"VAULT_FILE={_vault(tmp_path)}",
+            _settings_files(tmp_path),
+            f"LOG_DIR={tmp_path / 'logs'}",
+        ],
     )
     assert result.returncode != 0
     assert f"error: [{python}] is not the Python of a virtualenv, and this project runs its tools only from" in _output(
@@ -1293,6 +1307,7 @@ def test_recipes_run_the_tools_of_python_s_environment(tmp_path: Path) -> None:
         settings=[
             f"PYTHON={python}",
             f"VAULT_FILE={_vault(tmp_path)}",
+            _settings_files(tmp_path),
             f"LOG_DIR={tmp_path / 'logs'}",
             f"STATUS_DIR={tmp_path / 'status'}",
         ],
@@ -1306,7 +1321,9 @@ def test_a_bin_in_the_environment_is_not_the_tools(tmp_path: Path) -> None:
     _stand_in(tmp_path / "bin", "ansible-galaxy")
     python = _not_a_virtualenv(tmp_path)
     result = _just(
-        "status", settings=[f"PYTHON={python}", f"VAULT_FILE={_vault(tmp_path)}"], env={"BIN": str(tmp_path / "bin")}
+        "status",
+        settings=[f"PYTHON={python}", f"VAULT_FILE={_vault(tmp_path)}", _settings_files(tmp_path)],
+        env={"BIN": str(tmp_path / "bin")},
     )
     assert result.returncode != 0 and _runs(tmp_path, "ansible-playbook") == []
 
@@ -1493,6 +1510,8 @@ def _init_settings(tmp_path: Path, settings_body: str = "") -> list[str]:
         (tmp_path / f"{name}.example").write_text(f"# {name}\n")
         copies.append(str(tmp_path / name))
     settings = [f"BIN={bin_dir}", f"UV={bin_dir / 'uv'}", f"INIT_FILES={' '.join(copies)}"]
+    # Not the copies: tools/check settings reads its files with the environment's Python, which a stand-in has not.
+    settings.append(_settings_files(tmp_path / "settings"))
     settings += [
         f"VAULT_FILE={tmp_path / 'vault.yml'}",
         f"VAULT_PASS={tmp_path / '.vault_pass'}",
@@ -1611,7 +1630,7 @@ def test_init_logs_its_run_once(tmp_path: Path) -> None:
 
 
 GIVEN = [
-    "--host", "pve.lan", "--token-user", "deploy@pam", "--token-name", "claude", "--github-user", "octo-cat",
+    "--host", "pve.lan", "--token-user", "deploy@pam", "--token-id", "claude", "--github-user", "octo-cat",
     "--tailscale", "off", "--storage", "local-zfs", "--bridge", "vmbr1",
 ]  # fmt: skip
 
@@ -1661,7 +1680,7 @@ def test_an_exported_value_is_not_given(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "option", ["host", "token-user", "token-name", "token-secret-file", "github-user", "storage", "bridge"]
+    "option", ["host", "token-user", "token-id", "token-secret-file", "github-user", "storage", "bridge"]
 )
 @pytest.mark.parametrize("value", ["a'b", 'a"b', "a b", "$(x)", "a`b", "a;b", "a\nb", "ålpha"])
 def test_a_given_value_outside_its_characters_is_refused_before_anything_runs(
@@ -2128,15 +2147,46 @@ def test_status_takes_its_sections_as_one_json_extra_var(tmp_path: Path) -> None
     assert run[run.index('{"vm_name": "alpha"}') - 1] == "-e", run
 
 
+def test_a_setting_under_a_name_1_0_renamed_is_refused_by_its_new_name(tmp_path: Path) -> None:
+    # The check reads YAML with the environment's Python: this one's, whole, in place of a stand-in.
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    (tmp_path / "bin" / "python").chmod(0o755)
+    (tmp_path / "local.yml").write_text(
+        'vm_cores: 4\n"claude_remote_control": false\nclaude_login_timeout: ""\nclaude_login_args:\n'
+        "vm_password: a-console-password\n"
+        "claude_code_global_instructions: |\n  claude_vm_default_name: words in the instructions\n"
+    )
+    (tmp_path / "hosts.yml").write_text("all: {children: {proxmox: {hosts: {pve: {claude_vm_default_name: beta}}}}}\n")
+    output = _refused(tmp_path, "status")
+    local, hosts = tmp_path / "local.yml", tmp_path / "hosts.yml"
+    assert f"error: {local} sets claude_remote_control, which is claude_code_remote_control from 1.0" in output
+    assert f"error: {local} sets vm_password, which is vault_vm_password from 1.0: it is a secret" in output
+    assert f"error: {hosts} sets claude_vm_default_name, which is vm_default_name from 1.0" in output
+    # Empty, or text in another setting's value, it sets nothing: not said; and a password is never said back.
+    assert "claude_login_timeout" not in output and "claude_login_args" not in output
+    assert f"{local} sets claude_vm_default_name" not in output and "a-console-password" not in output
+    # A file it cannot read is said, never passed.
+    (tmp_path / "hosts.yml").write_text("all: [unclosed\n")
+    assert f"error: {hosts} is not YAML at line 2" in _refused(tmp_path, "status")
+    (tmp_path / "local.yml").write_text("claude_code_remote_control: false\n")
+    (tmp_path / "hosts.yml").write_text("all: {}\n")
+    assert _just("status", settings=_recording(tmp_path)).returncode == 0
+
+
+def test_every_recipe_that_reads_the_settings_checks_them_for_a_renamed_name() -> None:
+    recipes = json.loads(
+        subprocess.run(
+            [JUST, "--dump", "--dump-format", "json"], cwd=REPO, capture_output=True, text=True, check=True
+        ).stdout
+    )["recipes"]
+    checking = {name for name, recipe in recipes.items() if "tools/check settings" in json.dumps(recipe["body"])}
+    assert checking == {"init", "deploy", "code", "login", "status", "settings", "destroy"}, sorted(checking)
+
+
 @pytest.mark.parametrize("only", ["vms,,storage", "vms storage", "VMS", "access;id", ",vms"])
 def test_status_refuses_a_section_it_has_not_got(tmp_path: Path, only: str) -> None:
     assert NOT_MATCHED in _refused(tmp_path, "status", "--only", only)
-
-
-def test_list_is_status_by_the_name_it_had_before(tmp_path: Path) -> None:
-    run = _playbook(tmp_path, "list", "alpha")
-    assert run[-1] == "playbooks/status.yml", run
-    assert run[run.index('{"vm_name": "alpha"}') - 1] == "-e", run
 
 
 # ---------------------------------------------------------------- just settings ----
@@ -2187,10 +2237,10 @@ def test_settings_passes_a_value_as_one_argument_and_runs_none_of_it(tmp_path: P
     ran = tmp_path / "ran"
     value = f"$(touch {ran}) `touch {ran}` 'single' \"double\" ; | & spaces"
     result, runs = _settings(
-        tmp_path, "claude_vm_default_name", "--value", value, settings=[f"VAULT_PASS={tmp_path / 'none'}"]
+        tmp_path, "vm_default_name", "--value", value, settings=[f"VAULT_PASS={tmp_path / 'none'}"]
     )
     assert result.returncode == 0, _output(result)
-    expected = [f"--value={value}", "--all=", "--changed=", "--json=", "--", "claude_vm_default_name"]
+    expected = [f"--value={value}", "--all=", "--changed=", "--json=", "--", "vm_default_name"]
     assert runs == [["tools/settings", *expected]]
     assert not ran.exists()
 

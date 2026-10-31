@@ -21,7 +21,7 @@ vault_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # -------------------------------------------------------------------- VMs ---
 # Optional: a password for the VM user, for the Proxmox console. SSH stays
 # key-only either way (common_harden_ssh). Empty sets none.
-vm_password: ""
+vault_vm_password: ""
 
 # ----------------------------------------------------------------- GitHub ---
 # GitHub account whose repositories get cloned onto the VM.
@@ -40,7 +40,7 @@ vault_github_token: ""
 # Optional: skip interactive `claude` login on the VM.
 # Billing for Claude Code on the VM via Anthropic API credits. Leave empty to
 # log in with your Claude account instead - and leave it empty if you want
-# Remote Control (claude_remote_control), which an API key would override.
+# Remote Control (claude_code_remote_control), which an API key would override.
 vault_anthropic_api_key: ""
 
 # -------------------------------------------------------------- Tailscale ---

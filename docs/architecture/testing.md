@@ -75,7 +75,7 @@ pytest over `tests/unit/`: 2244 tests. By file:
   settings; each run with a `HOME` of its own and the collections' path pinned beside it. Every role's rows
   are its `argument_specs`; every line within 100 columns. The attacks: a `pipe` lookup behind a group
   variable in `hosts.yml` (refused, never run), an executable in `inventory/` (never run), a secret vaulted
-  inline in `local.yml` and a setting reading `vm_password` (masked), a GitHub username of `local` (no report
+  inline in `local.yml` and a setting reading `vault_vm_password` (masked), a GitHub username of `local` (no report
   refused), a secret copied in under a computed name (nothing printed, exit 1), a control sequence in a
   value. Where values come from: `proxmox_vm` evaluated on `claude_vm_pending`, `proxmox_template` on the
   Proxmox host with its host variable, a short setting followed to the role variable it feeds, what `just

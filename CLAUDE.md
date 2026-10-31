@@ -43,7 +43,7 @@ just deploy alpha --only configure   # one stage of it: template, provision, con
 just deploy alpha --tags claude_code # re-run one role, e.g. to push an API key (--tags beside names means --only configure)
 just destroy alpha                   # save the VM's own Claude sessions here, release it from Claude, GitHub and Tailscale, then delete it
 just login alpha                     # Claude, GitHub, Tailscale in deploy's order, one VM after another (--only claude, github or tailscale: one)
-just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed); just list too
+just status                          # read-only, live: every VM, what needs doing (--only vms,storage,access,sign-ins,system,work; --json; exit 0/1/2, 3 failed)
 just settings tailscale              # a role's variables, each value and where it was set (a variable; --all; --changed; --json; none: usage)
 just settings vm_cores --value 4     # set one setting in local.yml, held to its type; never a secret (just vault)
 just settings vm_cores --reset       # back to its default: its line out of local.yml, its example's line back
@@ -61,7 +61,8 @@ go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
 `--no-deps` would skip one - whose first line is the checkout guard (`tools/check checkout`: just looks for a
 justfile upward, so started in a make-era worktree under `.claude/worktrees/` it would run main's, against
 main's inventory and vault), then its own rules with their messages, then what it needs (`tools/env-run
---bin`, `tools/check vault`, `tools/check collections`), then the work, its last command `exec`'d - but in a
+--bin`, `tools/check vault`, `tools/check collections`, and in a recipe that reads the settings `tools/check settings`,
+which refuses a setting under a name 1.0 renamed), then the work, its last command `exec`'d - but in a
 recipe drawn in parts (`lint`, `init`, `test`), which exports its title and its state's path (`live_state`, the recipe's
 name and the shell's PID), sets `trap 'rc=$?; live_end "$rc"; exit "$rc"' EXIT` - an end that fails changes no exit
 status - only when `live_run` is empty, and runs each command as `{{ live }} run <stage> --step <label> -- …`

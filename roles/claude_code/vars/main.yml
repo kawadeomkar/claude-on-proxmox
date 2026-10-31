@@ -126,7 +126,7 @@ claude_code_remote_control_blocker: >-
      ~ (claude_code_remote_control_settings_blockers | join(', ')) ~ '. Each switches off the'
      ~ ' feature-flag evaluation Remote Control depends on, or routes the client away from the'
      ~ ' claude.ai login it needs. Remove it from claude_code_settings and from the file on the'
-     ~ ' VM, or set claude_remote_control: false to leave Remote Control off.'
+     ~ ' VM, or set claude_code_remote_control: false to leave Remote Control off.'
      if claude_code_remote_control_settings_blockers | length > 0
      else 'no Claude Code login is stored for ' ~ claude_code_user ~ ' on it.'
      if not (claude_code_remote_control_status.loggedIn | default(false)) | bool

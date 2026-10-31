@@ -144,7 +144,7 @@ def commands() -> str:
     layout is this script's own, so a newer just generates the same page."""
     justfile = json.loads(_just("--json"))
     recipes = justfile["recipes"]
-    # An alias is listed under its recipe: the name a recipe had before (just list for just status).
+    # An alias is listed under its recipe: the name a recipe had before.
     aliases: dict[str, list[str]] = {}
     for alias in sorted(justfile.get("aliases") or {}):
         aliases.setdefault(justfile["aliases"][alias]["target"], []).append(alias)
@@ -201,7 +201,7 @@ def wiring() -> tuple[dict, dict[str, list[str]]]:
     """Every default a setting can have, and which variables each setting sets directly.
 
     The wiring is a variable whose whole value is one setting, as in defaults.yml
-    (`claude_code_remote_control: "{{ claude_remote_control }}"`) or a role's defaults
+    (`claude_code_login_desktop: "{{ login_desktop }}"`) or a role's defaults
     (`proxmox_vm_cores: "{{ vm_cores | default(2) }}"`, which is where vm_cores' default lives).
     Role defaults load first and defaults.yml after, as Ansible ranks them.
     """

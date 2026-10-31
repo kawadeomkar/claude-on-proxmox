@@ -21,7 +21,7 @@ and the [security model](../architecture/security-model.md) is how each is enfor
   release manifest; there is no independently signed artifact to pin. With `dev_tools_install_rust` on,
   rustup comes from Ubuntu's archive, and the Rust toolchain it installs is fetched over TLS from `static.rust-lang.org` and checked against
   the hashes in the channel manifest, which comes from the same place.
-- sshd is restricted to key-based logins (`common_harden_ssh`), even if `vm_password` is set.
+- sshd is restricted to key-based logins (`common_harden_ssh`), even if `vault_vm_password` is set.
 - `just code` gives each VM this machine's Claude Code sessions of the repositories it has checked out
   ([This machine's Claude sessions on the VM](vscode.md#this-machines-claude-sessions-on-the-vm)): their
   transcripts hold whatever their tools printed, secrets among them, readable there by anything running as

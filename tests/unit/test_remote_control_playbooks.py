@@ -203,7 +203,7 @@ def test_remote_control_off_on_purpose_is_said_as_such(login):
     assert "Remove it wherever it is set" not in on_the_api_path
     assert "auth login" not in on_the_api_path
     assert messages["switched-off"] == (
-        "switched-off: signed in. Remote Control is off on this VM on purpose: claude_remote_control is false."
+        "switched-off: signed in. Remote Control is off on this VM on purpose: claude_code_remote_control is false."
     )
 
 
@@ -349,7 +349,7 @@ def test_settings_that_disable_remote_control_are_named_rather_than_fatal(check_
     named = re.search(r"disables Remote Control through (.+?)\. Each ", messages[host])
     assert named, messages[host]
     assert set(named.group(1).split(", ")) == set(expected), messages[host]
-    assert "claude_remote_control: false" in messages[host]
+    assert "claude_code_remote_control: false" in messages[host]
     # Signed in already, so no login step is suggested.
     assert "--only claude" not in messages[host]
 

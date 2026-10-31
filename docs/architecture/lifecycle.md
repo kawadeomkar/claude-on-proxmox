@@ -438,7 +438,7 @@ its own and reads the bytes back through a small terminal (`tests/unit/vt.py`).
 refused by `tests/check_no_local_files.sh`, since the report holds addresses), then `tools/status-exit`,
 which prints the report under `--json`, removes it and exits with its code. `--only` takes `vms`,
 `storage`, `access`, `sign-ins`, `system` and `work`; `--only vms,storage` reads the API alone and never
-opens SSH. `just list` is the same recipe by the name it had before.
+opens SSH.
 
 ## 4.7 `deploy.yml`
 
@@ -451,7 +451,7 @@ asked for its VM list — unfiltered, one node that is down failed the run befor
 
 `configure.yml` is imported with `vars: {claude_vm_discovery: false}`, so it configures exactly the
 hosts provisioning's play 3 published. Running discovery there would disagree with provisioning
-about what omitted names mean: `claude_vm_names` falls back to `claude_vm_default_name`, but
+about what omitted names mean: `claude_vm_names` falls back to `vm_default_name`, but
 discovery tests `vm_name is defined` and falls back to the whole fleet, so a bare `just deploy`
 created the default VM and then configured every tagged VM. It also repeated, one VM at a time, the
 lookups provisioning had just made. Import `vars:` are play vars of every imported play, including
@@ -989,9 +989,10 @@ every task a read (held by `tests/unit/test_init_check.py`):
    Proxmox refuses is a problem. `--storage` and `--bridge` given are held to the same lists before anything is
    written, written whenever the token can use them, and refused while they cannot be checked; `--bridge` beside
    a template is nothing to do when it is the template's own, and refused otherwise.
-9. **A key for the VMs**: `vm_ssh_public_keys`. `vm_password` alone is a problem - it is for the Proxmox
+9. **A key for the VMs**: `vm_ssh_public_keys`. `vault_vm_password` alone is a problem - it is for the Proxmox
    console, and deploy configures the VMs over SSH, which takes a key; with neither, the public keys in
-   `~/.ssh` are listed and the `local.yml` line suggested.
+   `~/.ssh` are listed and the `local.yml` line suggested. A `vm_password` that holds a password, its name
+   before 1.0, is a problem too: nothing reads it, and the fix is to rename it in `vault.yml`.
 
 Each result is `ok`, `!!` with its fix, or `--` not checked, printed together at the end, and the run fails
 when any is `!!`. NEXT STEPS (`claude_vm_next`, under the key `just init`, matter `init_check`) then gives

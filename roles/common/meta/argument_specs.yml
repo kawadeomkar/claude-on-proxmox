@@ -80,7 +80,7 @@ argument_specs:
         type: list
         elements: str
         default: []
-        description: More packages to install on top of common_packages.
+        description: More packages to install on top of common_packages. Set through vm_extra_packages in local.yml.
       common_enabled_services:
         type: list
         elements: str

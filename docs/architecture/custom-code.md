@@ -676,7 +676,7 @@ trusted as a template. What a setting is - each role's `argument_specs`, main's 
 
 **Where a value was set** is the highest layer that holds the name - `hosts.yml`, `vault.yml`, `local.yml`, or a
 default - and, for a default that is an expression, the names it reads, followed through the wiring (Jinja's own
-parse) to the file a person edits: `claude_code_remote_control` is false because of `claude_remote_control` in
+parse) to the file a person edits: `claude_code_login_desktop` is false because of `login_desktop` in
 `local.yml`. What a run sets above the inventory is read from the playbooks: a playbook no other imports is the run
 of the recipe of the same name, and the `vars:` it passes - on an import, a play, a role, an `add_host` - through
 every import; the justfile's `-e` objects too. The row keeps the value a run that sets nothing uses (`just deploy
@@ -694,7 +694,7 @@ the same file after, would template none of its values.
 **No secret is printed.** A value is masked when `vault.yml` holds it; when Ansible marks it as decrypted from a
 vault (`VaultHelper.get_ciphertext`), an inline `!vault` anywhere included - values of the whole-file vault carry no
 mark, hence the first rule; when its role marks the variable `no_log`; or when its expression reads a name the
-vault holds or a `no_log` variable (`vm_password` has no `vault_` prefix). A masked row says set, not set, or the
+vault holds, whatever its name, or a `no_log` variable. A masked row says set, not set, or the
 example's placeholder - compared with `vault.yml.example`, as `just init` decides it - and that it changes with
 `just vault`. Last, every value about to be printed, in the text or the JSON, is checked against every secret
 Ansible decrypted; a match prints nothing and exits 1. The GitHub username and an OAuth client's ID are masked in
@@ -706,7 +706,7 @@ is printed.
 **`--value` writes one setting into `local.yml`, and nothing else.** One function, `settable`, decides what a name
 can be set as, or why not, and the read view's `change` comes from it, so the report never names a command the
 writer refuses. A role variable a setting of the examples feeds is written as that setting
-(`claude_code_remote_control` as `claude_remote_control`). Refused, with nothing written: anything `vault.yml`
+(`claude_code_login_desktop` as `login_desktop`). Refused, with nothing written: anything `vault.yml`
 holds, feeds or a role marks `no_log` - for `just vault`, the value given never said back, though the shell's
 history keeps it - a value vaulted inline in `local.yml`, a name made from each VM's own (one setting would give
 every VM the same), what a run sets for itself and no example names, the Proxmox host's address (`hosts.yml`),

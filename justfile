@@ -10,7 +10,8 @@
 # How every recipe runs (docs/architecture/decisions.md §15.3): a bash script
 # with no dependencies. Its first lines refuse a run started in another
 # checkout (tools/check checkout), then check its own arguments, then what it
-# needs - the environment (tools/env-run --bin), the vault, the collections -
+# needs - the environment (tools/env-run --bin), the vault, the collections,
+# and where it reads the settings no name 1.0 renamed (tools/check settings) -
 # and only then does it work, its last command exec'd - but in a recipe drawn
 # in parts (lint, init, test), whose trap must still run to say the run's end
 # (tools/live). Nothing is a dependency, which JUST_NO_DEPS or --no-deps would
@@ -71,6 +72,9 @@ LIVE_DIR := env('LIVE_DIR', justfile_directory() / '.cache' / 'live')
 BIN := ''
 VAULT_FILE := 'inventory/group_vars/all/vault.yml'
 VAULT_PASS := '.vault_pass'
+# Where a person sets the settings: tools/check settings refuses a name 1.0
+# renamed in them, which nothing would read.
+SETTINGS_FILES := 'inventory/hosts.yml inventory/group_vars/all/local.yml'
 # What `just init` copies from its .example beside it, where it is missing.
 INIT_FILES := 'inventory/hosts.yml inventory/group_vars/all/local.yml ' + VAULT_FILE
 
@@ -84,7 +88,7 @@ live_run := ''
 # recipe that includes another's work (test lints, init installs) runs it by.
 # A recursive just would otherwise start without the command line's BIN= and
 # the rest; tests/unit/test_justfile.py holds this to every setting above.
-self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' INIT_FILES=' + quote(INIT_FILES) + ' LIVE_DIR=' + quote(LIVE_DIR) + ' stamp=' + quote(stamp) + ' live_run=' + quote(live_run)
+self := quote(just_executable()) + ' --justfile ' + quote(justfile()) + ' PYTHON=' + quote(PYTHON) + ' UV=' + quote(UV) + ' ANSIBLE_ARGS=' + quote(ANSIBLE_ARGS) + ' LOG_DIR=' + quote(LOG_DIR) + ' LOG_RETENTION_DAYS=' + quote(LOG_RETENTION_DAYS) + ' STATUS_DIR=' + quote(STATUS_DIR) + ' BIN=' + quote(BIN) + ' VAULT_FILE=' + quote(VAULT_FILE) + ' VAULT_PASS=' + quote(VAULT_PASS) + ' SETTINGS_FILES=' + quote(SETTINGS_FILES) + ' INIT_FILES=' + quote(INIT_FILES) + ' LIVE_DIR=' + quote(LIVE_DIR) + ' stamp=' + quote(stamp) + ' live_run=' + quote(live_run)
 # The first line of every recipe but help.
 guard := quote(justfile_directory() / 'tools/check') + ' checkout ' + quote(invocation_directory())
 # The scripts directory of PYTHON's environment, or BIN: refused, with how to
@@ -171,7 +175,7 @@ help *RECIPE:
 [arg('BRIDGE', long='bridge', pattern='[A-Za-z0-9._-]*', help='The bridge the template is built on, for local.yml (before the template exists)')]
 [arg('TAILSCALE', long='tailscale', pattern='(on|off)?', help="Answers init's Tailscale question: on, each VM joins your tailnet; off, no Tailscale, for a setup without an account (tailscale_enabled in local.yml)")]
 [arg('STORAGE', long='storage', pattern='[A-Za-z0-9._-]*', help='The storage for VM disks, for local.yml: written when the token can use it there')]
-[arg('TOKEN_NAME', long='token-name', pattern='[A-Za-z0-9._-]*', help="The API token's name, when it is not ansible")]
+[arg('TOKEN_ID', long='token-id', pattern='[A-Za-z0-9._-]*', help="The API token's ID, the part after its user's !, when it is not ansible")]
 [arg('GITHUB_USER', long='github-user', pattern='[A-Za-z0-9-]*', help='The GitHub account whose repositories are cloned')]
 [arg('TOKEN_USER', long='token-user', pattern='[A-Za-z0-9._@-]*', help="The API token's user, when it is not ansible@pve")]
 [arg('TOKEN_SECRET_FILE', long='token-secret-file', pattern='[A-Za-z0-9._/~+-]*', help="A file holding the token's secret (or CLAUDE_ON_PROXMOX_TOKEN_SECRET in the environment; never on the command line)")]
@@ -181,7 +185,7 @@ help *RECIPE:
 [no-exit-message]
 [positional-arguments]
 [script]
-init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STORAGE='' BRIDGE='' TAILSCALE='' PROMPT='' *EXTRA:
+init HOST='' TOKEN_USER='' TOKEN_ID='' TOKEN_SECRET_FILE='' GITHUB_USER='' STORAGE='' BRIDGE='' TAILSCALE='' PROMPT='' *EXTRA:
     {{ guard }}
     {{ if EXTRA == '' { '' } else { init_extra_refused } }}
     host=$1 token_user=$2 token_name=$3 token_secret_file=$4 github_user=$5 storage=$6 bridge=$7 tailscale=$8 prompt=$9
@@ -197,7 +201,7 @@ init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STO
     letters=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
     only host "$host" "$letters.:-" 'letters, digits and . : -'
     only token-user "$token_user" "$letters._@-" 'letters, digits and . _ - @'
-    only token-name "$token_name" "$letters._-" 'letters, digits and . _ -'
+    only token-id "$token_name" "$letters._-" 'letters, digits and . _ -'
     only token-secret-file "$token_secret_file" "$letters._/~+-" 'letters, digits and . _ - / ~ + (give an absolute path where the directory has others)'
     only github-user "$github_user" "$letters-" 'letters, digits and -'
     only storage "$storage" "$letters._-" 'letters, digits and . _ -'
@@ -221,6 +225,7 @@ init HOST='' TOKEN_USER='' TOKEN_NAME='' TOKEN_SECRET_FILE='' GITHUB_USER='' STO
       test -f "$file" || { cp "$file.example" "$file"; copied="$copied $file"; }
     done
     [ -z "$copied" ] || echo "Created$copied from their .example files (git-ignored)."
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     # Drawn live from here, after just install, as one run in two parts - the questions, then the checks - unless it
     # is a stage of another recipe's run (live_run), or there is no state to carry the run between them (LIVE_DIR=,
     # when each playbook prints as it did): its title, which no value given goes into, the state the two playbooks
@@ -398,6 +403,7 @@ deploy STAGE='' CHECK='' ROLES='' START='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     # Passed as JSON, not key=value: Ansible's key=value parser splits
@@ -452,6 +458,7 @@ code PROJECT='' SESSION='' *NAME:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -491,6 +498,7 @@ login SIGN_IN='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -513,7 +521,6 @@ login SIGN_IN='' *NAMES:
 # removes: 0 nothing is wrong, 1 a problem, 2 something could not be read, 3
 # the run itself failed or wrote no report. ansible-playbook's own code is
 # caught, since -e would end the script at it: its 2 would read as "not read".
-# just list is the same recipe, by the name it had before.
 [arg('JSON', long='json', value='true', help='The report as JSON, alone on standard output, with the same exit code')]
 [arg('NAMES', pattern='[A-Za-z0-9][A-Za-z0-9._,-]*', help='Only these VMs; none reads every VM this project created')]
 [arg('ONLY', long='only', pattern='((vms|storage|access|sign-ins|system|work)(,(vms|storage|access|sign-ins|system|work))*)?', help='Only these sections, comma-separated: vms storage access sign-ins system work; vms,storage reads only the Proxmox API, never a VM')]
@@ -532,6 +539,7 @@ status ONLY='' JSON='' *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
@@ -551,8 +559,6 @@ status ONLY='' JSON='' *NAMES:
       exit 3
     fi
     exec "$bin/python" tools/status-exit "$report" "$json"
-
-alias list := status
 
 # Each setting's value and where it was set (tools/settings): Ansible's own
 # variables for a play of the role, on the group its playbook runs it on, with
@@ -589,6 +595,7 @@ settings ALL='' CHANGED='' JSON='' RESET='' VALUE='' *NAME:
     if [ "$#" -eq 0 ] && [ -z "$all$changed" ]; then exec "$bin/python" tools/settings --usage --json="$json"; fi
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     name=${1:-}
     set --
     {{ vault_args }}
@@ -610,6 +617,7 @@ destroy *NAMES:
     {{ find_bin }}
     tools/check vault {{ quote(VAULT_FILE) }}
     tools/check collections "$bin"
+    tools/check settings "$bin" {{ SETTINGS_FILES }}
     set --
     {{ vault_args }}
     [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"
