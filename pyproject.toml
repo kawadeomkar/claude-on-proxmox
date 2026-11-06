@@ -28,14 +28,14 @@ dev = [
     "docker==7.2.0",
     "yamllint==1.38.0",
     "pre-commit==4.7.0",
-    "pytest==9.1.1",
+    "pytest==9.2.0",
     # just test unit runs the unit tests on it, one worker per CPU, each module that shares a fixture whole
     # (tests/unit/conftest.py).
     "pytest-xdist==3.8.0",
-    "ruff==0.17.2",
+    "ruff==0.17.3",
     # The uv CI runs: .github/actions/setup installs the version uv.lock pins, so Dependabot
     # bumps it with everything else.
-    "uv==0.13.5",
+    "uv==0.13.6",
 ]
 # The wiki in docs/: docsible renders each role's reference page - its variables, tasks and a
 # flowchart of each task file - with tools/templates/role.md.j2 (just docs), and Zensical builds the
