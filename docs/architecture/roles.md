@@ -322,8 +322,9 @@ The role automates everything around the login and stops at it:
    the service already active: a server waiting out its restart delay reports `activating`, which
    `started` treats as running. One `active` reading afterwards proves nothing, because `Type=simple` is active as soon
    as the process forks, before the server has tried to register. So the role records the main PID
-   and `NRestarts` right after the start, waits `claude_code_remote_control_stay_up_seconds` (20), and requires the unit to be
-   `active`/`running` with the same PID and count. An exit shows up either as `auto-restart` or as a
+   and `NRestarts` right after the start, waits `claude_code_remote_control_stay_up_seconds` (20; the scenarios, whose
+   server is a stand-in, pass 5 and 2 as an extra var), and requires the unit to be `active`/`running` with the same
+   PID and count. An exit shows up either as `auto-restart` or as a
    new PID and a higher count. The count is compared, not required to be 0, because systemd keeps
    it for as long as the unit is not fully stopped, so a healthy server that once restarted through
    an outage has a non-zero count. The check runs only when the start task reports `changed`: a

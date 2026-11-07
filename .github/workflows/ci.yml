@@ -109,14 +109,15 @@ jobs:
 
   # The unit suite runs real playbooks: 44 minutes on a hosted runner one test
   # at a time, 16-22 on one runner's four vCPUs (two cores, two threads each)
-  # with a worker on each, and 8.4-9.8 for the slowest of three shards; 8.2-8.6
-  # for the slowest of four (three runs each, 2026-11). test_github_auth.py
-  # and test_tailscale.py each run as one block on one worker, which takes
-  # about five minutes alone and twice that beside other long modules, so the
-  # slowest shard is the one that crowds them most. Each shard keeps every
-  # module that shares a fixture whole, and the shards are balanced by
-  # tests/unit/durations.json; test_shards.py holds that they run every test
-  # exactly once.
+  # with a worker on each, and 7.3-9 for the slowest of four shards while every
+  # test of a module that shared a fixture ran on one worker (2026-11). Each
+  # shard now keeps together only the tests that share one fixture's run, the
+  # longest about two and a half minutes here, so six shards end close to the
+  # configure scenario's job: on a homelab runner pinned to four CPUs, the
+  # slowest of six took 188 s against 330 s for the slowest of four before.
+  # tests/unit/durations.json balances them, recorded from these shards as
+  # they run (tools/unit_durations.py); test_shards.py holds that they run
+  # every test exactly once.
   unit:
     name: Unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
@@ -124,7 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -202,24 +203,32 @@ jobs:
         run: just test integration
 
   playbooks:
-    name: Molecule (${{ matrix.scenario }} playbook)
+    name: Molecule (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      # The job keeps the scenario's name; just test calls the configure
-      # scenario's part integration.
+      # Each job says its scenario; just test calls the configure scenario's
+      # part integration. The provision scenario's checks run as two jobs side
+      # by side, each half with a converge of its own: whole, at about eight
+      # minutes, it was the run's longest job (molecule/provision/verify.yml).
       matrix:
         include:
-          - scenario: configure
+          - name: configure playbook
             type: integration
-          - scenario: provision
+          - name: provision playbook, the fleet
             type: provision
+            verify: verify_fleet.yml
+          - name: provision playbook, just code
+            type: provision
+            verify: verify_code.yml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Molecule test
         run: just test ${{ matrix.type }}
+        env:
+          MOLECULE_PROVISION_VERIFY: ${{ matrix.verify }}
 
   # The one check branch protection is to require: every job of the gate passed
   # or was skipped (dependency review is, on a push). Required alone, in place of

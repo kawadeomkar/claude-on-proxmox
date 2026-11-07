@@ -1,0 +1,77 @@
+#!/bin/sh
+# just test molecule --jobs 4 and the like: the Molecule scenarios that many at a time, each its whole run in a log of
+# its own.
+#
+#   tools/molecule-lanes <jobs> <bin> <log dir> <stamp> <scenario>...
+#
+# A scenario is configure, provision or a role's name, in the order the justfile's molecule_order gives them, the
+# longest first, so the short ones fill in beside it. Side by side, the scenarios would interleave on the screen and
+# in one log, so each one's output - Molecule's lines and Ansible's, without colour - goes to
+# <log dir>/<stamp>-test-<scenario>.log alone, and this says one line as each ends: and when one failed, where its
+# log is and how its output ended. Without a log dir (LOG_DIR=) that end is kept until it is said. Every scenario
+# runs, failed or not, and this fails when any did. Ctrl-C reaches each scenario as it reaches one run alone: they
+# share this process group, and xargs starts nothing after it.
+#
+# Each scenario's Molecule comes from <bin>, prepended to PATH as the recipe does, since Molecule finds
+# ansible-playbook on PATH. ANSIBLE_LOG_PATH, the run's own log, is taken out of each scenario's environment: every
+# scenario's Ansible would write into that one file.
+set -eu
+
+said() {  # seconds -> as the run's summary says a duration: 33 s, 3:58
+  if [ "$1" -lt 60 ]; then echo "$1 s"; else printf '%d:%02d\n' $(($1 / 60)) $(($1 % 60)); fi
+}
+
+if [ "${1:-}" = --one ]; then
+  # xargs puts the scenario last, after the arguments every lane shares.
+  bin=$2 log_dir=$3 stamp=$4 results=$5 scenario=$6
+  if [ -n "$log_dir" ]; then
+    mkdir -p "$log_dir"
+    chmod 700 "$log_dir"
+    log="$log_dir/$stamp-test-$scenario.log"
+  else
+    log=$(mktemp)
+  fi
+  case "$scenario" in
+  configure | provision) where=. args="test -s $scenario" ;;
+  *) where="roles/$scenario" args=test ;;
+  esac
+  start=$(date +%s)
+  set +e
+  # shellcheck disable=SC2086 # args is two or three words this script wrote
+  (cd "$where" && exec env -u ANSIBLE_LOG_PATH -u ANSIBLE_FORCE_COLOR NO_COLOR=1 ANSIBLE_NOCOLOR=1 PY_COLORS=0 \
+    PATH="$bin:$PATH" "$bin/molecule" $args) < /dev/null > "$log" 2>&1
+  rc=$?
+  set -e
+  took=$(said $(($(date +%s) - start)))
+  echo "$scenario $rc" >> "$results"
+  if [ "$rc" -eq 0 ]; then
+    echo "$scenario passed in $took"
+  else
+    if [ -n "$log_dir" ]; then where="its log: $log"; else where="no log kept (LOG_DIR=)"; fi
+    echo "$scenario failed (exit $rc) after $took; $where"
+    tail -n 15 "$log" | sed 's/^/    /'
+  fi
+  [ -n "$log_dir" ] || rm -f "$log"
+  # 1 for any failure: xargs stops starting scenarios when one exits 255.
+  [ "$rc" -eq 0 ] || exit 1
+  exit 0
+fi
+
+jobs=$1 bin=$2 log_dir=$3 stamp=$4
+shift 4
+results=$(mktemp)
+trap 'rm -f "$results"' EXIT
+start=$(date +%s)
+echo "$# Molecule scenarios, $jobs at a time"
+set +e
+printf '%s\n' "$@" | xargs -P "$jobs" -n 1 "$0" --one "$bin" "$log_dir" "$stamp" "$results"
+set -e
+failed=$(awk '$2 != 0 { printf "%s%s", sep, $1; sep = ", " }' "$results")
+ran=$(wc -l < "$results" | tr -d ' ')
+took=$(said $(($(date +%s) - start)))
+if [ -z "$failed" ] && [ "$ran" -eq "$#" ]; then
+  echo "$# scenarios passed in $took"
+  exit 0
+fi
+echo "${failed:-none} failed, $ran of $# ran, in $took" >&2
+exit 1

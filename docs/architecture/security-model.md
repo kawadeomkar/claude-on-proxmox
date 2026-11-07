@@ -177,7 +177,10 @@ pattern limits to one listed word: the name is built from the recipe's own. `.lo
 by the tracked-file guard (with `*.log`), created `0700`, and pruned of files older than
 `LOG_RETENTION_DAYS` (14) by `tools/run-logged` at the start of each logged run, which deletes only files
 named the way it names them, and only in `LOG_DIR`. Every command of one run shares the run's stamp and
-name, so one `just test` is one file.
+name, so one `just test` is one file - but under `--jobs`, whose scenarios run side by side and would interleave
+there: `tools/molecule-lanes` writes each one's whole output, without colour, to
+`.logs/<stamp>-test-<scenario>.log`, the scenario a name from the justfile's own list, and takes
+`ANSIBLE_LOG_PATH` out of its environment.
 
 ## On the controller
 

@@ -126,8 +126,10 @@ CREDENTIALS = "fake-access-token-0000"
 API_KEY = "sk-ant-api03-fake-key-0001"
 TIMEOUT = 8
 # The answer timeout of the cases that must end without waiting for it: a run
-# that waited would take this long for that VM, far more than any of them takes.
-LONG = 60
+# that waited would take this long for that VM, far more than any of them takes -
+# under half of it on a runner whose every worker runs a playbook beside them,
+# where 60 s once left the slowest of them, 34 s, over half.
+LONG = 120
 
 # claude's answer for an account on hold, which it writes after a bare newline
 # and then exits 1 (Claude Code's auth login handler).

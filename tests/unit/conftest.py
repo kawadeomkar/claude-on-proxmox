@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import os
 import re
@@ -85,29 +87,80 @@ def pytest_addoption(parser):
     parser.addoption("--shard", metavar="I/N", help="run only the I-th of N shards, each group of tests whole")
 
 
+@functools.cache
+def _asks_by_name(function) -> bool:
+    """Whether a test function calls request.getfixturevalue; a function whose source cannot be read is taken to."""
+    try:
+        return "getfixturevalue" in inspect.getsource(function)
+    except (OSError, TypeError):
+        return True
+
+
+def _shared(item) -> set[str] | None:
+    """This project's module-scoped fixtures item reaches but its module's EACH_WORKER; None when no look can tell.
+
+    A test reaches a fixture through request.getfixturevalue only by a `fixture` parameter naming it, this suite's one
+    way; any other call to it leaves what it asks for unknown.
+    """
+    names = list(item._fixtureinfo.names_closure)
+    if _asks_by_name(item.function):
+        named = item.callspec.params.get("fixture") if hasattr(item, "callspec") else None
+        if not isinstance(named, str):
+            return None
+        names.append(named)
+    each_worker = getattr(item.module, "EACH_WORKER", frozenset())
+    manager, found, seen = item.session._fixturemanager, set(), set()
+    while names:
+        name = names.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        defs = manager.getfixturedefs(name, item)
+        if not defs or defs[-1].func.__module__.startswith("_pytest"):
+            continue
+        if defs[-1].scope != "function" and name not in each_worker:
+            found.add(name)
+        names.extend(defs[-1].argnames)
+    return found
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
-    """Keep each module whose tests share a module-scoped fixture on one xdist worker; with --shard, one shard.
+    """Keep the tests that share a module-scoped fixture on one xdist worker; with --shard, in one shard.
 
-    Such a fixture is a whole playbook run, made once for its module: split across workers or shards, each would
-    make it again. The whole module goes, since a test may reach the fixture through request.getfixturevalue, which
-    no static look finds. Only this project's fixtures count: pytest's own tmp_path rests on a session-scoped one,
-    made per worker anyway. First, so that xdist's own hook, which turns the marks into groups, sees them.
+    Such a fixture is a whole playbook run, made once for its module: split across workers or shards, each would make
+    it again. The tests that reach one, directly or through the fixtures they ask for, are its group, and two fixtures
+    one test reaches are one group, so every run is still made once; the module's other tests go wherever there is
+    room. Its whole module was one group until 2026-11, which left a shard's last minutes to one worker. A module with
+    a test that asks for a fixture by name any other way than a `fixture` parameter stays whole. A module's
+    EACH_WORKER names the fixtures cheap enough to make again on each worker that needs one - a fake server - which
+    join nothing. Only this project's fixtures count: pytest's own tmp_path rests on a session-scoped one, made per
+    worker anyway. First, so that xdist's own hook, which turns the marks into groups, sees them.
     """
-    shared = set()
+    reached = {id(item): _shared(item) for item in items}
+    whole = {item.module.__name__ for item in items if reached[id(item)] is None}
+    parent: dict[str, str] = {}
+
+    def root(key: str) -> str:
+        while parent.setdefault(key, key) != key:
+            key = parent[key]
+        return key
+
+    def keys(item) -> list[str]:
+        # Words only, as xdist's @<group> on a test's name must be for tools/unit_durations.py to take it off.
+        module = item.module.__name__
+        return [module] if module in whole else [f"{module}__{name}" for name in sorted(reached[id(item)])]
+
     for item in items:
-        info = getattr(item, "_fixtureinfo", None)
-        if info and any(
-            defs[-1].scope != "function" and not defs[-1].func.__module__.startswith("_pytest")
-            for defs in info.name2fixturedefs.values()
-        ):
-            shared.add(item.module.__name__)
+        joined = keys(item)
+        for key in joined[1:]:
+            parent[root(key)] = root(joined[0])
     units: dict[str, list] = {}
     for item in items:
-        module = item.module.__name__
-        if module in shared:
-            item.add_marker(pytest.mark.xdist_group(module))
-        units.setdefault(module if module in shared else item.nodeid, []).append(item)
+        group = root(keys(item)[0]) if keys(item) else None
+        if group:
+            item.add_marker(pytest.mark.xdist_group(group))
+        units.setdefault(group or item.nodeid, []).append(item)
     shard = config.getoption("--shard", None)
     if not shard:
         return

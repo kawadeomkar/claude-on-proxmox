@@ -64,7 +64,7 @@ from pathlib import Path
 import pytest
 import yaml
 from harness import EDITOR_FILES_DIR as PLANNED_FD
-from harness import _at_a_pseudo_terminal, _env, _fail_if_the_desktop_was_reached, editor_inputs
+from harness import _at_a_pseudo_terminal, _env, _fail_if_the_desktop_was_reached, editor_inputs, verify_plays
 
 from claude_vm.editors import common as editors_common
 from claude_vm.editors import registry as editors_registry
@@ -80,7 +80,7 @@ NOTES_HELPER = HELPERS / "session-notes.sh"
 NOTES_PYTHON = HELPERS / "session_notes.py"
 DEPLOY = REPO / "deploy.yml"
 ANSIBLE_PLAYBOOK = Path(sys.executable).with_name("ansible-playbook")
-PROVISION_VERIFY = REPO / "molecule" / "provision" / "verify.yml"
+PROVISION = REPO / "molecule" / "provision"
 NOT_INSTALLED = "Claude Code is not installed here yet."
 WATCHED = "Signed in; Remote Control starts by itself."
 UNWATCHED = "Signed in; start Remote Control from your machine."
@@ -2276,7 +2276,7 @@ PINNED = {
 def test_the_provision_scenario_never_reads_or_writes_the_developer_s_own(keys):
     # Every code.yml run passes verify_code_vars, which pins them; a refusal case that builds its own base pins them
     # too; and every deploy.yml run, which ends with code.yml, has them on its command line.
-    plays = yaml.safe_load(PROVISION_VERIFY.read_text())
+    plays = [play for _, play in verify_plays(PROVISION)]
     play = next(p for p in plays if "verify_code_vars" in (p.get("vars") or {}))
     for key in keys:
         assert "MOLECULE_EPHEMERAL_DIRECTORY" in play["vars"]["verify_code_vars"][key], key

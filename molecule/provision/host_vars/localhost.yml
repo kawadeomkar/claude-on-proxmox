@@ -28,3 +28,9 @@ verify_playbook_env:
   # The fake VMs report 192.0.2.x, which drops packets: a child run that
   # reaches for one waits this out, not Ansible's 10 s.
   ANSIBLE_TIMEOUT: "3"
+# The fake's agent fails a started VM's first two polls (fake_pve_api.py): polled every 0.2 s here, not every 1 s, and
+# destroy.yml's every 5 s - in its play's vars, which only an extra var outranks - so the waits are the code's, not
+# the clock's. 25 polls of 0.2 s are the 5 s the seeds' waits had.
+verify_agent_delay: 0.2
+verify_destroy_vars:
+  claude_vm_release_agent_delay: 0.2

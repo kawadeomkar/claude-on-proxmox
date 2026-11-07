@@ -255,6 +255,11 @@ def _signed_in(root: Path, host: str) -> bool:
     return (root / host / ".claude" / ".credentials.json").exists()
 
 
+# The fake GitHub API, which no test here reads anything back from: started on each xdist worker that needs it,
+# rather than holding the runs that use it to one worker (conftest.py).
+EACH_WORKER = {"github"}
+
+
 @pytest.fixture(scope="module")
 def github(tmp_path_factory):
     """The fake GitHub API on a loopback port: molecule/pub, and molecule/gone, which has no repository behind it."""

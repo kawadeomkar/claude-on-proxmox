@@ -245,6 +245,12 @@ def _marker(root: Path, host: str) -> Path:
     return root / host / ".config" / "claude-on-proxmox" / "gh-login"
 
 
+# The fake GitHub API over bare repositories of its own, which no test here reads anything back from: started again on
+# each xdist worker that runs a test needing one, rather than holding every run of this module to one worker
+# (conftest.py).
+EACH_WORKER = {"fake_github", "fake_github_dotted"}
+
+
 @pytest.fixture(scope="module")
 def fake_github(tmp_path_factory):
     """The fake GitHub API on a loopback port, listing bare repositories made here; yields its base URL."""

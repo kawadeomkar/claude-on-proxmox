@@ -12,6 +12,11 @@ platforms:
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
 provisioner:
+  # Every playbook here waits 2 s, not the claude_code role's 20, for the Remote Control server it started to fail:
+  # the stand-in claude's server never does (tests/molecule/fake_claude.sh). An extra var, since the wait is an
+  # internal in the role's vars/main.yml, which outranks every inventory variable.
+  options:
+    extra-vars: '{"claude_code_remote_control_stay_up_seconds": 2}'
   env:
     ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/roles
     ANSIBLE_FILTER_PLUGINS: ${MOLECULE_PROJECT_DIRECTORY}/filter_plugins

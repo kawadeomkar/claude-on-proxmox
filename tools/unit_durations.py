@@ -1,14 +1,19 @@
-"""Write tests/unit/durations.json, how long each unit test took, from a run's JUnit report: what --shard balances by.
+"""Write tests/unit/durations.json, how long each unit test took, from runs' JUnit reports: what --shard balances by.
 
-A run with a report, then this, from the checkout:
+Each CI shard's run with a report, on a machine of CI's four vCPUs (or `taskset -c` to four), then this over them
+all, from the checkout:
 
-    pytest tests/unit -n auto --dist loadgroup --junitxml=report.xml -o junit_family=xunit1
-    python3 tools/unit_durations.py report.xml
+    export PYTEST_XDIST_AUTO_NUM_WORKERS=4
+    pytest tests/unit -n auto --dist loadgroup --shard <i>/6 --junitxml=shard-<i>.xml -o junit_family=xunit1
+    python3 tools/unit_durations.py shard-*.xml earlier-*.xml
 
-A parallel run's times are inflated by its workers' contention, but in proportion, which is all a split needs; a
-module-scoped fixture's playbook run is counted in the first test that uses it, which its whole module goes with. A
-test the file lacks counts as the mean (tests/unit/conftest.py), so a new one never breaks a shard; write it again when
-the shards drift apart, as each CI shard's time shows.
+A test's time depends on what runs beside it - a playbook run over many stand-in hosts slows most beside others like
+it, by half or more - so the file is written from the shards as CI runs them, under the grouping it balances, and
+from more than one run of them, each test's longest time counting: from one whole run's times, a shard once took the
+four longest runs at once, and ran 40% longer than the rest (2026-11). A module-scoped
+fixture's playbook run is counted in the first test that uses it, which every test sharing it goes with. A test the
+file lacks counts as the mean (tests/unit/conftest.py), so a new one never breaks a shard; write it again when the
+shards drift apart, as each CI shard's time shows.
 """
 
 from __future__ import annotations
@@ -36,11 +41,16 @@ def durations(report: Path) -> dict[str, float]:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        sys.exit("usage: tools/unit_durations.py <a run's JUnit report, written with -o junit_family=xunit1>")
-    found = durations(Path(sys.argv[1]))
-    if not found:
-        sys.exit(f"no test cases in {sys.argv[1]}")
+    if len(sys.argv) < 2:
+        sys.exit("usage: tools/unit_durations.py <each shard's JUnit report, written with -o junit_family=xunit1>...")
+    found: dict[str, float] = {}
+    for report in sys.argv[1:]:
+        each = durations(Path(report))
+        if not each:
+            sys.exit(f"no test cases in {report}")
+        # Each test's longest time of the reports: a run's time is mostly what ran beside it.
+        for test, seconds in each.items():
+            found[test] = max(found.get(test, 0.0), seconds)
     DURATIONS.write_text(json.dumps(found, indent=0, sort_keys=True) + "\n")
     print(f"{len(found)} tests, {sum(found.values()) / 60:.1f} minutes, into {DURATIONS}")
 

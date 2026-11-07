@@ -1,0 +1,19 @@
+---
+# CI's first provision job: verify.yml's first half, the seeds and the fleet's checks. It ends as the whole verify
+# does, with the node that was down down again.
+- name: Seed the VMs discovery has to tell apart
+  ansible.builtin.import_playbook: seeds.yml
+
+- name: Verify the fleet
+  ansible.builtin.import_playbook: fleet.yml
+
+- name: Leave the node that was down as the whole verify does
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Take the node down again
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/fake/nodes/pve2?status=offline"
+        method: PUT
+        headers: "{{ proxmox_api_headers }}"

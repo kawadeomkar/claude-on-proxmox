@@ -100,6 +100,11 @@ def _scenario(root: Path, name: str, local_extra: str, env: dict, address: str =
     return inventory
 
 
+# The inventories made from the example files, and the read views they cache: made again on each xdist worker that
+# runs one of these tests, rather than holding all of them to one worker (conftest.py); nothing writes them.
+EACH_WORKER = {"scenarios"}
+
+
 @pytest.fixture(scope="module")
 def scenarios(tmp_path_factory) -> dict:
     root = tmp_path_factory.mktemp("settings")

@@ -2313,6 +2313,80 @@ def test_role_narrows_the_role_scenarios(tmp_path: Path, roles: str, expect: lis
     assert said == [f"===== molecule: {role}" for role in expect], _output(result)
 
 
+def _lanes(tmp_path: Path, fail: str = "") -> list[str]:
+    """_testing, with a molecule that says one line per run - its folder, its arguments, whether the run's log reached
+    it - as lanes side by side write: one short write each. Fails in the folder named fail."""
+    settings = _testing(tmp_path)
+    record = tmp_path / "lanes"
+    _stand_in(
+        tmp_path / "bin",
+        "molecule",
+        f'echo "$(basename "$PWD") $* log=${{ANSIBLE_LOG_PATH:-}} color=${{NO_COLOR:-}}" >> "{record}"\n'
+        'echo "molecule ran in $(basename "$PWD")"\n'
+        f'[ "$(basename "$PWD")" != "{fail}" ] || {{ echo "it broke here"; exit 3; }}',
+    )
+    return settings
+
+
+def _lanes_ran(tmp_path: Path) -> dict[str, str]:
+    """Each scenario the lanes ran, by its name, and what its molecule said of its run."""
+    lines = (tmp_path / "lanes").read_text().splitlines() if (tmp_path / "lanes").exists() else []
+    ran = {}
+    for line in lines:
+        folder, rest = line.split(" ", 1)
+        ran[rest.split(" ")[2] if rest.startswith("test -s ") else folder] = rest
+    return ran
+
+
+def test_molecule_order_names_every_scenario_once() -> None:
+    order = _evaluate("molecule_order").split()
+    assert sorted(order) == sorted([*_evaluate("scenario_roles").split(), "configure", "provision"]), order
+    assert order[:2] == ["provision", "configure"], order
+
+
+def test_jobs_runs_the_scenarios_side_by_side_each_in_a_log_of_its_own(tmp_path: Path) -> None:
+    result = _just("test", "molecule", "--jobs", "3", settings=[*_lanes(tmp_path), "stamp=20261106-120000"])
+    assert result.returncode == 0, _output(result)
+    scenarios = [*_evaluate("scenario_roles").split(), "configure", "provision"]
+    ran = _lanes_ran(tmp_path)
+    assert sorted(ran) == sorted(scenarios), ran
+    # Each with neither the run's log nor colour: every scenario's Ansible would write into that one file.
+    assert all("log= color=1" in said for said in ran.values()), ran
+    assert ran["configure"].startswith("test -s configure") and ran["common"].startswith("test log=")
+    said = _output(result)
+    assert f"{len(scenarios)} Molecule scenarios, 3 at a time" in said and f"{len(scenarios)} scenarios passed" in said
+    for scenario in scenarios:
+        assert re.search(rf"^{scenario} passed in \d+ s$", said, flags=re.M), (scenario, said)
+        log = tmp_path / "logs" / f"20261106-120000-test-{scenario}.log"
+        folder = scenario if scenario not in ("configure", "provision") else REPO.name
+        assert log.read_text() == f"molecule ran in {folder}\n", scenario
+    # Never one after another as well.
+    assert "===== molecule:" not in said
+
+
+def test_a_scenario_that_fails_beside_the_others_fails_the_run_and_says_where_its_log_is(tmp_path: Path) -> None:
+    result = _just("test", "role", "--jobs", "2", settings=[*_lanes(tmp_path, fail="common"), "stamp=20261106-120000"])
+    assert result.returncode != 0, _output(result)
+    said = _output(result)
+    # Every scenario ran, the one that failed among them, and it is said with its log and how its output ended.
+    assert sorted(_lanes_ran(tmp_path)) == sorted(_evaluate("scenario_roles").split())
+    log = tmp_path / "logs" / "20261106-120000-test-common.log"
+    assert re.search(rf"^common failed \(exit 3\) after \d+ s; its log: {re.escape(str(log))}$", said, flags=re.M), said
+    assert "    it broke here" in said and "common failed, 8 of 8 ran" in said, said
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["molecule", "--jobs", "1"], ["--role", "common", "--jobs", "4"]],
+    ids=["one at a time", "one scenario"],
+)
+def test_jobs_of_one_or_for_one_scenario_runs_them_as_before(tmp_path: Path, args: list[str]) -> None:
+    result = _just("test", *args, settings=_testing(tmp_path))
+    assert result.returncode == 0, _output(result)
+    assert "Molecule scenarios," not in _output(result)
+    assert "===== molecule:" in _output(result)
+
+
 @pytest.mark.parametrize(
     ("args", "expect"),
     [
@@ -2355,6 +2429,10 @@ def test_unit_runs_the_unit_tests_or_one_shard_of_them_and_nothing_else(tmp_path
         (["unit", "--shard", "4/3"], "--shard takes I/N with I no more than N (got: [4/3])"),
         (["role", "--shard", "1/2"], "--shard splits the unit tests, which role is not: just test unit --shard 1/2"),
         (["--role", "common", "--shard", "1/2"], "--shard splits the unit tests and --role narrows the role scenarios"),
+        (["unit", "--jobs", "2"], "--jobs runs Molecule scenarios side by side, and unit has none: just test molecule"),
+        (["--shard", "1/2", "--jobs", "2"], "--jobs runs Molecule scenarios side by side, and unit has none"),
+        (["molecule", "--jobs", "0"], NOT_MATCHED),
+        (["molecule", "--jobs", "12"], NOT_MATCHED),
     ],
 )
 def test_test_s_options_are_checked_before_anything_runs(tmp_path: Path, args: list[str], error: str) -> None:

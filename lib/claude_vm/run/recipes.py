@@ -312,7 +312,8 @@ RECIPES = {
         marks={"ok": "g", "!!": "r", "--": "d", "NOTICE": "y"},
     ),
     # just test: lint, nested; pytest, each test a task as live_pytest.py reports it; then each Molecule scenario a
-    # step, its actions its tasks. Every part a command through tools/live.
+    # step, its actions its tasks - or, with --jobs, the scenarios side by side as one part, tools/molecule-lanes, the
+    # line it says as each ends its task's. Every part a command through tools/live.
     "test": Recipe(
         stages=[
             Stage("lint", steps=[Step(check) for check in LINT]),
@@ -320,6 +321,7 @@ RECIPES = {
             Stage("role"),
             Stage("integration"),
             Stage("provision"),
+            Stage("molecule"),
         ],
         window=3,
         columns=("time", "tasks"),

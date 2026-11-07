@@ -897,6 +897,27 @@ def _scenario_vars(paths: Iterable[Path]) -> dict:
     return merged
 
 
+def verify_plays(scenario: Path) -> list[tuple[Path, dict]]:
+    """Every play a scenario's verify runs, with its file: each verify*.yml, and each file of the scenario's own one
+    imports (the provision scenario's checks are in three, which CI runs as two jobs), every file once."""
+    found, seen = [], set()
+
+    def read(path: Path) -> None:
+        if path in seen:
+            return
+        seen.add(path)
+        for play in yaml.safe_load(path.read_text()) or []:
+            target = str(play.get("ansible.builtin.import_playbook", ""))
+            if target and "/" not in target:
+                read(scenario / target)
+            else:
+                found.append((path, play))
+
+    for path in sorted(scenario.glob("verify*.yml")):
+        read(path)
+    return found
+
+
 # --------------------------------------------------------------------- just ---
 JUST = shutil.which("just")
 

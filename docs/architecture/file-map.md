@@ -29,6 +29,7 @@ tools/status-exit                 just status's last step: the report's exit cod
 tools/settings                    just settings: each setting's value and where it was set, from Ansible's own variables (§7.9)
 tools/stale_scripts.py            just install: the locked packages whose commands start another Python, to reinstall
 tools/unit_durations.py           tests/unit/durations.json from a run's JUnit report: what the unit tests' shards balance by
+tools/molecule-lanes              just test molecule --jobs 4: the scenarios that many at a time, each in a log of its own
 tools/proxmox-access.sh           on the Proxmox host, as root: the API role, user, grants and token, what is missing of them
 pyproject.toml, uv.lock           the pinned and locked Python tooling (§13); requirements.yml: the Galaxy collections
 .ansible-lint, .yamllint          the linters' settings: ansible-lint's production profile, and yamllint, which skips

@@ -1,0 +1,34 @@
+---
+# CI's second provision job: verify.yml's second half, just code's checks, on the fleet as the first half leaves
+# it - made here from the seeds, as the first half's refusals and re-runs leave it for just code.
+- name: Seed the VMs discovery has to tell apart
+  ansible.builtin.import_playbook: seeds.yml
+
+- name: Leave the fleet as the fleet's checks do
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Shut beta down
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/9004/status/shutdown"
+        method: POST
+        headers: "{{ proxmox_api_headers }}"
+
+    - name: Run provisioning for solo
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', '{"vm_name": "solo"}', playbook_dir ~ '/../../playbooks/provision.yml'] }}
+      environment: "{{ verify_playbook_env }}"
+      changed_when: false
+
+    - name: Bring the node that was down back
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/fake/nodes/pve2?status=online"
+        method: PUT
+        headers: "{{ proxmox_api_headers }}"
+
+- name: Verify just code against the fleet
+  ansible.builtin.import_playbook: just_code.yml

@@ -38,8 +38,9 @@ just lint                            # uv lock --check, yamllint --strict, ansib
 just lint syntax                     # some of them: lock, yaml, ansible, python, just, syntax, hooks
 just test                            # lint, then every test: unit and every Molecule scenario — the CI gate
 just test unit                       # pytest over tests/unit/, a worker per CPU (pytest-xdist loadgroup)
-just test unit --shard 2/4           # one of the four shards CI runs (tests/unit/durations.json balances them)
+just test unit --shard 2/6           # one of the six shards CI runs (tests/unit/durations.json balances them)
 just test --role proxmox_vm          # one role scenario (role: every role; molecule: every scenario)
+just test molecule --jobs 4          # the scenarios four at a time, the longest first, each in .logs/<stamp>-test-<scenario>.log
 just test provision                  # one playbook scenario (integration is the configure scenario)
 just deploy                          # template (if missing) + provision + configure + the three sign-ins + the editor (VS Code by default), all idempotent (just deploy alpha: that VM)
 just deploy alpha --only configure   # one stage of it: template, provision, configure or ssh-config (fleet-wide also prunes); --check is the dry run
@@ -112,7 +113,7 @@ or attached to a pull request. The file name is built from the date, the recipe 
 checked only, never from a VM name.
 
 Scenarios are slow and disk-hungry. Run the ones your change touches, one at a time, rather than
-`just test`, until you are ready to finish.
+`just test`, until you are ready to finish; `--jobs N` runs them N at a time on a machine with the room.
 
 `common`, `vscode_server`, `dev_tools`, `claude_code`, `github_projects`, `tailscale` and the `configure`
 scenario install packages inside the container and need working Docker DNS. `proxmox_vm`, `proxmox_template` and
@@ -682,9 +683,11 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   Ctrl-C test once sat in a browser wait for two minutes after one), so that test runs a hung run once more,
   until the pinned ansible-core has the fix.
 - **pytest-xdist's groups are made in xdist's own `pytest_collection_modifyitems`.** The hook in
-  `tests/unit/conftest.py` that marks them must stay `tryfirst`, and mark whole modules: run after xdist's, it
-  marked nothing, and loadgroup quietly became plain load, rebuilding every module-scoped fixture test by test
-  (37.5 minutes against 9.8). A test that sends Ctrl-C starts its child through `harness._default_signals`, since
+  `tests/unit/conftest.py` that marks them must stay `tryfirst`: run after xdist's, it marked nothing, and loadgroup
+  quietly became plain load, rebuilding every module-scoped fixture test by test (37.5 minutes against 9.8). It
+  groups the tests that reach one fixture's run, not whole modules, and keeps a module whole only where a test asks
+  for a fixture by name other than through a `fixture` parameter; `EACH_WORKER` names a module's cheap fixtures,
+  made on each worker, and `test_shards.py` holds it to real ones. A test that sends Ctrl-C starts its child through `harness._default_signals`, since
   a suite started with `&` or under nohup has SIGINT, SIGQUIT and SIGHUP ignored in every child
   ([§11.1](docs/architecture/testing.md#111-unit--just-test-unit)).
 - **ansible-core's task worker detaches: a SIGKILL or SIGHUP to a playbook's group leaves the task in flight.**

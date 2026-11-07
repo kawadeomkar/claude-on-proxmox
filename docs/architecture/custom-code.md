@@ -790,6 +790,11 @@ is drawn as one run, its parts in turn:
   percentage while one is still to come, since its size is unknown; a test or an action Ctrl-C ended is stopped, not
   failed; and the roles' parts, which run in their directories, find every tool by its absolute path, each saying
   which role it is as the first line of its own output, so that the log names it where the screen's row does.
+  With `--jobs N` (more than one scenario, N above one) the scenarios are instead one part of a stage of their own,
+  `molecule`, read plain: `tools/molecule-lanes`, which starts them N at a time through `xargs -P`, the longest first
+  (the justfile's `molecule_order`), each one's output into a log of its own, and says a line as each ends, its
+  log's path and its output's last lines where it failed; the part's one task shows the last of those lines. Every
+  scenario runs, failed or not, and they share the part's process group, so Ctrl-C reaches each as it would one.
 - **NEXT STEPS** prints each record's lines as they are, as the stream does: a record of several lines - just
   init's problems, each under the line that counts them - keeps each line with its indent, and each paragraph is one
   line, which the terminal wraps, never the run.

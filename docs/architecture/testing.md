@@ -7,14 +7,19 @@ with ones that fail the test if they are called.
 ## 11.1 Unit — `just test unit`
 
 `just test unit` runs it on pytest-xdist, a worker per CPU (`-n auto`; CI says 4, its vCPUs), with `--dist
-loadgroup`. `tests/unit/conftest.py` marks every test of a module that has a module-scoped fixture of this
-project's with that module's group, so the fixture - a whole playbook run - is made once, on one worker, and the
-other modules go test by test to whichever worker is free. Whole modules, since a test can reach a fixture
-through `request.getfixturevalue`, which no static look finds; and `tryfirst`, since xdist's own hook turns the
-marks into groups and, run first, would see none and rebuild the fixtures test by test. Plain `pytest` runs one
-test at a time, for one test or one file. `just test unit --shard <i>/<n>` runs one of n shards, each such module
-whole in one, balanced by `tests/unit/durations.json` (`tools/unit_durations.py`); CI runs four, `CI result` fails
-unless all four passed, and `test_shards.py` holds that the shards together collect every test exactly once.
+loadgroup`. `tests/unit/conftest.py` marks the tests that reach a module-scoped fixture of this project's - a
+whole playbook run - directly or through the fixtures they ask for, with that fixture's group, so it is made once,
+on one worker; two such fixtures one test reaches are one group, and every other test goes to whichever worker is
+free. A test that asks for a fixture by name does so through a `fixture` parameter naming it, which the hook reads;
+a module with any other `request.getfixturevalue` stays one group, since no static look finds what it asks for. A
+module's `EACH_WORKER` names the fixtures cheap enough to make again on each worker that needs one - a fake server
+no test reads back from, inventories nothing writes - which join nothing. And `tryfirst`, since xdist's own hook turns the marks into groups
+and, run first, would see none and rebuild the fixtures test by test. Grouped by module until 2026-11, a shard's
+last minutes were one worker's: `test_claude_login.py` alone held one for 500 s. Plain `pytest` runs one test at a
+time, for one test or one file. `just test unit --shard <i>/<n>` runs one of n shards, each group whole in one,
+balanced by `tests/unit/durations.json` (`tools/unit_durations.py`, from each shard's report as CI runs them); CI
+runs six, `CI result` fails unless all six passed, and `test_shards.py` holds that the shards together collect
+every test exactly once.
 Every child a test signals or types Ctrl-C at starts with SIGINT,
 SIGQUIT and SIGHUP at their defaults (`harness._default_signals`), since a suite started with `&` or under
 nohup has them ignored; and a pseudo-terminal's reader reads to its end after the run exits
@@ -225,8 +230,9 @@ pytest over `tests/unit/`, file by file:
   always()`, and no job of the gate may `continue-on-error`; its script, run as GitHub runs it, passes a
   success or a skip and fails a failure or a cancel. Every Molecule scenario names the one image pinned by
   digest, the shared configuration none, and the canary runs that image's repository at `:latest`.
-- **The shards** (`test_shards.py`): `--shard` collected as each CI shard collects it - two, three and four
-  shards that between them run every test exactly once, and a module whose tests share a fixture whole in one.
+- **The shards** (`test_shards.py`): `--shard` collected as each CI shard collects it - two, three and six
+  shards that between them run every test exactly once, and the tests that share a fixture's run in one; every
+  name an `EACH_WORKER` lists a module-scoped fixture of its own module.
 - **Remote Control** (`test_remote_control_playbooks.py`): `claude_login.yml` and `remote_control.yml`
   against canned logins and stand-ins, and the harness they share (`tests/unit/harness.py`: an
   allowlisted environment, desktop stand-ins - and this machine's tailscale, gh and claude - that fail a run
@@ -518,12 +524,15 @@ pytest over `tests/unit/`, file by file:
 ## 11.2 Role scenarios — `just test role`
 
 One Molecule scenario per role at `roles/<name>/molecule/default/`, inheriting the driver from
-`.config/molecule/config.yml`, which turns pipelining on as `ansible.cfg` does: without it each task
-put its module into the container, ran and removed it one `docker exec` at a time, and the ten scenarios
-took 16% longer. Each names its own platform, a container named after the role, since Molecule replaces a
-list rather than merging it. The shared file turns Molecule's dependency step off: `just install` puts the
-collections in and `just test` checks them first (`tools/check collections`). Each runs create → prepare →
-converge → **idempotence** → side_effect → verify → destroy.
+`.config/molecule/config.yml`, which turns pipelining on as `ansible.cfg` does: without it each task put its
+module into the container, ran and removed it one `docker exec` at a time, and the ten scenarios took 16%
+longer. Each names its own platform, a container named after the role, since Molecule replaces a list rather
+than merging it - and the fake APIs a port of their own - so that `just test --jobs 4` can run them, and the
+playbook scenarios, that many at a time (`tools/molecule-lanes`, the longest first): every scenario took 28
+minutes one after another on an 8-core runner, and 7.5 four at a time, provision alone the floor. The
+shared file turns Molecule's dependency step off: `just install` puts the collections in and `just test` checks
+them first (`tools/check collections`). Each runs create → prepare → converge → **idempotence** → side_effect →
+verify → destroy.
 
 A role scenario's side effect runs the role where it must refuse through one task file,
 `tests/molecule/refused.yml`: the role inside a `block`/`rescue`, then an assert that the failure was
@@ -591,7 +600,15 @@ Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scena
 actual variable wiring is exercised rather than a copy. Test overrides live in `host_vars/`. The
 symlink must survive checkout — clone the repo, do not download a zip.
 
-The `provision` scenario is deliberately adversarial. Before discovery runs, `verify.yml` seeds VMs
+The `provision` scenario's checks are three files `verify.yml` imports in turn: `seeds.yml`, the fixtures
+below; `fleet.yml`, discovery, `just status`, the playbooks where they must refuse or report, `destroy.yml` and
+the SSH aliases; and `just_code.yml`, `just code`'s runs on the fleet as `fleet.yml` leaves it. CI runs the two
+halves as jobs of their own, side by side: `verify_fleet.yml`, and `verify_code.yml`, which makes that fleet from
+the seeds first - `molecule.yml` takes the one to run from `MOLECULE_PROVISION_VERIFY`, so
+`MOLECULE_PROVISION_VERIFY=verify_code.yml just test provision` runs one half here, and `just test provision`
+both. Whole, the scenario was CI's longest job, about eight minutes; its halves end in about five.
+
+The `provision` scenario is deliberately adversarial. Before discovery runs, `seeds.yml` seeds VMs
 that must not be claimed, or that are this project's but once broke a fleet-wide command:
 
 | Fixture | Why |
@@ -695,7 +712,9 @@ stdout and stderr for a failure message (Molecule prints task failures to stderr
   VM absorbed every refusal and the second's first poll succeeded, so a fleet never exercised the
   wait loop more than once. A test that is not about the wait turns it off
   (`PUT /api2/json/fake/agent-ready-after?polls=0`): `test_destroy_live.py`, whose two whole runs it
-  saved ten seconds each.
+  saved ten seconds each. The `provision` scenario keeps the refusals and polls every 0.2 s instead
+  (`verify_agent_delay`, and `claude_vm_release_agent_delay` passed to each `destroy.yml` run, whose
+  play sets it to 5): 34 s of its time had been the clock's.
 - `agent_interfaces()` always reports `lo`, a `docker0` bridge the role must ignore, and the VM's own
   `eth0` — which is what makes the "address came from the right NIC" assertion meaningful.
 - 401 replies have an empty body, as the real API does.

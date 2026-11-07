@@ -206,10 +206,10 @@
 
     # Up long enough for a single "is it active?" reading taken right after the
     # start to say yes, then gone within seconds, as a refused or ineligible
-    # server is. The exit is clean on purpose: on-failure never restarted one.
-    - name: Stand in a server that exits cleanly three seconds after starting
+    # server is - and well within the 5 s this scenario waits (molecule.yml). The exit is clean on purpose: on-failure never restarted one.
+    - name: Stand in a server that exits cleanly two seconds after starting
       ansible.builtin.copy:
-        content: "{{ claude_code_side_effect_stand_in | replace('SERVER', 'sleep 3; exit 0') }}"
+        content: "{{ claude_code_side_effect_stand_in | replace('SERVER', 'sleep 2; exit 0') }}"
         dest: "{{ claude_code_side_effect_bin }}"
         owner: dev
         group: dev
@@ -244,7 +244,7 @@
         refused_at: did not stay up
         refused_unless: >-
           claude_code reported Remote Control live, although the server
-          exited three seconds after it started.
+          exited two seconds after it started.
 
     - name: Wait for systemd to restart the server that exited cleanly
       ansible.builtin.systemd_service:

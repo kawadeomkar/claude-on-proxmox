@@ -10,6 +10,11 @@ platforms:
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
 provisioner:
+  # Every playbook here waits 5 s, not the role's 20, for a Remote Control server it started to fail: the stand-in
+  # server that fails exits 2 s after it starts (side_effect.yml, step 3). An extra var, since the wait is an internal
+  # in the role's vars/main.yml, which outranks every inventory variable.
+  options:
+    extra-vars: '{"claude_code_remote_control_stay_up_seconds": 5}'
   env:
     # Resolve roles from this repository's roles/ directory (not Galaxy).
     ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/..

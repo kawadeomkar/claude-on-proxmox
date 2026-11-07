@@ -1,0 +1,139 @@
+---
+# Seed the VMs discovery has to tell apart, before it runs.
+#
+# Without the first three the tag filter is not load-bearing: the only
+# untagged VM the fake knows is the stopped template, which the agent check
+# already excludes, so deleting the tag filter entirely would leave every
+# assertion passing. Those are running and their agents answer - checked
+# below, not assumed - so the only thing keeping them out of the fleet is the
+# code under test. The rest are this project's, each in a state that once
+# broke discovery or the listing for the whole fleet.
+- name: Seed the VMs discovery has to tell apart
+  hosts: localhost
+  gather_facts: false
+  vars:
+    verify_seeds:
+      # The lookalike: an unanchored substring match on "claude-on-proxmox"
+      # would claim this VM and configure someone else's staging box.
+      - {vmid: 9011, name: stranger, start: true, config: {tags: claude-on-proxmox-staging}}
+      # Tagged the other way round, for the same reason.
+      - {vmid: 9012, name: bystander, start: true, config: {tags: not-claude-on-proxmox}}
+      # Correctly tagged but has no net0, as if its NIC were removed in the UI.
+      # net_mac used to raise on this and take discovery down for the fleet.
+      # Proxmox removes a setting with delete=<key>; sending it blank does not.
+      - {vmid: 9005, name: nonic, start: true, config: {tags: claude-on-proxmox, delete: net0}}
+      # Tags kept comma-joined, as proxmox_kvm sends them and some Proxmox
+      # versions echo them back, so both separators the tag pattern allows for
+      # are exercised - the fake otherwise stores them ";"-joined, as PVE does.
+      - {vmid: 9008, name: commas, start: true, config: {tags: "ansible,claude-on-proxmox", fake-verbatim-tags: 1}}
+      # Its LAN NIC is net1, as on a template built that way. With proxmox_nic
+      # at net0 it has no address; with net1 it must be found.
+      - {vmid: 9009, name: netone, start: true, config: {tags: claude-on-proxmox, delete: net0, net1: "virtio=BC:24:11:00:23:31,bridge=vmbr0"}}
+      # Stopped, and its VMID contains 401: Proxmox answers its agent with
+      # "VM 4013 is not running", which the auth-failure check once took for
+      # a 401 and failed discovery and the listing over.
+      - {vmid: 4013, name: parked, config: {tags: claude-on-proxmox}}
+      # Created before this project tagged its VMs, with the tags main used.
+      # destroy.yml must refuse it, unless told to delete it anyway.
+      - {vmid: 9010, name: legacy, config: {tags: "claude;ansible"}}
+  tasks:
+    - name: Clone each seed from the template, give it its tags and NICs, and start the running ones
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../tests/molecule/pve_vm.yml"
+      vars:
+        pve_vm_fixtures: "{{ verify_seeds }}"
+
+    - name: Read nonic's configuration
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/9005/config"
+        headers: "{{ proxmox_api_headers }}"
+      register: verify_nonic_cfg
+
+    - name: Assert nonic really has no NIC
+      ansible.builtin.assert:
+        that: "'net0' not in verify_nonic_cfg.json.data"
+        fail_msg: "nonic still has a NIC, so it cannot test the no-NIC path: {{ verify_nonic_cfg.json.data }}"
+        quiet: true
+
+    # Each of these fixtures proves something only if the fake really serves
+    # it the way Proxmox would, so check that rather than assume it.
+    - name: Read the cluster's VM list
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/cluster/resources?type=vm"
+        headers: "{{ proxmox_api_headers }}"
+      register: verify_resources
+
+    - name: Ask the node that is down for its VMs
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve2/qemu"
+        headers: "{{ proxmox_api_headers }}"
+        status_code: [595]
+
+    - name: Read the node's VM list
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu"
+        headers: "{{ proxmox_api_headers }}"
+      register: verify_node_qemu
+
+    - name: Ask parked's guest agent for an address
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/4013/agent/network-get-interfaces"
+        headers: "{{ proxmox_api_headers }}"
+        status_code: [500]
+      register: verify_parked_agent
+
+    - name: Assert the listing and the errors are Proxmox's
+      ansible.builtin.assert:
+        that:
+          # commas keeps the "," form; the ";" form is on every other VM.
+          - verify_resources.json.data | selectattr('name', 'defined') | selectattr('name', 'equalto', 'commas')
+            | map(attribute='tags') | list == ['ansible,claude-on-proxmox']
+          # A VM with no tags has no tags key at all, as the template shows.
+          - verify_resources.json.data | selectattr('name', 'defined') | selectattr('name', 'equalto', 'ubuntu-24.04-cloudinit')
+            | selectattr('tags', 'defined') | list | length == 0
+          # The guests on the node that is down are in the listing - one of
+          # them this project's - but without the name and template keys the
+          # cluster only knows while the node reports, as a real cluster
+          # lists them once those have expired.
+          - verify_resources.json.data | selectattr('node', 'equalto', 'pve2') | list | length == 2
+          - verify_resources.json.data | selectattr('node', 'equalto', 'pve2')
+            | selectattr('name', 'defined') | list | length == 0
+          - verify_resources.json.data | selectattr('node', 'equalto', 'pve2')
+            | selectattr('template', 'defined') | list | length == 0
+          - verify_resources.json.data | selectattr('node', 'equalto', 'pve2')
+            | selectattr('tags', 'defined') | map(attribute='tags') | list == ['claude-on-proxmox']
+          # The container is listed as a real cluster lists one - type lxc,
+          # tagged as this project's - and is not a VM to /nodes/pve/qemu.
+          - verify_resources.json.data | selectattr('type', 'equalto', 'lxc')
+            | map(attribute='name') | list == ['ours-container']
+          - verify_resources.json.data | selectattr('type', 'equalto', 'lxc')
+            | map(attribute='tags') | list == ['claude-on-proxmox']
+          - verify_node_qemu.json.data | selectattr('vmid', 'equalto', 9003) | list | length == 0
+          - verify_parked_agent.msg is search('VM 4013 is not running')
+        fail_msg: >-
+          The fake no longer serves the fixtures these checks depend on:
+          {{ verify_resources.json.data }}; parked's agent said "{{ verify_parked_agent.msg }}"
+        quiet: true
+
+    # The fake's agent refuses its first polls for every VM, the way a real one
+    # is not up the moment a VM starts. Left like that, discovery would skip
+    # the intruders for having no address, and a broken ownership filter would
+    # go unnoticed. Wait until each one answers, as a long-running VM's would.
+    - name: Wait until each running seed's guest agent answers
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/{{ verify_seed.vmid }}/agent/network-get-interfaces"
+        headers: "{{ proxmox_api_headers }}"
+        status_code: [200, 500]
+      register: verify_seed_agent
+      until: verify_seed_agent.status == 200
+      retries: 25
+      delay: "{{ verify_agent_delay }}"
+      loop: "{{ verify_seeds | selectattr('start', 'defined') | list }}"
+      loop_control:
+        loop_var: verify_seed
+        label: "{{ verify_seed.name }}"

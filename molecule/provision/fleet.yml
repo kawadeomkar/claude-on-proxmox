@@ -1,0 +1,1014 @@
+---
+# The provision scenario's checks of the fleet, on the seeds seeds.yml made: discovery, just status, the playbooks
+# where they must refuse or report, destroy, and the SSH aliases. verify.yml runs them before just code's;
+# verify_fleet.yml, CI's first provision job, alone.
+# Discovery runs as its own playbook here, in a Molecule stage of its own, so
+# the in-memory hosts provisioning added are gone: this proves the VMs can be
+# found again from their Proxmox tag alone, which is what a later
+# `just deploy --only configure` depends on.
+#
+# No vm_name, so this is `just deploy --only configure` with no names: the whole fleet,
+# with the ownership filter as the only thing between discovery and every
+# running VM on the host.
+- name: Discover the whole fleet
+  ansible.builtin.import_playbook: ../../playbooks/discover.yml
+
+- name: Verify discovery found the fleet and nothing else
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # claude_vm_discovered is what discovery went on to query. nonic, netone
+    # and parked being in it proves the skips below are their missing NIC and
+    # their stopped agent at work, not narrowing - and reaching this play at
+    # all proves parked's "VM 4013 is not running" did not fail discovery,
+    # and that the tagged VM on the node that is down, listed with no name,
+    # did not either.
+    - name: Assert the ownership filter admitted exactly this project's VMs
+      ansible.builtin.assert:
+        that:
+          - claude_vm_discovered | map(attribute='name', default='(no name)') | sort | list
+            == ['(no name)', 'alpha', 'beta', 'commas', 'netone', 'nonic', 'parked']
+          - claude_vm_discovered | rejectattr('name', 'defined') | map(attribute='vmid') | list == [8001]
+        fail_msg: >-
+          Discovery considered {{ claude_vm_discovered | map(attribute='name', default='(no name)') | sort | list }}.
+          It must match "{{ claude_vm_tag }}" as a whole tag: "stranger" is tagged
+          claude-on-proxmox-staging and "bystander" not-claude-on-proxmox, and a
+          substring match would wrongly claim both. "commas" carries it after a ","
+          and "legacy" does not carry it at all.
+        quiet: true
+
+    # The container carries the tag and is in the cluster listing discovery
+    # read, so only the type filter keeps it out - and it must, since it is
+    # not a VM that could be configured over SSH.
+    - name: Assert the tagged container was in the listing and was not claimed
+      ansible.builtin.assert:
+        that:
+          - claude_vm_all.json.data | selectattr('vmid', 'equalto', 9003) | map(attribute='type') | list == ['lxc']
+          - "9003 not in (claude_vm_discovered | map(attribute='vmid') | list)"
+          - "'ours-container' not in groups['claude_vms']"
+        fail_msg: >-
+          The container tagged {{ claude_vm_tag }} was not filtered out by type:
+          discovery considered {{ claude_vm_discovered | map(attribute='vmid') | list }}
+        quiet: true
+
+    - name: Assert every running VM was rediscovered by tag
+      ansible.builtin.assert:
+        that:
+          - groups['claude_vms'] | sort == ['alpha', 'beta', 'commas']
+          - hostvars['alpha'].ansible_host == '192.0.2.51'
+          - hostvars['beta'].ansible_host == '192.0.2.54'
+          - hostvars['commas'].ansible_host == '192.0.2.58'
+          - hostvars['alpha'].ansible_user == 'dev'
+        fail_msg: "Discovery published {{ groups['claude_vms'] | default([]) | sort }}"
+        quiet: true
+
+    - name: Assert no VM this project does not own was claimed
+      ansible.builtin.assert:
+        that:
+          - "'stranger' not in groups['claude_vms']"
+          - "'bystander' not in groups['claude_vms']"
+          - "'legacy' not in groups['claude_vms']"
+          # Tagged correctly and its agent answers, but unusable: skipped
+          # rather than crashing the play, and never added with a guessed
+          # address - without its MAC, the docker bridge's would be picked.
+          - "'nonic' not in groups['claude_vms']"
+          # The same for netone while proxmox_nic is net0.
+          - "'netone' not in groups['claude_vms']"
+          - "'parked' not in groups['claude_vms']"
+        fail_msg: >-
+          Discovery claimed a VM it does not own or cannot reach: {{ groups['claude_vms'] | sort }}.
+        quiet: true
+
+# The same discovery with vm_name. The hosts published above stay in memory,
+# so this checks what discovery narrowed to rather than the group.
+- name: Discover one VM by name
+  ansible.builtin.import_playbook: ../../playbooks/discover.yml
+  vars:
+    vm_name: beta
+
+- name: Verify discovery narrowed to the requested VM
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Assert only the requested VM was considered
+      ansible.builtin.assert:
+        that: claude_vm_discovered | map(attribute='name') | list == ['beta']
+        fail_msg: "vm_name=beta considered {{ claude_vm_discovered | map(attribute='name') | list }}"
+        quiet: true
+
+# A template whose LAN NIC is net1. Discovery used to read net0 whatever
+# proxmox_nic said, so provisioning such a VM worked and configuring it then
+# silently skipped it.
+- name: Discover a VM whose LAN NIC is net1
+  ansible.builtin.import_playbook: ../../playbooks/discover.yml
+  vars:
+    vm_name: netone
+    proxmox_nic: net1
+
+- name: Verify discovery read the NIC it was told to
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Assert netone was found on net1
+      ansible.builtin.assert:
+        that:
+          - "'netone' in groups['claude_vms']"
+          - hostvars['netone'].ansible_host == '192.0.2.59'
+        fail_msg: "proxmox_nic=net1 published {{ groups['claude_vms'] | sort }}"
+        quiet: true
+
+- name: Verify the API requests
+  hosts: claude-on-proxmox-provision
+  become: true
+  tasks:
+    - name: Read the fake API request log
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: provision_verify_raw
+
+    - name: Extract the clone requests
+      ansible.builtin.set_fact:
+        provision_verify_clones: >-
+          {{ (provision_verify_raw.content | b64decode).splitlines() | map('from_json')
+             | selectattr('path', 'search', '/qemu/9000/clone$')
+             | rejectattr('params.name', 'in', ['stranger', 'bystander', 'nonic', 'commas', 'netone', 'parked', 'legacy', 'twin', 'in-the-way'])
+             | list }}
+
+    - name: Assert each VM was cloned once, by name, with no VMID of ours
+      ansible.builtin.assert:
+        that:
+          - provision_verify_clones | length == 2
+          - provision_verify_clones | map(attribute='params.name') | sort == ['alpha', 'beta']
+          # From the next free ID Proxmox reported, skipping the taken 9002
+          # and the container on 9003
+          - provision_verify_clones | map(attribute='params.newid') | sort == ['9001', '9004']
+        quiet: true
+
+    # A fleet's VMIDs are chosen once, in provision.yml, starting from Proxmox's
+    # /cluster/nextid, so the clones can run at the same time. Asked once per
+    # run - not once per clone, which is what used to race.
+    - name: Assert the VMIDs started from Proxmox's next free ID rather than an invented one
+      ansible.builtin.assert:
+        that:
+          - >-
+            (provision_verify_raw.content | b64decode).splitlines() | map('from_json')
+            | selectattr('path', 'search', '/cluster/nextid$') | list | length == 1
+        fail_msg: provision.yml must ask Proxmox for the next free VMID, once, for a fleet.
+        quiet: true
+
+# alpha made two days ago, as its disk's ctime says - Proxmox's own record of when a clone was made - so its
+# day of CPU history is its own; beta was made just now, and the history the fake keeps for its VMID is another
+# VM's, which status leaves out.
+- name: Date alpha's disk two days back
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Set the ctime of alpha's disk in the fake
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_url }}/fake/disk-ctime?vmid=9001&ctime={{ now().timestamp() | int - 2 * 86400 }}"
+        method: PUT
+        headers: "{{ proxmox_api_headers }}"
+        validate_certs: false
+
+# What `just status` shows of the fleet, from the API alone: the fake's VMs
+# never answer over SSH, so only the sections that read the API (vms, storage).
+# Asserted on the report's model rather than its text, so a formatting change
+# does not break the test while a wrong VM, a wrong address or a lost filter
+# does. status_report_file is empty, whatever the environment says: the run writes no report file.
+- name: Report on the fleet the way just status does
+  ansible.builtin.import_playbook: ../../playbooks/status.yml
+  vars:
+    status_report_file: ""
+    status_only: vms,storage
+
+- name: Verify the report
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    # As discovery would not, the report keeps a VM it cannot address - nonic
+    # and netone with no net0, parked stopped, and the one on the node that is
+    # down, which has no name either and comes last - with a blank address,
+    # and it must still leave out every VM that is not this project's,
+    # including the template, and the tagged container, which is no VM.
+    - name: Assert the report shows this project's VMs, and only those
+      vars:
+        status_vms_seen: "{{ status_report.vms }}"
+      ansible.builtin.assert:
+        that:
+          - status_vms_seen | map(attribute='name') | map('default', '', true) | list == ['alpha', 'beta', 'commas', 'netone', 'nonic', 'parked', '']
+          - status_vms_seen | map(attribute='vmid') | last == 8001
+          - "9003 not in (status_vms_seen | map(attribute='vmid') | list)"
+          # From the guest agent, matched against each VM's own NIC - not the
+          # docker bridge the fake also reports.
+          - status_vms_seen | map(attribute='address') | list == ['192.0.2.51', '192.0.2.54', '192.0.2.58', '', '', '', '']
+          - status_vms_seen | map(attribute='state') | list == ['running', 'running', 'running', 'running', 'running', 'stopped', 'unknown']
+          # Each VM's own reads, by its name, as status_vms hosts: alpha has its day of history, beta, made
+          # just now, none of what came before it.
+          - (status_vms_seen | first).api.read
+          - (status_vms_seen | first).api.cpu_24h | select | list | length > 0
+          - (status_vms_seen | first).created_ago == '2 d ago'
+          - status_vms_seen[1].api.cpu_24h | reject('none') | list | length <= 1
+          # The VM on the node that is down could not be read, and says so, as do the two running VMs whose
+          # agent reports no address on net0 after three minutes; they make the run's code 2.
+          - status_report.attention | selectattr('level', 'equalto', 'unread') | map(attribute='vm') | list == ['VMID 8001', 'netone', 'nonic']
+          - status_report.exit == 2
+          - status_report.sections == ['vms', 'storage']
+          - status_report.storages | map(attribute='storage') | list == ['local-lvm']
+          - status_report.template.name == 'ubuntu-24.04-cloudinit'
+        fail_msg: "just status produced {{ status_report | to_json }}"
+        quiet: true
+
+- name: Report on two VMs by name
+  ansible.builtin.import_playbook: ../../playbooks/status.yml
+  vars:
+    status_report_file: ""
+    vm_name: alpha,beta
+    status_only: vms,storage
+
+- name: Verify the narrowed report
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Assert the report narrowed to the requested VMs
+      ansible.builtin.assert:
+        that:
+          - status_report.vms | map(attribute='name') | list == ['alpha', 'beta']
+          - status_report.exit in [0, 1]
+        fail_msg: "just status alpha,beta produced {{ status_report | to_json }}"
+        quiet: true
+
+- name: Report on a VM whose LAN NIC is net1
+  ansible.builtin.import_playbook: ../../playbooks/status.yml
+  vars:
+    status_report_file: ""
+    vm_name: netone
+    proxmox_nic: net1
+    status_only: vms
+
+- name: Verify the report read the NIC it was told to
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Assert netone is shown with its net1 address
+      ansible.builtin.assert:
+        that: status_report.vms | map(attribute='address') | list == ['192.0.2.59']
+        fail_msg: "just status netone with proxmox_nic=net1 produced {{ status_report | to_json }}"
+        quiet: true
+
+# The playbook-level refusals: a failure is the expected result, which an
+# imported playbook cannot express, so these run ansible-playbook as a child
+# process against this scenario's own inventory and assert on how it ended.
+# Last, because they leave VMs behind that would upset the checks above.
+- name: Run the playbooks where they must refuse or report
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # Proxmox permits duplicate names. Discovery would add_host the second over
+    # the first and configure one of them, unpredictably.
+    - name: Clone two tagged VMs with the same name
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../tests/molecule/pve_vm.yml"
+      vars:
+        pve_vm_fixtures:
+          - {vmid: 9006, name: twin, config: {tags: claude-on-proxmox}}
+          - {vmid: 9007, name: twin, config: {tags: claude-on-proxmox}}
+
+    # The child runs that end in a refusal, or in a read of one VM: each a
+    # fresh process, so groups['claude_vms'] starts empty, and none changes
+    # what a run after it finds - every refusal comes before anything is
+    # cloned, started or stopped, and the reads write nothing - so they run
+    # here, while the twins are there. Each case names the playbook, what goes
+    # before its extra vars, whether it must fail, and what its output must say
+    # and must not. A refusal is a task failure, and where ansible-core prints
+    # those depends on its configuration - stderr under Molecule, stdout in a
+    # plain run - so both streams are searched. deploy.yml's runs stay out of
+    # the table, each on a command line of its own, where
+    # tests/unit/test_code_session.py holds every one that reaches code.yml to
+    # just code's pins.
+    - name: Run discover.yml and provision.yml where they must refuse, or read one VM
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd + verify_case.args | default([])
+             + ['--extra-vars', verify_case.vars | default({}) | to_json, playbook_dir ~ '/../../playbooks/' ~ verify_case.playbook] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_cases
+      changed_when: false
+      failed_when: false
+      loop:
+        # Fleet-wide, with the twins there.
+        - playbook: discover.yml
+          fails: true
+          said: ['More than one VM is tagged\s+claude-on-proxmox\s+and\s+named\s+twin']
+        # A VM named in vm_name that has no address - parked is tagged but
+        # stopped - must fail discovery, not be dropped while the rest are
+        # configured and the run exits 0.
+        - playbook: discover.yml
+          vars: {vm_name: parked}
+          fails: true
+          said: [The names given were parked, 'no address\s+was found for parked']
+        # `just deploy --check` runs discovery in check mode, where a task that
+        # does not support it is skipped - and uri, which lists the cluster, is one.
+        - playbook: discover.yml
+          args: [--check]
+          vars: {vm_name: alpha}
+          fails: false
+          unsaid: [No VMs to configure]
+        # Proxmox stores tags lowercased. A claude_vm_tag typed in mixed case is
+        # stamped on a VM as lowercase, and matched as typed it would find
+        # nothing: every VM the project created would be unreachable to it from
+        # then on.
+        - playbook: discover.yml
+          vars: {claude_vm_tag: Claude-On-Proxmox, vm_name: alpha}
+          fails: false
+          unsaid: [No VMs to configure, The names given were]
+        # A token without the guest-agent privilege: the fake's "noagent" token
+        # is accepted everywhere but at the agent, which answers 403. Discovery
+        # must stop on the first refusal and name the privilege - not skip every
+        # VM and exit 0 as "none reported an address yet". Narrowed to alpha,
+        # since the twins would otherwise be refused first.
+        - playbook: discover.yml
+          vars: {proxmox_api_token_id: noagent, vm_name: alpha}
+          fails: true
+          said: ['refused the API token for VM\s+"alpha"', Permission check failed, VM.GuestAgent.Audit]
+          unsaid: [No VMs to configure]
+        # One pinned VMID cannot be every new VM's. Refused before anything is
+        # cloned, not after the first clone took it and the second failed.
+        - playbook: provision.yml
+          vars: {vm_name: "ex,why", proxmox_vm_id: 9500}
+          fails: true
+          said: ['proxmox_vm_id is set to 9500, but ex, why']
+      loop_control:
+        loop_var: verify_case
+        label: "{{ verify_case.playbook }} {{ verify_case.args | default([]) | join(' ') }} {{ verify_case.vars | default({}) }}"
+
+    - name: Assert each refused, or passed, as it must
+      ansible.builtin.assert:
+        that: (verify_run.rc != 0) == verify_run.verify_case.fails
+        fail_msg: >-
+          {{ verify_run.verify_case.playbook }} {{ verify_run.verify_case.vars | default({}) }} exited {{ verify_run.rc }}:
+          {{ (verify_run.stdout ~ '\n' ~ verify_run.stderr).splitlines()[-20:] }}
+        quiet: true
+      loop: "{{ verify_cases.results }}"
+      loop_control:
+        loop_var: verify_run
+        label: "{{ verify_run.verify_case.playbook }} {{ verify_run.verify_case.vars | default({}) }}"
+
+    - name: Assert each said what it must
+      ansible.builtin.assert:
+        that: (verify_said.0.stdout ~ '\n' ~ verify_said.0.stderr) is search(verify_said.1)
+        fail_msg: >-
+          {{ verify_said.0.verify_case.playbook }} {{ verify_said.0.verify_case.vars | default({}) }} did not say
+          /{{ verify_said.1 }}/: {{ (verify_said.0.stdout ~ '\n' ~ verify_said.0.stderr).splitlines()[-20:] }}
+        quiet: true
+      loop: "{{ verify_cases.results | subelements('verify_case.said', skip_missing=True) }}"
+      loop_control:
+        loop_var: verify_said
+        label: "{{ verify_said.0.verify_case.playbook }} /{{ verify_said.1 }}/"
+
+    - name: Assert none said what it must not
+      ansible.builtin.assert:
+        that: (verify_unsaid.0.stdout ~ '\n' ~ verify_unsaid.0.stderr) is not search(verify_unsaid.1)
+        fail_msg: >-
+          {{ verify_unsaid.0.verify_case.playbook }} {{ verify_unsaid.0.verify_case.vars | default({}) }} said
+          /{{ verify_unsaid.1 }}/: {{ (verify_unsaid.0.stdout ~ '\n' ~ verify_unsaid.0.stderr) | regex_findall('(?:\[ERROR\]|' ~ verify_unsaid.1 ~ ')[^\n]*') }}
+        quiet: true
+      loop: "{{ verify_cases.results | subelements('verify_case.unsaid', skip_missing=True) }}"
+      loop_control:
+        loop_var: verify_unsaid
+        label: "{{ verify_unsaid.0.verify_case.playbook }} /{{ verify_unsaid.1 }}/"
+
+    # Re-running provisioning over a VM that was shut down must leave it off,
+    # report it, and still publish the rest - not wait for an agent that
+    # cannot answer, and not crash the publish play over its missing address.
+    - name: Shut beta down
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/9004/status/shutdown"
+        method: POST
+        headers: "{{ proxmox_api_headers }}"
+
+    - name: Re-run provisioning for alpha and the stopped beta
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', '{"vm_name": "alpha,beta"}', playbook_dir ~ '/../../playbooks/provision.yml'] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_stopped_run
+      changed_when: false
+      failed_when: false
+
+    - name: Read beta's status after the re-run
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/9004/status/current"
+        headers: "{{ proxmox_api_headers }}"
+      register: verify_beta_status
+
+    - name: Assert the stopped VM was reported and left stopped, and alpha still published
+      ansible.builtin.assert:
+        that:
+          - verify_stopped_run.rc == 0
+          - verify_stopped_run.stdout is search('alpha is up at 192\.0\.2\.51')
+          - verify_stopped_run.stdout is search('beta is stopped and was left that way')
+          - verify_stopped_run.stdout is not search('beta is up at')
+          - verify_beta_status.json.data.status == 'stopped'
+        fail_msg: >-
+          Re-running provisioning over a stopped VM went wrong (rc {{ verify_stopped_run.rc }},
+          beta {{ verify_beta_status.json.data.status }}): {{ verify_stopped_run.stdout_lines[-20:] }}
+        quiet: true
+
+    # `just deploy solo --only provision`, the simplest command: one name, so
+    # play 1 lists nothing, asks for no VMID and hands the role no
+    # proxmox_vm_id - every lazy var there defaults from a skipped register,
+    # and the role lets Proxmox pick the VMID. Every other provision run here
+    # is a fleet. Bracketed by markers in the request log so the last play
+    # can read exactly what this run sent; shaped like a logged request so
+    # every filter over the log skips them rather than failing on a missing
+    # key. The fake's lowest free VMID at this point is 9013: 9001-9012 are
+    # taken by alpha, in-the-way, the container, beta, the seeds and the twins.
+    - name: Mark the start of the single-name run in the request log
+      ansible.builtin.shell: >-
+        printf '%s\n' '{"method": "MARKER", "path": "/solo-start", "params": {}, "token": null, "agent": ""}'
+        >> /var/lib/fake-pve/calls.log
+      delegate_to: claude-on-proxmox-provision
+      become: true
+      changed_when: false
+
+    - name: Run provisioning for one new VM
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', '{"vm_name": "solo"}', playbook_dir ~ '/../../playbooks/provision.yml'] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_solo_run
+      changed_when: false
+      failed_when: false
+
+    - name: Mark the end of the single-name run in the request log
+      ansible.builtin.shell: >-
+        printf '%s\n' '{"method": "MARKER", "path": "/solo-end", "params": {}, "token": null, "agent": ""}'
+        >> /var/lib/fake-pve/calls.log
+      delegate_to: claude-on-proxmox-provision
+      become: true
+      changed_when: false
+
+    - name: Assert the single VM was created and reported
+      ansible.builtin.assert:
+        that:
+          - verify_solo_run.rc == 0
+          - verify_solo_run.stdout is search('solo is up at 192\.0\.2\.63')
+        fail_msg: >-
+          just deploy solo --only provision went wrong (rc {{ verify_solo_run.rc }}):
+          {{ (verify_solo_run.stdout ~ '\n' ~ verify_solo_run.stderr).splitlines()[-20:] }}
+        quiet: true
+
+    # deploy.yml decides through the API whether to build the template. beta
+    # is stopped by now, so provisioning it creates nothing and configuration
+    # matches no host: each run is quick, needs no SSH, and exits 0. There is
+    # no proxmox host in this inventory, so the template play itself has
+    # nothing to run on either way; what it would do is read from the report.
+    # The sign-ins match no host either, and the window is left for later
+    # rather than failing the deploy, with the step that does everything: this
+    # deploy left beta stopped, so just code alone would open a VM it never
+    # configured or signed in. Never the developer's VS Code settings, though
+    # nothing reads them before that end.
+    - name: Run deploy.yml with the template present, and with a name that matches none
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', {'vm_name': 'beta', 'proxmox_template_name': verify_template,
+                                 'vscode_user_settings_file': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                              ~ '/vscode/settings.json',
+                                 'code_session_source_dir': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                            ~ '/here/.claude',
+                                 'code_session_dest_dir': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                          ~ '/vm-home/.claude'} | to_json,
+                playbook_dir ~ '/../../deploy.yml'] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_deploy_runs
+      changed_when: false
+      failed_when: false
+      loop: [ubuntu-24.04-cloudinit, no-such-template]
+      loop_control:
+        loop_var: verify_template
+
+    - name: Assert deploy.yml builds the template exactly when it is missing
+      ansible.builtin.assert:
+        that:
+          - verify_deploy_runs.results | map(attribute='rc') | list == [0, 0]
+          - verify_deploy_runs.results[0].stdout is search('is already built, so this run needs no SSH')
+          - verify_deploy_runs.results[1].stdout is search('does not exist yet; building it first')
+          # The window, left for later rather than failing a finished deploy
+          - >-
+            verify_deploy_runs.results | map(attribute='stdout')
+            | select('search', 'beta is stopped, and this deploy left it so: it was not configured, signed in or opened in VS Code\.'
+                               ~ ' To start it and finish the deploy: just deploy beta --start')
+            | list | length == 2
+          - >-
+            verify_deploy_runs.results | map(attribute='stdout') | select('search', 'just code beta') | list | length == 0
+        fail_msg: >-
+          deploy.yml exited {{ verify_deploy_runs.results | map(attribute='rc') | list }}, reporting
+          {{ verify_deploy_runs.results | map(attribute='stdout') | map('regex_findall', 'Template \S+ (?:is already built|does not exist yet)') | list }}
+          {{ verify_deploy_runs.results | map(attribute='stderr') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+        quiet: true
+
+    # Two more ends of deploy's window step, on stopped VMs so that nothing is
+    # configured. For two VMs it opens none, and ends at its first task with
+    # each VM's just code line; solo is shut down for that run and started
+    # again after it. With claude_ssh_config off, it says why there is no
+    # window, with the just code line, and the deploy still exits 0.
+    - name: Shut solo down for a deploy of two stopped VMs
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/9013/status/shutdown"
+        method: POST
+        headers: "{{ proxmox_api_headers }}"
+
+    - name: Run deploy.yml for two stopped VMs, then for one with the SSH alias switched off
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', verify_deploy_case
+                                | combine({'vscode_user_settings_file': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                                        ~ '/vscode/settings.json',
+                                           'code_session_source_dir': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                                      ~ '/here/.claude',
+                                           'code_session_dest_dir': lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+                                                                    ~ '/vm-home/.claude'}) | to_json,
+                playbook_dir ~ '/../../deploy.yml'] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_deploy_windows
+      changed_when: false
+      failed_when: false
+      loop:
+        - {vm_name: "beta,solo"}
+        - {vm_name: beta, claude_ssh_config: false}
+      loop_control:
+        loop_var: verify_deploy_case
+
+    - name: Start solo again
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/9013/status/start"
+        method: POST
+        headers: "{{ proxmox_api_headers }}"
+
+    # The later plays reach solo by its address, as they did before the
+    # shutdown; the fake counts the polls it refuses per VM, not per boot,
+    # so this answers at once, but is waited for all the same.
+    - name: Wait until solo's guest agent answers again
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/9013/agent/network-get-interfaces"
+        headers: "{{ proxmox_api_headers }}"
+        status_code: [200, 500]
+      register: verify_solo_agent
+      until: verify_solo_agent.status == 200
+      retries: 25
+      delay: "{{ verify_agent_delay }}"
+
+    - name: Assert a deploy for two VMs opened neither, and one without the alias said why
+      vars:
+        verify_fleet: "{{ verify_deploy_windows.results[0] }}"
+        verify_no_alias: "{{ verify_deploy_windows.results[1] }}"
+      ansible.builtin.assert:
+        that:
+          - verify_deploy_windows.results | map(attribute='rc') | list == [0, 0]
+          - verify_fleet.stdout is search('VS Code opens one VM at a time, so this deploy for 2 VMs opened none\. To open one')
+          - verify_fleet.stdout is search('"just code beta"')
+          - verify_fleet.stdout is search('"just code solo"')
+          # Ended at its first task: not even the one-VM check ran.
+          - verify_fleet.stdout is not search('TASK \\[Refuse anything but one VM\\]')
+          - >-
+            verify_no_alias.stdout is search('claude_ssh_config is false, so this project keeps no SSH alias for the VM')
+          - >-
+            verify_no_alias.stdout is search('VS Code was not opened; to open it later: just code beta"')
+        fail_msg: >-
+          deploy.yml exited {{ verify_deploy_windows.results | map(attribute='rc') | list }}, reporting
+          {{ verify_deploy_windows.results | map(attribute='stdout')
+             | map('regex_findall', '(?:VS Code opens one VM[^\n]*|just code [^\n]*|claude_ssh_config is false[^\n]*)') | list }}
+          {{ verify_deploy_windows.results | map(attribute='stderr') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+        quiet: true
+
+    # The template is on pve; a run that would clone on another node must say
+    # so here, with both nodes named, not fail every clone with "configuration
+    # file does not exist" after reporting the template as built.
+    - name: Run deploy.yml with proxmox_node pointing at the other node
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd
+             + ['--extra-vars', '{"vm_name": "beta", "proxmox_node": "pve2"}', playbook_dir ~ '/../../deploy.yml'] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_wrong_node_run
+      changed_when: false
+      failed_when: false
+
+    - name: Assert deploy.yml refused to clone on a node without the template
+      vars:
+        verify_wrong_node_output: "{{ verify_wrong_node_run.stdout ~ '\n' ~ verify_wrong_node_run.stderr }}"
+      ansible.builtin.assert:
+        that:
+          - verify_wrong_node_run.rc != 0
+          - verify_wrong_node_output is search('is on node pve, but\s+proxmox_node is pve2')
+          - verify_wrong_node_output is not search('is already built, so this run needs no SSH')
+        fail_msg: >-
+          Expected deploy.yml to refuse proxmox_node=pve2; it exited
+          {{ verify_wrong_node_run.rc }}: {{ verify_wrong_node_output.splitlines()[-20:] }}
+        quiet: true
+
+    # Every refusal must leave the VM where it was. vm_name and confirm_destroy
+    # arrive as extra vars, which is also what skips the prompt; the first case
+    # passes no confirmation at all, so it gets the prompt's default, as a run
+    # with no terminal does. The last case is the tagged container: not a VM,
+    # so not this project's to delete, even through the escape hatch.
+    # A VM of this project's that Proxmox will refuse to delete, because
+    # protection is on: one deletion of a fleet that fails. Made here rather
+    # than with the seeds, so the fleet-wide assertions above are unchanged.
+    - name: Clone a VM that will refuse to be deleted, tagged and with protection on
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../tests/molecule/pve_vm.yml"
+      vars:
+        pve_vm_fixtures: [{vmid: 9030, name: guarded, config: {tags: claude-on-proxmox, protection: 1}}]
+
+    # Aliases for the VMs about to be refused and deleted, written the way
+    # configure.yml writes them, into the ephemeral directory group_vars
+    # points the managed file at. A refusal must leave every one of them; a
+    # deletion must take exactly its own, and a deletion that fails none.
+    - name: Keep an SSH alias for the VMs destroy.yml is about to see
+      ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_vms:
+          - {name: commas, address: 192.0.2.58, user: dev}
+          - {name: parked, address: 192.0.2.13, user: dev}
+          - {name: legacy, address: 192.0.2.10, user: dev}
+          - {name: alpha, address: 192.0.2.51, user: dev}
+          - {name: guarded, address: 192.0.2.80, user: dev}
+
+    - name: Run destroy.yml where it must refuse
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_case.vars | combine(verify_destroy_vars) | to_json,
+                          playbook_dir ~ '/../../playbooks/destroy.yml'] }}"
+      environment: "{{ verify_playbook_env }}"
+      register: verify_refused_destroys
+      changed_when: false
+      failed_when: false
+      loop:
+        - {expect: 'Destroy not confirmed', vars: {vm_name: commas}}
+        - expect: 'No VM named legacy was created by this project\..*legacy does exist, but is not tagged'
+          vars: {vm_name: legacy, confirm_destroy: "yes"}
+        # The escape hatch is for an untagged VM, never for the template
+        # every VM is cloned from.
+        - expect: 'A template is never deleted'
+          vars: {vm_name: ubuntu-24.04-cloudinit, confirm_destroy: "yes", proxmox_vm_allow_untagged_delete: true}
+        - expect: 'No VM named ours-container was created by this project'
+          vars: {vm_name: ours-container, confirm_destroy: "yes", proxmox_vm_allow_untagged_delete: true}
+        # Two VMs of one name, both stopped: refused before either is started
+        # for its release, since by name the release could reach either.
+        - expect: 'More than one VM is named twin \(VMIDs 9006, 9007\), so\s+it is not clear which one to delete'
+          vars: {vm_name: twin, confirm_destroy: "yes"}
+      loop_control:
+        loop_var: verify_case
+        label: "{{ verify_case.vars }}"
+
+    - name: Read the cluster's VM list after the refusals
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/cluster/resources?type=vm"
+        headers: "{{ proxmox_api_headers }}"
+      register: verify_after_refusals
+
+    # A refusal is a task failure, printed to stderr under Molecule and to
+    # stdout in a plain run, so both streams are searched.
+    - name: Read the aliases after the refusals
+      ansible.builtin.set_fact:
+        verify_aliases_after_refusals: >-
+          {{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') ~ '/claude-on-proxmox.conf')
+             | ssh_config_blocks | map(attribute='name') | list }}
+
+    - name: Assert destroy.yml refused each for the right reason, and deleted nothing
+      vars:
+        verify_outputs: >-
+          {{ verify_refused_destroys.results | map(attribute='stdout')
+             | zip(verify_refused_destroys.results | map(attribute='stderr')) | map('join', '\n') | list }}
+      ansible.builtin.assert:
+        that:
+          - verify_refused_destroys.results | map(attribute='rc') | reject('equalto', 0) | list | length == 5
+          - verify_aliases_after_refusals == ['commas', 'parked', 'legacy', 'alpha', 'guarded']
+          - verify_outputs[0] is search(verify_refused_destroys.results[0].verify_case.expect)
+          - verify_outputs[1] is search(verify_refused_destroys.results[1].verify_case.expect)
+          - verify_outputs[2] is search(verify_refused_destroys.results[2].verify_case.expect)
+          - verify_outputs[3] is search(verify_refused_destroys.results[3].verify_case.expect)
+          - verify_outputs[4] is search(verify_refused_destroys.results[4].verify_case.expect)
+          - verify_after_refusals.json.data | map(attribute='name', default='')
+            | intersect(['commas', 'legacy', 'ubuntu-24.04-cloudinit', 'ours-container']) | length == 4
+          # Both twins are still there, and neither was started.
+          - >-
+            verify_after_refusals.json.data | selectattr('name', 'defined') | selectattr('name', 'equalto', 'twin')
+            | map(attribute='status') | list == ['stopped', 'stopped']
+        fail_msg: >-
+          destroy.yml exited {{ verify_refused_destroys.results | map(attribute='rc') | list }}, leaving
+          {{ verify_after_refusals.json.data | map(attribute='name', default='') | sort }}:
+          {{ verify_outputs | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+        quiet: true
+
+    # commas, with comma-joined tags and running, alone; then two tagged VMs in
+    # one run - one stopped, one protected - so the one that can be deleted is
+    # and the one Proxmox refuses fails on its own; then legacy, through the
+    # escape hatch; then the protected one alone, so that every deletion of the
+    # run fails - which once ended the run before the VM it started was stopped
+    # again.
+    - name: Run destroy.yml where it must delete
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', verify_case | combine(verify_destroy_vars) | to_json,
+                          playbook_dir ~ '/../../playbooks/destroy.yml'] }}"
+      environment: "{{ verify_playbook_env }}"
+      register: verify_destroys
+      changed_when: false
+      failed_when: false
+      # commas alone first: a running VM, so the run starts nothing - the run
+      # in which a skipped listing once failed destroy before it began.
+      loop:
+        - {vm_name: commas, confirm_destroy: "yes"}
+        - {vm_name: "parked,guarded", confirm_destroy: "yes"}
+        - {vm_name: legacy, confirm_destroy: "yes", proxmox_vm_allow_untagged_delete: true}
+        - {vm_name: guarded, confirm_destroy: "yes"}
+      loop_control:
+        loop_var: verify_case
+        label: "{{ verify_case }}"
+
+    - name: Read the cluster's VM list after the deletions
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/cluster/resources?type=vm"
+        headers: "{{ proxmox_api_headers }}"
+      register: verify_after_destroys
+
+    # Each deleted VM's alias went with it, as its host key does; alpha,
+    # untouched, keeps its block, with the Include line never written here.
+    - name: Read the aliases after the deletions
+      ansible.builtin.set_fact:
+        verify_aliases_after_destroys: >-
+          {{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') ~ '/claude-on-proxmox.conf')
+             | ssh_config_blocks | map(attribute='name') | list }}
+
+    - name: Stat the user ssh config that must not have been written
+      ansible.builtin.stat:
+        path: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ssh_config"
+      register: verify_user_ssh_config
+
+    - name: Assert exactly those VMs were deleted
+      vars:
+        verify_left: "{{ verify_after_destroys.json.data | map(attribute='name', default='') | list }}"
+      ansible.builtin.assert:
+        that:
+          - verify_destroys.results | map(attribute='rc') | list == [0, 2, 0, 2]
+          # commas started nothing; the fake's VMs answer no SSH, so each is
+          # deleted as it was, with what is left of it said.
+          - >-
+            (verify_destroys.results[0].stdout ~ verify_destroys.results[0].stderr)
+            is search('commas: could not be reached, so it was not released')
+          - (verify_destroys.results[1].stdout ~ verify_destroys.results[1].stderr) is search('protection mode enabled')
+          - (verify_destroys.results[1].stdout ~ verify_destroys.results[1].stderr) is search('Kept the SSH alias of guarded')
+          # parked, stopped, was started to be released.
+          - >-
+            (verify_destroys.results[1].stdout ~ verify_destroys.results[1].stderr)
+            is search('parked: could not be reached, so it was not released')
+          # The VM that is still there keeps its alias; the deleted ones lose theirs.
+          - verify_aliases_after_destroys == ['alpha', 'guarded']
+          - "'guarded' in verify_left"
+          # Stopped when destroy came, started by it to be released, then
+          # refused: stopped again, as it was found.
+          - >-
+            (verify_after_destroys.json.data | selectattr('name', 'defined') | selectattr('name', 'equalto', 'guarded')
+             | first).status == 'stopped'
+          - (verify_destroys.results[1].stdout ~ verify_destroys.results[1].stderr) is search('Stopped guarded again')
+          # Alone, its deletion the run's only one and failed: still stopped
+          # again, and the failure raised at the end with its reason.
+          - (verify_destroys.results[3].stdout ~ verify_destroys.results[3].stderr) is search('Stopped guarded again')
+          - >-
+            (verify_destroys.results[3].stdout ~ verify_destroys.results[3].stderr)
+            is search('guarded was not deleted \\(.*protection mode enabled')
+          - (verify_destroys.results[3].stdout ~ verify_destroys.results[3].stderr) is search('Kept the SSH alias of guarded')
+          - not verify_user_ssh_config.stat.exists
+          - verify_left | intersect(['commas', 'parked', 'legacy']) | length == 0
+          - verify_left | intersect(['alpha', 'beta', 'solo', 'nonic', 'netone', 'stranger', 'bystander', 'ubuntu-24.04-cloudinit',
+                                     'ours-container']) | length == 9
+        fail_msg: >-
+          destroy.yml exited {{ verify_destroys.results | map(attribute='rc') | list }}, leaving {{ verify_left | sort }}:
+          {{ verify_destroys.results | map(attribute='stdout') | zip(verify_destroys.results | map(attribute='stderr'))
+             | map('join', '\n') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+        quiet: true
+
+# What the refusals above sent to the API, read from the request log. The
+# fake records which token made each request, so the refused token's polls
+# can be counted on their own, and which HTTP agent, so a request a playbook
+# made itself through `uri` can be told from one a module made.
+- name: Verify what the refused runs sent to the API
+  hosts: claude-on-proxmox-provision
+  become: true
+  tasks:
+    - name: Read the fake API request log
+      ansible.builtin.slurp:
+        src: /var/lib/fake-pve/calls.log
+      register: provision_verify_raw_after
+
+    - name: Parse the request log
+      ansible.builtin.set_fact:
+        provision_verify_after: "{{ (provision_verify_raw_after.content | b64decode).splitlines() | map('from_json') | list }}"
+
+    - name: Assert the refused runs cloned nothing and the refused token was not retried
+      vars:
+        provision_verify_noagent_polls: >-
+          {{ provision_verify_after | selectattr('token', 'equalto', 'noagent')
+             | selectattr('path', 'search', '/agent/network-get-interfaces$') | map(attribute='path') | list }}
+      ansible.builtin.assert:
+        that:
+          - provision_verify_after | selectattr('path', 'search', '/clone$')
+            | selectattr('params.name', 'defined') | selectattr('params.name', 'in', ['ex', 'why']) | list | length == 0
+          # One poll per running VM it was asked about, none repeated.
+          - provision_verify_noagent_polls | length > 0
+          - provision_verify_noagent_polls | unique | length == provision_verify_noagent_polls | length
+        fail_msg: >-
+          noagent polled {{ provision_verify_noagent_polls }};
+          clones of ex/why: {{ provision_verify_after | selectattr('path', 'search', '/clone$')
+                               | map(attribute='params.name', default='') | select('in', ['ex', 'why']) | list }}
+        quiet: true
+
+    # The single-name run, between its markers. Play 1 reads nothing for one
+    # name - no cluster listing, no /cluster/nextid - so nothing in this
+    # stretch of the log came from `uri`, the playbooks' own HTTP client: the
+    # one nextid request is proxmox_kvm's, made because the clone carried no
+    # newid of the playbook's, and the VMID is the fake's lowest free one.
+    - name: Assert the single-name run let Proxmox choose the VMID
+      vars:
+        provision_verify_solo: >-
+          {{ provision_verify_after[provision_verify_after.index(
+               (provision_verify_after | selectattr('path', 'equalto', '/solo-start') | list)[0]) + 1
+             : provision_verify_after.index(
+               (provision_verify_after | selectattr('path', 'equalto', '/solo-end') | list)[0])] }}
+        provision_verify_solo_clones: >-
+          {{ provision_verify_solo | selectattr('path', 'search', '/clone$') | list }}
+      ansible.builtin.assert:
+        that:
+          - provision_verify_solo_clones | length == 1
+          - provision_verify_solo_clones[0].params.name == 'solo'
+          - provision_verify_solo_clones[0].params.newid == '9013'
+          - provision_verify_solo | selectattr('path', 'search', '/cluster/nextid$') | list | length == 1
+          - provision_verify_solo | map(attribute='agent') | select('search', '^ansible-httpget') | list | length == 0
+        fail_msg: >-
+          The single-name run sent {{ provision_verify_solo | map(attribute='agent') | select('search', '^ansible-httpget') | list | length }}
+          requests of the playbook's own, {{ provision_verify_solo | selectattr('path', 'search', '/cluster/nextid$') | list | length }}
+          nextid requests, and these clones: {{ provision_verify_solo_clones | map(attribute='params') | list }}
+        quiet: true
+
+# The aliases on this machine follow the fleet: `just deploy --only ssh-config` against
+# this cluster with the node that is down first off and then on, one VM at a
+# time, and `just code` against a stand-in VS Code that only records what it
+# was asked. Last, because the node switch changes what the listing shows,
+# and the twins go first: two tagged VMs of one name are refused here as
+# discovery refuses them. The managed file is the one group_vars points
+# into the ephemeral directory; the Include line is off there, and the user
+# config it would go in must still not exist at the end.
+- name: Verify the SSH aliases follow the fleet
+  hosts: localhost
+  gather_facts: false
+  vars:
+    verify_ssh_dir: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+    verify_ssh_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/claude-on-proxmox.conf"
+    verify_ssh_playbook: "{{ playbook_dir }}/../../playbooks/ssh_config.yml"
+  tasks:
+    - name: Remove the twins
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/nodes/pve/qemu/{{ item }}"
+        method: DELETE
+        headers: "{{ proxmox_api_headers }}"
+      loop: [9006, 9007]
+
+    # An alias for a VM that no longer exists anywhere, and one for the
+    # untagged lookalike. The first is what pruning is for; the second is
+    # what it must leave alone.
+    - name: Seed aliases for a VM that is gone and for the untagged lookalike
+      ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_config_file: "{{ verify_ssh_file }}"
+        claude_ssh_user_config: "{{ verify_ssh_dir }}/ssh_config"
+        claude_ssh_config_include: false
+        claude_ssh_vms:
+          - {name: gone, address: 192.0.2.99, user: dev}
+          - {name: stranger, address: 192.0.2.61, user: dev}
+
+    - name: Run ssh-config fleet-wide while the node is down
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + [verify_ssh_playbook] }}"
+      environment: "{{ verify_playbook_env }}"
+      register: verify_ssh_down
+      changed_when: false
+      failed_when: false
+
+    - name: Read the aliases with the node down
+      ansible.builtin.set_fact:
+        verify_aliases_down: "{{ lookup('ansible.builtin.file', verify_ssh_file) | ssh_config_blocks }}"
+
+    - name: Resolve alpha's alias with the real ssh client
+      ansible.builtin.command:
+        argv: [ssh, -G, -F, "{{ verify_ssh_file }}", alpha]
+      register: verify_alpha_resolved
+      changed_when: false
+
+    # Nothing pruned while a tagged VM is listed without a name; the running
+    # VMs refreshed; the stopped ones named; the lookalike never written to.
+    - name: Assert nothing was pruned while the node was down
+      vars:
+        verify_down_names: "{{ verify_aliases_down | map(attribute='name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - verify_ssh_down.rc == 0
+          - "verify_ssh_down.stdout is search('Nothing pruned: VMID 8001 is tagged')"
+          - verify_ssh_down.stdout is search('gone could be its')
+          - "verify_ssh_down.stdout is search('Not refreshed, no address[^:]*: .*beta')"
+          - "'gone' in verify_down_names"
+          - "'stranger' in verify_down_names"
+          - "'alpha' in verify_down_names"
+          - "'solo' in verify_down_names"
+          - "'beta' not in verify_down_names"
+          - "'nonic' not in verify_down_names"
+          - "'hostname 192.0.2.51' in verify_alpha_resolved.stdout_lines"
+          - "'user dev' in verify_alpha_resolved.stdout_lines"
+          # fixtures) survives a refresh that cannot know it.
+          # The managed file holds what ssh reads and no state of this project's.
+          - lookup('ansible.builtin.file', verify_ssh_file) is not search('^# (vmid|workspace) ', multiline=True)
+        fail_msg: >-
+          ssh-config with the node down exited {{ verify_ssh_down.rc }}, leaving {{ verify_down_names }}:
+          {{ (verify_ssh_down.stdout ~ '\n' ~ verify_ssh_down.stderr).splitlines()[-25:] }}
+        quiet: true
+
+    - name: Bring the node that was down back
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ proxmox_api_url }}/fake/nodes/pve2?status=online"
+        method: PUT
+        headers: "{{ proxmox_api_headers }}"
+
+    - name: Run ssh-config fleet-wide with every node reporting
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + [verify_ssh_playbook] }}"
+      environment: "{{ verify_playbook_env }}"
+      register: verify_ssh_up
+      changed_when: false
+      failed_when: false
+
+    - name: Read the aliases with the node up
+      ansible.builtin.set_fact:
+        verify_aliases_up: "{{ lookup('ansible.builtin.file', verify_ssh_file) | ssh_config_blocks | map(attribute='name') | list }}"
+
+    - name: Assert the vanished VM was pruned and the lookalike left alone
+      ansible.builtin.assert:
+        that:
+          - verify_ssh_up.rc == 0
+          - "verify_ssh_up.stdout is search('Pruned, no VM of that name exists any more: gone\\.')"
+          - "verify_ssh_up.stdout is search('Left alone: stranger\\.')"
+          - verify_ssh_up.stdout is not search('Nothing pruned')
+          - "'gone' not in verify_aliases_up"
+          - "'stranger' in verify_aliases_up"
+          - "'alpha' in verify_aliases_up"
+          - "'ours-on-a-node-that-is-down' not in verify_aliases_up"
+        fail_msg: >-
+          ssh-config with the node up exited {{ verify_ssh_up.rc }}, leaving {{ verify_aliases_up }}:
+          {{ (verify_ssh_up.stdout ~ '\n' ~ verify_ssh_up.stderr).splitlines()[-25:] }}
+        quiet: true
+
+    - name: Seed an alias for another VM that is gone
+      ansible.builtin.import_tasks: ../../playbooks/tasks/ssh_config.yml
+      vars:
+        claude_ssh_state: present
+        claude_ssh_config_file: "{{ verify_ssh_file }}"
+        claude_ssh_user_config: "{{ verify_ssh_dir }}/ssh_config"
+        claude_ssh_config_include: false
+        claude_ssh_vms:
+          - {name: gone-too, address: 192.0.2.98, user: dev}
+
+    - name: Run ssh-config for one VM
+      ansible.builtin.command:
+        argv: "{{ verify_playbook_cmd + ['--extra-vars', '{\"vm_name\": \"alpha\"}', verify_ssh_playbook] }}"
+      environment: "{{ verify_playbook_env }}"
+      register: verify_ssh_one
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a single-VM refresh prunes nothing
+      vars:
+        verify_one_names: "{{ lookup('ansible.builtin.file', verify_ssh_file) | ssh_config_blocks | map(attribute='name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - verify_ssh_one.rc == 0
+          - verify_ssh_one.stdout is search('Only the VMs named were refreshed')
+          - "'gone-too' in verify_one_names"
+          - "'alpha' in verify_one_names"
+        fail_msg: >-
+          ssh-config with vm_name=alpha exited {{ verify_ssh_one.rc }}, leaving {{ verify_one_names }}:
+          {{ (verify_ssh_one.stdout ~ '\n' ~ verify_ssh_one.stderr).splitlines()[-25:] }}
+        quiet: true
