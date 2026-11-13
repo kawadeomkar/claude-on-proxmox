@@ -596,7 +596,12 @@ if apt fails to resolve a mirror, that is the machine, not the change.
       `/bin/sh -s` with the script on stdin, never a copy left there; `--list` and `--dry-run` change nothing,
       and the question shows the dry run's `pveum` commands before the script runs.
     - It creates only what is missing - the role `AnsibleVM`, the user, a grant where the user lacks the
-      role's privileges, the token last - and changes nothing that exists.
+      role's privileges, the token last - and changes nothing that exists but the role, to which it appends a
+      privilege it lacks (`pveum role modify --append`, never taking one away) for every holder of the role,
+      as a role an older version made lacks what a newer one needs. While the vault holds a token's secret, or
+      one is given, the offer still runs, with `--no-token`: it asks only where something is missing - the
+      role or a privilege, the user, a grant - says why where it could not look, and changes nothing where
+      the token is not there, since the secret held can be no other's.
     - Its stdout is the token's secret alone, read `no_log` into the hidden answers. The offer and the secret
       are the last tasks before the vault's block, and the block's rescue deletes the token the run made while
       the vault is unwritten - never once `ansible-vault` wrote it, when it holds the secret.

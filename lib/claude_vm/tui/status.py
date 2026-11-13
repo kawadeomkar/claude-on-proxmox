@@ -215,8 +215,10 @@ def _capacity_lines(model):
             more = f"its stopped {_guests(stopped)} would take {plural(stopped['vcpus'], 'vCPU')}"
             more += f" and {fmt_gib(stopped['memory'])} GiB more"
             lines.append([seg(f"{'':12}{more}", "d")])
+        # Wrapped to the report's width: just init's line ends with the host's name, which may be a long one.
         for said in node.get("grant") or []:
-            lines.append([seg(f"{'':12}{said}", "d")])
+            for line in textwrap.wrap(said, WIDTH - 13, break_on_hyphens=False, subsequent_indent="  ") or [""]:
+                lines.append([seg(f"{'':12}{line}", "d")])
     return lines
 
 

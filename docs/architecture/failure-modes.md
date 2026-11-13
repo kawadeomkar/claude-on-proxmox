@@ -51,7 +51,7 @@ each problem `!!` with its fix; `just init` then fails, so a scripted one exits 
 | `refused the token ... (401)` | a token named otherwise (`proxmox_api_user`, `proxmox_api_token_id` in `local.yml`), or a wrong secret (`just vault`) |
 | `nothing answered at https://...` | the address in `inventory/hosts.yml`, or a firewall between this machine and port 8006 |
 | `certificate is not trusted` | `proxmox_validate_certs` on without the CA trusted ([Proxmox access](../getting-started/proxmox-access.md#trusting-the-proxmox-certificate)) |
-| `the token lacks ... on /vms` | the role is missing a privilege, often the guest agent's after an upgrade from 8.x: the `pveum role modify` line it prints |
+| `the token lacks ... on /vms` | the role is missing a privilege, often the guest agent's after an upgrade from 8.x: `just init` at a terminal offers to add it (answer `y`), or the `pveum role modify` line it prints |
 | `the token holds no privilege on /vms at all` | a token made with privilege separation, which has none of its user's: `--privsep 0`, or an ACL for the token |
 | `... on /vms but not on the VMs under it` | the ACL on `/vms` has Propagate off: `pveum aclmod /vms ... -propagate 1` |
 | `the template is on X, but proxmox_node is Y` | VMs are cloned on the node that holds the template: `proxmox_node: X` (`just init` at a terminal writes it while `proxmox_node` is the default) |
@@ -72,9 +72,10 @@ each problem `!!` with its fix; `just init` then fails, so a scripted one exits 
 Storage and bridge are checked on the node worked out, among what it lists: a default `local-lvm` on a ZFS
 host is a name to replace, which `just init` offers, not a missing privilege.
 
-Before those checks, at a terminal, `just init` offers to make the token (`tasks/init_access.yml`). What
-stops the offer is a `NOTICE` that ends in how to run `tools/proxmox-access.sh` by hand, and `just init` asks
-for the secret instead:
+Before those checks, at a terminal, `just init` offers to make the token (`tasks/init_access.yml`) - or, while
+the vault holds a token's secret or one is given, to add only what the role or a grant lacks, with `--no-token`.
+What stops the offer is a `NOTICE` that ends in how to run `tools/proxmox-access.sh` by hand, and `just init`
+asks for the secret instead, where none is held:
 
 | `NOTICE` | Cause, and the fix |
 |---|---|
@@ -82,7 +83,9 @@ for the secret instead:
 | `tools/proxmox-access.sh refused on ...: error: run it as root` | `hosts.yml` reaches the host as another user: the template build needs root too |
 | `proxmox_storage is X in local.yml, and the Proxmox host has no storage of that name` | a storage set by hand that the host does not list for VM disks: fix `local.yml` |
 | `the storage is not chosen yet` | Enter at the storage (or bridge) question: `just init` asks again |
-| `The API access is set up on ... already` | not a problem: the role, the user, its grants and the token exist, so `just init` asks for the secret Proxmox showed when the token was made. Lost it? Delete the token (`pveum user token delete ansible@pve ansible`; every machine that uses it loses access), and `just init` makes a new one |
+| `tools/proxmox-access.sh refused on ...: error: token ... is not on node ...` | the vault's secret is for a token this host does not have - a host installed again, a token named otherwise: put this host's token's secret in the vault with `just vault`, or set it back to its placeholder, and `just init` offers to make the token |
+| `The API access is set up on ... already` | not a problem: the role, the user, its grants and the token exist, so `just init` asks for the secret Proxmox showed when the token was made, while the vault holds none. Lost it? Delete the token (`pveum user token delete ansible@pve ansible`; every machine that uses it loses access), and `just init` makes a new one |
+| `WARNING: token ... was made with privilege separation` | the token holds none of its user's privileges, so nothing given to the user reaches it: delete it (`pveum user token delete ansible@pve ansible`), set the vault's secret back to its placeholder with `just vault`, and `just init` makes it again without |
 
 A failure while the script runs fails `just init` with what it said; what it did before that stays, and the
 next `just init` does only what is still missing. A vault that cannot be written after the token was made

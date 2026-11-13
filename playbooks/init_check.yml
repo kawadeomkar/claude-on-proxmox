@@ -297,7 +297,9 @@
              if init_privileges_missing | length == init_privileges_wanted | length else
              ('the token lacks ' ~ init_privileges_missing | join(', ') ~ ' on /vms: add '
               ~ ('them' if init_privileges_missing | length > 1 else 'it') ~ ' to its role, the one'
-              ~ " docs/getting-started/proxmox-access.md calls AnsibleVM: pveum role modify AnsibleVM -append 1 -privs '"
+              ~ ' docs/getting-started/proxmox-access.md calls AnsibleVM. just init' ~ init_host_flag
+              ~ ' at a terminal, with root SSH to the host, offers to (answer y), or by hand: pveum role modify'
+              ~ " AnsibleVM -append 1 -privs '"
               ~ init_privileges_missing | join(' ') ~ "'")
              if init_privileges_missing | length > 0 else
              ('the token holds ' ~ init_privileges_unpropagated | join(', ') ~ ' on /vms but not on the VMs under'

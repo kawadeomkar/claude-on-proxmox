@@ -1144,25 +1144,30 @@ the vault with the others (`auth_key`; never from the command line). Unanswered,
 Tailscale: `just init` runs `tools/check settings` with `--asking`, so the warning every other command gives while
 no VPN is chosen is not said beside the question.
 
-Before the secret, at a terminal, while the vault has none and none was given, `tasks/init_access.yml`
-offers to make the token: the one change `just init` makes on Proxmox. It adds the first `proxmox` host as
-`hosts.yml` has it (`add_host`, its connection settings passed on), and runs `tools/proxmox-access.sh` there
-as root over SSH with the `command` module - `/bin/sh -s` with the script on stdin, never a copy left on the
-host. `--list` names the node's storages for VM disks and its bridges, which the script reads from `pvesh`
-and nothing changes; the storage and bridge in effect are kept when the host has them, a default it lacks is
-asked for among what it has (`tasks/init_access_choose.yml`, written into `local.yml`), and one `local.yml`
-sets that the host lacks is said and left. `--dry-run` prints the `pveum` commands it would run, which the
-question shows with what exists already; on `y` the script runs them, creating only what is missing - the
-role, the user, its grants where the user does not hold the role's privileges, and the token, last - and
-changes nothing that exists. Its stdout is the token's secret and nothing else, read by a `no_log` task
-into the hidden answers, as a typed secret would be; what it said, on stderr, is said. `n`, Enter, a root
-SSH that fails or a step that cannot be done says how to run the script by hand, and the secret is asked
-for. The offer and the secret are the last tasks before the vault's write, nothing between them, and that
-write is a block whose rescue deletes a token this run made (`pveum user token delete`) while the vault is
-unwritten, since its secret would be lost, and fails with what went wrong. Once `ansible-vault` has written
-the vault, which then holds the secret, the token is kept whatever the read-back says. The connection settings
-come from `hosts.yml` as the template build reads them: `all`'s vars, then the `proxmox` group's, then the
-host's own.
+Before the secret, at a terminal, `tasks/init_access.yml` offers to set up the API access: the one change
+`just init` makes on Proxmox. It adds the first `proxmox` host as `hosts.yml` has it (`add_host`, its
+connection settings passed on), and runs `tools/proxmox-access.sh` there as root over SSH with the `command`
+module - `/bin/sh -s` with the script on stdin, never a copy left on the host. `--list` names the node's
+storages for VM disks and its bridges, which the script reads from `pvesh` and nothing changes; the storage
+and bridge in effect are kept when the host has them, a default it lacks is asked for among what it has
+(`tasks/init_access_choose.yml`, written into `local.yml`), and one `local.yml` sets that the host lacks is
+said and left. `--dry-run` prints the `pveum` commands it would run, which the question shows with what exists
+already; on `y` the script runs them, creating only what is missing - the role, the user, its grants where the
+user does not hold the role's privileges, and the token, last - and changes nothing that exists but the role,
+given a privilege it lacks (`--append`, keeping what it holds), which then reaches every user the role is
+granted to, as the question says. While the vault holds a token's secret, or one was given, the offer runs
+with `--no-token` - a new token's secret could not replace the vault's - and asks only where something is
+missing, saying nothing where nothing is. The script then changes nothing where the token is not there, since
+that secret can be no other token's, and warns of one made with privilege separation, which nothing given to
+its user reaches. Its stdout is the token's secret and nothing else, read by a `no_log` task into the hidden
+answers, as a typed secret would be; what it said, on stderr, is said. `n`, Enter, a root SSH that fails or a
+step that cannot be done says how to run the script by hand - with `--no-token` while a secret is held, so a
+check that could not be made is never silent - and the secret is asked for while none is. The offer and the
+secret are the last tasks before the vault's write, nothing between them, and that write is a block whose
+rescue deletes a token this run made (`pveum user token delete`) while the vault is unwritten, since its
+secret would be lost, and fails with what went wrong. Once `ansible-vault` has written the vault, which then
+holds the secret, the token is kept whatever the read-back says. The connection settings come from `hosts.yml`
+as the template build reads them: `all`'s vars, then the `proxmox` group's, then the host's own.
 
 `init_ask` is false unless the justfile sees a terminal and was not given `--no-prompt`, and
 every write is under it, or under a value given on the command line: `init_given`, the JSON

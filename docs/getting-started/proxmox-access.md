@@ -29,20 +29,22 @@ of them is missing:
   the user does not already hold what the role gives there;
 - the token `ansible@pve!ansible`, without privilege separation, so it has exactly the user's privileges.
 
-The script changes nothing that exists. A role that lacks a privilege is named, with the line that adds it;
-so is a grant on `/vms` that does not propagate to the VMs under it, where Proxmox checks it, and a token that
-exists already, since Proxmox shows its secret only once. A user that was there already and holds privileges
+The script changes nothing that exists but the role: one that lacks a privilege - as a role an older version
+made lacks what a newer one needs - is given it with `pveum role modify AnsibleVM --append 1`, which keeps every
+privilege it holds. A grant on `/vms` that does not propagate to the VMs under it, where Proxmox checks it, is
+named with the line that fixes it, and so is a token that exists already, since Proxmox shows its secret only
+once. A user that was there already and holds privileges
 on `/` is warned of before its token is made, since a token without privilege separation holds them too.
 Nothing else on the host is touched.
 
 ### Letting `just init` set it up
 
-Once the host's address is known and the vault has no token secret, `just init` at a terminal reaches the host
-over root SSH, lists what it has, and shows what the script would run there before asking:
+Once the host's address is known, `just init` at a terminal reaches the host over root SSH, lists what it has,
+and shows what the script would run there before asking:
 
 ```text
 just init can set up the API access this project uses on pve.lan, as root over SSH.
-It would run there, creating only what is missing:
+It would run there, adding only what is missing:
   pveum role add AnsibleVM --privs VM.Allocate,VM.Clone,...,SDN.Use,Sys.Audit
   ...
 › yes
@@ -89,9 +91,12 @@ pveum user token add ansible@pve ansible --privsep 0 --comment agent-warehouse
 
 `Sys.Audit` on the node is read only: the node's CPU threads and memory, which `just status --only capacity` shows
 and a sized `just deploy` checks a VM's size against ([Size](../guides/vms.md#size)). Nothing else needs it, and a
-token without it works as before. A role made before it was added gets it with
-`pveum role modify AnsibleVM --append 1 --privs Sys.Audit` and `pveum acl modify /nodes/<node> --users ansible@pve
---roles AnsibleVM`.
+token without it works as before. A role made before it was added is offered it by the next `just init` at a
+terminal, with the node's grant, as `pveum role modify AnsibleVM --append 1 --privs Sys.Audit` and `pveum acl
+modify /nodes/<node> --users ansible@pve --roles AnsibleVM`: while the vault holds the token's secret, the offer
+makes no token (the script's `--no-token`), whose secret could not take its place, and says nothing where nothing
+is missing. It needs root SSH to the host, and grants on the node that SSH reaches: in a cluster, `just status`
+gives each other node the two lines above, run as root on any node.
 
 It prints the token's secret last, once: give it to `just init`, which asks for it (or to
 `--token-secret-file`, [Your first deploy](first-deploy.md#without-a-terminal-or-scripted)).
@@ -100,6 +105,8 @@ It prints the token's secret last, once: give it to `just init`, which asks for 
 
 A second person who deploys onto the same host gets a user of their own with `--user`, and a token of their own.
 Their token holds the same role on `/vms`, so it can list, reconfigure and delete your VMs as yours can theirs.
+The role is one for every user it is granted to: a privilege one person's `just init` adds to it - as a newer
+version needs, on their `y` - is every holder's, on every path it is granted on.
 The ownership tag does not separate you either. Anyone who can create a VM can tag it `agent-warehouse`, and
 every tagged VM a token lists is treated as that person's own:
 
@@ -123,8 +130,8 @@ on purpose: share a host only with people you would trust with your VMs
 creates the VM but cannot report where it is, and the API answers every address query with 403. Do not
 substitute `VM.GuestAgent.Unrestricted`: it also works, but lets the token run arbitrary commands inside the VM.
 
-A role made on 8.x loses `VM.Monitor` when the host is upgraded to 9.x. The script leaves an existing role as
-it is and names what it lacks, and `just init` names it too; add the privilege to the role:
+A role made on 8.x loses `VM.Monitor` when the host is upgraded to 9.x. The script adds what the role lacks,
+and the next `just init` at a terminal offers to run it; by hand, add the privilege to the role:
 
 ```bash
 pveum role modify AnsibleVM --append 1 --privs VM.GuestAgent.Audit

@@ -8,10 +8,12 @@
 # just init runs it the second way, once you answer y to its question; this is
 # the whole of what it runs there (docs/getting-started/proxmox-access.md).
 #
-# It creates whichever of these is missing, and changes nothing that exists:
+# It creates whichever of these is missing, and changes nothing that exists
+# but the role, to which it adds a privilege it lacks, never taking one away:
 #
 #   the role AnsibleVM: the privileges below, and the guest agent's, which is
-#     VM.Monitor on Proxmox VE 8 and VM.GuestAgent.Audit on 9
+#     VM.Monitor on Proxmox VE 8 and VM.GuestAgent.Audit on 9 - a role an older
+#     version made lacks what a newer one needs, as Sys.Audit, added for sizes
 #   the user ansible@pve, with no password: it signs in by its token alone
 #   that role for that user on /vms, on the storage for VM disks, on the
 #     bridge and on the node, wherever the user does not hold what the role
@@ -20,14 +22,17 @@
 #     has exactly the user's privileges
 #
 # and prints the token's secret, which Proxmox shows only once: just init asks
-# for it. A role that exists without a privilege, or a token that exists
-# already, is named with what to do, and left as it is.
+# for it. A token that exists already, or a grant that does not reach the VMs
+# under its path, is named with what to do, and left as it is.
 #
 # Options:
 #   --storage <id>       the storage for VM disks: local-lvm (an install on ZFS has local-zfs)
 #   --bridge <name>      the bridge the VMs are on: vmbr0
 #   --user <user@realm>  the token's user: ansible@pve
 #   --token <name>       the token's name: ansible
+#   --no-token           make no token: what just init runs while its vault holds a token's secret already,
+#                        which a new token's could not take the place of. The token must be there, or nothing
+#                        changes: that secret could be no other's
 #   --dry-run            print the commands it would run, and run none
 #   --list               print this node's storages for VM disks and its bridges, and change nothing
 #
@@ -42,6 +47,7 @@ bridge=vmbr0
 user=ansible@pve
 token=ansible
 mode=apply
+no_token=0
 # The privileges each path needs; the guest agent's joins /vms's below.
 vms_privileges='VM.Allocate VM.Clone VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt VM.Audit'
 storage_privileges='Datastore.AllocateSpace Datastore.Audit'
@@ -70,6 +76,10 @@ while [ $# -gt 0 ]; do
     ;;
   --dry-run)
     mode=dry-run
+    shift
+    ;;
+  --no-token)
+    no_token=1
     shift
     ;;
   --list)
@@ -147,6 +157,22 @@ has() {
   case "$1" in *"\"$2\":"*) return 0 ;; esac
   return 1
 }
+# ---------------------------------------------------------- the token held ---
+# With --no-token the secret just init holds can be only this token's. One
+# that is not there - a host installed again under the old vault, a secret of a
+# token named otherwise - leaves the secret no token's here, and nothing this
+# adds would make it work: said, and nothing changed. One made with privilege
+# separation holds none of the user's privileges, so what this gives the user
+# never reaches it: said.
+if [ "$no_token" = 1 ]; then
+  held_token=$(pvesh get "/access/users/$user/token/$token" --output-format json 2>/dev/null) \
+    || die "token $user!$token is not on node $node, so the secret just init holds is not its, and nothing was changed: put this host's token's secret in the vault (just vault), or set it back to its placeholder and run just init, which then offers to make the token"
+  case "$held_token" in *'"privsep":1'* | *'"privsep":"1"'*)
+    say "WARNING: token $user!$token was made with privilege separation, so it holds none of $user's privileges, and what $user is given here never reaches it: remove it - pveum user token delete $user $token - and make it again without (docs/getting-started/proxmox-access.md)"
+    ;;
+  esac
+fi
+
 changes=0
 # run <command...>: printed with --dry-run; otherwise said, and run.
 run() {
@@ -161,19 +187,18 @@ run() {
 
 # ------------------------------------------------------------------ the role ---
 wanted="$vms_privileges $storage_privileges $bridge_privileges $node_privileges"
+lacking=''
 if role_privileges=$(pvesh get "/access/roles/$role" --output-format json 2>/dev/null); then
-  role_exists=1
-  lacking=''
   for privilege in $wanted; do
     has "$role_privileges" "$privilege" || lacking="$lacking${lacking:+,}$privilege"
   done
   if [ -n "$lacking" ]; then
-    say "role $role exists without $lacking, and is left as it is; this adds them: pveum role modify $role --append 1 --privs $lacking"
+    # Added, never replacing what it holds: a privilege a newer version needs, which the role an older one made lacks.
+    run pveum role modify "$role" --append 1 --privs "$lacking"
   else
     say "role $role exists, with every privilege"
   fi
 else
-  role_exists=0
   run pveum role add "$role" --privs "$(commas $wanted)"
 fi
 
@@ -191,32 +216,58 @@ fi
 
 # ---------------------------------------------------------------- the grants ---
 # grant <path> <privileges>: the role, for the user, on the path, where the
-# user lacks a privilege there that the role gives. The permissions read give
-# each privilege its propagate flag: on /vms one that does not propagate is
-# none, since Proxmox checks each VM's own path, and its grant is the person's
-# to change. A privilege the role lacks is said, as the role is.
+# user lacks a privilege there - every one the role gives, once a privilege it
+# lacked was given it above. The permissions read give each privilege its
+# propagate flag: on /vms one that does not propagate is none, since Proxmox
+# checks each VM's own path, and its grant is the person's to change.
+#
+# granted <path>: the role is granted to the user itself on the path, or above
+# it and propagating, so a privilege the role is given above reaches the user
+# there with no grant of its own. Only --dry-run asks, since the role has not
+# changed yet when it reads what the user holds; the run reads it after. A grant
+# through a group is not looked for: the dry run may then show a grant the run
+# finds made already, more than it runs, never less.
+acls=''
+granted() {
+  if [ -z "$acls" ]; then
+    acl_json=$(pvesh get /access/acl --output-format json) || die "Proxmox would not list the ACLs"
+    acls=$(printf '%s' "$acl_json" | tr '{' '\n')
+  fi
+  printf '%s\n' "$acls" | {
+    while IFS= read -r entry; do
+      case "$entry" in *"\"ugid\":\"$user\""*) ;; *) continue ;; esac
+      case "$entry" in *"\"roleid\":\"$role\""*) ;; *) continue ;; esac
+      case "$entry" in *'"type":"user"'*) ;; *) continue ;; esac
+      at=$(printf '%s' "$entry" | grep -o '"path":"[^"]*"' | cut -d'"' -f4)
+      [ "$at" != "$1" ] || exit 0
+      case "$entry" in *'"propagate":1'*) ;; *) continue ;; esac
+      case "$1" in "${at%/}"/*) exit 0 ;; esac
+    done
+    exit 1
+  }
+}
+lacking_words=$(printf '%s' "$lacking" | tr ',' ' ')
 grant() {
   if [ "$user_exists" = 1 ]; then
     held=$(pveum user permissions "$user" --path "$1" --output-format json)
   else
     held='{}'
   fi
-  missing='' unpropagated='' beyond_role=''
+  missing='' unpropagated=''
   for privilege in $2; do
     if has "$held" "$privilege"; then
       case "$1 $held" in "/vms "*"\"$privilege\":0"*) unpropagated="$unpropagated${unpropagated:+,}$privilege" ;; esac
-    elif [ "$role_exists" = 0 ] || has "$role_privileges" "$privilege"; then
-      missing="$missing${missing:+,}$privilege"
+    elif [ "$mode" = dry-run ] && [ "$user_exists" = 1 ] && listed "$privilege" "$lacking_words" && granted "$1"; then
+      : # Given to the role above, it reaches the user here through the role's grant once the role has it.
     else
-      beyond_role="$beyond_role${beyond_role:+,}$privilege"
+      # The role gives it: made with it, holding it, or given it above.
+      missing="$missing${missing:+,}$privilege"
     fi
   done
   if [ -n "$unpropagated" ]; then
     say "$user holds $unpropagated on $1 but not on the VMs under it, and its grant is left as it is; this makes it propagate: pveum acl modify $1 --users $user --roles $role --propagate 1"
   elif [ -n "$missing" ]; then
     run pveum acl modify "$1" --users "$user" --roles "$role"
-  elif [ -n "$beyond_role" ]; then
-    say "$user lacks $beyond_role on $1, which role $role does not give either: add it to the role, as above, and run this again"
   else
     say "$user holds what it needs on $1"
   fi
@@ -236,7 +287,9 @@ broad() {
   [ -z "$above" ] || say "WARNING: $user holds $(listing $above) on /, which its token will hold too: a user of the project's own holds only role $role, on the paths above. Give --user another user to keep the token to that."
 }
 # Last, so that nothing after it can fail with its secret unsaid.
-if existing=$(pvesh get "/access/users/$user/token/$token" --output-format json 2>/dev/null); then
+if [ "$no_token" = 1 ]; then
+  : # just init's vault holds the secret of the token it uses: no other is made.
+elif existing=$(pvesh get "/access/users/$user/token/$token" --output-format json 2>/dev/null); then
   say "token $user!$token exists: Proxmox showed its secret once, when it was made, and never again, so just init asks for it. If it is lost, remove the token - pveum user token delete $user $token, and every machine that uses it loses access - and run this again."
   case "$existing" in *'"privsep":1'* | *'"privsep":"1"'*)
     say "It was made with privilege separation, so it holds none of $user's privileges: remove it and run this again, which makes it without."
