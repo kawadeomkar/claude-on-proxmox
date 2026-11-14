@@ -560,8 +560,8 @@ def test_status_reads_a_host_through_its_sources_and_both_vaults_and_keeps_its_s
 
     root = _checkout_copy(tmp_path)
     _host_copy(root, "nuc")
-    (root / "hosts" / "current").write_text("nuc\n")
-    result = _just_here(root, "status")
+    # --host, one host's run: the others' are not read.
+    result = _just_here(root, "status", "--host", "nuc")
     assert result.returncode == 0, result.stdout + result.stderr
     (run,) = _runs(tmp_path, "python")
     assert run[run.index("--cache") + 1] == str(tmp_path / "status" / "nuc")
@@ -911,3 +911,77 @@ def test_a_recipe_given_a_vm_another_host_has_runs_against_that_host(tmp_path: P
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "inventory.txt").read_text() == "inventory/controller.yml,hosts/nuc\n"
     assert len(_runs(tmp_path, "ansible-playbook")) == 1
+
+
+def test_status_with_more_than_one_host_reads_every_host(tmp_path: Path) -> None:
+    from test_justfile import _runs
+
+    root = _checkout_copy(tmp_path)
+    _host_copy(root, "nuc")
+    (root / "hosts" / "lab").mkdir()
+    result = _just_here(root, "status")
+    assert result.returncode == 0, result.stdout + result.stderr
+    (run,) = _runs(tmp_path, "python")
+    every = json.loads(run[run.index("--hosts") + 1])
+    assert [(one["name"], one["current"], bool(one["problem"])) for one in every] == [
+        ("pve", True, False),
+        ("lab", False, True),
+        ("nuc", False, False),
+    ]
+    assert every[2]["sources"] == ["inventory/controller.yml", "hosts/nuc"]
+    assert run[run.index("--cache") + 1] == str(tmp_path / "status") and "-i" not in run
+
+
+def _status_says(tmp_path: Path, said: str) -> None:
+    """The environment's Python, but tools/status's run, which prints said: what a creating deploy's question gets."""
+    python = tmp_path / "bin" / "python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    record = tmp_path / "python.args"
+    python.write_text(
+        '#!/bin/sh\nif [ "$1" = tools/status ]; then\n'
+        f'  {{ for arg in "$@"; do printf "%s\\n" "$arg"; done; echo --end--; }} >> "{record}"\n'
+        f"  printf '%s\\n' {said!r}\n  exit 0\nfi\n"
+        f'exec "{sys.executable}" "$@"\n'
+    )
+    python.chmod(0o755)
+
+
+def test_a_deploy_that_may_make_a_vm_asks_the_other_hosts_for_its_name(tmp_path: Path) -> None:
+    from test_justfile import _runs
+
+    root = _checkout_copy(tmp_path)
+    _host_copy(root, "nuc")
+    _status_says(tmp_path, "taken newvm nuc")
+    refused = _just_here(root, "deploy", "newvm")
+    assert refused.returncode != 0
+    assert "newvm is a VM of nuc already, and a VM name belongs to one host" in refused.stderr
+    assert _runs(tmp_path, "ansible-playbook") == []
+    (asked,) = _runs(tmp_path, "python")
+    assert "--taken" in asked and asked[asked.index("--names") + 1] == "newvm"
+    # Only the hosts the run is not against: here every one but the first, the current.
+    assert [one["name"] for one in json.loads(asked[asked.index("--hosts") + 1])] == ["nuc"]
+
+
+def test_a_host_that_does_not_answer_the_question_is_said_and_the_deploy_goes_on(tmp_path: Path) -> None:
+    from test_justfile import _runs
+
+    root = _checkout_copy(tmp_path)
+    _host_copy(root, "nuc")
+    _status_says(tmp_path, "unread nuc")
+    result = _just_here(root, "deploy", "newvm")
+    assert result.returncode == 0, result.stderr
+    assert "nuc did not answer, so whether it has a VM of these names is not known" in result.stderr
+    assert len(_runs(tmp_path, "ansible-playbook")) == 1
+
+
+def test_a_deploy_of_a_vm_an_alias_places_or_of_the_fleet_asks_no_other_host(tmp_path: Path) -> None:
+    from test_justfile import _runs
+
+    root = _checkout_copy(tmp_path)
+    _host_copy(root, "nuc")
+    _aliases(root, alpha="pve")
+    _status_says(tmp_path, "taken alpha nuc")
+    for args in (["alpha"], ["--only", "configure"], ["--check"]):
+        result = _just_here(root, "deploy", *args)
+        assert result.returncode == 0, result.stderr
+    assert _runs(tmp_path, "python") == []

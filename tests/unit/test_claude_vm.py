@@ -23,9 +23,10 @@ REPO = Path(__file__).resolve().parents[2]
 LIB = REPO / "lib"
 # Loaded only inside the function that needs one: each is milliseconds a client that is not Ansible would pay.
 NEVER_AT_IMPORT = ("ansible", "yaml", "asyncio", "subprocess")
-# What a module may load when imported all the same: the process table is what proc.py is for. The MCP server's
-# modules, which tools/mcp alone imports, are a process of its own whose work is to run just, over asyncio.
-AT_IMPORT = {"claude_vm.proc": {"subprocess"}}
+# What a module may load when imported all the same: the process table is what proc.py is for, and a child per host
+# what status/hosts.py is for, which just status's engine imports only for --hosts. The MCP server's modules, which
+# tools/mcp alone imports, are a process of its own whose work is to run just, over asyncio.
+AT_IMPORT = {"claude_vm.proc": {"subprocess"}, "claude_vm.status.hosts": {"subprocess"}}
 MCP_AT_IMPORT = {"asyncio", "subprocess"}
 
 

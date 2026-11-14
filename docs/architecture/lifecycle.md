@@ -398,6 +398,25 @@ screen in a quarter of a second and a finished report in about two, against five
    than `forks` (20 in `ansible.cfg`), as Ansible would reach them.
 5. Each piece is drawn as it lands; `status_report` ranks what was found and works out the exit code.
 
+**More than one host** ([§7.14](custom-code.md#714-libclaude_vmhosts-and-toolshost--the-checkouts-hosts)). Without
+`--host` or a VM named, `just status` reads every host of the checkout's at once
+(`lib/claude_vm/status/hosts.py`): the engine is not safe to run twice in one process - `reach` ends every probe at
+one host's refusal, and Ansible's `GlobalCLIArgs` is one per process - so each host is read by a child of
+`tools/status`'s own, run with `--emit`, today's engine with that host's sources as `-i`, its vaults and its own
+folder of `.cache/status/<host>/`, which draws nothing and writes what it lands as JSON lines. The parent holds what
+each host found, builds each host's report with the same `status_report`, and draws them through the one live
+region, a block a host, each titled with its host's name and `▸` for the current one; a host that does not answer is
+its block alone, the others drawn meanwhile. Once every child has ended it adds what only the whole checkout shows:
+an alias recorded for a host whose listing has no VM of that name (`todo`, with the prune that clears it), and a VM
+name two hosts each have (`problem`). The JSON keeps every key 1.0 promised, the single objects (`proxmox`,
+`template`, `others`, `goldens`) the current host's, and adds `hosts` - each host's name, whether it is the current
+one, its exit, why it failed, its report - and `host` on every row of `vms`, `storages`, `capacity` and `attention`.
+The exit is the highest of the hosts', a host that did not answer counting only where it is the current one.
+A host that cannot be read - not set up, a token in the wrong vault - is said in its block, never the others'
+refusal. With `--host`, or names, which route to their host, it is one host's run as before, its settings kept in
+that host's folder. `just deploy` asks the other hosts through the same children (`--taken`, the listing only)
+before it may make a VM no alias records, and refuses a name one of them has.
+
 **The fleet.** A refused token is told from a host that did not answer by the listing's own status, and each says
 what to check; a token refused a VM's config or address names the privileges it lacks, and no VM is read over SSH
 after it, as none was when the playbook stopped there. A run that fails part way ends every connection it opened

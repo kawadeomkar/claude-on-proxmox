@@ -1207,7 +1207,8 @@ def test_every_status_run_in_a_test_writes_into_its_own_directory() -> None:
     for path in (REPO / "tests" / "unit").glob("test_*.py"):
         text = path.read_text()
         # test_ratchets.py names the file a table counts lines of, and test_controller_writes.py one that only reads the
-        # SSH config; neither runs anything. The MCP tests name it as what their stand-in python answers, in its place.
+        # SSH config; neither runs anything. The MCP tests and test_hosts.py name it as what their stand-in python
+        # answers, in its place.
         skipped = (
             "test_status.py",
             "test_justfile.py",
@@ -1215,6 +1216,7 @@ def test_every_status_run_in_a_test_writes_into_its_own_directory() -> None:
             "test_controller_writes.py",
             "test_mcp_server.py",
             "test_mcp_confirm.py",
+            "test_hosts.py",
         )
         if path.name not in skipped and "tools/status" in text:
             assert "status_root" in text, path.name

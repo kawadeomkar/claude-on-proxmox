@@ -105,4 +105,26 @@ while the aliases were off - still answer `just status`, `just login` and `just 
 with the host that recorded it, and a `just deploy` or `just code` that would point it at the other is refused until
 one of them has another name.
 
-`just status` keeps each host's settings apart (`.cache/status/<host>/`), and with `--host` reads that host.
+## Status
+
+```
+$ just status
+agent-warehouse  2026-11-11 10:02 · 2 hosts · 4 VMs
+
+▸ homelab · pve, Proxmox VE 9.2.21 · 3 VMs
+VMS
+  ...
+
+nuc · not read
+...
+```
+
+`just status` reads every host at once, each in a block of its own under its name, `▸` marking the current one;
+a host that does not answer costs only its own block, and makes the run's exit 2 only when it is the current host.
+Under ATTENTION each host says, beside its own, an alias recorded for it whose VM it no longer lists - deleted in
+Proxmox's own UI, say - with `just deploy --only ssh-config --host <name>`, which prunes it, and a VM name two hosts
+each have. `--host` reads one host, and a VM named is read where it is. `--json` keeps every key it had, the current
+host's, and adds `hosts` and a `host` on every row. Each host's settings are kept apart, in `.cache/status/<host>/`.
+
+`just deploy newvm`, about to make a VM no alias records, first asks every other host whether it has a VM of that
+name, and refuses one that does; a host that does not answer is said, and the run goes on.

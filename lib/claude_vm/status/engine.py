@@ -172,6 +172,27 @@ class Screen:
             self.out.print([(coloured, plain)])
 
 
+class Emitter(Screen):
+    """The screen of a host's read for just status across hosts (claude_vm.status.hosts): nothing drawn, and what
+    lands written as one JSON line each on standard output, for the run that draws every host's."""
+
+    def __init__(self, sections):
+        super().__init__(sections, True, "")
+
+    def emit(self, message: dict) -> None:
+        with self.display._lock:
+            sys.stdout.write(json.dumps(message, sort_keys=True) + "\n")
+            sys.stdout.flush()
+
+    def land(self, host, part, merge=False):
+        super().land(host, part, merge)
+        self.emit({"land": [host, part, merge]})
+
+    def finish(self, report):
+        self.out.finish()
+        self.emit({"end": {"exit": report["exit"], "fleet_at": self.fleet_at, "done_at": self.done_at}})
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """The token is never carried to another address: a redirect is an answer, not a place to go."""
 
@@ -589,6 +610,8 @@ def run(opts) -> int:
         return 3
 
     def drawn():
+        if opts.emit:
+            return Emitter(sections)
         return Screen(sections, opts.json, os.environ.get("ANSIBLE_LOG_PATH", ""))
 
     # A password script may ask at the terminal: the outline waits for its answer rather than being drawn over it.
@@ -596,12 +619,16 @@ def run(opts) -> int:
     try:
         config = settings.load(opts, screen.display.display if screen else None)
         screen = screen or drawn()
+        if opts.emit:
+            fleet = config["fleet"]
+            keys = ("ssh_config", "ssh_config_file", "ssh_config_legacy")
+            screen.emit({"settings": {key: fleet.get(key) for key in keys}})
         if config["run"].get("only") and not opts.only:
             screen.sections = sections = settings.sections(config["run"]["only"])
         Run(opts, screen, config).go()
         report = model.status_report(dict(screen.found), screen.now_said(), time.time())
         screen.finish(report)
-        if opts.json:
+        if opts.json and not opts.emit:
             sys.stdout.write(json.dumps(report, indent=4, sort_keys=True) + "\n")
             sys.stdout.flush()
     except KeyboardInterrupt:

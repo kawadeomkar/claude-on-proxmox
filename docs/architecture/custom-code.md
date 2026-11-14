@@ -1273,6 +1273,8 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
 - **`just init --host <name>`** sets one up (`tools/check host init`, [§4.12](lifecycle.md#412-playbooksinit_settingsyml)),
   and **`just vault --host`** and **`just settings`** reach a host leniently (`--lenient`): one that lacks a setting
   it sets for itself, since they are how that is put right.
-- **`just status`** reads a host in `hosts/` through its sources as `-i`, so that its files key the settings kept,
+- **`just status`** reads every host at once, a child process each, drawn as one report
+  ([§4.6](lifecycle.md#46-toolsstatus--read-only-drawn-live)); with `--host`, one host. It reads a host in `hosts/`
+  through its sources as `-i`, so that its files key the settings kept,
   every vault loaded (`--vault-file` each), and keeps each host's settings in a folder of its own,
   `.cache/status/<host>/`; the token's vault name is kept with the snapshot.

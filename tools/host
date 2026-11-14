@@ -9,6 +9,7 @@ host from; just host's list, its switch and its removal. tools/check host runs i
     tools/host remove --checkout <dir> --hosts-dir <dir> <name>
     tools/host init --checkout <dir> --hosts-dir <dir> [--address <address>] [--asking] [<name>]
     tools/host current --checkout <dir> --hosts-dir <dir>
+    tools/host every --checkout <dir> --hosts-dir <dir> [--except <name>] [--vault-file <file>] [--vault-pass <file>]
 
 env prints, for the recipe to eval, the host of the run - --host, else the host --nested names (a recipe run inside
 another's, its host passed as the justfile's nested_host=), else the one hosts/current names, else the first host - as
@@ -106,6 +107,54 @@ def _vaults_hold_their_own(layout: hosts.Layout, host: hosts.Host, password: str
     return ""
 
 
+def _what_a_run_reads(layout: hosts.Layout, host: hosts.Host, opts) -> str:
+    """Why a run against a host in hosts/ would read what is not its own, or "": a setting of one network the shared
+    files set and it does not, a token under the other vault's name."""
+    lines = layout.never_inherited(host)
+    if lines:
+        return (
+            f"{hosts.SHARED_LOCAL} sets {', '.join(lines)}, which describe{'s' if len(lines) == 1 else ''} one "
+            f"network or one host, and {host.local_file} does not: add {'it' if len(lines) == 1 else 'them'} "
+            f"there for {host.name}, the value or the setting's default to say none"
+        )
+    return _vaults_hold_their_own(layout, host, opts.vault_pass)
+
+
+def every(opts, layout: hosts.Layout) -> int:
+    """Every host, for just status to read each: its name, whether it is the current one, its sources and vaults,
+    and why it cannot be read, if anything does - said in its own block, never refusing the others'. --except leaves
+    one out: a creating deploy asks the others for the names it would make."""
+    try:
+        current = layout.resolve("")
+    except hosts.Refused as refused:
+        return _refuse(str(refused))
+    out = []
+    for host in layout.every():
+        if host.name == opts.except_:
+            continue
+        problem = host.problem
+        if not problem and not host.first:
+            problem = _what_a_run_reads(layout, host, opts)
+        if not problem:
+            for vault in [hosts.SHARED_VAULT] if host.first else [hosts.SHARED_VAULT, host.vault_file]:
+                path = layout._path(vault)
+                if not path.is_file() or not path.read_bytes().startswith(b"$ANSIBLE_VAULT"):
+                    problem = (
+                        f"{vault} is missing or not encrypted: just vault{'' if host.first else ' --host ' + host.name}"
+                    )
+        out.append(
+            {
+                "name": host.name,
+                "current": current is not None and host.name == current.name,
+                "sources": host.sources,
+                "vault_files": [opts.vault_file] if host.first else [hosts.SHARED_VAULT, host.vault_file],
+                "problem": problem,
+            }
+        )
+    print(json.dumps(out))
+    return 0
+
+
 def env(opts, layout: hosts.Layout) -> int:
     given = opts.host or opts.nested
     if opts.host and opts.nested and opts.host != opts.nested:
@@ -164,14 +213,7 @@ def env(opts, layout: hosts.Layout) -> int:
                 "them only for a run against the first host"
             )
     if overlay and not opts.lenient:
-        lines = layout.never_inherited(host)
-        if lines:
-            return _refuse(
-                f"{hosts.SHARED_LOCAL} sets {', '.join(lines)}, which describe{'s' if len(lines) == 1 else ''} one "
-                f"network or one host, and {host.local_file} does not: add {'it' if len(lines) == 1 else 'them'} "
-                f"there for {host.name}, the value or the setting's default to say none"
-            )
-        why = _vaults_hold_their_own(layout, host, opts.vault_pass)
+        why = _what_a_run_reads(layout, host, opts)
         if why:
             return _refuse(why)
     others = layout.others_of(host) if many else []
@@ -192,6 +234,9 @@ def env(opts, layout: hosts.Layout) -> int:
         "vault_files": " ".join(vaults),
         "host_sources": sources,
         "host_extra": json.dumps({"claude_hosts_other": others}) if many else "",
+        # Whether the VMs named chose the host, their aliases recording it: a creating deploy that they did not asks
+        # the other hosts for the names first.
+        "host_routed": "1" if routed else "",
     }
     for name, value in values.items():
         print(f"{name}={shlex.quote(value)}")
@@ -384,7 +429,7 @@ def remove(opts, layout: hosts.Layout) -> int:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="tools/host")
-    parser.add_argument("action", choices=["env", "list", "switch", "remove", "init", "current"])
+    parser.add_argument("action", choices=["env", "list", "switch", "remove", "init", "current", "every"])
     parser.add_argument("name", nargs="?", default="")
     parser.add_argument("--checkout", required=True)
     parser.add_argument("--hosts-dir", required=True)
@@ -398,6 +443,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--lenient", action="store_true")
     parser.add_argument("--asking", action="store_true")
     parser.add_argument("--address", default="")
+    parser.add_argument("--except", dest="except_", default="")
     opts = parser.parse_args(argv)
     for value in (opts.host, opts.nested, opts.name):
         if value and not hosts.NAME.fullmatch(value):
@@ -405,9 +451,8 @@ def main(argv: list[str]) -> int:
     checkout = Path(opts.checkout)
     hosts_dir = Path(opts.hosts_dir)
     layout = hosts.Layout(checkout, hosts_dir if hosts_dir.is_absolute() else checkout / hosts_dir)
-    action = {"env": env, "list": listing, "switch": switch, "remove": remove, "init": init, "current": current}[
-        opts.action
-    ]
+    actions = {"env": env, "list": listing, "switch": switch, "remove": remove, "init": init, "current": current}
+    action = {**actions, "every": every}[opts.action]
     if opts.action in ("switch", "remove") and not opts.name:
         return _refuse(f"just host {'--remove ' if opts.action == 'remove' else ''}takes the host's name")
     return action(opts, layout)

@@ -591,6 +591,9 @@ if apt fails to resolve a mirror, that is the machine, not the change.
       or Tailscale, not this machine: no host key - each VM is reached with `status_ssh_args`, `ansible.cfg`'s with
       `StrictHostKeyChecking=yes` and `UpdateHostKeys=no`, first on ssh's command line, the inventory's own ssh
       options, port and key after them - no alias, nothing in `~/.ssh` or `~/.claude`.
+    - With more than one host it reads every host at once, a child of `tools/status` each (`--emit`,
+      `lib/claude_vm/status/hosts.py`): the engine is not safe twice in one process. Each child has its host's sources,
+      vaults and `.cache/status/<host>/`; a host not answering fails the run only as the current host.
     - It runs no `ansible-playbook` (decided on measurements,
       [§15.7](docs/architecture/decisions.md#157-just-status-runs-no-playbook)): `tools/status`, the engine in
       `lib/claude_vm/status/`, the settings asked of Ansible in-process and kept, and one program on each VM

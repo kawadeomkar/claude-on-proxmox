@@ -170,7 +170,8 @@ lib/claude_vm/                    the controller's Python as one package (§7.10
                                   the region, the run's own words and the summary out; the stdout callback hands it
                                   every event (§7.5)
                                   status/, just status: engine.py the run, settings.py, reach.py and found.py, lines.py
-                                  what the roles say too, model.py its model, and tui/status.py, its report drawn (§7.7)
+                                  what the roles say too, model.py its model, hosts.py every host's run at once, a
+                                  child each, and tui/status.py, its report drawn (§7.7)
                                   wiring.py, the settings' wiring, which tools/docs.py renders and tools/settings reads
                                   (§7.9)
                                   store.py, a file replaced atomically under a lock on its folder: tools/settings'
