@@ -982,6 +982,13 @@ test of a running `claude`, held equal to it by `tests/unit/test_code_session.py
   `replace` swaps a file for new text atomically, keeping its mode (through a symlink, the file it names), and
   `locked`, around a read and a replace, holds an exclusive `flock` on the file's folder, so two writers never
   lose one's change.
+- **`vault.py`** reads the vault without Ansible, and imports none of it anywhere, which would cost 159 ms on a
+  homelab runner: the password files in Ansible's order (the recipe's, then `ANSIBLE_VAULT_PASSWORD_FILE`'s), a
+  script among them run once a process, its standard input and error left to it so that it can ask, a client
+  script left to Ansible; an AES256 file opened with `cryptography`, format 1.1 or 1.2. `names` gives the names a
+  vault sets, never its values, a tag such as an inline `!vault` read as `None`, for the hosts' check (§7.14);
+  `values` what the vaults hold, read strictly, for `just status`'s snapshot (§7.7), which asks Ansible for what it
+  cannot open. A vault ID's password opens nothing here.
 - **`refs.py`** names a VM and a command: `VmRef` (a name as `just` takes one, and a VM ID in Proxmox's range),
   `Action` (a recipe and its words, `line` its one display form, `command_line`) and `NextStep`.
 - **The adapters.** Each file in `filter_plugins/` is an adapter: it puts its checkout's `lib/` first on `sys.path`,
@@ -1017,8 +1024,10 @@ test of a running `claude`, held equal to it by `tests/unit/test_code_session.py
   thin all the same, for the runs no callback of the project's warms (the unit harness, Molecule).
 
 Covered by `tests/unit/test_claude_vm.py`: `lib/` holds the one package, every core module imports in a fresh
-`python -I` without `ansible`, `yaml` or `asyncio`, each record refuses what its fields cannot hold, and an adapter's
-filter imports its module only when called and refuses another checkout's `claude_vm`.
+`python -I` without `ansible`, `yaml` or `asyncio`, `vault.py` imports no `ansible` anywhere, each record refuses what
+its fields cannot hold, and an adapter's filter imports its module only when called and refuses another checkout's
+`claude_vm`. `tests/unit/test_vault.py` holds `vault.names` to the names Ansible's own `VaultLib` reads, vault by vault:
+a 1.2 vault with a vault ID's label, an inline `!vault`, another password, a client script.
 
 ## 7.11 The choices: the editor, the VPN, and later the host's OS
 
@@ -1104,13 +1113,14 @@ of its own its modules name. Why: [§15.6](decisions.md#156-agents-run-the-recip
 - **`checkout.py`: the head, the branch guard, the change notice, the vault.** Every result names the checkout's
   branch and commit. `run_refusal` is the guard a run that changes something checks: `main` with no tracked change,
   unless `--any-branch`. A digest of what the server runs, from its start: the justfile its tools are made from,
-  `tools/mcp`, which every job's supervisor runs anew, and `lib/claude_vm/`, some of which it imports only when a tool
-  first needs it, read from the files, Python's caches and dot-names (`.DS_Store`, an editor's swap file) aside. Once
-  one changes - a pull, a branch, an edit - every tool answers "restart this server with /mcp" rather than run a
-  schema that no longer matches, or older code beside newer. The environment is not compared: after an install that
-  moves a package the server runs on, the SDK above all, it is restarted by hand. A recipe that
-  reads the vault is refused, before anything runs, when the vault is encrypted and there is no `.vault_pass` or
-  recorded file, since a run has no terminal to ask the password at.
+  `tools/mcp`, which every job's supervisor runs anew, and `lib/claude_vm/`, which the server imported at its start and
+  each supervisor imports anew, read from the files, Python's caches and dot-names (`.DS_Store`, an editor's swap file)
+  aside. Once one changes - a pull, a branch, an edit - every tool answers "restart this server with /mcp" rather than
+  run a schema that no longer matches, or older code beside newer: every tool but `jobs`, `job` and `cancel`, which
+  follow and stop a job the server started by the code that started it, so an agent can always stop a run. The
+  environment is not compared: after an install that moves a package the server runs on, the SDK above all, it is
+  restarted by hand. A recipe that reads the vault is refused, before anything runs, when the vault is encrypted and
+  there is no `.vault_pass` or recorded file, since a run has no terminal to ask the password at.
 - **`results.py`: what the model reads.** Claude Code gives the model only a result's structured part when it has one
   (verified on 2.1.309), so a JSON tool (`status`, `settings`) returns its report as structured content with the head
   and the note that what the VMs said is data inside it, and a text tool (`logs`, `log`) text alone, registered with
@@ -1160,7 +1170,11 @@ of its own its modules name. Why: [§15.6](decisions.md#156-agents-run-the-recip
   (`just host --json`); none switches or removes one. Every run tool takes `host`. `destroy`'s dialog names the host it
   deletes from, and its code holds the host, so an answer for one host's `alpha` is none for another's; the run is
   then given that host, whatever is current by the time it starts (`run_host`: the host given, else where the VMs'
-  aliases place them - each name hyphenated, as the justfile takes it - else the current one). Every run tool's job
+  aliases place them - each name hyphenated, as the justfile takes it - else the current one). The server learns it
+  as a UI would, from the command line: `just host --json --for <names> --host <name>`'s `where`, through the same
+  recipe its `hosts` tool runs, and imports nothing of the hosts, whose code a pull may change under a long-lived
+  process (`hosts_read`; unread, it is a word left out of a title or a dialog, and a deploy that may create a VM is
+  refused, since the current host is never implied here). Every run tool's job
   title names its host the same way (`titled_host`), and the title alone: the run is given no `--host` it was not, so
   it resolves its host as at a terminal, and `init`, whose `--host` is the host it sets up, is given none. With more
   than one host, `settings_set`'s dialog names the file it writes - a host's own `local.yml` where one is named, else
@@ -1249,7 +1263,21 @@ host's `group_vars/all/` come second, so they outrank the shared ones. Every pla
 `proxmox_api_host`, `hosts: proxmox`, the template's build, init's checks and the name refusals all read the run's one
 host. `hosts/current` names the current host; `hosts/` is git-ignored and refused by `tests/check_no_local_files.sh`.
 
-- **One resolver** (`tools/check host`, which runs `tools/host`; the layout in `layout.py`) is the one place that
+- **One core, one adapter.** The rules are a core in `lib/claude_vm/hosts/` that reads and decides and never
+  writes: `layout.py` reads the files into `Host` records; `choose.py` answers which host a run is against, reading
+  no vault, no environment and no password script, and lists the hosts as `just host` shows them; `resolve.py` runs
+  every check a run's host must pass, in their order, the vault check among them (`vault_check`, a decision and the
+  key a check that passed is kept under), and `every`, each host as `just status` reads it; `setup.py` plans
+  `just init --host`, the switch and the removal; `model.py` holds the records, frozen and checked (§7.10). `tools/host`
+  is its one adapter: it reads the arguments into a `Request`, prints what the core decided - shell for a recipe to
+  `eval`, JSON, a table - and performs every write, `hosts/current` and `hosts/.checked.json` through `store.py` and
+  a host's files `O_EXCL`. It says each note on standard error at one of three moments: a `--host` beside another
+  host's VM as soon as the host is chosen, a vault nothing here opens when the check runs, the routing note last, once
+  every check passed; a refusal carries the notes said before it. `Host` and `Choice` stay the core's, since a
+  `Host` holds a whole `local.yml`: `just host --json` is `HostList`, through `wire.to_wire`, and `every`'s JSON a
+  private pipe to `just status`'s parent, bare. No front end imports the core: the MCP server asks
+  `just host --json` (§7.12), as a UI would.
+- **One resolver** (`tools/check host`, which runs `tools/host`) is the one place that
   knows a path. Each VM recipe asks it, in the line `{{ host_env }}`, after its own rules and before its lock: the
   host of the run - `--host`, else a nested recipe's `nested_host=`, else the host the VMs named are on, as their
   aliases record (`# origin`; names on two hosts are refused, one host per run, and beside `--host` a name another
@@ -1278,9 +1306,10 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
   folder (its `inventory_dir` is localhost's), and `vault_host_proxmox_api_token_secret` otherwise - one expression,
   keyed on where Ansible recorded the host, with no variable a git-ignored file could set to switch it off. A host
   whose vault lacks it is an undefined variable before any request. The resolver refuses either name in the other's
-  vault, reading the vaults' names in memory with the recipe's password file - a password script run as Ansible runs
-  it; a vault no password here opens, a vault ID's or a client script's, is said and left to Ansible - and keeping a
-  check that passed in `hosts/.checked.json`, by the files' sizes and times, but for `just status`'s (`--read-only`),
+  vault, reading the vaults' names in memory with the recipe's password file (`vault.py`, §7.10) - a password script
+  run as Ansible runs it; a vault no password here opens, a vault ID's or a client script's, is said and left to
+  Ansible - and keeping a check that passed in `hosts/.checked.json`, by the files' sizes and times, but for `just
+  status`'s (`--read-only`),
   which writes only into `.cache/status/`. Nor may a settings file or a vault set what the inventory defaults make
   from the run's host (the kind's `from_host`: `proxmox_api_host`, `proxmox_api_token_secret`, `proxmox_api_url`,
   `proxmox_api_headers`, `proxmox_api_module_defaults`), which would outrank the rule for every host: beside another
@@ -1293,8 +1322,11 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
   others: `claude_vm_inventory_hosts`, `claude_vm_inventory_addresses` and with them `proxmox_vm_known_hosts_kept`
   add `claude_hosts_other`, so no VM is named after another host, no alias takes its address, and destroy never
   forgets its key.
-- **`just host`** lists the hosts from their files alone, writes `hosts/current` anew and renames it over the old
-  under the run lock, so a run under way ends on the host it started on, and `--remove` deletes a host's folder after
+- **`just host`** lists the hosts from their files alone, replaces `hosts/current` whole (`store.replace`) under the
+  run lock, so a run under way ends on the host it started on. With `--json`, `--for` and `--host` ask which host a
+  run given those names and that `--host` would reach (`where`, `choose.where`): `choose` made public, no vault opened,
+  a refusal said as data. It is a preview, not a reservation: a front end that shows a host for a person to confirm
+  passes it to the run as `--host`. `--remove` deletes a host's folder after
   its name is typed at a terminal - never the current host's or the first's, and never its VMs.
 - **`just init --host <name>`** sets one up (`tools/check host init`, [§4.12](lifecycle.md#412-playbooksinit_settingsyml)),
   and `just init` alone works on the current host, as every command does. For a host in `hosts/`, a value for the

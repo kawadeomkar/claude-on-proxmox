@@ -315,8 +315,14 @@ One checkout drives more than one Proxmox host - a homelab and a NUC - and movin
   checks, the token - would have had to learn per host.
 - **The first host stays where it is**, in `inventory/`: no migration, and a checkout of one host sees nothing new.
   Moving every host under `hosts/` is a change to the resolver alone, should it be wanted.
-- **One resolver knows the layout** (`tools/check host`): every recipe asks it for its run's host and the files and
-  sources that host is read from, never a path of its own.
+- **One core knows the layout, behind `tools/host`; front ends ask the command line**
+  ([§7.14](custom-code.md#714-libclaude_vmhosts-and-toolshost--the-checkouts-hosts)): every recipe asks
+  `tools/check host` for its run's host and the files and sources that host is read from, never a path of its own.
+  The rules are records and functions in `lib/claude_vm/hosts/` that read and decide and never write, and `tools/host`
+  is their one adapter, which prints and performs the writes. No front end imports them: the MCP server asks
+  `just host --json` which host a run would reach, since its long-lived process would go on deciding by the code it
+  loaded after a pull, and a UI gets a contract over `just`. Rejected (11 November 2026): a second copy of the choosing
+  order in the MCP server, which drifted once (names not hyphenated).
 - **Nothing of the first host's falls through to another.** Its token's secret by a committed rule keyed on where
   Ansible recorded the host, with no variable to switch it off - run on fake values against two fake APIs before it
   was written - and every setting that describes one machine or one network required in, or refused missing from,

@@ -27,8 +27,9 @@ tools/run-logged                  run a command with its Ansible output logged t
 tools/live                        a recipe's command drawn as a part of one run, or passed through as it ran; the run's end
                                   from the recipe's trap (§7.8)
 tools/status                      just status: the engine's command line (lib/claude_vm/status/engine.py, §7.7)
-tools/host                        the checkout's hosts (tools/check host): the host of a run and the files it is read
-                                  from, and just host's list, switch and removal (lib/claude_vm/hosts/, §7.14)
+tools/host                        the checkout's hosts (tools/check host): the hosts core's one adapter, which prints
+                                  the host of a run and the files it is read from, and performs just host's switch and
+                                  removal and just init --host's files (lib/claude_vm/hosts/, §7.14)
 tools/settings                    just settings: each setting's value and where it was set, from Ansible's own variables (§7.9)
 tools/mcp                         the MCP server just mcp registers with Claude Code: its tools the recipes (§7.12)
 tools/stale_scripts.py            just install: the locked packages whose commands start another Python, to reinstall
@@ -176,6 +177,12 @@ lib/claude_vm/                    the controller's Python as one package (§7.10
                                   (§7.9)
                                   store.py, a file replaced atomically under a lock on its folder: tools/settings'
                                   write of local.yml (§7.9)
+                                  vault.py, the vault read without Ansible: its names for the hosts' check, its values
+                                  for just status, how Ansible finds and runs a password file (§7.10)
+                                  hosts/, the hosts core, which reads and decides and never writes: layout.py the files
+                                  as Host records, kinds.py the kinds of host, model.py the records, choose.py which
+                                  host and the list, resolve.py a run's checks and every host for just status,
+                                  setup.py init, the switch and the removal as plans (§7.14)
                                   mcp/, tools/mcp's server: config.py, its registered arguments; recipes.py, the
                                   tools' schemas from just --dump and a call's argv; environment.py, a run's
                                   environment from an allow list; checkout.py, the head, the branch guard, the

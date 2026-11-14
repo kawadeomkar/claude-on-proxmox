@@ -344,7 +344,9 @@ if apt fails to resolve a mirror, that is the machine, not the change.
     - The first host stays in `inventory/`; each other is `hosts/<name>/` (git-ignored, refused by
       `tests/check_no_local_files.sh`), run with `-i inventory/controller.yml -i hosts/<name>`, so
       `groups['proxmox']` is that host alone and no playbook or role names a host. Only `tools/check host`
-      (`lib/claude_vm/hosts/`) knows a path: every VM recipe's `{{ host_env }}` line asks it, after the rules and
+      (`tools/host`, the one adapter of the core in `lib/claude_vm/hosts/`, which reads and decides and never writes,
+      and which no front end imports: the MCP server asks `just host --json`) knows a path: every VM recipe's
+      `{{ host_env }}` line asks it, after the rules and
       before the lock, and reads `$vault_files`, `$settings_files` and `$host_sources` from it, never `VAULT_FILE` or
       `SETTINGS_FILES`, which stay the first host's and are refused beside another.
     - A host's sources are each a `-i` of the run's, never an exported `ANSIBLE_INVENTORY`: the editor and every

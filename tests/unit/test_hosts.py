@@ -769,6 +769,54 @@ def test_a_removal_names_the_host_to_type_and_deletes_only_on_it(tmp_path: Path)
     assert not (root / "hosts" / "nuc").exists()
 
 
+# What just host --json says of a run it was asked about (--for, --host), promised as the rest of the document is.
+PROMISED_WHERE_KEYS = ["host", "routed", "unplaced", "notes", "refusal"]
+
+
+def _alias(root: Path, name: str, origin: str) -> None:
+    (root / ".ssh").mkdir(exist_ok=True)
+    block = f"# BEGIN agent-warehouse: {name}\n# origin: {origin}\nHost {name}\n# END agent-warehouse: {name}\n"
+    with open(root / ".ssh" / "agent-warehouse.conf", "a") as aliases:
+        aliases.write(block)
+
+
+def test_the_json_says_which_host_a_run_would_reach_and_never_switches(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    _alias(root, "beta", "nuc")
+    assert json.loads(_tool(root, "list", "--json").stdout)["where"] is None
+    routed = json.loads(_tool(root, "list", "--json", "--names=beta,new_vm").stdout)["where"]
+    assert list(routed) == PROMISED_WHERE_KEYS
+    # Names as a run takes them: hyphenated.
+    assert routed == {"host": "nuc", "routed": True, "unplaced": ["new-vm"], "notes": [], "refusal": ""}
+    given = json.loads(_tool(root, "list", "--json", "--host=pve", "--names=beta").stdout)["where"]
+    assert given["host"] == "pve" and not given["routed"] and given["notes"][0].startswith("beta is nuc's")
+    # A run that would be refused says why as data, before it starts, and the list is still read.
+    refused = _tool(root, "list", "--json", "--host=lab")
+    assert refused.returncode == 0, refused.stderr
+    said = json.loads(refused.stdout)
+    assert "which is no host of this checkout's" in said["where"]["refusal"] and len(said["hosts"]) == 2
+    assert not (root / "hosts" / "current").exists()
+
+
+def test_just_host_says_which_host_a_run_would_reach_with_json_alone(tmp_path: Path) -> None:
+    root = _checkout_copy(tmp_path)
+    _host_copy(root, "nuc")
+    _alias(root, "beta", "nuc")
+    listed = _just_here(root, "host", "--json", "--for=beta", "--host=nuc")
+    assert listed.returncode == 0, listed.stderr
+    assert json.loads(listed.stdout)["where"]["host"] == "nuc"
+    for args, said in (
+        (("--for=beta",), "give them with --json"),
+        (("--host=nuc",), "give them with --json"),
+        (("nuc", "--json", "--for=beta"), "give it no name"),
+        (("--json", "--for=beta,-x"), "VM names start with a letter or a digit"),
+    ):
+        refused = _just_here(root, "host", *args)
+        assert refused.returncode != 0 and said in refused.stderr, (args, refused.stderr)
+    assert not (root / "hosts" / "current").exists()
+
+
 # ---------------------------------------------------------------------------------------- a run through an overlay ----
 # The project's own playbooks against two fake Proxmox hosts with different token secrets, a VM on each: the first host
 # in inventory/, the second in hosts/nuc/. What the overlay must hold for every playbook: the run asks one host only,

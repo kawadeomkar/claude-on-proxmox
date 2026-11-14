@@ -3,9 +3,9 @@ change anything from it; whether what the server runs changed since it started; 
 
 The settings and the vault live in one checkout, whose branch other sessions switch, so a run that changes something
 runs only on main with no tracked change, unless just mcp was given --any-branch (the branch guard). A pull, a branch
-or an edit changes the justfile, and with it the tools' schemas, or the server's own code, some of which it imports
-only when a tool first needs it: every tool then answers "restart" rather than run a schema that no longer matches,
-or older code beside newer.
+or an edit changes the justfile, and with it the tools' schemas, or the server's own code, which it imported at its
+start and each job's supervisor imports anew: every tool then answers "restart" rather than run a schema that no
+longer matches, or older code beside newer.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def run_refusal(config: Config, at: Head) -> str:
 
 
 # What the server runs, from the checkout: the justfile its tools are made from, tools/mcp, which a job's supervisor
-# runs anew, and the package, which the server imports some of only when a tool first needs it.
+# runs anew, and the package, which the server imported at its start and a supervisor imports anew.
 RUNS = ("justfile", "tools/mcp", "lib/claude_vm")
 
 

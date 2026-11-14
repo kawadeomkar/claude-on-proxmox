@@ -19,14 +19,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import hmac
 import json
 import os
 import re
 import sys
 from pathlib import Path
 
-from .. import wiring
+from .. import vault, wiring
 from ..hosts.kinds import KINDS
 from . import model
 
@@ -227,38 +226,22 @@ class Stale(Exception):
 
 
 # ------------------------------------------------------------------------------------------- the vault, natively ----
+# Read by the one reader the hosts' check shares (lib/claude_vm/vault.py): what it cannot open is Stale here, and the
+# run asks Ansible instead.
 
 
 def _vault_open(data: bytes, password: bytes) -> bytes:
     """An ansible-vault AES256 file's text, opened with the standard library and cryptography alone."""
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
-    lines = data.strip().splitlines()
-    if not (lines and lines[0].startswith((b"$ANSIBLE_VAULT;1.1;AES256", b"$ANSIBLE_VAULT;1.2;AES256"))):
-        raise Stale("not an AES256 vault")
-    salt, mac, cipher = bytes.fromhex(b"".join(lines[1:]).decode()).split(b"\n", 2)
-    derived = hashlib.pbkdf2_hmac("sha256", password, bytes.fromhex(salt.decode()), 10000, 80)
-    cipher = bytes.fromhex(cipher.decode())
-    if not hmac.compare_digest(hmac.new(derived[32:64], cipher, hashlib.sha256).hexdigest().encode(), mac):
-        raise Stale("the vault's password does not open it")
-    opened = Cipher(algorithms.AES(derived[:32]), modes.CTR(derived[64:])).decryptor()
-    text = opened.update(cipher) + opened.finalize()
-    return text[: -text[-1]]
+    try:
+        return vault.open_text(data, password)
+    except vault.Unopened as error:
+        raise Stale(str(error)) from error
 
 
 def _password_files(opts) -> list[str]:
     """The vault's password files, in the order Ansible tries them: the recipe's (.vault_pass), then the one
     ANSIBLE_VAULT_PASSWORD_FILE names. One that ansible.cfg names is Ansible's to read: no snapshot is kept then."""
-    files = [opts.vault_password_file, os.path.expanduser(os.environ.get("ANSIBLE_VAULT_PASSWORD_FILE", ""))]
-    return [one for at, one in enumerate(files) if one and one not in files[:at]]
-
-
-def _is_script(path: str) -> bool:
-    return os.access(path, os.X_OK) and not os.path.isdir(path)
-
-
-def _is_client(path: str) -> bool:
-    return Path(path).stem.endswith("-client")
+    return list(vault.password_files(opts.vault_password_file, os.environ))
 
 
 def _named_by_ansible_cfg() -> list[str]:
@@ -274,32 +257,16 @@ def _named_by_ansible_cfg() -> list[str]:
 def may_ask(opts) -> bool:
     """Whether a password script may ask at the terminal. Nothing is drawn until it has answered, or it would ask under
     the live region; a run with a plain password file, the usual one, draws at once."""
-    return any(_is_script(path) for path in [*_password_files(opts), *_named_by_ansible_cfg()])
-
-
-# What each password script said in this run: it may have had to ask a person, who is asked once.
-_answers: dict[str, bytes] = {}
+    return any(vault.is_script(path) for path in [*_password_files(opts), *_named_by_ansible_cfg()])
 
 
 def _password(path: str) -> bytes:
-    """A password file's password, as Ansible reads one: an executable file is run, and says it. A vault client
-    script, which is asked for a vault ID, is left to Ansible."""
-    if not _is_script(path):
-        return Path(path).read_bytes().strip()
-    if _is_client(path):
-        raise Stale("a vault password client script")
-    # Whole: given as .vault_pass, the name alone would be looked for on PATH.
-    whole = os.path.abspath(path)
-    if whole not in _answers:
-        import subprocess
-
-        try:
-            # Its standard input and error are left to it, as Ansible leaves them, so that it can ask.
-            said = subprocess.run([whole], stdout=subprocess.PIPE, check=True)
-        except subprocess.SubprocessError as error:
-            raise Stale("the vault's password script failed") from error
-        _answers[whole] = said.stdout.strip(b"\r\n")
-    return _answers[whole]
+    """A password file's password, as Ansible reads one: an executable file is run, once in a run, and says it. A vault
+    client script, which is asked for a vault ID, is left to Ansible."""
+    said = vault.password(path)
+    if said is None:
+        raise Stale("a vault password client script" if vault.is_client(path) else "the vault's password script failed")
+    return said
 
 
 def _vault_files(opts) -> list[str]:
@@ -310,29 +277,10 @@ def _vault_files(opts) -> list[str]:
 
 def _vault_values(opts) -> dict:
     """What the vaults hold, merged as Ansible merges them: a later file's value of a name over an earlier one's."""
-    import yaml
-
-    merged = {}
-    for file in _vault_files(opts):
-        data = Path(file).read_bytes()
-        if data.startswith(b"$ANSIBLE_VAULT"):
-            for path in _password_files(opts):
-                try:
-                    data = _vault_open(data, _password(path))
-                    break
-                except (OSError, Stale):
-                    continue
-            else:
-                raise Stale("no password file opens the vault")
-        try:
-            values = yaml.load(data, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)) or {}
-        except yaml.YAMLError as error:
-            # What Ansible alone reads, as !unsafe: it is asked instead, and no snapshot is kept.
-            raise Stale("the vault is more than plain YAML") from error
-        if not isinstance(values, dict):
-            raise Stale("the vault is not a mapping")
-        merged.update(values)
-    return merged
+    try:
+        return vault.values(_vault_files(opts), _password_files(opts))
+    except vault.Unopened as error:
+        raise Stale(str(error)) from error
 
 
 # ---------------------------------------------------------------------------------------------------- Ansible ----
@@ -371,7 +319,7 @@ class Ansible:
         self.loader = DataLoader()
         self.loader.set_basedir(str(REPO / "playbooks"))
         # What a password script already said is given to Ansible, which would run it again and have it ask again.
-        scripts = [path for path in _password_files(opts) if _is_script(path) and not _is_client(path)]
+        scripts = [path for path in _password_files(opts) if vault.is_script(path) and not vault.is_client(path)]
         said = [(C.DEFAULT_VAULT_IDENTITY, VaultSecret(_password(path))) for path in scripts]
         named = C.DEFAULT_VAULT_PASSWORD_FILE
         if named and os.path.abspath(named) in map(os.path.abspath, scripts):

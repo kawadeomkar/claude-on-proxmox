@@ -172,7 +172,7 @@ def test_the_server_reads_nothing_of_its_environment_but_through_the_allow_list(
 
 # ------------------------------------------------------------------------------------------- more than one host ----
 # The current host is the terminal's, as the default VM is: no tool changes it, a deploy that may create a VM names the
-# host it goes on, and a named VM that exists is found where its alias says it is (lib/claude_vm/hosts/).
+# host it goes on, and a named VM that exists is found where its alias says it is, as just host --json says.
 
 
 def test_the_hosts_tool_lists_and_never_switches(dumped):
@@ -193,47 +193,19 @@ def test_with_more_than_one_host_a_deploy_that_may_create_a_vm_names_its_host():
     assert server.deploy_refusal([], "", False, "nuc").startswith("deploy creates the VMs named, and none were")
 
 
-def _two_hosts(root: Path) -> Config:
-    import yaml
-
-    (root / "inventory").mkdir(parents=True)
-    hosts = {"all": {"children": {"proxmox": {"hosts": {"pve": {"ansible_host": "192.0.2.10"}}}}}}
-    (root / "inventory" / "hosts.yml").write_text(yaml.safe_dump(hosts))
-    (root / "inventory" / "group_vars" / "all").mkdir(parents=True)
-    alias_file = root / "aliases.conf"
-    (root / "inventory" / "group_vars" / "all" / "local.yml").write_text(f"claude_ssh_config_file: {alias_file}\n")
-    alias_file.write_text(
-        "# BEGIN agent-warehouse: beta\n# origin: nuc\nHost beta\n# END agent-warehouse: beta\n"
-        "# BEGIN agent-warehouse: gamma\n# origin: pve\nHost gamma\n# END agent-warehouse: gamma\n"
-    )
-    (root / "hosts" / "nuc").mkdir(parents=True)
-    return Config(checkout=root, python=sys.executable, just="just", uv="uv", path="/usr/bin", home=str(root))
-
-
-def test_a_run_is_against_the_host_given_else_where_its_vm_is_else_the_current_one(tmp_path):
-    config = _two_hosts(tmp_path)
-    assert server.run_host(config, "nuc", ["alpha"]) == "nuc"
-    assert server.run_host(config, "", ["beta"]) == "nuc"
-    assert server.run_host(config, "", ["alpha"]) == "pve"
-    (tmp_path / "hosts" / "current").write_text("nuc\n")
-    assert server.run_host(config, "", ["alpha"]) == "nuc"
+def test_a_run_is_against_the_host_the_read_names_else_the_current_one_and_none_with_one_host():
+    # The server asks just host --json, --for the names and --host the call gives (test_mcp_hosts.py runs it): this is
+    # what it takes from the answer.
+    pve, nuc = {"name": "pve", "first": True}, {"name": "nuc", "first": False}
+    one = {"current_host": "pve", "hosts": [pve], "where": {"host": "pve", "refusal": ""}}
+    assert server.run_host(one) == "" and not server.many_hosts(one)
+    two = {"current_host": "nuc", "hosts": [pve, nuc]}
+    assert server.many_hosts(two)
+    assert server.run_host({**two, "where": None}) == "nuc"
+    assert server.run_host({**two, "where": {"host": "pve", "routed": True, "refusal": ""}}) == "pve"
     # Names on two hosts: none, and the run refuses them itself.
-    assert server.run_host(config, "", ["beta", "gamma"]) == ""
-    # A name as the justfile takes it, hyphenated: my_vm is my-vm.
-    (tmp_path / "aliases.conf").write_text(
-        "# BEGIN agent-warehouse: my-vm\n# origin: pve\nHost my-vm\n# END agent-warehouse: my-vm\n"
-    )
-    assert server.run_host(config, "", ["my_vm"]) == "pve"
-    # The job's title names the host the run will resolve; the run itself is given none it was not, and init, whose
-    # --host is the host it sets up, none at all.
-    assert server.titled_host(config, "login", {"names": ["my_vm"], "host": ""}) == "pve"
-    assert server.titled_host(config, "code", {"name": "", "host": ""}) == "nuc"
-    assert server.titled_host(config, "login", {"names": ["beta"], "host": "pve"}) == ""
-    assert server.titled_host(config, "install", {}) == ""
-    assert server.titled_host(config, "init", {"github_user": "someone", "host": ""}) == ""
-    # One host: nothing named.
-    one = tmp_path / "one"
-    one.mkdir()
-    single = Config(checkout=one, python="", just="", uv="", path="", home="")
-    assert server.run_host(single, "", ["alpha"]) == ""
-    assert server.titled_host(single, "login", {"names": ["alpha"], "host": ""}) == ""
+    assert server.run_host({**two, "where": {"host": "", "refusal": "the VMs named are on 2 hosts"}}) == ""
+    # Unread: none, a word in a title or a dialog.
+    assert server.run_host({}) == ""
+    # A second host without a first is more than one host too.
+    assert server.many_hosts({"current_host": None, "hosts": [nuc]})

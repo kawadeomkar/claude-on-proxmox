@@ -1216,6 +1216,7 @@ def test_every_status_run_in_a_test_writes_into_its_own_directory() -> None:
             "test_controller_writes.py",
             "test_mcp_server.py",
             "test_mcp_confirm.py",
+            "test_mcp_hosts.py",
             "test_hosts.py",
         )
         if path.name not in skipped and "tools/status" in text:

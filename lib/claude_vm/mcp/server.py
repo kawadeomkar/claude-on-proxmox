@@ -93,13 +93,15 @@ class Server:
                 raise ToolError(f"{self.config.just} could not read {justfile}: {error}") from error
         return self._dumped
 
-    def check(self, *, vault: bool) -> Config:
+    def check(self, *, vault: bool, changed: bool = True) -> Config:
         """The configuration, once every refusal of the server's own that applies has been said: its command line, the
-        checkout changed since its start, and for a recipe that reads the vault, a vault it cannot read."""
+        checkout changed since its start - but for jobs, job and cancel (changed False), which follow and stop a job
+        this server started, by the code that started it, so an agent can always stop a run - and for a recipe that
+        reads the vault, a vault it cannot read."""
         if self.config is None:
             raise ToolError(self.refusal)
         for refusal in (
-            checkout.changed_refusal(self.config, self.code),
+            checkout.changed_refusal(self.config, self.code) if changed else "",
             checkout.vault_refusal(self.config) if vault else "",
         ):
             if refusal:
@@ -154,6 +156,31 @@ class Server:
             raise ToolError(text_result(first, err + out))
         return report, err
 
+    async def hosts_read(self, host: str = "", names: list[str] | None = None) -> dict:
+        """just host --json, asked which host a run given these names and --host would reach - the command line's own
+        answer, the one a UI asks: this server imports nothing of the hosts, whose code a pull may change under it.
+        {} where it cannot be read: a word in a title or a dialog, never a run's decision, which the run makes for
+        itself."""
+        arguments = {"for": ",".join(name.replace("_", "-") for name in names or []), "host": host}
+        try:
+            listed, _ = await self.report("hosts", arguments, {0})
+        except ToolError:
+            return {}
+        return listed
+
+    async def run_host(self, host: str, names: list[str]) -> str:
+        return run_host(await self.hosts_read(host, names))
+
+    async def titled_host(self, tool: str, arguments: dict[str, Any]) -> str:
+        """The host a run tool's job title names, where the checkout has more than one and none was given: the one the
+        run will resolve, so the title and every line that shows it say where it runs. Only the title's: the run is
+        given no --host it was not, so it resolves its host as at a terminal - a VM's alias, else the current host - and
+        init, whose --host is the host it sets up, is never given one."""
+        if tool == "init" or "host" not in arguments or arguments["host"]:
+            return ""
+        named = arguments.get("names") or [name for name in [arguments.get("name")] if name]
+        return await self.run_host("", named)
+
     async def json_tool(self, tool: str, arguments: dict[str, Any], keep: tuple[str, ...], narrow: str, ok: set[int]):
         """A recipe's JSON report on standard output, with the head, the note and any warning in it."""
         report, err = await self.report(tool, arguments, ok)
@@ -187,7 +214,7 @@ class Server:
             raise ToolError(str(error)) from error
         jobs.prune(config.checkout, int(recipes.settings(config)["LOG_RETENTION_DAYS"]))
         title = " ".join([tool_recipe(tool), *argv[argv.index(recipe["name"]) + 1 :]])
-        where = titled_host(config, tool, arguments)
+        where = await self.titled_host(tool, arguments)
         if where:
             title += f" --host={where}"
         job = jobs.start(config.checkout, config.python, argv, self.env(), tool, title)
@@ -268,44 +295,25 @@ def deploy_refusal(names: list[str] | None, only: str, check: bool, host: str = 
     return ""
 
 
-def _layout(config):
-    """The checkout's hosts (lib/claude_vm/hosts/): its own hosts/ folder, as the justfile's HOSTS_DIR is by default."""
-    from claude_vm.hosts import layout
-
-    return layout.Layout(config.checkout, config.checkout / "hosts")
+# What a hosts result cut to fit keeps of just host --json: keys the document promises, which test_mcp_hosts.py holds.
+HOSTS_KEEP = ("current_host", "hosts")
 
 
-def run_host(config, host: str, names: list[str]) -> str:
-    """The host a run is against, where the checkout has more than one: the one given, else the one the VMs named are
-    on, as their aliases record - each name hyphenated, as the justfile takes it - else the current one. "" with one
-    host, which nothing names, and for names on two hosts, which the run refuses itself."""
-    layout = _layout(config)
-    if not layout.many():
+def many_hosts(listed: dict) -> bool:
+    """Whether just host --json lists more than one host: a host in hosts/ beside the first, or without one."""
+    return any(not row.get("first") for row in listed.get("hosts") or [])
+
+
+def run_host(listed: dict) -> str:
+    """The host a run is against, from just host --json asked about it (--for, --host), where the checkout has more
+    than one: the host given, else the one the VMs named are on, as their aliases record, else the current one. "" with
+    one host, which nothing names, and for a run the hosts refuse, which refuses itself, saying why."""
+    if not many_hosts(listed):
         return ""
-    if host:
-        return host
-    names = [name.replace("_", "-") for name in names]
-    try:
-        on = sorted(set(layout.origins(names).values())) if names else []
-        if len(on) == 1:
-            return on[0]
-        if on:
-            return ""
-        first = layout.first()
-        return layout.current_name() or (first.name if first is not None else "")
-    except Exception:  # noqa: BLE001 - the run itself says why it cannot resolve: here it is only a word in a dialog
-        return ""
-
-
-def titled_host(config, tool: str, arguments: dict[str, Any]) -> str:
-    """The host a run tool's job title names, where the checkout has more than one and none was given: the one the run
-    will resolve, so the title and every line that shows it say where it runs. Only the title's: the run is given no
-    --host it was not, so it resolves its host as at a terminal - a VM's alias, else the current host - and init, whose
-    --host is the host it sets up, is never given one."""
-    if tool == "init" or "host" not in arguments or arguments["host"]:
-        return ""
-    named = arguments.get("names") or [name for name in [arguments.get("name")] if name]
-    return run_host(config, "", named)
+    where = listed.get("where")
+    if where is None:
+        return listed.get("current_host") or ""
+    return where.get("host") or ""
 
 
 class Typed(BaseModel):
@@ -395,7 +403,7 @@ def tools(server: Server) -> list[Tool]:
         return await server.json_tool(
             "hosts",
             {},
-            keep=("current_host", "hosts"),
+            keep=HOSTS_KEEP,
             narrow="the list is all there is",
             ok={0},
         )
@@ -440,10 +448,13 @@ def tools(server: Server) -> list[Tool]:
         host: str = "",
         wait_seconds: int | None = None,
     ) -> str:
-        config = server.check(vault=True)
-        layout = _layout(config)
-        hyphenated = [name.replace("_", "-") for name in names or []]
-        unplaced = layout.many() and bool(set(hyphenated) - set(layout.origins(hyphenated)))
+        server.check(vault=True)
+        unplaced = False
+        if names and not host and not check and only in ("", "provision"):
+            # A name no alias places may be created: with more than one host, on which is the caller's to say. Asked of
+            # just host --json, and refused where it cannot be read, since the current host is never implied here.
+            listed, _ = await server.report("hosts", {"for": ",".join(name.replace("_", "-") for name in names)}, {0})
+            unplaced = many_hosts(listed) and bool((listed.get("where") or {}).get("unplaced"))
         refusal = deploy_refusal(names, only, check, host, unplaced)
         if refusal:
             raise ToolError(refusal)
@@ -478,7 +489,7 @@ def tools(server: Server) -> list[Tool]:
         return await server.run("install", {}, wait_seconds, ctx, vault=False)
 
     async def jobs_(ctx: Context) -> str:
-        config = server.check(vault=False)
+        config = server.check(vault=False, changed=False)
         lines = []
         for job in jobs.listed(config.checkout)[:20]:
             record = job.read()
@@ -487,14 +498,14 @@ def tools(server: Server) -> list[Tool]:
         return text_result(f"{server.head()} · the jobs, newest first", "\n".join(lines) or "No jobs.")
 
     async def job(ctx: Context, id: str, since: int = 0, wait_seconds: int | None = None) -> str:  # noqa: A002
-        config = server.check(vault=False)
+        config = server.check(vault=False, changed=False)
         found = jobs.find(config.checkout, id)
         if found is None:
             raise ToolError(f"{id!r} is no job of this checkout's: jobs lists them")
         return await server.follow(found, max(since, 0), wait_seconds, ctx)
 
     async def cancel(ctx: Context, id: str) -> str:  # noqa: A002
-        config = server.check(vault=False)
+        config = server.check(vault=False, changed=False)
         found = jobs.find(config.checkout, id)
         if found is None:
             raise ToolError(f"{id!r} is no job of this checkout's: jobs lists them")
@@ -522,7 +533,7 @@ def tools(server: Server) -> list[Tool]:
         report, _ = await server.report("status", {"names": hyphenated, "only": "vms,work", "host": host}, {0, 1, 2})
         # With more than one host, the host is part of what is confirmed: an answer for one host's alpha is none for
         # another's.
-        where = run_host(config, host, hyphenated)
+        where = await server.run_host(host, hyphenated)
         typed = f"{confirm.code('destroy', *([where] if where else []), *hyphenated)} {' '.join(hyphenated)}"
         return Elicit(confirm.destroy_message(hyphenated, report, typed, where), Typed)
 
@@ -534,7 +545,8 @@ def tools(server: Server) -> list[Tool]:
         wait_seconds: int | None = None,
     ) -> str:
         hyphenated = [name.replace("_", "-") for name in names or []]
-        where = run_host(server.check(vault=True), host, hyphenated)
+        server.check(vault=True)
+        where = await server.run_host(host, hyphenated)
         typed = f"{confirm.code('destroy', *([where] if where else []), *hyphenated)} {' '.join(hyphenated)}"
         refused = answered(answer, typed)
         if refused:
@@ -545,7 +557,7 @@ def tools(server: Server) -> list[Tool]:
 
     async def ask_setting(ctx: Context, name: str = "", value: str = "", reset: bool = False, host: str = "") -> Elicit:
         """Before the person is asked: the client, the allow list, the value, then what the setting is now."""
-        config = server.check(vault=True)
+        server.check(vault=True)
         terminal = f"just settings {name} --value=<value>"
         refusal = (
             client_refusal(ctx, "settings_set", terminal)
@@ -560,14 +572,23 @@ def tools(server: Server) -> list[Tool]:
         # named is its own local.yml, and anything else the shared one, every host's, read as the first host's runs
         # read it - never the current host's value, which its own file may set over the shared one.
         where, read = "local.yml", host
-        layout = _layout(config)
-        if layout.many():
-            first = layout.first()
-            if host and (first is None or host != first.name):
-                where = f"hosts/{host}/group_vars/all/local.yml, {host}'s own"
+        listed = await server.hosts_read()
+        if not listed:
+            # A read that failed is no answer of one host: the dialog would name the shared file plain, and show the
+            # current host's value for it, which the comment above says it must never.
+            raise ToolError(
+                "just host --json could not be read, so which file the setting goes in is unknown:"
+                " nothing was asked or changed."
+            )
+        if many_hosts(listed):
+            rows = listed["hosts"]
+            first = next((row["name"] for row in rows if row.get("first")), None)
+            if host and host != first:
+                folder = next((row["folder"] for row in rows if row.get("name") == host), f"hosts/{host}")
+                where = f"{folder}/group_vars/all/local.yml, {host}'s own"
             else:
                 where = "inventory/group_vars/all/local.yml, every host's, which a host's own local.yml outranks"
-                read = first.name if first is not None else host
+                read = first if first is not None else host
         report, _ = await server.report("settings", {"name": name, "host": read}, {0})
         rows = [row for row in report.get("settings") or [] if isinstance(row, dict) and row.get("name") == name]
         current = json.dumps(rows[0].get("value")) if rows and rows[0].get("value") is not None else ""

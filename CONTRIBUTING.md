@@ -169,8 +169,8 @@ and only that:
 - `just status`'s exit codes for a run that reads the fleet - 0 nothing is wrong, 1 a problem, 2 something
   could not be read, 3 the run failed - and the JSON `just status --json`, `just settings --json` and (from 2.5)
   `just host --json` print, to which a release may add keys but never removes or renames one (`test_status.py`,
-  `test_settings.py` and `test_hosts.py` hold the keys there are). `just host --json` begins with
-  `format_version` and `kind` (`host_list`): `format_version` is major.minor, a reader takes any 1.x and ignores
+  `test_settings.py` and `test_hosts.py` hold the keys there are, `where`'s among them). `just host --json` begins
+  with `format_version` and `kind` (`host_list`): `format_version` is major.minor, a reader takes any 1.x and ignores
   the keys it does not know, and a 2.0 would come only with a major release. A command line or a setup that a
   recipe refuses before it reads anything prints an error on standard error and nothing on standard output,
   `--json` or not, and exits non-zero.

@@ -105,8 +105,15 @@ type its name: never the current host's or the first's, and never its VMs, which
 (`host_list`) first, then `current_host`, the current host's name; `hosts`, a row per host with its `name`,
 `address`, `folder`, `settings`, `host_kind` (`proxmox`), `first`, `current` (whether it is the current host) and
 `problem`; and `problem`, why the hosts' files cannot be read. A `problem` is `""` where there is none, at the top as
-in a row. Only these can be `null`: `current_host` where there is no current host, and a row's `host_kind` for a
-folder not set up. A release adds keys to it, and never removes or renames one.
+in a row. Only these can be `null`: `current_host` where there is no current host, a row's `host_kind` for a
+folder not set up, and `where`, below, where the list was not asked about a run. A release adds keys to it, and never
+removes or renames one.
+
+`--for <vm,...>` and `--host <name>` beside `--json` ask which host a run given those names and that `--host` would
+reach, as `where`: its `host`, whether the VMs' aliases `routed` it there, the names no alias places (`unplaced`),
+what the run would warn of (`notes`), and the `refusal` it would meet before anything starts, said here rather than
+refused. It reads the files alone and switches nothing; the run still decides for itself when it starts, so give the
+host you mean as `--host` to the run.
 
 ## The VMs and their aliases
 

@@ -92,6 +92,10 @@ LEFT_OUT = {
     ): "it makes a host the current one, which is the terminal's, as the default VM is: no agent changes "
     "it, and each run tool takes the host it runs against as host",
     ("hosts", "remove"): "it deletes a host's settings and token: the person's, at a terminal, after typing its name",
+    ("hosts", "for"): "the server asks it for itself, for the host a run tool's call would reach: each run tool takes "
+    "the host it runs against as host",
+    ("hosts", "host"): "the server asks it for itself, for the host a run tool's call would reach: each run tool takes "
+    "the host it runs against as host",
 }
 
 # The settings the justfile reads with env(), each given on just's command line at the server's value: a setting on

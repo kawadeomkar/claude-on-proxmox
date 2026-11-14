@@ -355,12 +355,17 @@ def test_a_change_to_what_the_server_runs_makes_every_tool_say_restart(world, ch
             text = path.read_text()
             path.write_text(text + "\n# changed\n")
             try:
-                return [await client.call_tool("logs", {}), await client.call_tool("status", {})]
+                ran = [await client.call_tool("logs", {}), await client.call_tool("status", {})]
+                return ran, [await client.call_tool("jobs", {}), await client.call_tool("job", {"id": "0" * 12})]
             finally:
                 path.write_text(text)
 
-    for result in asyncio.run(asyncio.wait_for(calls(), 120)):
+    refused, followed = asyncio.run(asyncio.wait_for(calls(), 120))
+    for result in refused:
         assert result.is_error and "restart this server with /mcp" in _text(result)
+    # Following and stopping a job the server started need no restart: an agent can always stop a run.
+    for result in followed:
+        assert "restart this server" not in _text(result), _text(result)
 
 
 def test_what_the_server_runs_is_read_from_its_files_alone(tmp_path):

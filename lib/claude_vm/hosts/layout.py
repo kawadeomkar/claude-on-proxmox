@@ -1,8 +1,6 @@
 """Where a checkout's hosts are, read from their files alone: the first host in inventory/, each other in a folder of
-its own under hosts/, and which one is current. The one place that knows the layout (docs/architecture/custom-code.md
-§7.14): every recipe asks tools/check host, which asks this, for the host of its run and the files and inventory
-sources that host is read from. Reads, writes only hosts/current, and needs neither Ansible nor the vault - but for
-vault_names, which opens the vaults to read their names, never their values.
+its own under hosts/, and which one is current, as Host records (docs/architecture/custom-code.md §7.14). The core's
+reading half: choose.py and resolve.py decide from what it reads, and nothing here writes or opens a vault.
 
 A host is an inventory source laid over the shared one: a run against hosts/<name> gets inventory/controller.yml, then
 hosts/<name>, so its group_vars outrank the shared ones and its hosts.yml is the run's one Proxmox host.
@@ -12,56 +10,26 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..vault import lenient_yaml
 from .kinds import KINDS, Kind
-
-# A host's name: a folder's under hosts/, a line of hosts/current, a word of the just line.
-NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,30}")
-# Never a host's name: the selection's file, the listed machines' origin, this machine, a stage of just deploy.
-RESERVED = frozenset({"current", "machines", "localhost", "template", "provision", "configure", "check", "ssh-config"})
-SHARED = "inventory"
-SHARED_HOSTS = f"{SHARED}/hosts.yml"
-SHARED_LOCAL = f"{SHARED}/group_vars/all/local.yml"
-SHARED_VAULT = f"{SHARED}/group_vars/all/vault.yml"
-CONTROLLER = f"{SHARED}/controller.yml"
-# The settings files and vault every recipe names for the first host: the justfile's VAULT_FILE and SETTINGS_FILES at
-# their defaults. Another value given on the command line is the first host's alone.
-DEFAULT_VAULT = SHARED_VAULT
-DEFAULT_SETTINGS = f"{SHARED_HOSTS} {SHARED_LOCAL}"
-
-
-class Refused(Exception):
-    """What the resolver will not do, said as the recipe's error."""
-
-
-def name_refusal(name: str) -> str:
-    """Why ``name`` can be no host's name, or "": the rule every --host, folder and hosts/current is held to."""
-    if NAME.fullmatch(name) and name not in RESERVED:
-        return ""
-    return f"a host's name is lowercase letters, digits and -, at most 31, and never {', '.join(sorted(RESERVED))}"
-
-
-class _Loader:
-    """YAML as Ansible writes it: a tag such as !vault is a value, never a key, and read as None."""
-
-    loader = None
-
-    @classmethod
-    def load(cls, text: str):
-        import yaml
-
-        if cls.loader is None:
-
-            class Loader(yaml.SafeLoader):
-                pass
-
-            Loader.add_multi_constructor("!", lambda loader, suffix, node: None)
-            cls.loader = Loader
-        return yaml.load(text, Loader=cls.loader)  # noqa: S506 - a SafeLoader, with tags read as None
+from .model import (  # noqa: F401 - the layout's names, which its callers take from here
+    CONTROLLER,
+    DEFAULT_SETTINGS,
+    DEFAULT_VAULT,
+    NAME,
+    RESERVED,
+    SHARED,
+    SHARED_HOSTS,
+    SHARED_LOCAL,
+    SHARED_VAULT,
+    Host,
+    OtherHost,
+    Refused,
+    name_refusal,
+)
 
 
 def _yaml(path: Path) -> object:
@@ -75,7 +43,7 @@ def _yaml(path: Path) -> object:
     import yaml
 
     try:
-        return _Loader.load(text)
+        return lenient_yaml(text)
     except yaml.YAMLError as error:
         mark = getattr(error, "problem_mark", None)
         raise Refused(f"{path} is not YAML{f' at line {mark.line + 1}' if mark else ''}") from error
@@ -111,45 +79,6 @@ def _kind_of(data: object) -> tuple[Kind, list[str]] | None:
             if name == kind.group and isinstance(group.get("hosts"), dict) and group["hosts"]:
                 return kind, [str(host) for host in group["hosts"]]
     return None
-
-
-@dataclass
-class Host:
-    """One of the checkout's hosts, as its files say it is."""
-
-    name: str
-    folder: str  # inventory, or hosts/<name>: where its files are, relative to the checkout or absolute
-    first: bool  # the host in inventory/, whose files are the shared ones
-    kind: Kind | None = None
-    address: str = ""
-    local: dict = field(default_factory=dict)  # its own local.yml (the shared one for the first host)
-    problem: str = ""  # why it cannot be used yet: "" for a host that is set up
-    # Its files are its, but it lacks a setting it sets for itself: just settings and just vault may still reach it, to
-    # put that right.
-    incomplete: bool = False
-
-    @property
-    def sources(self) -> list[str]:
-        """The inventory sources a run against it gets, in their order of precedence: none for the first host, whose
-        are ansible.cfg's."""
-        return [] if self.first else [CONTROLLER, self.folder]
-
-    @property
-    def local_file(self) -> str:
-        return SHARED_LOCAL if self.first else f"{self.folder}/group_vars/all/local.yml"
-
-    @property
-    def vault_file(self) -> str:
-        return SHARED_VAULT if self.first else f"{self.folder}/group_vars/all/vault.yml"
-
-    @property
-    def hosts_file(self) -> str:
-        return SHARED_HOSTS if self.first else f"{self.folder}/hosts.yml"
-
-    def shown(self) -> dict:
-        """What just host shows of it, the kind's settings among it: the values as its own files set them."""
-        settings = {name: self.local.get(name) for _, name in self.kind.shown} if self.kind else {}
-        return {"name": self.name, "address": self.address, "folder": self.folder, "settings": settings}
 
 
 class Layout:
@@ -201,67 +130,69 @@ class Layout:
         return [entry.name for entry in entries if entry.is_dir() and not entry.name.startswith(".")]
 
     def other(self, name: str) -> Host:
-        """The host in hosts/<name>, with what keeps it from being used, if anything."""
-        host = Host(name=name, folder=f"{self.hosts_rel}/{name}", first=False)
+        """The host in hosts/<name>, with what keeps it from being used, if anything: what is known of it, each field
+        worked out first, then the record built once."""
+        folder = f"{self.hosts_rel}/{name}"
+
+        def unusable(problem: str, **known) -> Host:
+            return Host(name=name, folder=folder, first=False, problem=problem, **known)
+
         if not NAME.fullmatch(name) or name in RESERVED:
-            host.problem = (
+            return unusable(
                 f"{self.hosts_rel}/{name} is no host's folder: a host's name is lowercase letters, digits and -, "
                 f"at most 31, and never {', '.join(sorted(RESERVED))}"
             )
-            return host
         first = self.first()
         if first is not None and first.name == name:
-            host.problem = f"{self.hosts_rel}/{name} has the name of the host in {SHARED_HOSTS}: rename the folder"
-            return host
+            return unusable(f"{self.hosts_rel}/{name} has the name of the host in {SHARED_HOSTS}: rename the folder")
+        bare = Host(name=name, folder=folder, first=False)
         # A file of its that is not YAML costs this host alone: said in its place, as any other reason it is unusable.
         try:
-            data = _yaml(self._path(host.hosts_file))
-            local = _yaml(self._path(host.local_file))
+            data = _yaml(self._path(bare.hosts_file))
+            local = _yaml(self._path(bare.local_file))
         except Refused as refused:
-            host.problem = str(refused)
-            return host
+            return unusable(str(refused))
         if data is None:
-            host.problem = f"not set up: just init --host {name}"
-            return host
-        strays = self._strays(host)
+            return unusable(f"not set up: just init --host {name}")
+        strays = self._strays(folder)
         if strays:
-            host.problem = (
-                f"{host.folder}/ holds {', '.join(strays)} beside hosts.yml, and Ansible reads every inventory file in "
+            return unusable(
+                f"{folder}/ holds {', '.join(strays)} beside hosts.yml, and Ansible reads every inventory file in "
                 f"a host's folder: any host there would be this run's too. Move {'it' if len(strays) == 1 else 'them'} "
                 "out of the folder"
             )
-            return host
         found = _kind_of(data)
         defined = sorted(_hosts_of(data))
         if found is None or found[1] != [name] or defined != [name]:
             kinds = " or ".join(kind.group for kind in KINDS.values())
-            host.problem = (
-                f"{host.hosts_file} must define one host, {name}, in the {kinds} group, and no other (it defines "
+            return unusable(
+                f"{bare.hosts_file} must define one host, {name}, in the {kinds} group, and no other (it defines "
                 f"{', '.join(defined) or 'none'}): any other host there would be this run's too"
             )
-            return host
-        host.kind = found[0]
+        kind = found[0]
         values = _hosts_of(data)[name]
         if not values.get("ansible_host"):
-            host.problem = f"{host.hosts_file} gives {name} no ansible_host, its address: just init --host {name}"
-            return host
-        host.address = str(values["ansible_host"])
-        host.local = local if isinstance(local, dict) else {}
-        missing = [setting for setting in host.kind.always if host.local.get(setting) in (None, "")]
-        if missing:
-            host.incomplete = True
-            host.problem = (
-                f"{host.local_file} does not set {', '.join(missing)}, which each host sets for itself rather than "
-                f"take {SHARED_LOCAL}'s: just init --host {name} writes them"
+            return unusable(
+                f"{bare.hosts_file} gives {name} no ansible_host, its address: just init --host {name}", kind=kind
             )
-        return host
+        own = local if isinstance(local, dict) else {}
+        known = {"kind": kind, "address": str(values["ansible_host"]), "local": own}
+        missing = [setting for setting in kind.always if own.get(setting) in (None, "")]
+        if missing:
+            return unusable(
+                f"{bare.local_file} does not set {', '.join(missing)}, which each host sets for itself rather than "
+                f"take {SHARED_LOCAL}'s: just init --host {name} writes them",
+                incomplete=True,
+                **known,
+            )
+        return Host(name=name, folder=folder, first=False, **known)
 
-    def _strays(self, host: Host) -> list[str]:
+    def _strays(self, folder: str) -> list[str]:
         """What in a host's folder Ansible would read as inventory beside its hosts.yml: a YAML or JSON file - the
         extensions the yaml plugin takes, the one ansible.cfg enables - or a folder, which it reads through, but for
         group_vars and host_vars."""
         try:
-            entries = sorted(os.scandir(self._path(host.folder)), key=lambda entry: entry.name)
+            entries = sorted(os.scandir(self._path(folder)), key=lambda entry: entry.name)
         except OSError:
             return []
         return [
@@ -297,8 +228,6 @@ class Layout:
     def _path(self, path: str) -> Path:
         return Path(path) if Path(path).is_absolute() else self.checkout / path
 
-    # ------------------------------------------------------------------------------------------- choosing ----
-
     def named(self, name: str, why: str, lenient: bool = False) -> Host:
         """The host called ``name``, set up; Refused otherwise, ``why`` saying where the name came from. ``lenient``
         takes one that lacks a setting it sets for itself, for just settings and just vault to put it right."""
@@ -316,34 +245,25 @@ class Layout:
             f"just init --host {name} --address <address> sets one up"
         )
 
-    def resolve(self, given: str = "", lenient: bool = False) -> Host | None:
-        """The host of a run: the one given (--host, or a nested recipe's host=), else the one hosts/current names,
-        else the first. None for a checkout with no host at all - before just init - which runs as it always did."""
-        if given:
-            return self.named(given, "--host names", lenient)
-        current = self.current_name()
-        if current:
-            return self.named(current, f"{self.hosts_rel}/current names", lenient)
-        first = self.first()
-        if first is None and self.many():
-            raise Refused(
-                f"{SHARED_HOSTS} names no host, and {self.hosts_rel}/current none of {', '.join(self.folders())}: "
-                "choose one with just host <name>"
-            )
-        return first
-
-    def others_of(self, host: Host | None) -> list[dict]:
-        """Every other host of the checkout, as {name, address}: the guards of a run against ``host`` keep them out
-        of its VMs' names and aliases, and its destroy from their keys. A host not set up has the address its files
-        give, or none."""
+    def others_of(self, host: Host | None) -> tuple[OtherHost, ...]:
+        """Every other host of the checkout: the guards of a run against ``host`` keep them out of its VMs' names and
+        aliases, and its destroy from their keys. A host not set up has the address its files give, or none."""
         found = []
         for other in self.every():
             if host is not None and other.name == host.name:
                 continue
             if not NAME.fullmatch(other.name) and not other.first:
                 continue
-            found.append({"name": other.name, "address": other.address})
-        return found
+            found.append(OtherHost(name=other.name, address=other.address))
+        return tuple(found)
+
+    def defaults(self) -> dict:
+        """The inventory defaults, as YAML reads them: a setting a host's files leave unset shows its default."""
+        try:
+            found = _yaml(self.checkout / "inventory" / "group_vars" / "all" / "defaults.yml")
+        except Refused:
+            return {}
+        return found if isinstance(found, dict) else {}
 
     # ------------------------------------------------------------------------------------------- the names ----
 
@@ -400,74 +320,6 @@ class Layout:
             if names:
                 found[file] = names
         return found
-
-    # ------------------------------------------------------------------------------------------- writing ----
-
-    def switch(self, name: str) -> Host:
-        """Make ``name`` the current host: hosts/current written anew and renamed over the old one, never edited in
-        place, so a run reading it reads the old name or the new one, whole."""
-        host = self.named(name, "just host names")
-        self.hosts_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        temporary = self.hosts_dir / f".current.{os.getpid()}"
-        with open(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
-            handle.write(f"{host.name}\n")
-        os.replace(temporary, self.hosts_dir / "current")
-        return host
-
-
-# What each password script said in this run: run once, as it may ask a person.
-_said: dict[str, bytes] = {}
-
-
-def _password(path: str) -> bytes | None:
-    """A password file's password, as Ansible reads one: an executable file is run, its standard input and error left to
-    it so that it can ask, and says it on its output. None for a vault client script, which takes a vault ID Ansible
-    alone knows, or a script that fails."""
-    if not (os.access(path, os.X_OK) and not os.path.isdir(path)):
-        return Path(path).read_bytes().strip()
-    if Path(path).stem.endswith("-client"):
-        return None
-    whole = os.path.abspath(path)
-    if whole not in _said:
-        import subprocess
-
-        try:
-            _said[whole] = subprocess.run([whole], stdout=subprocess.PIPE, check=True).stdout.strip(b"\r\n")
-        except (OSError, subprocess.SubprocessError):
-            return None
-    return _said[whole]
-
-
-def vault_names(path: Path, password_files: list[str]) -> set[str] | None:
-    """The names a vault file sets, never its values: decrypted in memory with the first password file that opens it,
-    as Ansible opens it, a password script run as Ansible runs it. None where it cannot be read or opened here - a
-    vault ID's password, a client script's - which the caller says."""
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None
-    if data.startswith(b"$ANSIBLE_VAULT"):
-        from ansible.parsing.vault import VaultLib, VaultSecret
-
-        for password_file in password_files:
-            try:
-                password = _password(password_file)
-            except OSError:
-                continue
-            if password is None:
-                continue
-            try:
-                data = VaultLib([("default", VaultSecret(password))]).decrypt(data)
-                break
-            except Exception:  # noqa: BLE001 - any refusal: the next file, as Ansible tries them
-                continue
-        else:
-            return None
-    try:
-        values = _Loader.load(data.decode("utf-8"))
-    except Exception:  # noqa: BLE001 - not YAML: Ansible says so
-        return None
-    return {str(name) for name in values} if isinstance(values, dict) else set()
 
 
 def checked_digest(paths: list[Path]) -> str:

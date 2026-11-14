@@ -923,21 +923,27 @@ destroy CONFIRM='' ON='' *NAMES:
 # renamed over the old, under the run lock, so a run under way finishes on the
 # host it started on. --remove deletes a host's folder, after its name is typed
 # at a terminal: never the current host's or the first's, and never its VMs,
-# which stay on it with their aliases here.
+# which stay on it with their aliases here. With --json, --for and --host say
+# which host a run given those names and that --host would reach (the where
+# key): a preview, from the files alone, that never switches.
 [arg('JSON', long='json', value='true', help='The list as JSON, alone on standard output')]
 [arg('REMOVE', long='remove', value='true', help="Delete the host's folder in hosts/, after you type its name: its VMs and their SSH aliases stay")]
 [arg('NAME', pattern='[a-z0-9][a-z0-9-]{0,30}', help='The host to make the current one: every command runs against it from now on')]
+[arg('ON', long='host', pattern='([a-z0-9][a-z0-9-]{0,30})?', help='With --json: the host a run would be given, to say which host it would reach')]
+[arg('VMS', long='for', pattern='([A-Za-z0-9][A-Za-z0-9._,-]*)?', help='With --json: the VMs a run would name, comma-separated, to say which host it would reach')]
 [doc('List the hosts, or make one the current host, which every command runs against unless --host names another')]
 [group('use')]
 [no-exit-message]
 [positional-arguments]
 [script]
-host JSON='' REMOVE='' *NAME:
+host JSON='' REMOVE='' VMS='' ON='' *NAME:
     {{ guard }}
-    json=$1 remove=$2
-    shift 2
+    json=$1 remove=$2 vms=$3 on=$4
+    shift 4
     [ "$#" -le 1 ] || { echo "error: just host takes one host's name (got: [$*])" >&2; exit 1; }
     [ -z "$json" ] || [ "$#" -eq 0 ] || { echo "error: --json lists the hosts: give it no name" >&2; exit 1; }
+    [ -n "$json" ] || [ -z "$vms$on" ] || { echo "error: --for and --host say which host a run would reach, in the list: give them with --json" >&2; exit 1; }
+    [ -z "$vms" ] || tools/check names $(printf %s "$vms" | tr , ' ')
     [ -z "$remove" ] || [ "$#" -eq 1 ] || { echo "error: --remove deletes the host named beside it: just host <name> --remove" >&2; exit 1; }
     if [ -n "$remove" ] && [ ! -t 0 ]; then
       echo "error: just host --remove asks you to type the host's name, and there is no terminal to ask at" >&2
@@ -945,7 +951,7 @@ host JSON='' REMOVE='' *NAME:
     fi
     {{ find_bin }}
     set -- "${1:-}" --checkout={{ quote(justfile_directory()) }} --hosts-dir={{ quote(HOSTS_DIR) }}
-    if [ -z "$1" ]; then exec tools/check host "$bin" list "$2" "$3" ${json:+--json}; fi
+    if [ -z "$1" ]; then exec tools/check host "$bin" list "$2" "$3" ${json:+--json} ${vms:+--names=$vms} ${on:+--host=$on}; fi
     {{ take_lock }} "host $1${remove:+ --remove}"
     if [ -z "$remove" ]; then exec tools/check host "$bin" switch "$@"; fi
     printf 'Delete %s/%s/, its settings and its token here? Its VMs stay. Type %s to delete it: ' {{ quote(HOSTS_DIR) }} "$1" "$1" >&2

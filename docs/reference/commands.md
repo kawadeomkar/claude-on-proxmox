@@ -105,6 +105,8 @@ environment where `python3` is not it.
 | `just host [<name>]` | List the hosts, or make one the current host, which every command runs against unless --host names another |
 | &emsp;`--json` | The list as JSON, alone on standard output |
 | &emsp;`--remove` | Delete the host's folder in hosts/, after you type its name: its VMs and their SSH aliases stay |
+| &emsp;`--for VMS` | With --json: the VMs a run would name, comma-separated, to say which host it would reach |
+| &emsp;`--host ON` | With --json: the host a run would be given, to say which host it would reach |
 | &emsp;`<name>` | The host to make the current one: every command runs against it from now on |
 | `just logs` | List the run logs in .logs/, newest first |
 | `just mcp` | Let Claude Code sessions in any project run these commands, through an MCP server |
