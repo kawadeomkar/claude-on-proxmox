@@ -57,7 +57,7 @@
     that: claude_code_login_which.stdout | trim | length > 0
     fail_msg: >-
       `claude` is not on {{ claude_code_user }}'s PATH on {{ inventory_hostname }}, so there is
-      nothing to sign in yet: just deploy {{ inventory_hostname }} --only configure installs it.
+      nothing to sign in yet: just deploy {{ inventory_hostname }} --only configure{{ claude_code_host_flag }} installs it.
     quiet: true
 
 - name: browser_login | Make the directory for the sign-in's files

@@ -168,3 +168,65 @@ def test_the_server_reads_nothing_of_its_environment_but_through_the_allow_list(
     assert readers == ["environment.py", "server.py"]
     source = (package / "server.py").read_text()
     assert source.count("os.environ") == 1 and "os.environ" in inspect.getsource(server.main)
+
+
+# ------------------------------------------------------------------------------------------- more than one host ----
+# The current host is the terminal's, as the default VM is: no tool changes it, a deploy that may create a VM names the
+# host it goes on, and a named VM that exists is found where its alias says it is (lib/claude_vm/hosts/).
+
+
+def test_the_hosts_tool_lists_and_never_switches(dumped):
+    assert recipes.TOOLS["hosts"].recipe == "host" and recipes.TOOLS["hosts"].fixed == {"json": True}
+    assert recipes.schema(recipes.recipe_of(dumped, "hosts"), "hosts")["properties"] == {}
+
+
+def test_with_more_than_one_host_a_deploy_that_may_create_a_vm_names_its_host():
+    assert server.deploy_refusal(["newvm"], "", False, "", unplaced=True).startswith(
+        "this checkout has more than one Proxmox host, and deploy may create a VM: name the host"
+    )
+    assert server.deploy_refusal(["newvm"], "", False, "nuc", unplaced=True) == ""
+    # A VM its alias places, configuration, a dry run: no host to name.
+    assert server.deploy_refusal(["alpha"], "", False, "", unplaced=False) == ""
+    assert server.deploy_refusal(["newvm"], "configure", False, "", unplaced=True) == ""
+    assert server.deploy_refusal(["newvm"], "", True, "", unplaced=True) == ""
+    # Without names, the default VM, which is never implied here, whatever the hosts.
+    assert server.deploy_refusal([], "", False, "nuc").startswith("deploy creates the VMs named, and none were")
+
+
+def _two_hosts(root: Path) -> Config:
+    import yaml
+
+    (root / "inventory").mkdir(parents=True)
+    hosts = {"all": {"children": {"proxmox": {"hosts": {"pve": {"ansible_host": "192.0.2.10"}}}}}}
+    (root / "inventory" / "hosts.yml").write_text(yaml.safe_dump(hosts))
+    (root / "inventory" / "group_vars" / "all").mkdir(parents=True)
+    alias_file = root / "aliases.conf"
+    (root / "inventory" / "group_vars" / "all" / "local.yml").write_text(f"claude_ssh_config_file: {alias_file}\n")
+    alias_file.write_text(
+        "# BEGIN agent-warehouse: beta\n# origin: nuc\nHost beta\n# END agent-warehouse: beta\n"
+        "# BEGIN agent-warehouse: gamma\n# origin: pve\nHost gamma\n# END agent-warehouse: gamma\n"
+    )
+    (root / "hosts" / "nuc").mkdir(parents=True)
+    return Config(checkout=root, python=sys.executable, just="just", uv="uv", path="/usr/bin", home=str(root))
+
+
+def test_a_run_is_against_the_host_given_else_where_its_vm_is_else_the_current_one(tmp_path):
+    config = _two_hosts(tmp_path)
+    assert server.run_host(config, "nuc", ["alpha"]) == "nuc"
+    assert server.run_host(config, "", ["beta"]) == "nuc"
+    assert server.run_host(config, "", ["alpha"]) == "pve"
+    (tmp_path / "hosts" / "current").write_text("nuc\n")
+    assert server.run_host(config, "", ["alpha"]) == "nuc"
+    # Names on two hosts: none, and the run refuses them itself.
+    assert server.run_host(config, "", ["beta", "gamma"]) == ""
+    # A run tool's arguments name it, so the job's title does.
+    assert server.with_host(config, {"names": ["beta"], "host": ""})["host"] == "nuc"
+    assert server.with_host(config, {"name": "", "host": ""})["host"] == "nuc"
+    assert server.with_host(config, {"names": ["beta"], "host": "pve"})["host"] == "pve"
+    assert "host" not in server.with_host(config, {"names": ["beta"]})
+    # One host: nothing named.
+    one = tmp_path / "one"
+    one.mkdir()
+    single = Config(checkout=one, python="", just="", uv="", path="", home="")
+    assert server.run_host(single, "", ["alpha"]) == ""
+    assert server.with_host(single, {"names": ["alpha"], "host": ""})["host"] == ""

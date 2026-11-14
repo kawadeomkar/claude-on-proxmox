@@ -564,6 +564,8 @@ def test_what_only_the_vm_has_of_its_sessions_is_saved_as_it_was(released):
         assert stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600), path
     listed = json.loads((saved / "sessions.json").read_text())
     assert listed["vm"] == "sessions"
+    # The Proxmox host the VM was on (claude_ssh_origin): none in this inventory, which has no proxmox group.
+    assert "host" in listed and listed["host"] is None
     assert [(item["id"], item["started_on_the_vm"], item["cwd"]) for item in listed["sessions"]] == [
         (CONTINUED, False, "/Users/me/demo"),
         (STARTED, True, "/home/dev/projects/demo"),

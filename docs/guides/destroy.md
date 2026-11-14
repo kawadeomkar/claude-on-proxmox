@@ -43,7 +43,8 @@ path or one starting with `~` when you set it), which git ignores, laid out as t
 `~/.claude/projects/` and changed in nothing, readable by you alone. What arrives is what the VM sends,
 so nothing of it is trusted: only plain files and folders are written, under the names Claude Code gives
 its own, never a link or anything outside that folder, and the run counts what it left out. The run's
-line for the VM says how many it saved and where, and the `sessions.json` there names each session with
+line for the VM says how many it saved and where, and the `sessions.json` there names the Proxmox host
+the VM was on, and each session with
 its directory, branch, last write and the Claude Code version that wrote it - resuming it needs one at
 least as new here - and the command that continues it, quoted where its path needs that. Run that command
 in a checkout of its repository:

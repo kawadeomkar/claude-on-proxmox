@@ -13,6 +13,8 @@ platforms:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     published_ports:
       - 127.0.0.1:18007:8006/tcp
+      # The second host's fake (second_host.yml).
+      - 127.0.0.1:18017:8016/tcp
 provisioner:
   # verify.yml, both halves of the checks in turn; CI's two provision jobs name one each (verify.yml says why).
   playbooks:

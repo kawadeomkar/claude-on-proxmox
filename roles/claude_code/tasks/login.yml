@@ -68,7 +68,8 @@
 - name: login | Report the login state and what to do about it
   vars:
     claude_code_login_report: >-
-      {{ 'Claude Code is not installed; just deploy ' ~ inventory_hostname ~ ' --tags claude_code installs it, and '
+      {{ 'Claude Code is not installed; just deploy ' ~ inventory_hostname ~ ' --tags claude_code' ~ claude_code_host_flag
+              ~ ' installs it, and '
               ~ claude_code_login_command ~ ' then signs it in.'
          if not claude_code_login_installed | bool
          else ('signed in as ' if claude_code_login_done | default(false) | bool else 'already signed in as ')
@@ -88,7 +89,7 @@
                  if claude_code_anthropic_api_key | length > 0 else 'claude_code_remote_control is false.')
          if not claude_code_remote_control_wanted | bool
          else 'signed in, but not in a way Remote Control can use: ' ~ claude_code_remote_control_blocker
-              ~ ' Then just deploy ' ~ inventory_hostname ~ ' --tags claude_code starts it. If that'
+              ~ ' Then just deploy ' ~ inventory_hostname ~ ' --tags claude_code' ~ claude_code_host_flag ~ ' starts it. If that'
               ~ ' leaves the VM logged out, log in with the claude.ai account first: '
               ~ claude_code_remote_control_login_command }}
   ansible.builtin.debug:

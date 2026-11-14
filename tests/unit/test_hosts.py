@@ -503,7 +503,8 @@ def _just_here(root: Path, *args: str, settings: tuple = ()) -> subprocess.Compl
     _stand_in(
         bin_dir,
         "ansible-playbook",
-        f'printf "%s\\n" "${{ANSIBLE_INVENTORY-unset}}" >> "{root.parent / "inventory.txt"}"',
+        f'printf "%s\\n" "${{ANSIBLE_INVENTORY-unset}}" >> "{root.parent / "inventory.txt"}"\n'
+        f'printf "%s\\n" "${{AGENT_WAREHOUSE_LIVE_HOST-unset}}" >> "{root.parent / "header.txt"}"',
     )
     _python(root.parent)
     given = [
@@ -985,3 +986,86 @@ def test_a_deploy_of_a_vm_an_alias_places_or_of_the_fleet_asks_no_other_host(tmp
         result = _just_here(root, "deploy", *args)
         assert result.returncode == 0, result.stderr
     assert _runs(tmp_path, "python") == []
+
+
+def test_a_runs_host_is_handed_to_its_live_header_with_more_than_one_host(tmp_path: Path) -> None:
+    root = _checkout_copy(tmp_path)
+    _host_copy(root, "nuc")
+    result = _just_here(root, "login", "--host", "nuc")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "header.txt").read_text() == "nuc\n"
+    single = _checkout_copy(tmp_path / "one")
+    assert _just_here(single, "login").returncode == 0
+    assert (tmp_path / "one" / "header.txt").read_text() == "\n"
+
+
+def test_a_line_that_says_what_to_run_names_the_host_only_with_more_than_one(tmp_path: Path) -> None:
+    # claude_host_flag, which every retry, the notes and NEXT STEPS end their just lines with.
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    play = root / "flag.yml"
+    play.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "tasks": [{"ansible.builtin.debug": {"msg": "[{{ claude_host_flag }}]"}}],
+                }
+            ]
+        )
+    )
+
+    def flag(sources: str | None, *extra: str) -> str:
+        env = _env(root, f"inventory = {root / 'inventory'}\n", ANSIBLE_NOCOLOR="1")
+        if sources:
+            env["ANSIBLE_INVENTORY"] = sources
+        done = subprocess.run(
+            [str(ANSIBLE_PLAYBOOK), "--vault-password-file", str(root / ".vault_pass"), *extra, str(play)],
+            cwd=root,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert done.returncode == 0, done.stdout + done.stderr
+        return next(line for line in done.stdout.splitlines() if '"msg"' in line).split('"msg": ')[1]
+
+    assert flag(None) == '"[]"'
+    others = json.dumps({"claude_hosts_other": [{"name": "pve", "address": "192.0.2.10"}]})
+    assert flag("inventory/controller.yml,hosts/nuc", "-e", others) == '"[ --host nuc]"'
+
+
+def _fragments(body: list) -> list:
+    """Every interpolation of a recipe's body, as just --dump gives them."""
+    found = []
+    for line in body:
+        for fragment in line:
+            if isinstance(fragment, list):
+                found.extend(fragment)
+    return found
+
+
+def test_no_recipe_resolves_its_host_twice_and_a_part_of_one_is_handed_the_host_resolved() -> None:
+    dumped = json.loads(
+        subprocess.run(
+            [shutil.which("just"), "--justfile", str(REPO / "justfile"), "--dump", "--dump-format", "json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    resolving = []
+    for name, recipe in dumped["recipes"].items():
+        fragments = _fragments(recipe["body"])
+        count = fragments.count(["variable", "host_env"])
+        # Once: a second resolution could land on another host than the first, with hosts/current changed between.
+        assert count <= 1, name
+        if count:
+            resolving.append(name)
+            text = "\n".join("".join(part for part in line if isinstance(part, str)) for line in recipe["body"])
+            # A recipe run as a part of this one is handed the host resolved, never left to resolve it again.
+            if ["variable", "self"] in fragments:
+                assert 'nested_host="$host"' in text, name
+    assert sorted(resolving) == ["code", "deploy", "destroy", "login", "settings", "status", "vault"]

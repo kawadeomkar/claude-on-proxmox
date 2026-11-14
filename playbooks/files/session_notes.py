@@ -23,6 +23,10 @@ from datetime import datetime, timezone
 START, END = "<!-- agent-warehouse:live -->", "<!-- /agent-warehouse:live -->"
 # The section's markers through 1.x, in notes 1.x wrote: found too, and written over with the new ones.
 START_1X, END_1X = "<!-- claude-on-proxmox:live -->", "<!-- /claude-on-proxmox:live -->"
+# With more than one Proxmox host, the one the VM is on, which just code writes into the notes: every just line here
+# ends with it, as the notes' own lines do. A host's name, and nothing else.
+ON = re.compile(r"^<!-- agent-warehouse:on --host ([a-z0-9][a-z0-9-]{0,30}) -->$", re.M)
+on = ""
 # What plain_text removes (filter_plugins/text.py): whole escape sequences, then every control character.
 SEQUENCES = re.compile(
     r"(?:\x1b[\]PX^_]|[\x9d\x90\x98\x9e\x9f])[^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c)?"
@@ -81,7 +85,7 @@ def claude_row(answer):
     if not isinstance(status, dict):
         return "unknown (claude auth status gave no status)"
     if not status.get("loggedIn"):
-        return f"not signed in: just login {vm} --only claude on your machine"
+        return f"not signed in: just login {vm} --only claude{on} on your machine"
     if status.get("apiKeySource") or status.get("authMethod") == "api_key":
         return f"an API key ({clean(status.get('apiKeySource') or 'ANTHROPIC_API_KEY')})"
     plan = status.get("subscriptionType")
@@ -107,9 +111,9 @@ def github_row(answer):
     accounts = hosts.get("github.com") or []
     active = next((account for account in accounts if isinstance(account, dict) and account.get("active")), None)
     if active is None:
-        return f"not signed in: just login {vm} --only github on your machine"
+        return f"not signed in: just login {vm} --only github{on} on your machine"
     if active.get("state") != "success":
-        return f"`{clean(active.get('login') or '?')}`, but its token is refused: just login {vm} --only github"
+        return f"`{clean(active.get('login') or '?')}`, but its token is refused: just login {vm} --only github{on}"
     return f"`{clean(active.get('login') or '?')}` · git over {clean(active.get('gitProtocol') or '?')}"
 
 
@@ -119,7 +123,7 @@ def tailscale_row(answer, user):
         return "unknown (tailscale status gave no status)"
     backend = clean(status.get("BackendState") or "unknown")
     if backend != "Running":
-        return f"{backend}: just login {vm} --only tailscale signs it in" if backend == "NeedsLogin" else backend
+        return f"{backend}: just login {vm} --only tailscale{on} signs it in" if backend == "NeedsLogin" else backend
     node = status.get("Self") or {}
     name = clean(str(node.get("DNSName") or "").rstrip("."))
     addresses = [clean(address) for address in node.get("TailscaleIPs") or [] if ":" not in str(address)]
@@ -148,6 +152,9 @@ def main():
         start, end, end_marker = text.find(START_1X), text.find(END_1X), END_1X
     if start < 0 or end < start:
         return
+    global on
+    named = ON.search(text)
+    on = f" --host {named.group(1)}" if named else ""
     user = pwd.getpwuid(os.getuid()).pw_name
     with ThreadPoolExecutor(max_workers=4) as pool:
         claude = pool.submit(run, "claude", "auth", "status")

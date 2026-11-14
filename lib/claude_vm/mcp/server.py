@@ -180,6 +180,7 @@ class Server:
         refusal = checkout.run_refusal(config, checkout.head(config, self.env()))
         if refusal:
             raise ToolError(refusal)
+        arguments = with_host(config, arguments)
         recipe = recipes.recipe_of(self.dumped(), tool)
         try:
             argv = recipes.command(config, recipe, tool, arguments, {"ATTENDED": self.attended()})
@@ -241,17 +242,65 @@ def tool_recipe(tool: str) -> str:
     return recipes.TOOLS[tool].recipe
 
 
-def deploy_refusal(names: list[str] | None, only: str, check: bool) -> str:
+def deploy_refusal(names: list[str] | None, only: str, check: bool, host: str = "", unplaced: bool = False) -> str:
     """Why this deploy goes no further, or nothing: without names, one that would create a VM makes the default VM, a
     convenience of the terminal's that an agent's forgotten argument must not reach. Not the schema's to require: the
-    stages that reach every VM, or none, take no names."""
-    if names or check or only not in ("", "provision"):
+    stages that reach every VM, or none, take no names. With more than one host, one that may create a VM - a name no
+    alias places on a host (``unplaced``) - names its host too: the current host is the terminal's, as the default VM
+    is."""
+    if check or only not in ("", "provision"):
         return ""
-    return (
-        "deploy creates the VMs named, and none were: name them. The default VM is never implied through this server: "
-        f"at a terminal, just deploy{' --only provision' if only else ''} makes it. Without names, only='configure' or "
-        "'ssh-config' and check reach every VM this project created, and only='template' builds the template."
-    )
+    if not names:
+        return (
+            "deploy creates the VMs named, and none were: name them. The default VM is never implied through this "
+            f"server: at a terminal, just deploy{' --only provision' if only else ''} makes it. Without names, "
+            "only='configure' or 'ssh-config' and check reach every VM this project created, and only='template' "
+            "builds the template."
+        )
+    if unplaced and not host:
+        return (
+            "this checkout has more than one Proxmox host, and deploy may create a VM: name the host it goes on, "
+            "host='<name>' (hosts lists them). The current host is never implied through this server: at a terminal, "
+            "just deploy uses it. A VM that exists is found where it is, and needs no host."
+        )
+    return ""
+
+
+def _layout(config):
+    """The checkout's hosts (lib/claude_vm/hosts/): its own hosts/ folder, as the justfile's HOSTS_DIR is by default."""
+    from claude_vm.hosts import layout
+
+    return layout.Layout(config.checkout, config.checkout / "hosts")
+
+
+def run_host(config, host: str, names: list[str]) -> str:
+    """The host a run is against, where the checkout has more than one: the one given, else the one the VMs named are
+    on, as their aliases record, else the current one. "" with one host, which nothing names, and for names on two
+    hosts, which the run refuses itself."""
+    layout = _layout(config)
+    if not layout.many():
+        return ""
+    if host:
+        return host
+    try:
+        on = sorted(set(layout.origins(names).values())) if names else []
+        if len(on) == 1:
+            return on[0]
+        if on:
+            return ""
+        first = layout.first()
+        return layout.current_name() or (first.name if first is not None else "")
+    except Exception:  # noqa: BLE001 - the run itself says why it cannot resolve: here it is only a word in a dialog
+        return ""
+
+
+def with_host(config, arguments: dict[str, Any]) -> dict[str, Any]:
+    """A run tool's arguments with the host it is against named, where the checkout has more than one and none was
+    given: the job's title, and every line that shows it, then says the host."""
+    if "host" not in arguments or arguments["host"]:
+        return arguments
+    named = arguments.get("names") or [name for name in [arguments.get("name")] if name]
+    return {**arguments, "host": run_host(config, "", named)}
 
 
 class Typed(BaseModel):
@@ -321,11 +370,11 @@ def tools(server: Server) -> list[Tool]:
             ok={0, 1, 2},
         )
 
-    async def settings(  # noqa: A002
+    async def settings(
         name: str = "",
-        all: bool = False,
+        all: bool = False,  # noqa: A002
         changed: bool = False,
-        host: str = "",  # noqa: A002
+        host: str = "",
     ) -> CallToolResult:
         server.check(vault=bool(name or all or changed))
         return await server.json_tool(
@@ -333,6 +382,16 @@ def tools(server: Server) -> list[Tool]:
             {"name": name, "all": all, "changed": changed, "host": host},
             keep=("target", "settings", "roles", "options"),
             narrow="name one role or setting to read it",
+            ok={0},
+        )
+
+    async def hosts() -> CallToolResult:
+        server.check(vault=False)
+        return await server.json_tool(
+            "hosts",
+            {},
+            keep=("current", "hosts"),
+            narrow="the list is all there is",
             ok={0},
         )
 
@@ -376,8 +435,10 @@ def tools(server: Server) -> list[Tool]:
         host: str = "",
         wait_seconds: int | None = None,
     ) -> str:
-        server.check(vault=True)
-        refusal = deploy_refusal(names, only, check)
+        config = server.check(vault=True)
+        layout = _layout(config)
+        unplaced = layout.many() and bool(set(names or []) - set(layout.origins(names or [])))
+        refusal = deploy_refusal(names, only, check, host, unplaced)
         if refusal:
             raise ToolError(refusal)
         arguments = {"names": names or [], "only": only, "check": check, "tags": tags, "start": start}
@@ -453,8 +514,11 @@ def tools(server: Server) -> list[Tool]:
         if held:
             raise ToolError(f"{held}: wait for it to end, then ask again. Nothing was asked or deleted.")
         report, _ = await server.report("status", {"names": hyphenated, "only": "vms,work", "host": host}, {0, 1, 2})
-        typed = f"{confirm.code('destroy', *hyphenated)} {' '.join(hyphenated)}"
-        return Elicit(confirm.destroy_message(hyphenated, report, typed), Typed)
+        # With more than one host, the host is part of what is confirmed: an answer for one host's alpha is none for
+        # another's.
+        where = run_host(config, host, hyphenated)
+        typed = f"{confirm.code('destroy', *([where] if where else []), *hyphenated)} {' '.join(hyphenated)}"
+        return Elicit(confirm.destroy_message(hyphenated, report, typed, where), Typed)
 
     async def destroy(
         ctx: Context,
@@ -464,11 +528,13 @@ def tools(server: Server) -> list[Tool]:
         wait_seconds: int | None = None,
     ) -> str:
         hyphenated = [name.replace("_", "-") for name in names or []]
-        typed = f"{confirm.code('destroy', *hyphenated)} {' '.join(hyphenated)}"
+        where = run_host(server.check(vault=True), host, hyphenated)
+        typed = f"{confirm.code('destroy', *([where] if where else []), *hyphenated)} {' '.join(hyphenated)}"
         refused = answered(answer, typed)
         if refused:
             raise ToolError(f"Nothing was deleted: {refused}. At a terminal: just destroy {' '.join(hyphenated)}")
-        arguments = {"names": hyphenated, "confirm": ",".join(hyphenated), "host": host}
+        # The host confirmed is the host the run is against, whatever is current by the time it starts.
+        arguments = {"names": hyphenated, "confirm": ",".join(hyphenated), "host": where or host}
         return await server.run("destroy", arguments, wait_seconds, ctx)
 
     async def ask_setting(ctx: Context, name: str = "", value: str = "", reset: bool = False, host: str = "") -> Elicit:
@@ -544,6 +610,9 @@ def tools(server: Server) -> list[Tool]:
         "settings": "Read-only. name: a role (github_projects) or one setting (vm_cores); none says how to use this. "
         "A secret is said set or not set, never shown.",
         "logs": "Read-only: the run logs' names, newest first. Read one with log.",
+        "hosts": "Read-only: the checkout's Proxmox hosts - each one's name, address and node, and which is the "
+        "current one the terminal's commands run against. Every run tool takes host, to run against another; with more "
+        "than one host, a deploy that may create a VM must name one.",
         "deploy": "Creates, configures and signs in VMs and opens one in the user's editor: minutes, longer with a "
         "template build. Say first that pages will open in the user's browser to approve. Name every VM to create: "
         "there is no default VM here. A VM for a repository X: "
@@ -574,6 +643,7 @@ def tools(server: Server) -> list[Tool]:
         (status, None),
         (settings, None),
         (logs, False),
+        (hosts, None),
         (deploy, False),
         (login, False),
         (code, False),
@@ -584,7 +654,9 @@ def tools(server: Server) -> list[Tool]:
     ):
         name = fn.__name__
         description = described[name]
-        annotations = READ_ONLY if name in ("status", "settings", "logs") else DELETES if name == "destroy" else CHANGES
+        annotations = (
+            READ_ONLY if name in ("status", "settings", "logs", "hosts") else DELETES if name == "destroy" else CHANGES
+        )
         meta = GATED if name in ("install", "destroy", "settings_set", "init") else None
         tool = Tool.from_function(fn, name=name, annotations=annotations, meta=meta, structured_output=structured)
         if server.config is not None:

@@ -649,9 +649,13 @@ Both symlink the **real** `inventory/group_vars/all/defaults.yml` into the scena
 actual variable wiring is exercised rather than a copy. Test overrides live in `host_vars/`. The
 symlink must survive checkout — clone the repo, do not download a zip.
 
-The `provision` scenario's checks are three files `verify.yml` imports in turn: `seeds.yml`, the fixtures
+The `provision` scenario's checks are four files `verify.yml` imports in turn: `seeds.yml`, the fixtures
 below; `fleet.yml`, discovery, `just status`, the playbooks where they must refuse or report, `destroy.yml` and
-the SSH aliases; and `just_code.yml`, `just code`'s runs on the fleet as `fleet.yml` leaves it. CI runs the two
+the SSH aliases; `second_host.yml`, a second fake Proxmox on a port and token secret of its own, laid out as
+`just init --host nuc` leaves a host and reached through the overlay a run against it is given
+([More than one host](../guides/hosts.md)): a VM provisioned there and nowhere else, sent nuc's secret, its alias
+recording nuc beside the first host's, which its prune leaves, and destroyed there with its alias alone; and
+`just_code.yml`, `just code`'s runs on the fleet as `fleet.yml` leaves it. CI runs the two
 halves as jobs of their own, side by side: `verify_fleet.yml`, and `verify_code.yml`, which makes that fleet from
 the seeds first - `molecule.yml` takes the one to run from `MOLECULE_PROVISION_VERIFY`, so
 `MOLECULE_PROVISION_VERIFY=verify_code.yml just test provision` runs one half here, and `just test provision`

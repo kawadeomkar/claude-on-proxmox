@@ -8,3 +8,33 @@
       vars:
         prepare_pve_source: "{{ playbook_dir }}/../../tests/molecule/fake_pve_api.py"
         prepare_pve_port: "{{ proxmox_api_port }}"
+
+    # A second Proxmox host for second_host.yml: the same fake on another port, with a state and a token secret of
+    # its own, so a request sent with the first host's secret is refused there.
+    - name: Install the second fake Proxmox API's unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fake-pve-api-nuc.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=A second fake Proxmox VE API for Molecule
+          [Service]
+          ExecStart=/usr/bin/python3 /usr/local/bin/fake_pve_api.py 8016 /etc/fake-pve.crt /etc/fake-pve.key /var/lib/fake-pve-nuc molecule-nuc-secret
+          Restart=on-failure
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start the second fake Proxmox API
+      ansible.builtin.systemd_service:
+        name: fake-pve-api-nuc
+        daemon_reload: true
+        state: started
+        enabled: true
+
+    - name: Wait for the second fake API from the controller
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 18017
+        timeout: 30
+      delegate_to: localhost
+      become: false

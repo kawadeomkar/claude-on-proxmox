@@ -1,13 +1,17 @@
 ---
-# The provision scenario's checks, after converge.yml's `just deploy alpha,beta --only provision`, in three files: the
-# seeds, the fleet's checks, then just code's. CI runs the two halves as jobs of their own, side by side -
-# verify_fleet.yml and verify_code.yml, which molecule.yml takes from MOLECULE_PROVISION_VERIFY - since together they
-# were its longest job; `MOLECULE_PROVISION_VERIFY=verify_code.yml just test provision` runs one half here.
+# The provision scenario's checks, after converge.yml's `just deploy alpha,beta --only provision`, in four files: the
+# seeds, the fleet's checks, a second host's, then just code's. CI runs the two halves as jobs of their own, side by
+# side - verify_fleet.yml and verify_code.yml, which molecule.yml takes from MOLECULE_PROVISION_VERIFY - since
+# together they were its longest job; `MOLECULE_PROVISION_VERIFY=verify_code.yml just test provision` runs one half
+# here.
 - name: Seed the VMs discovery has to tell apart
   ansible.builtin.import_playbook: seeds.yml
 
 - name: Verify the fleet
   ansible.builtin.import_playbook: fleet.yml
+
+- name: Verify a second host beside the first
+  ansible.builtin.import_playbook: second_host.yml
 
 - name: Verify just code against the fleet
   ansible.builtin.import_playbook: just_code.yml

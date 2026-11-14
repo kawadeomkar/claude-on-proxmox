@@ -45,6 +45,8 @@ plain_text = text.plain_text
 
 LIVE_ENV = commands.LIVE_ENV
 STATE_ENV = commands.STATE_ENV
+# The run's host, where the checkout has more than one (the justfile's, from tools/check host): said beside the title.
+HOST_ENV = "AGENT_WAREHOUSE_LIVE_HOST"
 WAITING_TAG = "attention_browser"
 
 
@@ -101,9 +103,10 @@ def from_environment(callback, playbook):
     whose terminals a later just destroy may run in - inherits them."""
     title = os.environ.pop(LIVE_ENV, "").strip()
     state = os.environ.pop(STATE_ENV, "").strip()
+    host = os.environ.pop(HOST_ENV, "").strip()
     if not title or callback._display.verbosity != 0 or ansible_display.logger is None:
         return None
-    engine = Engine(callback, title, state)
+    engine = Engine(callback, title, state, _vm_name(host))
     engine.start(playbook)
     return engine
 
@@ -303,9 +306,10 @@ def play_batches(play):
 class Engine(commands.Drawn):
     """One live run: the callback's events in; the region, the run's own words and the summary out."""
 
-    def __init__(self, callback, title, state_path=""):
+    def __init__(self, callback, title, state_path="", host=""):
         super().__init__(callback._display, title, state_path, on_prompt=self.prompt)
         self.cb = callback
+        self.host = host
         self.saved = False  # a part's state saved, at its end
         self.plan_play = None
         self._failed_items = {}  # (task ID, host): the results of a loop's items that failed, said with the task
@@ -361,6 +365,7 @@ class Engine(commands.Drawn):
             check=bool(cli.get("check")),
             log=commands.log_shown(),
             vms=vm_names(cli.get("extra_vars")),
+            host=self.host,
         )
         if self.state_path:
             # A part of a run in parts: the parts before it, done, drawn above its own stages.

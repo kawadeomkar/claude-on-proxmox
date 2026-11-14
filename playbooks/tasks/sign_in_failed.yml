@@ -20,7 +20,7 @@
 # already; any other gets it added, so the line NEXT STEPS keeps names it too.
 - name: sign_in_failed | Remember why this VM's sign-in failed
   vars:
-    claude_vm_sign_in_retry: just login {{ inventory_hostname }} --only {{ claude_vm_sign_in }}
+    claude_vm_sign_in_retry: just login {{ inventory_hostname }} --only {{ claude_vm_sign_in }}{{ claude_host_flag | default('') }}
   ansible.builtin.set_fact:
     # set_fact templates its keys, so the fact is named for the sign-in.
     "claude_vm_{{ claude_vm_sign_in }}_login_failure": >-

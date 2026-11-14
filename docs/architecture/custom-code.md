@@ -310,9 +310,11 @@ JSON report (`_left_to_do`), in every state they already run.
 set to what was run (`deploy --check alpha`, `login alpha beta`, the run's title), hands every event of the run
 to an engine, `lib/claude_vm/ansible/engine.py`, at
 verbosity 0 and with a run log to send the stream to; any `-v`, or no log (`LOG_DIR=`), leaves it the stream above.
-The callback then keeps only its classic output, which the engine prints through it too. The engine takes the
-variable out of the environment when the playbook starts, so nothing the run starts - the editor whose terminals a
-later `just destroy` may run in - inherits it. It is `live` when stdout can take the region every live output
+The callback then keeps only its classic output, which the engine prints through it too. With more than one host the
+recipe exports `AGENT_WAREHOUSE_LIVE_HOST` beside it, the run's host, which the header and the summary say after the
+title (`deploy alpha · nuc · started 10:02`) and never inside it, whose first word names the declaration. The engine
+takes both variables out of the environment when the playbook starts, so nothing the run starts - the editor whose
+terminals a later `just destroy` may run in - inherits them. It is `live` when stdout can take the region every live output
 shares (§7.8, `can_draw`), and `lines` otherwise. The model is `lib/claude_vm/run/model.py`, which `tui/run.py`
 draws and any playbook run can be drawn with, and what a run is made of is its recipe's declaration in
 `lib/claude_vm/run/recipes.py`, named
@@ -1152,7 +1154,14 @@ of its own its modules name. Why: [§15.6](decisions.md#156-agents-run-the-recip
 - **A deploy that creates names its VMs.** One of the server's own refusals (`deploy_refusal`): `deploy` with no names,
   or `only="provision"` with none, would make the default VM, a convenience of the terminal's that an agent's forgotten
   argument must not reach. It is no `required` in the schema, since the stages that reach every VM, or none, take no
-  names.
+  names. With more than one host it wants `host` too, for a deploy that may create a VM - a name no alias places on a
+  host: the current host is the terminal's, as the default VM is. A named VM that exists is found where it is.
+- **The hosts** ([§7.14](#714-libclaude_vmhosts-and-toolshost--the-checkouts-hosts)). The `hosts` tool lists them
+  (`just host --json`); none switches or removes one. Every run tool takes `host`. `destroy`'s dialog names the host it
+  deletes from, and its code holds the host, so an answer for one host's `alpha` is none for another's; the run is
+  then given that host, whatever is current by the time it starts (`run_host`: the host given, else where the VMs'
+  aliases place them, else the current one). Every run tool names the host it is against the same way
+  (`with_host`), so the job's title, and every line that shows it, says the host.
 - **`ATTENDED`.** A run tool passes `ATTENDED=1` - the pages open and the sign-ins run, and nothing asks - exactly when
   the session is an interactive one on this machine: Claude Code gives its servers `CLAUDE_CODE_ENTRYPOINT=cli` then,
   `sdk-cli` for `claude -p`, and the server reads `SSH_CONNECTION` from its own environment. `just mcp --attended`
@@ -1278,3 +1287,13 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
   through its sources as `-i`, so that its files key the settings kept,
   every vault loaded (`--vault-file` each), and keeps each host's settings in a folder of its own,
   `.cache/status/<host>/`; the token's vault name is kept with the snapshot.
+- **A line that says what to run names the host.** With more than one host, `claude_host_flag` (`" --host <name>"`,
+  empty with one) ends every `just ... <vm>` line a run prints or writes onto a VM: the retries (`retry_line`,
+  `sign_in_failed.yml`); the roles' commands, which NEXT STEPS and their messages say, through `claude_code_host_flag`,
+  `github_projects_host_flag` and `tailscale_host_flag`, wired from it; `code.yml`'s `code_editor_flag`, after any
+  `--editor`, and the editor's plan, which takes the two apart (`editor_flag`, `host_flag`, each held to its form) for
+  its report and the Claude terminal's lines; and the session notes, whose header names the host and which carry it
+  in a marker (`<!-- agent-warehouse:on --host <name> -->`) that `session_notes.py`, the window's notes task, reads
+  for the rows it writes - a host's name only, so no helper's arguments changed. A VM named is found by its alias
+  anyway; the flag reaches it where no alias records it. `just status`'s ATTENTION adds it in the parent, and
+  destroy's `sessions.json` records the host.

@@ -93,3 +93,6 @@ claude_code_login_code: ""
 # Set by just deploy's configure step: the sign-in comes next in the same run,
 # so the role says so rather than naming just login --only claude.
 claude_code_sign_in_follows: false
+# What ends each line naming a just command for this VM: " --host <name>" where
+# the checkout has more than one Proxmox host (wired from claude_host_flag).
+claude_code_host_flag: ""

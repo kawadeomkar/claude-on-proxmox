@@ -408,8 +408,11 @@ class Stage:
 class Run:
     """One drawn run, from the plays it will run and the events Ansible sends."""
 
-    def __init__(self, title, now, check=False, log="", started_at=None, recipe=None, vms=()):
+    def __init__(self, title, now, check=False, log="", started_at=None, recipe=None, vms=(), host=""):
         self.title, self.check, self.log = title, check, log
+        # The host the run is against, said beside its title where the checkout has more than one: never part of the
+        # title, whose first word names the run's declaration.
+        self.host = host
         self.recipe = recipe if recipe is not None else recipes.recipe(title)
         self.specs = {stage.key: stage for stage in self.recipe.stages}
         self.step_specs = {(stage.key, step.label): step for stage in self.recipe.stages for step in stage.steps}

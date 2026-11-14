@@ -54,7 +54,7 @@ LIVE_ENV = "AGENT_WAREHOUSE_LIVE"
 STATE_ENV = "AGENT_WAREHOUSE_LIVE_STATE"
 STAGES_ENV = "AGENT_WAREHOUSE_LIVE_STAGES"
 # What a part's child never inherits: the switch, the state and the stages are the run's, the log is written here.
-NOT_PASSED_ON = (LIVE_ENV, STATE_ENV, STAGES_ENV, "ANSIBLE_LOG_PATH")
+NOT_PASSED_ON = (LIVE_ENV, STATE_ENV, STAGES_ENV, "AGENT_WAREHOUSE_LIVE_HOST", "ANSIBLE_LOG_PATH")
 CHILD_ENV = {"NO_COLOR": "1", "PYTHONUNBUFFERED": "1", "PRE_COMMIT_COLOR": "never"}
 # How much of a failed part's output is printed above: the end, where its error is.
 FAILURE_LINES = 40

@@ -1,11 +1,14 @@
 ---
-# CI's first provision job: verify.yml's first half, the seeds and the fleet's checks. It ends as the whole verify
+# CI's first provision job: verify.yml's first half, the seeds, the fleet's checks and a second host's. It ends as the whole verify
 # does, with the node that was down down again.
 - name: Seed the VMs discovery has to tell apart
   ansible.builtin.import_playbook: seeds.yml
 
 - name: Verify the fleet
   ansible.builtin.import_playbook: fleet.yml
+
+- name: Verify a second host beside the first
+  ansible.builtin.import_playbook: second_host.yml
 
 - name: Leave the node that was down as the whole verify does
   hosts: localhost

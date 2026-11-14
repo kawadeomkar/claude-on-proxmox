@@ -119,7 +119,7 @@
               {{ claude_vm_configure_failures | default([])
                  + [(inventory_hostname ~ ' is signed in to Claude, but starting Remote Control failed at "'
                      ~ (ansible_failed_task.name | default('a task')) ~ '": ' ~ claude_vm_failed_why)
-                    | retry_line('just deploy ' ~ inventory_hostname ~ ' --tags claude_code')] }}
+                    | retry_line('just deploy ' ~ inventory_hostname ~ ' --tags claude_code' ~ claude_host_flag | default(''))] }}
 
         - name: Say why
           ansible.builtin.debug:

@@ -389,6 +389,7 @@ tailscale_report_result: >-
       'auth_method': tailscale_auth_method,
       'admin_page': tailscale_admin_page,
       'configure_command': tailscale_configure_command,
+      'reconfigure_command': tailscale_reconfigure_command,
       'login_command': tailscale_login_command} | tailscale_report }}
 tailscale_report_case: "{{ tailscale_report_result.case }}"
 tailscale_report_left: "{{ tailscale_report_result.left }}"
@@ -396,5 +397,7 @@ tailscale_report_left: "{{ tailscale_report_result.left }}"
 # --- Where to fix what the report names ---
 tailscale_admin_page: >-
   {{ 'your control server' if tailscale_login_server | length > 0 else 'https://login.tailscale.com/admin/machines' }}
-tailscale_configure_command: just deploy {{ inventory_hostname }} --tags tailscale
-tailscale_login_command: just login {{ inventory_hostname }} --only tailscale
+tailscale_configure_command: just deploy {{ inventory_hostname }} --tags tailscale{{ tailscale_host_flag }}
+tailscale_login_command: just login {{ inventory_hostname }} --only tailscale{{ tailscale_host_flag }}
+# The whole configuration again, which installs and starts what check mode does not.
+tailscale_reconfigure_command: just deploy {{ inventory_hostname }} --only configure{{ tailscale_host_flag }}

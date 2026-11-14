@@ -381,13 +381,15 @@
                    ~ ' on your machine and asks for the code the page shows'
                    ~ (', and starts it.' if claude_code_remote_control_settings_blockers | length == 0 else '.'))
              ~ (' A sign-in made any other way, such as in the Claude terminal of just code, starts it'
-                ~ ' by itself too; "just deploy ' ~ inventory_hostname ~ ' --only configure" then confirms it.'
+                ~ ' by itself too; "just deploy ' ~ inventory_hostname ~ ' --only configure' ~ claude_code_host_flag
+                ~ '" then confirms it.'
                 if claude_code_remote_control_bridge_wanted | bool else '')
              if not (claude_code_remote_control_status.loggedIn | default(false)) | bool
              else ''
              if claude_code_remote_control_settings_blockers | length > 0
              else '"' ~ claude_code_login_command ~ '" checks again and signs it in if a login'
-                  ~ ' is still needed; then re-run "just deploy ' ~ inventory_hostname ~ ' --only configure" and the service'
+                  ~ ' is still needed; then re-run "just deploy ' ~ inventory_hostname ~ ' --only configure'
+                  ~ claude_code_host_flag ~ '" and the service'
                   ~ ' starts.' }}
       ansible.builtin.debug:
         msg: >-

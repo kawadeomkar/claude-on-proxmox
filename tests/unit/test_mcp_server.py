@@ -48,12 +48,13 @@ DROPPED = {
     "HOME": "/nonexistent/evil-home",
     "XDG_DATA_HOME": "/nonexistent/evil-data",
 }
-TOOLS = {"status", "settings", "logs", "log", "deploy", "login", "code", "install", "jobs", "job", "cancel"} | {
+TOOLS = {"status", "settings", "logs", "log", "hosts", "deploy", "login", "code", "install", "jobs", "job"} | {
+    "cancel",
     "destroy",
     "settings_set",
     "init",
 }
-READ_ONLY = {"status", "settings", "logs", "log", "jobs", "job"}
+READ_ONLY = {"status", "settings", "logs", "log", "hosts", "jobs", "job"}
 REPORT = {
     "exit": 1,
     "title": "agent-warehouse  10:00 · pve · 1 VM",

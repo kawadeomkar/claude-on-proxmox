@@ -133,6 +133,13 @@ argument_specs:
         type: bool
         default: false
         description: just deploy signs the VM in next, in the same run, and the report says so.
+      tailscale_host_flag:
+        type: str
+        default: ""
+        description:
+          - What ends each just line naming this VM, in NEXT STEPS, a retry or a message - " --host <name>" where
+            the checkout has more than one Proxmox host (claude_host_flag), so a line pasted later reaches the
+            VM's host. Empty with one host.
   login:
     short_description: Say how the VM is on Tailscale, and sign it in by the web login when asked to
     description:
@@ -191,6 +198,9 @@ argument_specs:
       tailscale_marker_dir:
         type: path
         default: /var/lib/agent-warehouse
+      tailscale_host_flag:
+        type: str
+        default: ""
 
 
   # tasks_from: release, which playbooks/destroy.yml runs on each VM before it

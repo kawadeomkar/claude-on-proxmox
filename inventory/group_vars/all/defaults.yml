@@ -424,6 +424,11 @@ claude_ssh_user_config: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/config
 # next write go by it. Empty without a Proxmox host in the inventory (a static
 # one, as Vagrant's), when a block records none. Not a setting.
 claude_ssh_origin: "{{ groups['proxmox'][0] if groups['proxmox'] | default([]) else '' }}"
+# How every line a run prints or writes onto a VM - NEXT STEPS, a retry, the
+# session notes - names the host its VM is on, with more than one host: " --host
+# <name>", so a line pasted later reaches that VM whichever host is current.
+# Empty with one host. Not a setting.
+claude_host_flag: "{{ ' --host ' ~ claude_ssh_origin if claude_hosts_other | length > 0 and claude_ssh_origin | length > 0 else '' }}"
 # The checkout's other hosts, as {name, address}: tools/check host hands them
 # to every run against one host (the justfile's vm_args), for the guards above
 # and the alias records. Not a setting.
@@ -485,6 +490,7 @@ claude_code_user: "{{ vm_user }}"
 claude_code_anthropic_api_key: "{{ anthropic_api_key }}"
 claude_code_remote_control_dir: "{{ vm_projects_dir }}"
 claude_code_login_desktop: "{{ login_desktop }}"
+claude_code_host_flag: "{{ claude_host_flag }}"
 
 github_projects_user: "{{ vm_user }}"
 github_projects_username: "{{ github_username }}"
@@ -497,10 +503,12 @@ github_projects_auth: "{{ github_auth }}"
 github_projects_auth_method: "{{ github_auth_method }}"
 github_projects_login_scopes: "{{ github_login_scopes }}"
 github_projects_login_desktop: "{{ login_desktop }}"
+github_projects_host_flag: "{{ claude_host_flag }}"
 github_projects_git_user_name: "{{ git_user_name }}"
 github_projects_git_user_email: "{{ git_user_email }}"
 
 tailscale_login_desktop: "{{ login_desktop }}"
+tailscale_host_flag: "{{ claude_host_flag }}"
 tailscale_joined_tag: "{{ claude_vm_tailscale_tag }}"
 # Whether Tailscale is the VPN, from the vpn setting: the role's own input,
 # since vpn's default reads tailscale_enabled, which the role cannot then be

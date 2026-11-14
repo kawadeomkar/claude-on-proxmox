@@ -96,7 +96,8 @@ class OpenInputs(Checked):
     notes_file: str = ""
     notes_dir: str = ""
     task_written: bool = False  # the editors list's task file goes into just code's directory (code.yml's)
-    editor_flag: str = ""  # code.yml's code_editor_flag: " --editor <key>" where the run's editor is not the setting's
+    editor_flag: str = ""  # code.yml's code_editor_choice: " --editor <key>" where the editor is not the setting's
+    host_flag: str = ""  # claude_host_flag: " --host <name>" where the checkout has more than one Proxmox host
     session_id: str = ""
     session_branch: str = ""
     session_commit: str = ""
@@ -115,6 +116,8 @@ class OpenInputs(Checked):
     def validate(self) -> None:
         if self.editor_flag and not re.fullmatch(rf" --editor {WORD.pattern}", self.editor_flag):
             raise ValueError(f"not an --editor flag: {self.editor_flag!r}")
+        if self.host_flag and not re.fullmatch(r" --host [a-z0-9][a-z0-9-]{0,30}", self.host_flag):
+            raise ValueError(f"not a --host flag: {self.host_flag!r}")
         if not all(map(WORD.fullmatch, self.helpers)):
             raise ValueError(f"not a plain name among the helpers: {self.helpers!r}")
         target, root = vm_path(self.target, "target"), vm_path(self.root, "root")

@@ -19,9 +19,14 @@
 {#- The just code line that opens this run's editor's window again: code.yml's code_editor_flag, the --editor where
     that is not the setting's, whose bare line opens the setting's. -#}
 {%- set again = 'just code ' ~ name ~ code_editor_flag | default('') -%}
+{#- With more than one host, the host the VM is on, ending every line that names it (claude_host_flag). -#}
+{%- set on = claude_host_flag | default('') -%}
 # {{ name }}
 
-VM {{ vm.vmid }} on Proxmox node **{{ vm.node }}** · written by `just code` on your machine · not in any repository · edits here are overwritten
+VM {{ vm.vmid }} on {{ 'Proxmox host **' ~ claude_ssh_origin ~ '**, node' if on else 'Proxmox node' }} **{{ vm.node }}** · written by `just code` on your machine · not in any repository · edits here are overwritten
+{% if on %}
+<!-- agent-warehouse:on{{ on }} -->
+{% endif %}
 
 {% if code_notes_live %}
 {{ code_notes_live }}
@@ -32,7 +37,7 @@ VM {{ vm.vmid }} on Proxmox node **{{ vm.node }}** · written by `just code` on 
 {% if window_tasks %}
 Opening the window fills this in; "Tasks: Run Task", **Session notes** refreshes it.
 {% else %}
-{{ editor_name }} does not fill this in: `just status {{ name }}` on your machine says what is signed in.
+{{ editor_name }} does not fill this in: `just status {{ name }}{{ on }}` on your machine says what is signed in.
 {% endif %}
 <!-- /agent-warehouse:live -->
 {% endif %}
@@ -81,16 +86,16 @@ Opening the window fills this in; "Tasks: Run Task", **Session notes** refreshes
 | Command | Does |
 |---|---|
 | `{{ again }}` | open this window again |
-| `just login {{ name }} --only claude` | sign Claude Code in |
+| `just login {{ name }} --only claude{{ on }}` | sign Claude Code in |
 {% if github_auth | default(true) | bool %}
-| `just login {{ name }} --only github` | sign `gh` in, then clone the private repositories |
+| `just login {{ name }} --only github{{ on }}` | sign `gh` in, then clone the private repositories |
 {% endif %}
 {% if tailscale_wanted | default(tailscale_enabled | default(true)) | bool %}
-| `just login {{ name }} --only tailscale` | sign it in to Tailscale |
+| `just login {{ name }} --only tailscale{{ on }}` | sign it in to Tailscale |
 {% endif %}
-| `just deploy {{ name }} --only configure` | run the configuration again; `--tags <role>` for one part of it |
+| `just deploy {{ name }} --only configure{{ on }}` | run the configuration again; `--tags <role>` for one part of it |
 | `just status` · `just logs` | the fleet, and what it needs · the run logs |
-| `just destroy {{ name }}` | sign it out of everything, then delete it |
+| `just destroy {{ name }}{{ on }}` | sign it out of everything, then delete it |
 
 {# playbooks/vars/controller_writes.yml's list, the one the security model renders too, but for a row of another
    editor's. A row whose place a setting moves says where this run's settings put it, under the home as ~, never the
@@ -121,9 +126,9 @@ What the project writes on your machine outside its checkout, and what it has an
 {% endif %}
 - **"REMOTE HOST IDENTIFICATION HAS CHANGED"** after a rebuild: `ssh-keygen -R {{ vm.address }}` on your machine.
 {% if claude_code_remote_control | default(true) | bool %}
-- **Not in the Claude apps?** `systemctl status {{ code_remote_control_unit }}` here, then `just deploy {{ name }} --tags claude_code` on your machine.
+- **Not in the Claude apps?** `systemctl status {{ code_remote_control_unit }}` here, then `just deploy {{ name }} --tags claude_code{{ on }}` on your machine.
 {% endif %}
-- **Private repositories missing?** `just deploy {{ name }} --tags github_projects` on your machine.
+- **Private repositories missing?** `just deploy {{ name }} --tags github_projects{{ on }}` on your machine.
 
 ## About this file
 

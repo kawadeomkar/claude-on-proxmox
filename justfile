@@ -668,7 +668,10 @@ deploy STAGE='' CHECK='' ON='' ROLES='' START='' CORES='' MEMORY='' DISK='' REPO
     # The live output (callback_plugins/agent_warehouse.py): set, the run is drawn rather than streamed, under
     # this title. Any -v in ANSIBLE_ARGS streams it as before.
     AGENT_WAREHOUSE_LIVE="deploy${check:+ --check}${stage:+ --only $stage}${roles:+ --tags $roles}${start:+ --start}$sized${names:+ $(printf %s "$names" | tr , ' ')}"
-    export AGENT_WAREHOUSE_LIVE
+    # The run's host beside its title, where the checkout has more than one: never in the title, whose first word
+    # names its declaration.
+    AGENT_WAREHOUSE_LIVE_HOST=${hosts_many:+$host}
+    export AGENT_WAREHOUSE_LIVE AGENT_WAREHOUSE_LIVE_HOST
     exec {{ run_logged }} "$name" "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} ${check:+--check --diff} "$playbook"
 
 # One VM at a time: an editor opens one window per workspace, and "open it in
@@ -711,7 +714,10 @@ code PROJECT='' IDE='' ON='' SESSION='' *NAME:
     # this title; a session's ID, which its report names, is left out of it. Any -v in ANSIBLE_ARGS streams it as
     # before.
     AGENT_WAREHOUSE_LIVE="code${project:+ --project $project} $names"
-    export AGENT_WAREHOUSE_LIVE
+    # The run's host beside its title, where the checkout has more than one: never in the title, whose first word
+    # names its declaration.
+    AGENT_WAREHOUSE_LIVE_HOST=${hosts_many:+$host}
+    export AGENT_WAREHOUSE_LIVE AGENT_WAREHOUSE_LIVE_HOST
     exec {{ run_logged }} code "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/code.yml
 
 # The sign-ins only the person can make, each a page in the browser: Claude's
@@ -749,7 +755,10 @@ login ON='' SIGN_IN='' *NAMES:
     # Drawn live (callback_plugins/agent_warehouse.py, its declaration in lib/claude_vm/run/recipes.py), under
     # this title. Any -v in ANSIBLE_ARGS streams it as before.
     AGENT_WAREHOUSE_LIVE="login${only:+ --only $only}${names:+ $(printf %s "$names" | tr , ' ')}"
-    export AGENT_WAREHOUSE_LIVE
+    # The run's host beside its title, where the checkout has more than one: never in the title, whose first word
+    # names its declaration.
+    AGENT_WAREHOUSE_LIVE_HOST=${hosts_many:+$host}
+    export AGENT_WAREHOUSE_LIVE AGENT_WAREHOUSE_LIVE_HOST
     exec {{ run_logged }} "login${only:+-$only}" "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} "playbooks/${only:+${only}_}login.yml"
 
 # What every VM this project created is doing, and what needs doing next, read
@@ -891,7 +900,10 @@ destroy CONFIRM='' ON='' *NAMES:
     # Drawn live (callback_plugins/agent_warehouse.py, its declaration in lib/claude_vm/run/recipes.py), under
     # this title. Any -v in ANSIBLE_ARGS streams it as before.
     AGENT_WAREHOUSE_LIVE="destroy${names:+ $(printf %s "$names" | tr , ' ')}"
-    export AGENT_WAREHOUSE_LIVE
+    # The run's host beside its title, where the checkout has more than one: never in the title, whose first word
+    # names its declaration.
+    AGENT_WAREHOUSE_LIVE_HOST=${hosts_many:+$host}
+    export AGENT_WAREHOUSE_LIVE AGENT_WAREHOUSE_LIVE_HOST
     exec {{ run_logged }} destroy "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/destroy.yml
 
 # The checkout's hosts (tools/check host): the first in inventory/, each other

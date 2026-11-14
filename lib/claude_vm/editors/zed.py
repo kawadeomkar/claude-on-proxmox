@@ -43,7 +43,7 @@ def _refusal(editor: Editor, inputs: OpenInputs) -> str:
         return (
             f"Zed is handed the folder in an ssh:// URL, which cannot carry {inputs.target} as it is: a URL takes"
             ' letters, digits, "/" and . _ ~ + , = : @ - there. Set vm_projects_dir to a path of only those, or open'
-            f" it in VS Code: just code {vm} --editor vscode."
+            f" it in VS Code: just code {vm} --editor vscode{inputs.host_flag}."
         )
     return ""
 
@@ -52,7 +52,7 @@ def _claude(editor: Editor, inputs: OpenInputs, there: bool, listed: bool, helpe
     vm = inputs.vm.name
     terminal = (
         "Open a terminal there, in the terminal panel, and run claude: the terminal is the VM's, and claude is signed"
-        f" in there by just deploy (or just login {vm} --only claude)."
+        f" in there by just deploy (or just login {vm} --only claude{inputs.host_flag})."
     )
     if inputs.session_id:
         moved = ", where just code moved it" if inputs.session_moved else ""
@@ -66,7 +66,8 @@ def _claude(editor: Editor, inputs: OpenInputs, there: bool, listed: bool, helpe
             'Claude is a task there: "task: spawn" in the command palette lists Claude (just code), which runs'
             " claude in a terminal of its own, the VM's: it picks the folder's last conversation up, or starts a fresh"
             " one where a claude already has it open, so a second one never ends or shares the first; claude is"
-            f" signed in there by just deploy (or just login {vm} --only claude). docs/guides/zed.md: one key, or"
+            f" signed in there by just deploy (or just login {vm} --only claude{inputs.host_flag}). docs/guides/zed.md:"
+            " one key, or"
             " Claude with no key."
         )
     if there:

@@ -1094,3 +1094,17 @@ def test_a_vm_of_the_run_is_a_vm_ref_once_its_id_is_known():
     run.fact("localhost", "proxmox_vm_resolved_id", "99")
     assert run.vm_ref("alpha") == VmRef(name="alpha", vmid=4013)
     assert run.vm_ref("localhost") is None  # no VM of the project's has an ID below 100
+
+
+def test_the_runs_host_is_said_beside_its_title_never_in_it():
+    # With more than one host, the host the recipe exports beside the title: the header and the last line say it, the
+    # title's first word still the declaration's name.
+    run = drawn.Run("deploy alpha", 0.0, started_at=STARTED, host="nuc")
+    started = time.strftime("%H:%M", time.localtime(STARTED))
+    first = SGR.sub("", run.frame(0.0, 100, 40, "⠋", color=False)[0])
+    assert first.startswith(f"agent-warehouse  deploy alpha · nuc · started {started}"), first
+    assert run.recipe is view.recipes.RECIPES["deploy"]
+    plain = drawn.Run("deploy alpha", 0.0, started_at=STARTED)
+    assert SGR.sub("", plain.frame(0.0, 100, 40, "⠋", color=False)[0]).startswith(
+        f"agent-warehouse  deploy alpha · started {started}"
+    )

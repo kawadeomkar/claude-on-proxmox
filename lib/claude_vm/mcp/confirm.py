@@ -31,12 +31,13 @@ def code(*asked: str) -> str:
     return "".join(ALPHABET[b % len(ALPHABET)] for b in digest[:4])
 
 
-def destroy_message(names: list[str], report: dict, typed: str) -> str:
+def destroy_message(names: list[str], report: dict, typed: str, host: str = "") -> str:
     """The deletion's dialog: what goes and what to type - first, since Claude Code shows a dialog's first lines and
     folds the rest - then a line per VM from just status's report, each value a VM supplied made one line, and what of
-    its work exists nowhere else."""
+    its work exists nowhere else. With more than one host, the host it goes from."""
+    on = f" on the Proxmox host {host}" if host else " on Proxmox"
     lines = [
-        f"This deletes {', '.join(names)} and their disks on Proxmox. It cannot be undone.",
+        f"This deletes {', '.join(names)} and their disks{on}. It cannot be undone.",
         f"To delete, type: {typed}",
     ]
     by_name = {vm.get("name"): vm for vm in report.get("vms") or [] if isinstance(vm, dict)}

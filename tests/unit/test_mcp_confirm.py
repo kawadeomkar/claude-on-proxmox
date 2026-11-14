@@ -252,3 +252,13 @@ def test_the_code_changes_with_what_is_asked_and_reads_unambiguously():
     first, second = confirm.code("destroy", "alpha"), confirm.code("destroy", "beta")
     assert first != second and first == confirm.code("destroy", "alpha")
     assert len(first) == 4 and not set(first) & set("01IOL")
+
+
+def test_with_more_than_one_host_the_deletion_names_its_host_and_its_code_holds_it():
+    said = confirm.destroy_message(["alpha"], {"vms": []}, "WXYZ alpha", "nuc")
+    assert said.startswith("This deletes alpha and their disks on the Proxmox host nuc. It cannot be undone.")
+    # An answer for one host's alpha is none for another's.
+    assert confirm.code("destroy", "nuc", "alpha") != confirm.code("destroy", "pve", "alpha")
+    assert confirm.destroy_message(["alpha"], {"vms": []}, "WXYZ alpha").startswith(
+        "This deletes alpha and their disks on Proxmox."
+    )

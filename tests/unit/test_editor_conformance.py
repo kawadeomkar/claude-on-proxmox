@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import typing
 from pathlib import Path
 
@@ -66,7 +67,10 @@ BAD_INPUTS = [
     {"files_dir": "/"},
     {"files_dir": ROOT},
     {"terminal": "false"},
-    {"editor_flag": "--editor zed"},  # code_editor_flag's own spelling only: a space, then --editor and a key
+    {"editor_flag": "--editor zed"},  # code_editor_choice's own spelling only: a space, then --editor and a key
+    {"editor_flag": " --editor zed --host nuc"},  # the host is a flag of its own
+    {"host_flag": "--host nuc"},  # claude_host_flag's spelling only: a space, then --host and a host's name
+    {"host_flag": " --host nuc; rm -rf ~"},
     {"target": "/etc"},
     {"colour": "red"},
     {"vm": "alpha"},  # a bare name is no VmRef
@@ -185,6 +189,20 @@ def test_the_just_code_line_a_plan_says_names_the_editor_a_run_chose_against_the
     zed, vscode = report("zed"), report("vscode")
     assert f"The window of just code alpha{' --editor zed' if other else ''} lists a task," in zed, zed
     assert f"Trusting the window of just code alpha{' --editor vscode' if other else ''} instead" in vscode, vscode
+
+
+def test_with_more_than_one_host_every_just_line_a_plan_says_or_writes_names_the_vms_host():
+    # claude_host_flag (host_flag), after the --editor where there is one: the report's lines, and the Claude
+    # terminal's, which VS Code's tasks file carries onto the VM.
+    one = given(target=f"{ROOT}/bot", project="bot", editor_flag=" --editor zed", host_flag=" --host nuc")
+    zed = " ".join(registry.editor_open_plan("zed", ROWS, one)["report"])
+    assert "The window of just code alpha --editor zed --host nuc lists a task," in zed, zed
+    plan = registry.editor_open_plan("vscode", ROWS, given(host_flag=" --host nuc"))
+    written = json.dumps(plan)
+    assert "just deploy alpha --tags claude_code --host nuc" in written, written
+    assert "just deploy alpha --only configure --host nuc" in written, written
+    for line in re.findall(r"just (?:deploy|login|code) alpha[^\"]*", written):
+        assert " --host nuc" in line, line
 
 
 def test_the_folders_no_plan_writes_are_the_ones_code_yml_writes_itself():

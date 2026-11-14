@@ -88,7 +88,10 @@
     # another, every just code line that opens its window carries it: the
     # notes, the plan's report, the alias line, the failures and a fleet's
     # lines all take this one flag.
-    code_editor_flag: "{{ '' if code_editor == (claude_editor_key | string) else ' --editor ' ~ code_editor }}"
+    # And with more than one host, the host the VM is on (claude_host_flag), so a line pasted from the notes or the
+    # report reaches it whichever host is current. The editor's plan takes the two apart, each held to its form.
+    code_editor_choice: "{{ '' if code_editor == (claude_editor_key | string) else ' --editor ' ~ code_editor }}"
+    code_editor_flag: "{{ code_editor_choice ~ claude_host_flag | default('') }}"
     # code_ssh is the result of whichever task connected. ssh's error can hold
     # line breaks, and text the VM sent before the login: said on one line,
     # with no control character reaching this terminal.
@@ -173,7 +176,8 @@
       notes_file: "{{ code_notes_file }}"
       notes_dir: "{{ code_notes_dir }}"
       task_written: "{{ code_claude_task_written | bool }}"
-      editor_flag: "{{ code_editor_flag }}"
+      editor_flag: "{{ code_editor_choice }}"
+      host_flag: "{{ claude_host_flag | default('') }}"
       session_id: "{{ code_session_id }}"
       session_branch: "{{ code_session_plan.session.branch | default('') if code_session_id | length > 0 else '' }}"
       session_commit: "{{ code_session_commit | default('') if code_session_id | length > 0 else '' }}"

@@ -2599,6 +2599,22 @@ def test_a_vm_signed_in_nowhere_names_each_sign_in(tmp_path):
     assert "| Tailscale | NeedsLogin: just login alpha --only tailscale signs it in |" in live
 
 
+def test_with_more_than_one_host_each_sign_in_line_names_the_vms_host(tmp_path):
+    # The host just code wrote into the notes (vm_session.md.j2's marker), on every just line of the rows, as on the
+    # notes' own lines; anything at the marker but a host's name is nothing.
+    marked = NOTES_TEXT.replace("VM 101\n", "VM 101\n<!-- agent-warehouse:on --host nuc -->\n")
+    (tmp_path / "nuc").mkdir()
+    (tmp_path / "odd").mkdir()
+    _, _, after, _, _ = _helper(tmp_path / "nuc", answers=SIGNED_OUT, text=marked)
+    live = _live(after)
+    assert "| Claude Code | not signed in: just login alpha --only claude --host nuc on your machine |" in live
+    assert "| GitHub (`gh`) | not signed in: just login alpha --only github --host nuc on your machine |" in live
+    assert "| Tailscale | NeedsLogin: just login alpha --only tailscale --host nuc signs it in |" in live
+    odd = NOTES_TEXT.replace("VM 101\n", "VM 101\n<!-- agent-warehouse:on --host nuc; rm -rf ~ -->\n")
+    _, _, after, _, _ = _helper(tmp_path / "odd", answers=SIGNED_OUT, text=odd)
+    assert "| Claude Code | not signed in: just login alpha --only claude on your machine |" in _live(after)
+
+
 def test_what_a_tool_prints_is_read_as_utf_8_whatever_the_locale(tmp_path):
     # No LANG here: an account name outside ASCII is still read, never a failure that leaves the notes stale.
     answers = {**SIGNED_IN, "claude": SIGNED_IN["claude"].replace("dev@example.com", "dév@exämple.com")}

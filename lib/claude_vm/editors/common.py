@@ -46,8 +46,9 @@ def below(path: str, top: str) -> bool:
 
 def just_code(inputs: OpenInputs) -> str:
     """The just code line that opens the projects directory's window again: the VM's name, then code.yml's flag,
-    which alone decides where a bare line, opening the setting's editor, is not this run's."""
-    return f"just code {inputs.vm.name}{inputs.editor_flag}"
+    which alone decides where a bare line, opening the setting's editor, is not this run's, and the VM's host where
+    there is more than one."""
+    return f"just code {inputs.vm.name}{inputs.editor_flag}{inputs.host_flag}"
 
 
 def nice_json(value: object) -> str:

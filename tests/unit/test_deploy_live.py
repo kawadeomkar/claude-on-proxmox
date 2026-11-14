@@ -582,8 +582,9 @@ def test_no_other_test_or_scenario_draws_a_run():
     # tool that decides whether a command is drawn, and pytest's plugin, whose file it names - and the declarations
     # its title names, the recipes that set it, and the tests, each by name: the live kit sets it for the live tests,
     # this one, the live tests that draw a playbook through the engine and the command engine's name it, and
-    # test_justfile.py reads the title the recipe exports, from an ansible-playbook stand-in that runs nothing. No
-    # scenario or config, and no other test - test_status_live.py's run is drawn by a callback of its own.
+    # test_justfile.py and test_hosts.py read the title and the host the recipe exports, from an ansible-playbook
+    # stand-in that runs nothing. No scenario or config, and no other test - test_status_live.py's run is drawn by a
+    # callback of its own.
     assert mentions == [
         "callback_plugins/agent_warehouse.py",
         "justfile",
@@ -593,6 +594,7 @@ def test_no_other_test_or_scenario_draws_a_run():
         "tests/unit/live_kit.py",
         "tests/unit/live_pytest.py",
         "tests/unit/test_deploy_live.py",
+        "tests/unit/test_hosts.py",
         "tests/unit/test_justfile.py",
         "tests/unit/test_live_commands.py",
         "tests/unit/test_login_live.py",

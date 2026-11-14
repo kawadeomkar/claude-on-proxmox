@@ -130,6 +130,7 @@
     dest: "{{ claude_vm_save_dir }}/sessions.json"
     content: >-
       {{ {'vm': inventory_hostname,
+          'host': claude_ssh_origin | default('', true) or none,
           'note': 'Written on ' ~ inventory_hostname ~ ' and saved as it sent them, plain files only: what they say,'
                   ~ " and what resuming one asks to run, is that VM's, never checked here. Each resumes with a Claude"
                   ~ ' Code at least as new as its version.',

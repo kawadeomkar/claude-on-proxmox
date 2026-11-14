@@ -118,21 +118,21 @@ def _workspace_file(inputs: OpenInputs) -> str:
 
 def _claude_lines(inputs: OpenInputs) -> list[str]:
     """The lines the Claude terminal is handed after its helper, in the helper's order."""
-    vm = inputs.vm.name
+    vm, on = inputs.vm.name, inputs.host_flag
     signed_in_watched = (
         "Signed in. Remote Control starts by itself in a moment, putting this VM in the Claude apps too; to keep it on"
-        f" across reboots, run on your machine: just deploy {vm} --tags claude_code"
+        f" across reboots, run on your machine: just deploy {vm} --tags claude_code{on}"
         if inputs.remote_control
         else ""
     )
     signed_in_unwatched = (
         "Signed in. To reach this VM from the Claude apps too, start Remote Control from your machine: just deploy"
-        f" {vm} --tags claude_code"
+        f" {vm} --tags claude_code{on}"
         if inputs.remote_control
         else ""
     )
     return [
-        f"Claude Code is not installed on {vm} yet. On your machine, run just deploy {vm} --only configure, then"
+        f"Claude Code is not installed on {vm} yet. On your machine, run just deploy {vm} --only configure{on}, then"
         ' "Tasks: Run Task", Claude here.',
         signed_in_watched,
         signed_in_unwatched,
@@ -147,7 +147,7 @@ def _claude_lines(inputs: OpenInputs) -> list[str]:
 def _github_said(inputs: OpenInputs) -> str:
     return (
         "Signed in to GitHub. To clone your private repositories here too, run on your machine: just deploy"
-        f" {inputs.vm.name} --tags github_projects"
+        f" {inputs.vm.name} --tags github_projects{inputs.host_flag}"
         if inputs.github_signed_in
         else ""
     )

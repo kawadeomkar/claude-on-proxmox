@@ -27,6 +27,7 @@ Using it: [Remote Control](../../guides/remote-control.md). How it works: [§5.5
 | `claude_code_remote_control_spawn` | str | `same-dir` | How the server creates sessions. One of `same-dir`, `worktree`, `session`. |
 | `claude_code_remote_control_service` | str | `claude-remote-control` | Name of the systemd unit installed for the server. |
 | `claude_code_sign_in_follows` | bool | `false` | Set by just deploy's configure step, whose sign-in comes next in the same run. The message for a VM with no login then says so, rather than naming just login --only claude. |
+| `claude_code_host_flag` | str | `""` | What ends each just line naming this VM, in NEXT STEPS, a retry or a message - " --host &lt;name&gt;" where the checkout has more than one Proxmox host (claude_host_flag), so a line pasted later reaches the VM's host. Empty with one host. |
 
 ## Entry point `login`
 
@@ -44,6 +45,7 @@ Decides with the same definitions the main entry point starts Remote Control fro
 | `claude_code_anthropic_api_key` | str | `""` | With a key set the browser sign-in is not offered, and the report says Remote Control is off on purpose. Set through vault_anthropic_api_key in vault.yml. A secret: never logged. Set through `vault_anthropic_api_key` in vault.yml. |
 | `claude_code_login_interactive` | bool | `false` | Sign a VM with no Claude login and no API key in by the browser flow (browser_login.yml), then start Remote Control. Set by the playbooks; without it this entry point only reports. |
 | `claude_code_login_desktop` | bool | `true` | Open the sign-in page in the controller's browser. Off in every test. Set through `login_desktop` in local.yml. |
+| `claude_code_host_flag` | str | `""` | What ends each just line for this VM, as main has it. |
 | `claude_code_login_redirect` | bool | same as `claude_code_login_desktop` | Bring the browser back to the VM by itself once you authorise, with nothing to paste - claude's callback port forwarded from the controller over SSH for the sign-in. Defaults to claude_code_login_desktop, since only a browser on the controller reaches that forward; where the forward fails, the code is pasted. Set through `login_desktop` in local.yml. |
 | `claude_code_login_approval_timeout` | int | `300` | Seconds the run waits for you to authorise in the browser when it comes back by itself. |
 | `claude_code_login_args` | list of `str` | `[]` | Extra arguments for `claude auth login`, such as --sso or --email. |
@@ -139,7 +141,7 @@ Set in `roles/claude_code/vars/main.yml`. These are not settings: Ansible ranks 
 | `claude_code_login_start_seconds` |  | `30` |
 | `claude_code_login_entered` | The code to hand claude - the one given instead of the prompt, or what was pasted at it. | <code>{{ claude_code_login_code if claude_code_login_code &#124; length > 0 else ((claude_code_login_prompt &#124; default({})).user_input &#124; default('', true) &#124; trim) }}</code> |
 | `claude_code_login_entered_again` | The code pasted when asked again, after an "Invalid code". | <code>{{ (claude_code_login_prompt_again &#124; default({})).user_input &#124; default('', true) &#124; trim }}</code> |
-| `claude_code_login_command` |  | `just login {{ inventory_hostname }} --only claude` |
+| `claude_code_login_command` |  | `just login {{ inventory_hostname }} --only claude{{ claude_code_host_flag }}` |
 | `claude_code_login_browser` | The browser claude gets on the VM (BROWSER), which only records the page claude would open - the one that redirects back to claude's own callback on the VM - and the file it records it in; and the pid of the far end of the forward to that callback, which ends it. | `{{ claude_code_login_dir }}/claude-login.browser` |
 | `claude_code_login_page_file` |  | `{{ claude_code_login_dir }}/claude-login.page` |
 | `claude_code_login_forward_pidfile` |  | `{{ claude_code_login_dir }}/claude-login.forward.pid` |

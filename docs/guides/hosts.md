@@ -128,3 +128,17 @@ host's, and adds `hosts` and a `host` on every row. Each host's settings are kep
 
 `just deploy newvm`, about to make a VM no alias records, first asks every other host whether it has a VM of that
 name, and refuses one that does; a host that does not answer is said, and the run goes on.
+
+## Where the host is said
+
+With more than one host, every run says which host it is against, where a mistake would hurt:
+
+- the live run's first line, `agent-warehouse  deploy alpha · nuc · started 10:02`, and its last;
+- the run lock, so a second run is told which host the one under way is on;
+- every line a run prints or writes onto a VM that tells you what to run - NEXT STEPS, a retry, the session notes
+  and their "Signed in" rows, the Claude terminal's lines, `just status`'s ATTENTION - ends with `--host <name>`, so a
+  line pasted later reaches that VM whichever host is current, and the notes' first line names the host;
+- `just destroy`'s saved `sessions.json`, which records the host the VM was on;
+- through [MCP](agents.md), the `hosts` tool lists the hosts and every run tool takes `host`, and names it in the
+  job's title when it is not given; no tool changes the current host, a deploy that may create a VM must name one,
+  and `destroy`'s dialog names the host and its code holds it.

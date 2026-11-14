@@ -206,10 +206,14 @@ class Run(model.Run):
             self.frame_vms = None
         return [screen.render(screen.cut(line, limit), color) for line in lines]
 
+    def _on(self):
+        """The run's host, as the header and the summary say it: nothing with one host."""
+        return f" · {self.host}" if self.host else ""
+
     def _header(self, now, limit):
         # The plan is printed whole above the region, as every report is: here it could only be cut.
         started = time.strftime("%H:%M", time.localtime(self.started_at))
-        first = [("agent-warehouse", "b"), (f"  {self.title} · started {started}", "")]
+        first = [("agent-warehouse", "b"), (f"  {self.title}{self._on()} · started {started}", "")]
         if self.check:
             first.append((" · a dry run: nothing is changed", "y"))
         # A run drawn as its steps has no stage row to say its VM on: the header does, at its right.
@@ -538,7 +542,7 @@ class Run(model.Run):
         else:
             where = f" at {self.first_failure}" if self.first_failure else ""
             said, style = f"failed after {took}{where}", "r"
-        return [("agent-warehouse", "b"), (f"  {self.title} · {said}", style), tail]
+        return [("agent-warehouse", "b"), (f"  {self.title}{self._on()} · {said}", style), tail]
 
     def summary(self, now, cols, color=True, failed_hosts=(), next_steps=()):
         limit = cols - 1

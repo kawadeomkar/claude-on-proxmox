@@ -174,7 +174,7 @@
                      ~ (ansible_failed_task.name | default('a task')) ~ '"'
                      ~ (' (' ~ claude_vm_failed_items | join(', ') ~ ')' if claude_vm_failed_items | length > 0 else '')
                      ~ ': ' ~ claude_vm_failed_why)
-                    | retry_line('just deploy ' ~ inventory_hostname ~ ' --tags github_projects')] }}
+                    | retry_line('just deploy ' ~ inventory_hostname ~ ' --tags github_projects' ~ claude_host_flag | default(''))] }}
 
         - name: Say why
           ansible.builtin.debug:

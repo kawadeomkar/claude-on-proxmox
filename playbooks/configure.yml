@@ -236,7 +236,7 @@
               {{ claude_vm_configure_failures | default([])
                  + [(inventory_hostname ~ ': Tailscale failed at "' ~ (ansible_failed_task.name | default('a task'))
                      ~ '": ' ~ claude_vm_tailscale_why)
-                    | retry_line('just deploy ' ~ inventory_hostname ~ ' --tags tailscale')] }}
+                    | retry_line('just deploy ' ~ inventory_hostname ~ ' --tags tailscale' ~ claude_host_flag | default(''))] }}
 
         - name: Say why, and go on
           ansible.builtin.debug:

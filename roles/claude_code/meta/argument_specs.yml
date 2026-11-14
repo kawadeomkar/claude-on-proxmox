@@ -72,6 +72,12 @@ argument_specs:
           - Set by just deploy's configure step, whose sign-in comes next in the
             same run. The message for a VM with no login then says so, rather
             than naming just login --only claude.
+      claude_code_host_flag:
+        type: str
+        description:
+          - What ends each just line naming this VM, in NEXT STEPS, a retry or a message - " --host <name>" where
+            the checkout has more than one Proxmox host (claude_host_flag), so a line pasted later reaches the
+            VM's host. Empty with one host.
 
   # tasks_from: login, which playbooks/claude_login.yml runs on VMs this role
   # has configured.
@@ -106,6 +112,9 @@ argument_specs:
       claude_code_login_desktop:
         type: bool
         description: Open the sign-in page in the controller's browser. Off in every test.
+      claude_code_host_flag:
+        type: str
+        description: What ends each just line for this VM, as main has it.
       claude_code_login_redirect:
         type: bool
         description:

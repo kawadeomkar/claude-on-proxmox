@@ -114,6 +114,9 @@ tailscale_login_desktop: true
 # just deploy signs the VM in next, in the same run: configuration says so
 # rather than naming just login --only tailscale.
 tailscale_sign_in_follows: false
+# What ends each line naming a just command for this VM: " --host <name>" where
+# the checkout has more than one Proxmox host (wired from claude_host_flag).
+tailscale_host_flag: ""
 
 # Set by playbooks/tailscale_login.yml for the login entry point: sign the VM in
 # by the web login (names given, or just deploy for a VM whose Claude code was

@@ -1,0 +1,139 @@
+---
+# A second Proxmox host, laid out as `just init --host nuc` leaves one (docs/guides/hosts.md): hosts/nuc/ with its own
+# address, port and token, given after the shared sources as a run against it is
+# (ANSIBLE_INVENTORY=inventory/controller.yml,hosts/nuc). The scenario's own inventory is the first host's, and the
+# shared one: through verify_playbook_cmd, as every child run takes it, with the pins. Beside it a controller.yml in a
+# folder of its own defines localhost, as the shared inventory's does, so the token rule tells nuc from it.
+# prepare.yml starts the second fake, whose secret is not the first's. One VM is provisioned through the overlay, its
+# alias written recording nuc beside the first host's, and destroy through the overlay deletes it there and takes its
+# alias alone - so verify.yml goes on with the aliases as fleet.yml left them.
+- name: Provision, alias and destroy a VM on a second host
+  hosts: localhost
+  gather_facts: false
+  vars:
+    verify_eph: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+    verify_aliases_file: "{{ verify_eph }}/agent-warehouse.conf"
+    verify_nuc_url: https://127.0.0.1:18017/api2/json
+    verify_nuc_headers:
+      Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}=molecule-nuc-secret"
+    verify_nuc_sources: "{{ ['--inventory=' ~ verify_eph ~ '/controller/controller.yml', '--inventory=' ~ verify_eph ~ '/hosts/nuc'] }}"
+    # The other hosts, as the resolver passes them (claude_hosts_other): the first host here has no name of its own.
+    verify_nuc_vars:
+      claude_hosts_other: [{name: pve, address: 127.0.0.1}]
+  tasks:
+    - name: Make the folders of controller.yml and of nuc
+      ansible.builtin.file:
+        path: "{{ verify_eph }}/{{ verify_folder }}"
+        state: directory
+        mode: "0700"
+      loop: [controller, hosts/nuc/group_vars/all]
+      loop_control:
+        loop_var: verify_folder
+
+    - name: Copy controller.yml beside them
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../inventory/controller.yml"
+        dest: "{{ verify_eph }}/controller/controller.yml"
+        mode: "0600"
+
+    - name: Write nuc's files, as just init --host nuc makes them
+      ansible.builtin.copy:
+        dest: "{{ verify_eph }}/hosts/nuc/{{ verify_host_file.path }}"
+        content: "{{ verify_host_file.content | to_nice_yaml }}"
+        mode: "0600"
+      loop:
+        - path: hosts.yml
+          content: {all: {children: {proxmox: {hosts: {nuc: {ansible_host: 127.0.0.1}}}}}}
+        - path: group_vars/all/local.yml
+          content: {proxmox_api_port: 18017, proxmox_node: pve, proxmox_validate_certs: false, vm_default_name: nuc-default}
+        - path: group_vars/all/vault.yml
+          content: {vault_host_proxmox_api_token_secret: molecule-nuc-secret}
+      loop_control:
+        loop_var: verify_host_file
+        label: "{{ verify_host_file.path }}"
+
+    - name: Read the aliases before nuc's runs
+      ansible.builtin.set_fact:
+        verify_aliases_before_nuc: "{{ lookup('ansible.builtin.file', verify_aliases_file) | ssh_config_blocks }}"
+
+    - name: Provision nucvm through nuc's overlay, then write the aliases there
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd + verify_nuc_sources
+             + ['--extra-vars', verify_nuc_vars | combine(verify_nuc_run.vars) | to_json,
+                playbook_dir ~ '/../../playbooks/' ~ verify_nuc_run.playbook] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_nuc_runs
+      changed_when: false
+      failed_when: false
+      loop:
+        - {playbook: provision.yml, vars: {vm_name: nucvm}}
+        # Fleet-wide, so the prune runs: the first host's aliases are no host's this run knows, and stay.
+        - {playbook: ssh_config.yml, vars: {}}
+      loop_control:
+        loop_var: verify_nuc_run
+        label: "{{ verify_nuc_run.playbook }}"
+
+    - name: List each host's VMs
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_listing.url }}/cluster/resources?type=vm"
+        headers: "{{ verify_listing.headers }}"
+      register: verify_listings
+      loop:
+        - {url: "{{ proxmox_api_url }}", headers: "{{ proxmox_api_headers }}"}
+        - {url: "{{ verify_nuc_url }}", headers: "{{ verify_nuc_headers }}"}
+      loop_control:
+        loop_var: verify_listing
+        label: "{{ verify_listing.url }}"
+
+    - name: Read the aliases after nuc's runs
+      ansible.builtin.set_fact:
+        verify_aliases_after_nuc: "{{ lookup('ansible.builtin.file', verify_aliases_file) | ssh_config_blocks }}"
+
+    - name: Assert nucvm was made on nuc alone, sent nuc's secret, and its alias records nuc beside the first host's
+      vars:
+        verify_names: "{{ verify_listings.results | map(attribute='json.data') | map('map', attribute='name', default='') | map('list') | list }}"
+      ansible.builtin.assert:
+        that:
+          - verify_nuc_runs.results | map(attribute='rc') | list == [0, 0]
+          # The fake refuses any other secret: made at all, nucvm was asked for with nuc's own.
+          - "'nucvm' in verify_names[1] and 'nucvm' not in verify_names[0]"
+          - verify_aliases_after_nuc | selectattr('name', 'equalto', 'nucvm') | map(attribute='origin') | list == ['nuc']
+          - verify_aliases_after_nuc | rejectattr('name', 'equalto', 'nucvm') | list == verify_aliases_before_nuc
+        fail_msg: >-
+          Through nuc's overlay: exits {{ verify_nuc_runs.results | map(attribute='rc') | list }}, the hosts listing
+          {{ verify_names }}, aliases {{ verify_aliases_before_nuc }} then {{ verify_aliases_after_nuc }}.
+          {{ verify_nuc_runs.results | map(attribute='stdout') | zip(verify_nuc_runs.results | map(attribute='stderr'))
+             | map('join', '\n') | map('regex_findall', '\[ERROR\]: [^\n]*') | list }}
+        quiet: true
+
+    - name: Destroy nucvm through nuc's overlay
+      ansible.builtin.command:
+        argv: >-
+          {{ verify_playbook_cmd + verify_nuc_sources
+             + ['--extra-vars', verify_nuc_vars | combine(verify_destroy_vars) | combine({'vm_name': 'nucvm', 'confirm_destroy': 'yes'})
+                                | to_json,
+                playbook_dir ~ '/../../playbooks/destroy.yml'] }}
+      environment: "{{ verify_playbook_env }}"
+      register: verify_nuc_destroy
+      changed_when: false
+      failed_when: false
+
+    - name: List nuc's VMs after the deletion
+      ansible.builtin.uri:
+        validate_certs: false
+        url: "{{ verify_nuc_url }}/cluster/resources?type=vm"
+        headers: "{{ verify_nuc_headers }}"
+      register: verify_nuc_after
+
+    - name: Assert nucvm went from nuc with its alias, and the first host's aliases stayed
+      ansible.builtin.assert:
+        that:
+          - verify_nuc_destroy.rc == 0
+          - "'nucvm' not in verify_nuc_after.json.data | map(attribute='name', default='') | list"
+          - (lookup('ansible.builtin.file', verify_aliases_file) | ssh_config_blocks) == verify_aliases_before_nuc
+        fail_msg: >-
+          destroy.yml through nuc's overlay exited {{ verify_nuc_destroy.rc }}:
+          {{ (verify_nuc_destroy.stdout ~ verify_nuc_destroy.stderr) | regex_findall('\[ERROR\]: [^\n]*') }}
+        quiet: true

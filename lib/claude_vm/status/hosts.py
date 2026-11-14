@@ -229,6 +229,15 @@ def reconcile(reports: dict, blocks: list[dict]) -> None:
                         "rename one of them in Proxmox",
                     )
                 )
+    # Each line that says what to run names its host: pasted later, it reaches that host's VM whichever is current.
+    for name, report in reports.items():
+        for item in report["attention"] if report is not None else []:
+            command = item.get("command") or ""
+            if (
+                command.startswith(("just deploy", "just login", "just code", "just destroy"))
+                and "--host" not in command
+            ):
+                item["command"] = f"{command} --host {name}"
     for report in reports.values():
         if report is not None:
             counts = {level: sum(1 for it in report["attention"] if it["level"] == level) for level in model.LEVELS}

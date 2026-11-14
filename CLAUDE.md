@@ -672,7 +672,8 @@ if apt fails to resolve a mirror, that is the machine, not the change.
       `just mcp --any-branch`, and with `ATTENDED=1` exactly when the session is an interactive one here
       (`CLAUDE_CODE_ENTRYPOINT=cli`, not over SSH) or `--attended` says so.
     - A `deploy` that would create a VM needs its names (`deploy_refusal`): the default VM is the terminal's, never
-      implied through an agent.
+      implied through an agent; with more than one host, its `host` too, the current host being the terminal's. No
+      tool changes the current host (`hosts` lists them), and `destroy`'s code holds the host it deletes from.
     - A call returns at the run's first browser block, with the job's ID and where it ended: the person cannot see
       a backgrounded call's progress. Only a person's stop - Esc (`AbortError: user-cancel`), `x` in `/tasks`
       (`AbortError: The operation was aborted.`), `cancel` - stops a run, by SIGINT to its group, the tree ended after

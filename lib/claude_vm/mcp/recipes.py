@@ -42,6 +42,8 @@ TOOLS = {
     # The one setting named, written into local.yml: the settings recipe's other half.
     "settings_set": ToolRecipe("settings", {"json": True}, required=("name",)),
     "init": ToolRecipe("init", {"no_prompt": True}, own=("wait_seconds",)),
+    # The checkout's hosts, listed: switching or removing one is the person's, at a terminal.
+    "hosts": ToolRecipe("host", {"json": True}),
 }
 # The properties a run tool has beside its recipe's.
 OWN = {
@@ -71,8 +73,6 @@ NO_TOOL = {
     "vagrant": "a contributor's command",
     "clean": "a contributor's command",
     "mcp": "it registers this server: the person's command",
-    "host": "the current host is the terminal's, as the default VM is: no agent changes it, and each run tool takes "
-    "the host it runs against as host",
 }
 
 # Options a tool's recipe has that the tool does not take, and why, by tool.
@@ -86,6 +86,12 @@ LEFT_OUT = {
     ("init", "token_secret_file"): "a file's contents would go into the vault and to the Proxmox host as the token: "
     "any file this user can read, an SSH key among them",
     ("init", "extra"): "init refuses any word after its options",
+    (
+        "hosts",
+        "name",
+    ): "it makes a host the current one, which is the terminal's, as the default VM is: no agent changes "
+    "it, and each run tool takes the host it runs against as host",
+    ("hosts", "remove"): "it deletes a host's settings and token: the person's, at a terminal, after typing its name",
 }
 
 # The settings the justfile reads with env(), each given on just's command line at the server's value: a setting on

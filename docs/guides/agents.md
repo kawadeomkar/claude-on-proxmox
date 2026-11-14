@@ -45,6 +45,9 @@ agent tells you what the page is for, then follows the run with `job` to its nex
 - **The names.** A deploy that would create a VM needs its names: `just deploy`'s default VM is the terminal's, so that
   an agent's forgotten argument creates nothing. `only="configure"`, `only="ssh-config"`, `only="template"` and `check`
   take no names, as at a terminal.
+- **The host.** With [more than one Proxmox host](hosts.md), the `hosts` tool lists them and every run tool takes
+  `host`; no tool changes the current host, which is yours. A deploy that may create a VM names its host; a VM that
+  exists is found where it is. `destroy`'s dialog names the host, and the code to type holds it.
 
 ## Register it
 

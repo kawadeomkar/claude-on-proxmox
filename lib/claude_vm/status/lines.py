@@ -193,13 +193,12 @@ def _tailscale_line(case, facts):
     )
     where = f"{tailnet}as {shown} ({facts['ipv4'] or 'no IPv4 address yet'})"
     configure, login, admin = facts["configure_command"], facts["login_command"], facts["admin_page"]
+    # Check mode's alone: just status reads no run in check mode, and names no such command.
+    again = facts.get("reconfigure_command") or f"just deploy {vm} --only configure"
     if case == "check-no-package":
-        return (
-            f"Tailscale is not installed, and check mode installs nothing; just deploy {vm} --only configure"
-            " installs it."
-        )
+        return f"Tailscale is not installed, and check mode installs nothing; {again} installs it."
     if case == "check-daemon-down":
-        return f"tailscaled is not running, and check mode starts nothing; just deploy {vm} --only configure starts it."
+        return f"tailscaled is not running, and check mode starts nothing; {again} starts it."
     if case == "not-ours":
         said = (
             f"on Tailscale {where}; installed"

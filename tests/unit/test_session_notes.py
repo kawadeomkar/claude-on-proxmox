@@ -107,6 +107,8 @@ VARIANTS = {
     # A run whose --editor is not the setting's editor (code.yml's code_editor_flag).
     "zed, --editor zed": {**LISTED, "code_claude_task_there": True, "code_editor_flag": " --editor zed"},
     "vscode, --editor vscode": {"code_editor": "vscode", "code_editor_flag": " --editor vscode"},
+    # A VM on another of more than one host: claude_host_flag, which code.yml's code_editor_flag ends with too.
+    "on nuc": {"claude_host_flag": " --host nuc", "claude_ssh_origin": "nuc", "code_editor_flag": " --host nuc"},
     "switched off": {"tailscale_enabled": False, "claude_code_remote_control": False, "github_auth": False},
     "no sizes": {"claude_vm_addressed": [{key: value for key, value in VM.items() if not key.startswith("max")}]},
     # A window of one repository.
@@ -207,6 +209,16 @@ def test_the_notes_just_code_lines_open_the_window_of_the_run_s_editor(notes, ru
     assert also in text, text
     if line != "just code alpha":
         assert "`just code alpha`" not in text, text
+
+
+def test_with_more_than_one_host_the_notes_name_the_vms_host_on_every_just_line(notes):
+    text = notes["on nuc"]
+    assert text.startswith("# alpha\n\nVM 101 on Proxmox host **nuc**, node **pve** · written by `just code`")
+    # The marker the window's notes task reads, so the rows it writes name the host too (session_notes.py).
+    assert "\n<!-- agent-warehouse:on --host nuc -->\n" in text
+    lines = re.findall(r"`(just (?:code|login|deploy|destroy) alpha[^`]*)`", text)
+    assert lines and all(line.endswith(" --host nuc") or " --host nuc " in line for line in lines), lines
+    assert "--host" not in notes["default"]
 
 
 def test_what_the_window_wrote_is_carried_over_as_it_is(notes):

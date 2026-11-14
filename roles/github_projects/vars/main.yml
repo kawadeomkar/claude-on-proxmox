@@ -342,10 +342,10 @@ github_projects_git_identity_wanted: >-
 # The command that signs gh in by the device flow, run on the controller: it
 # opens the page there, copies the code, waits for the approval, and then
 # runs this role so the private repositories arrive in the same run.
-github_projects_login_command: just login {{ inventory_hostname }} --only github
+github_projects_login_command: just login {{ inventory_hostname }} --only github{{ github_projects_host_flag }}
 # The command that runs this role alone: the token sign-in, the listing and the
 # clones, with nothing else of just deploy --only configure.
-github_projects_configure_command: just deploy {{ inventory_hostname }} --tags github_projects
+github_projects_configure_command: just deploy {{ inventory_hostname }} --tags github_projects{{ github_projects_host_flag }}
 
 # --- releasing the VM before it is destroyed (release.yml) ---
 # release.yml reads the token gh held into github_projects_stored_token, as

@@ -73,6 +73,9 @@ github_projects_login_ask: false
 # next, in the same run, so a vault token not yet signed in is said to be
 # signed in by it rather than by a command to run.
 github_projects_login_role_follows: false
+# What ends each line naming a just command for this VM: " --host <name>" where
+# the checkout has more than one Proxmox host (wired from claude_host_flag).
+github_projects_host_flag: ""
 # Read by just deploy --only configure's message for a signed-out VM: true under just
 # deploy, whose sign-ins come next in the same run, so it says so rather than
 # naming just login --only github.

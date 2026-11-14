@@ -307,8 +307,8 @@ tracked-file guard), `<vm>-<YYYYMMDD-HHMMSS>/projects/` laid out as on the VM an
 plain files and folders only, 0600 and 0700, at the names asked for or inside one, never through a link,
 never outside that folder. A link, hard link, device or pipe in the archive is left out and counted;
 rsync made the VM's links here as links, and the `chmod -R` after it followed them out of the folder. A
-`sessions.json` beside them names each, the Claude Code version that wrote it and the newest of them,
-says that what they hold is the VM's and unchecked, and gives the `claude --resume <path>` that continues
+`sessions.json` beside them names the Proxmox host the VM was on, and each session, the Claude Code
+version that wrote it and the newest of them, says that what they hold is the VM's and unchecked, and gives the `claude --resume <path>` that continues
 each here: given a
 transcript's path, Claude Code resumes it where it lies and writes to it there, whatever this machine
 holds of the same ID (the `configure` scenario holds that against the real claude). Not best effort like
