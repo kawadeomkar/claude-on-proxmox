@@ -127,7 +127,8 @@ def test_every_host_is_read_by_a_child_of_its_own_and_said_under_its_name(tmp_pa
     done, report = _status(root, hosts)
     assert report is not None, done.stderr[-2000:]
     assert FIRST_SECRET not in done.stdout + done.stderr and NUC_SECRET not in done.stdout + done.stderr
-    assert [(one["host"], one["current"], one["failed"]) for one in report["hosts"]] == [
+    # A row that is a host names itself name, as just host --json's rows do; every other row's host names its host.
+    assert [(one["name"], one["current"], one["failed"]) for one in report["hosts"]] == [
         ("pve", True, None),
         ("nuc", False, None),
     ]

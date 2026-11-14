@@ -395,7 +395,7 @@ def tools(server: Server) -> list[Tool]:
         return await server.json_tool(
             "hosts",
             {},
-            keep=("current", "hosts"),
+            keep=("current_host", "hosts"),
             narrow="the list is all there is",
             ok={0},
         )

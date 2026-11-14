@@ -270,8 +270,9 @@ def reconcile(reports: dict, blocks: list[dict], current: str | None = None) -> 
 
 def combined(reports: dict, problems: dict, failed: dict) -> dict:
     """The JSON: the current host's report, every key 1.0 promised where it was, and every host's rows with their
-    host's name; each host whole under hosts. The exit is the highest of the hosts', a host that did not answer
-    counting only where it is the current one (decided: plan D4)."""
+    host's name as host; each host whole under hosts, its row naming it name, as just host --json's rows do. The exit
+    is the highest of the hosts', a host that did not answer counting only where it is the current one (decided: plan
+    D4)."""
     current = next((name for name, one in problems.items() if one.get("current")), None)
     base = dict(reports.get(current) or next((one for one in reports.values() if one), {}) or {})
     out = dict(base)
@@ -282,7 +283,7 @@ def combined(reports: dict, problems: dict, failed: dict) -> dict:
         exit_code = 3 if failed.get(name) else 2 if report is None else report["exit"]
         out["hosts"].append(
             {
-                "host": name,
+                "name": name,
                 "current": bool(problems[name].get("current")),
                 "exit": exit_code,
                 "failed": failed.get(name) or problems[name].get("problem") or None,

@@ -101,6 +101,13 @@ so a run never ends on another host than the one it started on. `--host` on `dep
 and `status` reaches another host for that run alone. `just host <name> --remove` deletes a host's folder after you
 type its name: never the current host's or the first's, and never its VMs, which stay on it.
 
+`just host --json` is the list for a script or an agent, one JSON document: `format_version` and `kind`
+(`host_list`) first, then `current_host`, the current host's name; `hosts`, a row per host with its `name`,
+`address`, `folder`, `settings`, `host_kind` (`proxmox`), `first`, `current` (whether it is the current host) and
+`problem`; and `problem`, why the hosts' files cannot be read. A `problem` is `""` where there is none, at the top as
+in a row. Only these can be `null`: `current_host` where there is no current host, and a row's `host_kind` for a
+folder not set up. A release adds keys to it, and never removes or renames one.
+
 ## The VMs and their aliases
 
 Each VM's SSH alias records the host it was found on (`# origin: nuc` in the managed SSH config), and a run against
@@ -148,7 +155,9 @@ a host that does not answer costs only its own block, and makes the run's exit 2
 Under ATTENTION each host says, beside its own, an alias recorded for it whose VM it no longer lists - deleted in
 Proxmox's own UI, say - with `just deploy --only ssh-config --host <name>`, which prunes it, and a VM name two hosts
 each have. `--host` reads one host, and a VM named is read where it is. `--json` keeps every key it had, the current
-host's, and adds `hosts` and a `host` on every row. Each host's settings are kept apart, in `.cache/status/<host>/`.
+host's, and adds `hosts`, a row per host - its `name`, as `just host --json` names a host's row, `current`, `exit`,
+`failed` and its own `report` - and a `host` on every other row, naming the host it is from. Each host's settings are
+kept apart, in `.cache/status/<host>/`.
 
 `just deploy newvm`, about to make a VM no alias records, first asks every other host whether it has a VM of that
 name, and refuses one that does; a host that does not answer is said, and the run goes on.

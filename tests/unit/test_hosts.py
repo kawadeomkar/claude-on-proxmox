@@ -455,13 +455,37 @@ def test_the_list_says_each_host_from_its_files_alone(tmp_path: Path) -> None:
     (root / "hosts" / "lab").mkdir()
     (root / "hosts" / "current").write_text("nuc\n")
     listed = json.loads(_tool(root, "list", "--json").stdout)
-    assert listed["current"] == "nuc"
+    assert listed["current_host"] == "nuc"
     rows = {row["name"]: row for row in listed["hosts"]}
     assert rows["pve"]["settings"] == {"proxmox_node": "pve1"} and rows["pve"]["first"]
     assert rows["nuc"]["current"] and rows["nuc"]["address"] == "192.0.2.20" and rows["nuc"]["problem"] == ""
     assert rows["lab"]["problem"] == "not set up: just init --host lab"
     table = _tool(root, "list").stdout
     assert "▸ nuc" in table and "the current host" in table and "not set up: just init --host lab" in table
+
+
+# The keys of `just host --json` that 2.5 promises (CONTRIBUTING.md, Releasing): added to, never taken away or renamed,
+# in this order, which a record made by wire.to_wire will keep.
+PROMISED_KEYS = ["format_version", "kind", "current_host", "hosts", "problem"]
+PROMISED_ROW_KEYS = ["name", "address", "folder", "settings", "host_kind", "first", "current", "problem"]
+
+
+def test_the_json_keeps_every_key_2_5_promises(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    listed = json.loads(_tool(root, "list", "--json").stdout)
+    # format_version and kind first, as wire.to_wire puts them; kind names the document, and is no other key's name.
+    assert list(listed)[:2] == ["format_version", "kind"] and listed["kind"] == "host_list"
+    assert listed["format_version"].split(".")[0] == "1", listed["format_version"]
+    assert [key for key in listed if key in PROMISED_KEYS] == PROMISED_KEYS, list(listed)
+    assert [row["name"] for row in listed["hosts"]] == ["pve", "nuc"]
+    for row in listed["hosts"]:
+        assert [key for key in row if key in PROMISED_ROW_KEYS] == PROMISED_ROW_KEYS, list(row)
+        # current is a boolean wherever it appears: the current host's name is current_host.
+        assert "kind" not in row and isinstance(row["current"], bool), row
+        assert row["problem"] == "", row
+    # "Nothing" has one shape under one name: a problem is "" at the top as in a row, never null.
+    assert listed["problem"] == ""
 
 
 def test_switching_writes_hosts_current_whole_and_refuses_a_host_not_set_up(tmp_path: Path) -> None:

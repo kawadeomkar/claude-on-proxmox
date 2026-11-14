@@ -41,6 +41,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "lib"))  # the controller's package (docs/architecture/custom-code.md §7.10)
+from claude_vm import wire  # noqa: E402
 from claude_vm.hosts import layout as hosts  # noqa: E402
 
 TEMPLATES = REPO / "tools" / "templates" / "host"
@@ -464,14 +465,19 @@ def listing(opts, layout: hosts.Layout) -> int:
         rows.append(
             {
                 **shown,
-                "kind": host.kind.key if host.kind else None,
+                "host_kind": host.kind.key if host.kind else None,
                 "first": host.first,
                 "current": current is not None and host.name == current.name,
                 "problem": host.problem,
             }
         )
     if opts.json:
-        print(json.dumps({"current": current.name if current else None, "hosts": rows, "problem": said or None}))
+        # A document a release only adds keys to (CONTRIBUTING.md, Releasing): format_version and kind first, as
+        # wire.to_wire puts them, and no other key named kind or current, so each means one thing.
+        document = {"format_version": wire.FORMAT_VERSION, "kind": "host_list"}
+        # "" for none, as a row's problem is: null only where no value can be had - no current host.
+        document |= {"current_host": current.name if current else None, "hosts": rows, "problem": said or ""}
+        print(json.dumps(document))
         return 0
     if not rows:
         print(f"{said}." if said else "No host yet: just init sets up the first, in inventory/hosts.yml.")
