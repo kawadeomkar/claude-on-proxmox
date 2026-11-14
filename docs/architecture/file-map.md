@@ -240,7 +240,8 @@ tests/
                                   fake_anthropic_api.py, the Messages API for the real claude in configure.
                                   And the scenarios' shared task files: prepare_pve.yml and prepare_github.yml
                                   start the fake APIs, pve_vm.yml makes fixture VMs through the PVE one, and
-                                  refused.yml runs a role where it must refuse and asserts why
+                                  refused.yml runs a role where it must refuse and asserts why; and boot_wait.yml,
+                                  the playbook every prepare.yml imports first, which waits for the containers' boot
 molecule/
   provision/                      provision.yml + discover.yml against the fake API
   configure/                      configure.yml end to end in a container

@@ -3,7 +3,8 @@
 `CI result`, the one check branch protection requires, holds every other job to it. Required alone, it fails open
 where a list of required job names failed closed: a job added to the workflow and left out of its `needs`, or one
 allowed to fail, could fail and the pull request still merge. So the job set is held here, and so is the Molecule
-image every scenario runs, pinned by digest, which the weekly canary runs unpinned.
+image every scenario runs, pinned by digest, which the weekly canary runs unpinned, and the wait for its containers'
+boot that every scenario starts with, since the boot empties /tmp under a module's payload.
 
 A release is an annotated SemVer tag on main (release.yml), its notes the pull requests merged since the last one,
 grouped by the label labels.yml gives each from its title's tag (.github/release.yml). Their scripts run here
@@ -23,6 +24,7 @@ from pathlib import Path
 import pytest
 import yaml
 from harness import GIT_ENV
+from molecule.constants import DEFAULT_CONFIG
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text())
@@ -76,21 +78,26 @@ def test_ci_result_passes_only_when_each_job_succeeded_or_was_skipped(tmp_path, 
 # ------------------------------------------------------------------------------------------ the Molecule image ---
 
 IMAGE = re.compile(r"\$\{MOLECULE_IMAGE:-(?P<repository>[\w./-]+)@sha256:[0-9a-f]{64}\}")
+# Each scenario's folder, the playbook scenarios' and the roles' own.
+SCENARIOS = [
+    path.parent
+    for path in [*sorted(REPO.glob("molecule/*/molecule.yml")), *sorted(REPO.glob("roles/*/molecule/*/molecule.yml"))]
+]
+SHARED_MOLECULE = yaml.safe_load((REPO / ".config" / "molecule" / "config.yml").read_text())
 
 
 def _molecule_images() -> dict[str, list[str]]:
     """The image of each platform, by scenario. The shared configuration names none: Molecule replaces a list."""
-    files = [*sorted(REPO.glob("molecule/*/molecule.yml")), *sorted(REPO.glob("roles/*/molecule/*/molecule.yml"))]
     return {
         str(path.relative_to(REPO)): [platform["image"] for platform in yaml.safe_load(path.read_text())["platforms"]]
-        for path in files
+        for path in (scenario / "molecule.yml" for scenario in SCENARIOS)
     }
 
 
 def test_every_scenario_runs_the_one_image_pinned_by_digest():
     # Each scenario names its own platforms, so each repeats the image: a bump that missed one would leave that
     # scenario on the old image without a word. A platform in the shared configuration would never be used.
-    assert "platforms" not in yaml.safe_load((REPO / ".config" / "molecule" / "config.yml").read_text())
+    assert "platforms" not in SHARED_MOLECULE
     images = _molecule_images()
     found = {image for each in images.values() for image in each}
     assert len(found) == 1, images
@@ -108,6 +115,116 @@ def test_the_debian_job_runs_the_vpn_and_editor_roles_on_debian_pinned_by_digest
 def test_the_canary_runs_the_pinned_image_unpinned():
     (image,) = {image for each in _molecule_images().values() for image in each}
     assert JOBS["canary"]["env"]["MOLECULE_IMAGE"] == IMAGE.fullmatch(image)["repository"] + ":latest"
+
+
+# ------------------------------------------------------------------------------- the Molecule containers' boot ---
+
+BOOT_WAIT = REPO / "tests" / "molecule" / "boot_wait.yml"
+NEEDS_TIMEOUT = pytest.mark.skipif(shutil.which("timeout") is None, reason="coreutils' timeout is not installed")
+
+
+def _plays(playbook: Path) -> list[tuple[Path, dict]]:
+    """Each play a playbook runs, in order, with the file it is in: an imported playbook's plays in its place."""
+    plays = []
+    for play in yaml.safe_load(playbook.read_text()):
+        imported = play.get("ansible.builtin.import_playbook") or play.get("import_playbook")
+        plays += _plays((playbook.parent / imported).resolve()) if imported else [(playbook, play)]
+    return plays
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda path: str(path.relative_to(REPO)))
+def test_every_scenario_waits_for_its_containers_to_boot_before_a_module_runs_there(scenario):
+    # A container's boot empties /tmp, where a module's payload is unpacked, and Molecule's create returns before the
+    # boot is over: five scenarios lost their first module's payload on a busy CI round. So prepare comes straight
+    # after create in every sequence the scenario has - Molecule's own, the converge and create ones too, and any it
+    # sets - its own prepare.yml is the playbook prepare runs, and the first play of that, an import followed, is the
+    # wait. The image scenario's prepare.yml imports the configure scenario's, and so waits through it.
+    config = yaml.safe_load((scenario / "molecule.yml").read_text())
+    sequences = {**DEFAULT_CONFIG["scenario"], **SHARED_MOLECULE.get("scenario", {}), **config.get("scenario", {})}
+    for name, sequence in sequences.items():
+        if name.endswith("_sequence") and "create" in sequence:
+            assert sequence[sequence.index("create") + 1] == "prepare", (name, sequence)
+    for provisioner in (SHARED_MOLECULE.get("provisioner", {}), config.get("provisioner", {})):
+        assert "prepare" not in provisioner.get("playbooks", {}), provisioner["playbooks"]
+    prepare = scenario / "prepare.yml"
+    assert prepare.is_file(), f"{prepare.relative_to(REPO)}: a scenario prepares, and waits there first"
+    (first, play), *_ = _plays(prepare)
+    assert first == BOOT_WAIT, f"{prepare.relative_to(REPO)} runs {play.get('name')!r} before the boot wait"
+
+
+def test_the_boot_wait_runs_no_module_in_a_container():
+    # Gathering facts runs the setup module, the very one CI saw lose its payload; raw sends none, assert runs on the
+    # controller, and a play with nothing but these two tasks has nowhere to put another.
+    (play,) = yaml.safe_load(BOOT_WAIT.read_text())
+    assert set(play) == {"name", "hosts", "gather_facts", "tasks"}
+    assert play["hosts"] == "all"
+    assert play["gather_facts"] is False
+    wait, said = play["tasks"]
+    assert [key for key in wait if "." in key] == ["ansible.builtin.raw"]
+    assert [key for key in said if "." in key] == ["ansible.builtin.assert"]
+    # Never changed, for an idempotence stage; a boot that is over is running, or degraded where a unit failed.
+    assert wait["changed_when"] is False
+    assert said["ansible.builtin.assert"]["that"] == f"({wait['register']}.stdout | trim) in ['running', 'degraded']"
+
+
+def _boot_wait(tmp_path: Path, pid1: str, answers: list[str], seconds: int = 120) -> subprocess.CompletedProcess:
+    """The wait's own script, run by sh against a stand-in systemctl that gives the next of its answers at each call
+    and its last for good, `nobus` as systemctl says it before systemd's socket is up; PID 1's name read from a file of
+    the test's in place of /proc/1/comm, the 120 s cut to `seconds`, and each second between two calls to 0.05 s."""
+    (play,) = yaml.safe_load(BOOT_WAIT.read_text())
+    script = play["tasks"][0]["ansible.builtin.raw"]
+    assert script.count("/proc/1/comm") == 1 and script.count("timeout 120 ") == 1
+    (tmp_path / "comm").write_text(pid1 + "\n")
+    script = script.replace("/proc/1/comm", str(tmp_path / "comm")).replace("timeout 120 ", f"timeout {seconds} ")
+    (tmp_path / "answers").write_text("".join(f"{answer}\n" for answer in answers))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "systemctl").write_text(
+        "#!/bin/sh\n"
+        'echo "$*" >> "$BOOT_CALLS"\n'
+        'n=$(( $(wc -l < "$BOOT_CALLS") )); last=$(( $(wc -l < "$BOOT_ANSWERS") ))\n'
+        '[ "$n" -le "$last" ] || n=$last\n'
+        'answer=$(sed -n "${n}p" "$BOOT_ANSWERS")\n'
+        "case $answer in\n"
+        'nobus) echo "Failed to connect to bus: No such file or directory" >&2; exit 1 ;;\n'
+        "running) echo running ;;\n"
+        '*) echo "$answer"; exit 1 ;;\n'
+        "esac\n"
+    )
+    (bin_dir / "sleep").write_text("#!/bin/sh\nexec /bin/sleep 0.05\n")
+    for tool in bin_dir.iterdir():
+        tool.chmod(0o755)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "BOOT_CALLS": str(tmp_path / "calls"),
+        "BOOT_ANSWERS": str(tmp_path / "answers"),
+    }
+    return subprocess.run(["/bin/sh", "-c", script], env=env, capture_output=True, text=True, timeout=60)
+
+
+@NEEDS_TIMEOUT
+@pytest.mark.parametrize(
+    ("pid1", "answers", "seconds", "said", "waits"),
+    [
+        # Asked at the very start of a boot, systemctl cannot reach systemd, then says offline: asked again each time.
+        pytest.param("systemd", ["nobus", "offline", "degraded"], 120, "degraded", 3, id="early"),
+        pytest.param("systemd", ["running"], 120, "running", 1, id="booted"),
+        # A boot not over in time: what systemd says then, which the assert refuses.
+        pytest.param("systemd", ["starting"], 1, "starting", None, id="too-slow"),
+        # No systemd at all, as a platform with the driver's own command would run: said at once, systemctl unasked.
+        pytest.param("bash", ["running"], 120, "PID 1 is bash, not systemd", 0, id="no-systemd"),
+    ],
+)
+def test_the_boot_wait_asks_systemd_until_it_says_the_boot_is_over(tmp_path, pid1, answers, seconds, said, waits):
+    run = _boot_wait(tmp_path, pid1, answers, seconds)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == said, (run.stdout, run.stderr)
+    calls = (tmp_path / "calls").read_text().splitlines() if (tmp_path / "calls").exists() else []
+    if waits is None:
+        assert len(calls) > 2 and set(calls[:-1]) == {"is-system-running --wait"}, calls
+        assert calls[-1] == "is-system-running", calls
+    else:
+        assert calls == ["is-system-running --wait"] * waits + ["is-system-running"] * bool(waits), calls
 
 
 # ----------------------------------------------------------------------- pull requests' labels, and releases ---

@@ -857,6 +857,13 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   (`lib/claude_vm/ansible/parts.py`) do; every pytest process takes SIGTERM and SIGHUP as a Ctrl-C, once
   (`tests/unit/interrupts.py`). `test_processes.py` holds all three, under xdist too
   ([§11.1](docs/architecture/testing.md#111-unit--just-test-unit)).
+- **A scenario's container is still booting when Molecule's create returns.** The boot empties `/tmp`
+  (`systemd-tmpfiles-setup.service`, from `D /tmp` in the image's `tmp.conf`), where a module's payload is unpacked
+  and read from while it runs: on a busy CI round five scenarios failed at their first fact gathering,
+  `FileNotFoundError` for the payload's zip, then `No start of json char found`, and passed on a re-run (2026-11-13).
+  Every scenario's `prepare.yml` imports `tests/molecule/boot_wait.yml` first: no facts, and a `raw`
+  `systemctl is-system-running --wait`, asked again while systemd cannot answer yet, before any module runs.
+  `test_ci.py` holds every scenario to it ([§11.2](docs/architecture/testing.md#112-role-scenarios--just-test-role)).
 - **Ansible's loader caches a file without its trust as a template.** `tools/settings` read `local.yml` through the
   same `DataLoader` the inventory uses, to say which file set what; the inventory, reading the file after, got the
   cached, untrusted copy, and no value of `local.yml` or `defaults.yml` was templated - nor any lookup in them run,

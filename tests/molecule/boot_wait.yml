@@ -1,0 +1,36 @@
+---
+# Every scenario's prepare.yml imports this first, and prepare is the first playbook Molecule runs in the containers
+# after create, in every scenario's sequence: tests/unit/test_ci.py holds both. A scenario's container boots systemd,
+# and create returns as soon as the container has started. That boot empties /tmp (systemd-tmpfiles-setup.service,
+# from `D /tmp` in the image's /usr/lib/tmpfiles.d/tmp.conf), where a module's payload is unpacked and read from while
+# the module runs: on a busy CI round, five scenarios failed at their first fact gathering with the payload's zip gone.
+# So nothing here runs a module before systemd says the boot is over: no facts are gathered, raw sends no payload, and
+# assert runs on the controller (docs/architecture/testing.md §11.2).
+- name: Wait for each container's boot to finish
+  hosts: all
+  gather_facts: false
+  tasks:
+    # At the very start of a boot systemctl cannot reach systemd yet, or says offline until /run/systemd/system is
+    # made, so it is asked again each second until it says the boot is over, 120 s at most. A container whose PID 1
+    # is not systemd fails at once. The line printed last is what systemd says now, which the assert reads.
+    - name: Wait for systemd to finish booting
+      ansible.builtin.raw: |
+        pid1=$(cat /proc/1/comm)
+        if [ "$pid1" != systemd ]; then echo "PID 1 is $pid1, not systemd"; exit 0; fi
+        timeout 120 sh -c 'while :; do
+          case $(systemctl is-system-running --wait 2>/dev/null) in running | degraded) exit 0 ;; esac
+          sleep 1
+        done'
+        systemctl is-system-running 2>&1 | tail -n 1
+      register: boot_wait_state
+      changed_when: false
+
+    - name: Assert each container booted
+      ansible.builtin.assert:
+        that: (boot_wait_state.stdout | trim) in ['running', 'degraded']
+        fail_msg: >-
+          {{ inventory_hostname }} did not finish booting: {{ boot_wait_state.stdout | trim or 'systemctl said nothing' }}.
+          A scenario's container runs systemd as PID 1 (its platform's command "" leaves the image's own), and waits
+          here, 120 s at most, for its boot to be over before any module runs there: the boot empties /tmp, where a
+          module's payload is unpacked.
+        quiet: true

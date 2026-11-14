@@ -582,6 +582,19 @@ shared file turns Molecule's dependency step off: `just install` puts the collec
 them first (`tools/check collections`). Each runs create → prepare → converge → **idempotence** → side_effect →
 verify → destroy.
 
+Every scenario, the playbook scenarios too, waits for its containers to boot before a module runs in them. A
+container runs systemd as PID 1, and Molecule's create returns as soon as it has started, before the boot is over.
+That boot empties `/tmp` (`systemd-tmpfiles-setup.service`, from `D /tmp` in the image's
+`/usr/lib/tmpfiles.d/tmp.conf`, Ubuntu's and Debian's alike), where a module's payload is unpacked and read from while
+the module runs: on a busy CI round five scenarios lost their first module's payload that way, `FileNotFoundError` for
+its zip, then `No start of json char found`. So each `prepare.yml`, the first playbook after create in every
+scenario's sequence, imports `tests/molecule/boot_wait.yml` first (the `image` scenario through `configure`'s). It is
+one play that gathers no facts. Its `raw` task, which sends no payload, asks `systemctl is-system-running --wait`
+again each second until it says `running` or `degraded`, 120 s at most: at the very start of a boot systemctl cannot
+reach systemd yet, or says `offline`. Then an assert names any container that did not boot and what systemd said. A
+container already booted costs it a fraction of a second. `test_ci.py` holds every scenario to it, and runs the
+wait's script against a stand-in `systemctl`.
+
 A role scenario's side effect runs the role where it must refuse through one task file,
 `tests/molecule/refused.yml`: the role inside a `block`/`rescue`, then an assert that the failure was
 the role's, at the task named where one is, with a message that matches every pattern the case gives.
@@ -802,7 +815,8 @@ The fixture VMs the `proxmox_vm` and `provision` scenarios meet are made through
 file, `tests/molecule/pve_vm.yml`: each cloned from the template, then given a config, made a template or
 started where its entry says. A config write of a fixture's carries no `name`, and every one the role makes
 does, which is how both verifies tell the two apart. `tests/molecule/prepare_pve.yml` and
-`tests/molecule/prepare_github.yml` start the fake APIs in a scenario's container.
+`tests/molecule/prepare_github.yml` start the fake APIs in a scenario's container, once `tests/molecule/boot_wait.yml`
+has waited for its boot (§11.2).
 
 Beside these, the `proxmox_template` scenario serves a "cloud image" locally, with a real `SHA256SUMS`
 file, and a fake `/etc/pve/.vmlist` that places a VMID on a second node. The `tailscale` role scenario

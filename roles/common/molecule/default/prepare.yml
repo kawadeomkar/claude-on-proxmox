@@ -1,4 +1,7 @@
 ---
+- name: Wait for the containers to boot
+  ansible.builtin.import_playbook: ../../../../tests/molecule/boot_wait.yml
+
 # The container has none of the units common_masked_units names, so stand-ins
 # for four of them play their part: a running service and a waiting timer
 # (fwupd, and the timer's own service), a listening socket and its service

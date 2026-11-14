@@ -13,10 +13,12 @@ exclude_paths:
 # Roles in this repo are meant to be used from this repo, not published to Galaxy.
 offline: true
 
-# Example files are copied into place by the user; treat them as regular YAML.
+# Example files are copied into place by the user; treat them as regular YAML. The scenarios' shared files are task
+# files but one, the playbook each scenario's prepare.yml imports first: the first kind whose glob matches wins.
 kinds:
   - yaml: "**/*.yml.example"
   - inventory: "inventory/hosts.yml.example"
+  - playbook: "tests/molecule/boot_wait.yml"
   - tasks: "tests/molecule/*.yml"
 
 # The modules in playbooks/library/ import what they share from playbooks/module_utils/, and the args rule imports
