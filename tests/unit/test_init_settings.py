@@ -917,6 +917,95 @@ def test_a_host_set_up_already_asks_only_for_the_secret(tmp_path: Path) -> None:
     assert SECRET_LINE in _decrypt(files)
 
 
+def _set_up_but_the_secret(tmp_path: Path) -> dict:
+    """A checkout every value of which is set, its vault encrypted and holding the token's secret: what just init
+    finds on a machine it set up before."""
+    files = _files(tmp_path)
+    hosts = Path(files["init_hosts_file"])
+    hosts.write_text(hosts.read_text().replace("192.0.2.10", "pve.lan"))
+    local = Path(files["init_local_file"])
+    local.write_text(local.read_text() + "tailscale_enabled: false\n")
+    text = _example("init_vault_file").replace(
+        'vault_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"', SECRET_LINE
+    )
+    _encrypt(files, text.replace('vault_github_username: "your-github-username"', GITHUB_LINE))
+    return files
+
+
+def test_a_role_an_older_version_made_is_offered_what_it_lacks_and_no_token(tmp_path: Path) -> None:
+    # The NUC's, made before Sys.Audit joined the role (live, 2026-11-13): with the vault holding the token's secret,
+    # just init offers the privilege and the node's grant, and never a token, whose secret could not replace it.
+    files = _set_up_but_the_secret(tmp_path)
+    older = {
+        **SET_UP,
+        "roles": {"AnsibleVM": [p for p in ROLE if p != "Sys.Audit"]},
+        "acls": [acl for acl in SET_UP["acls"] if acl["path"] != "/nodes/pve"],
+    }
+    host = _stand_in_proxmox(tmp_path, files, older)
+    before = _snapshot(files)
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, [(ACCESS_PROMPT, b"y\n")])
+    assert rc == 0, output
+    assert "pveum role modify AnsibleVM --append 1 --privs Sys.Audit" in output and "token add" not in output
+    assert _pve_cli_writes(host) == [
+        "pveum role modify AnsibleVM --append 1 --privs Sys.Audit",
+        "pveum acl modify /nodes/pve --users ansible@pve --roles AnsibleVM",
+    ]
+    assert _pve_cli_state(host)["roles"]["AnsibleVM"] == [*older["roles"]["AnsibleVM"], "Sys.Audit"]
+    assert "goes straight into the encrypted vault" not in output
+    assert _snapshot(files) == before and SECRET_PROMPT.decode() not in output
+    # Adding to the role reaches every user it is granted to: the question says so (RP-5).
+    assert "reaches every user it is granted to, wherever it is granted" in " ".join(output.split())
+
+
+def test_topping_up_says_why_it_could_not_look_and_the_script_s_line(tmp_path: Path) -> None:
+    # Status and init_check send a person here for a privilege the role lacks: with no root SSH to the host, just init
+    # says so and how to run the script, with --no-token, rather than nothing (RP-3).
+    files = _set_up_but_the_secret(tmp_path)
+    before = _snapshot(files)
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, [])
+    assert rc == 0, output
+    said = " ".join(output.split())
+    assert "root SSH to pve.lan failed" in said and "To add what the role or its grants lack yourself" in said
+    assert "ssh root@pve.lan sh -s -- --no-token < tools/proxmox-access.sh" in said
+    assert "the secret it prints" not in said and _snapshot(files) == before
+
+
+def test_a_vault_secret_whose_token_is_not_on_the_host_changes_nothing_there(tmp_path: Path) -> None:
+    # A host installed again under the old vault: no token there for its secret, which nothing the script adds would
+    # make work, so nothing on the host changes, and just init says why (RP-4).
+    files = _set_up_but_the_secret(tmp_path)
+    host = _stand_in_proxmox(tmp_path, files, {"roles": {}, "users": {"root@pam": {}}, "acls": [], "tokens": {}})
+    before = _snapshot(files)
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, [])
+    assert rc == 0, output
+    said = " ".join(output.split())
+    assert "token ansible@pve!ansible is not on node pve, so the secret just init holds is not its" in said
+    assert ACCESS_PROMPT.decode() not in output and _pve_cli_writes(host) == [] and _snapshot(files) == before
+
+
+def test_a_secret_given_at_a_terminal_tops_up_and_makes_no_token(tmp_path: Path) -> None:
+    # A secret given is the vault's next (init_secret_given), so the offer makes no token: here the host lacks only
+    # the node's grant, which it offers, and the vault takes the secret given (RP-4).
+    files = _files(tmp_path)
+    given = {"host": "pve.lan", "token_secret_file": str(_secret_file(tmp_path))}
+    short = SET_UP | {"acls": [acl for acl in SET_UP["acls"] if acl["path"] != "/nodes/pve"]}
+    host = _stand_in_proxmox(tmp_path, files, short)
+    steps = [(GITHUB_PROMPT, b"octocat\n"), (TAILSCALE_PROMPT, b"\n"), (ACCESS_PROMPT, b"y\n")]
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, steps, {"init_given": given})
+    assert rc == 0, output
+    assert _pve_cli_writes(host) == ["pveum acl modify /nodes/pve --users ansible@pve --roles AnsibleVM"]
+    assert "token add" not in output and SECRET_LINE in _decrypt(files)
+
+
+def test_a_host_set_up_already_says_nothing_once_the_vault_holds_the_secret(tmp_path: Path) -> None:
+    files = _set_up_but_the_secret(tmp_path)
+    host = _stand_in_proxmox(tmp_path, files, SET_UP)
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, [])
+    assert rc == 0, output
+    assert ACCESS_PROMPT.decode() not in output and "set up on pve.lan already" not in output
+    assert _pve_cli_writes(host) == []
+
+
 def test_a_vault_that_cannot_be_written_deletes_the_token_just_made(tmp_path: Path) -> None:
     # As test_an_encryption_that_fails_says_why: the vault's directory is
     # read-only, so its password is elsewhere and the address is set already.
@@ -1263,9 +1352,15 @@ def test_proxmox_is_changed_only_by_the_script_after_a_y_and_by_deleting_the_tok
     # the script on stdin: --list and --dry-run, which change nothing, and then
     # the script itself only on a y, its output no_log. The one other command
     # there deletes the token it made, when the vault cannot keep its secret.
+    # With a secret set or given, the script makes no token (--no-token): it
+    # only tops up what the role and its grants lack.
     playbook = list(_every_task(yaml.safe_load(PLAYBOOK.read_text())))
     offer = next(task for task in playbook if task.get("ansible.builtin.include_tasks") == "tasks/init_access.yml")
-    assert " ".join(offer["when"].split()).startswith("init_ask | bool and init_vault_readable and not init_secret_set")
+    assert " ".join(offer["when"].split()).startswith("init_ask | bool and init_vault_readable and ")
+    play = yaml.safe_load(PLAYBOOK.read_text())[0]["vars"]
+    assert "['--no-token'] if init_access_topping_up | bool" in play["init_access_arguments"]
+    topping_up = " ".join(play["init_access_topping_up"].split())
+    assert topping_up == "{{ init_secret_set | default(false) | bool or init_secret_given | bool }}"
     on_the_host = {}
     for path in (PLAYBOOK, *ACCESS_FILES):
         for task in _every_task(yaml.safe_load(path.read_text())):

@@ -19,11 +19,13 @@
 # vault while it holds none (vault_tailscale_auth_key; Enter is the web login
 # during just deploy).
 #
-# Before the secret is asked for, at a terminal, just init offers to make the
-# token itself (tasks/init_access.yml): it shows what tools/proxmox-access.sh
-# would run on the Proxmox host, over root SSH, and runs it on a y - the one
-# change just init makes on Proxmox - and the vault takes the secret it prints.
-# On n, the secret is asked for, as the script prints it when run by hand.
+# Before the secret is asked for, at a terminal, just init offers to set up
+# the API access itself (tasks/init_access.yml): it shows what
+# tools/proxmox-access.sh would run on the Proxmox host, over root SSH, and
+# runs it on a y - the one change just init makes on Proxmox - and the vault
+# takes the secret of the token it made. On n, the secret is asked for, as the
+# script prints it when run by hand. While the vault holds a secret, or one
+# is given, it makes no token: it offers only what the role or a grant lacks.
 #
 # NEXT STEPS gives what is still to set, or a vault that cannot be opened, as
 # the report says them; nothing once every value is set, since the checks,
@@ -91,7 +93,11 @@
          + (['--bridge', (init_access_settled | default({})).bridge]
             if (init_access_settled | default({})).bridge | default(init_bridge_default) != init_bridge_default else [])
          + (['--user', init_access_user] if init_access_user != init_token_user_default else [])
-         + (['--token', init_access_token] if init_access_token != init_token_name_default else []) }}
+         + (['--token', init_access_token] if init_access_token != init_token_name_default else [])
+         + (['--no-token'] if init_access_topping_up | bool else []) }}
+    # A vault that holds a token's secret, or one given: the offer then makes no token, whose secret could not take
+    # that one's place, and asks only where the role lacks a privilege a newer version needs, or a grant is missing.
+    init_access_topping_up: "{{ init_secret_set | default(false) | bool or init_secret_given | bool }}"
     # Whether ansible-vault wrote the vault: from then on it holds the secret.
     init_access_vault_written: >-
       {{ init_vault_encrypt is defined and init_vault_encrypt is not skipped and init_vault_encrypt.rc | default(1) == 0 }}
@@ -673,7 +679,7 @@
     - name: Offer to set up the API access on the Proxmox host
       ansible.builtin.include_tasks: tasks/init_access.yml
       when: >-
-        init_ask | bool and init_vault_readable and not init_secret_set and not init_secret_given
+        init_ask | bool and init_vault_readable
         and init_access_host | length > 0 and init_access_address not in ['', init_host_placeholder]
 
     - name: Ask for the API token's secret

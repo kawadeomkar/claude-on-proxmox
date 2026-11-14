@@ -580,14 +580,25 @@ def proxmox_template_drift(config, wanted):
 ACCESS_ROLE = "AnsibleVM"
 
 
-def proxmox_read_grant(node, user):
+def proxmox_read_grant(node, user, on="", cluster=False):
     """How the API token comes to read a node's CPU threads and memory: Sys.Audit, read only, in the role just init's
     offer makes, granted on the node, where Proxmox looks for it - the role alone is not enough where it is granted
-    elsewhere. The lines just status prints under the node, and an agent reads in its JSON."""
+    elsewhere. The lines just status prints under the node, and an agent reads in its JSON. On a host of one node,
+    just init at a terminal offers both, by tools/proxmox-access.sh over root SSH, which adds to the role what it lacks
+    and grants it on the node it runs on: the lines name that run, ``on`` (" --host <name>", or "") ending it as every
+    just line ends, so it reaches this host whichever is current. In a cluster that node may be another, so the lines
+    are the two commands, which hold for any node (docs/getting-started/proxmox-access.md)."""
+    user = user or "ansible@pve"
+    if cluster:
+        return [
+            f"to read them, {user} needs Sys.Audit on /nodes/{node}, read-only; as root on a node of the cluster:",
+            f"pveum role modify {ACCESS_ROLE} --append 1 --privs Sys.Audit",
+            f"pveum acl modify /nodes/{node} --users {user} --roles {ACCESS_ROLE}",
+        ]
     return [
-        f"to read them, give the token's role Sys.Audit, read-only (just init's is {ACCESS_ROLE}):",
-        f"pveum role modify {ACCESS_ROLE} --append 1 --privs Sys.Audit",
-        f"pveum acl modify /nodes/{node} --users {user or 'ansible@pve'} --roles {ACCESS_ROLE}",
+        f"to read them, {user} needs Sys.Audit on /nodes/{node}, read-only:",
+        f"just init{on}, at a terminal and with root SSH to the host, offers to add it to the role {ACCESS_ROLE}"
+        " and grant it there",
     ]
 
 

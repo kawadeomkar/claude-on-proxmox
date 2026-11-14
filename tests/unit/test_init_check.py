@@ -278,6 +278,22 @@ def test_a_missing_privilege_is_named_with_its_path(tmp_path: Path, fake_pve: st
     said = _said(report)
     assert f"!!   the token lacks VM.Clone, {agent} on /vms" in said
     assert "pveum role modify AnsibleVM -append 1 -privs 'VM.Clone " + agent + "'" in said
+    assert "just init at a terminal, with root SSH to the host, offers to" in " ".join(said.split())
+
+
+def test_a_missing_privilege_on_another_host_names_that_host_s_just_init(tmp_path: Path, fake_pve: str) -> None:
+    # The current host's just init would set up another (RP-1): the line ends its just with the host checked.
+    _pve(
+        fake_pve,
+        "PUT",
+        "fake/privileges",
+        token="ansible",
+        path="/vms",
+        privs=",".join(p for p in ROLE_8 if p != "VM.Clone"),
+    )
+    report = _check(tmp_path / "run", fake_pve, "ssh", extra={"init_host": HOST})
+    assert report["rc"] != 0
+    assert "just init --host nuc at a terminal, with root SSH to the host, offers to" in " ".join(_said(report).split())
 
 
 NO_TEMPLATE = {"proxmox_template_name": "not-built-yet", "proxmox_template_vmid": 9999}

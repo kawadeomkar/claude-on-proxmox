@@ -154,14 +154,91 @@ def test_a_node_with_no_storage_for_vm_disks_says_so(tmp_path: Path) -> None:
 
 
 # ------------------------------------------------------------ what exists ---
-def test_a_role_that_exists_without_a_privilege_is_named_and_left(tmp_path: Path) -> None:
+def test_a_role_that_exists_without_a_privilege_is_given_it_and_keeps_the_rest(tmp_path: Path) -> None:
+    # A role an older version made lacks what a newer one needs: added to it, never in place of what it holds.
     lacking = [p for p in ROLE if p != "VM.Clone"]
-    result = _access(tmp_path, state={"roles": {"AnsibleVM": lacking}})
+    planned = _access(tmp_path, "--dry-run", state={"roles": {"AnsibleVM": [*lacking, "Sys.Console"]}})
+    assert "pveum role modify AnsibleVM --append 1 --privs VM.Clone" in planned.stdout.splitlines()
+    assert _writes(tmp_path) == []
+    result = _access(tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "role AnsibleVM exists without VM.Clone, and is left as it is" in result.stderr
-    assert "pveum role modify AnsibleVM --append 1 --privs VM.Clone" in result.stderr
-    assert _pve_cli_state(tmp_path / "pve")["roles"]["AnsibleVM"] == lacking
-    assert not [write for write in _writes(tmp_path) if write.startswith("pveum role")]
+    assert "+ pveum role modify AnsibleVM --append 1 --privs VM.Clone" in result.stderr
+    assert _pve_cli_state(tmp_path / "pve")["roles"]["AnsibleVM"] == [*lacking, "Sys.Console", "VM.Clone"]
+
+
+def test_a_role_an_older_version_made_gets_what_it_lacks_and_its_grant_and_no_token(tmp_path: Path) -> None:
+    # The NUC's, made before Sys.Audit joined the role (live, 2026-11-13): --no-token, as just init runs it while its
+    # vault holds the token's secret, adds the privilege and the node's grant, and says nothing of a token.
+    state = {
+        "roles": {"AnsibleVM": [p for p in ROLE if p != "Sys.Audit"]},
+        "users": {"root@pam": {}, "ansible@pve": {}},
+        "acls": [
+            {"path": path, "ugid": "ansible@pve", "roleid": "AnsibleVM", "propagate": 1, "type": "user"}
+            for path in ("/vms", "/storage/local-lvm", "/sdn/zones/localnetwork/vmbr0")
+        ],
+        "tokens": {"ansible@pve!ansible": {"privsep": 0}},
+    }
+    commands = [
+        "pveum role modify AnsibleVM --append 1 --privs Sys.Audit",
+        "pveum acl modify /nodes/pve --users ansible@pve --roles AnsibleVM",
+    ]
+    planned = _access(tmp_path, "--dry-run", "--no-token", state=state)
+    assert planned.returncode == 0 and planned.stdout.splitlines() == commands, planned.stderr
+    result = _access(tmp_path, "--no-token")
+    assert result.returncode == 0 and result.stdout == "", result.stderr
+    assert _writes(tmp_path) == commands and "token" not in result.stderr
+    assert _pve_cli_state(tmp_path / "pve")["roles"]["AnsibleVM"][-1] == "Sys.Audit"
+
+
+def _set_up(**changes) -> dict:
+    """A host the script set up, the role's grants on each path and its token there, with changes."""
+    return {
+        "roles": {"AnsibleVM": ROLE},
+        "users": {"root@pam": {}, "ansible@pve": {}},
+        "acls": [
+            {"path": path, "ugid": "ansible@pve", "roleid": "AnsibleVM", "propagate": 1, "type": "user"}
+            for path in ("/vms", "/storage/local-lvm", "/sdn/zones/localnetwork/vmbr0", "/nodes/pve")
+        ],
+        "tokens": {"ansible@pve!ansible": {"privsep": 0}},
+    } | changes
+
+
+def test_a_privilege_the_role_gains_where_it_is_granted_is_planned_on_the_role_alone(tmp_path: Path) -> None:
+    # The upgrade to Proxmox VE 9: the role, granted on /vms, lacks VM.GuestAgent.Audit. Given to the role, it reaches
+    # the user through that grant, so the dry run shows the one command the run makes, never a grant it then finds
+    # made already (RP-6) - and so for a grant above the path, which propagates to it.
+    command = ["pveum role modify AnsibleVM --append 1 --privs VM.GuestAgent.Audit"]
+    state = _set_up(roles={"AnsibleVM": [p for p in ROLE if p != "VM.GuestAgent.Audit"]})
+    planned = _access(tmp_path, "--dry-run", "--no-token", state=state)
+    assert planned.returncode == 0 and planned.stdout.splitlines() == command, planned.stderr
+    assert _access(tmp_path, "--no-token").returncode == 0
+    assert _writes(tmp_path) == command
+    above = tmp_path / "above"
+    nodes = {"path": "/nodes", "ugid": "ansible@pve", "roleid": "AnsibleVM", "propagate": 1, "type": "user"}
+    state = _set_up(
+        roles={"AnsibleVM": [p for p in ROLE if p != "Sys.Audit"]},
+        acls=[*(acl for acl in _set_up()["acls"] if acl["path"] != "/nodes/pve"), nodes],
+    )
+    planned = _access(above, "--dry-run", "--no-token", state=state)
+    assert planned.stdout.splitlines() == ["pveum role modify AnsibleVM --append 1 --privs Sys.Audit"], planned.stderr
+
+
+def test_with_no_token_a_token_that_is_not_there_leaves_the_host_as_it_is(tmp_path: Path) -> None:
+    # --no-token is just init's while its vault holds a secret, which can be only this token's: on a host installed
+    # again, the role, user and grants it would add could never make that secret work, so nothing changes (RP-4).
+    for args in (("--dry-run", "--no-token"), ("--no-token",)):
+        result = _access(tmp_path, *args)
+        assert result.returncode == 1 and result.stdout == "", result.stderr
+        assert "token ansible@pve!ansible is not on node pve, so the secret just init holds is not its" in result.stderr
+    assert _writes(tmp_path) == []
+
+
+def test_with_no_token_a_token_made_with_privilege_separation_is_said(tmp_path: Path) -> None:
+    # What its user is given never reaches such a token, which status would go on finding short: said (RP-4).
+    state = _set_up(tokens={"ansible@pve!ansible": {"privsep": 1}})
+    result = _access(tmp_path, "--dry-run", "--no-token", state=state)
+    assert result.returncode == 0 and result.stdout == "", result.stderr
+    assert "WARNING: token ansible@pve!ansible was made with privilege separation" in result.stderr
 
 
 def test_a_user_that_holds_the_privileges_another_way_gets_no_grant(tmp_path: Path) -> None:
@@ -208,17 +285,15 @@ def test_a_grant_on_vms_that_does_not_propagate_is_named_and_left(tmp_path: Path
     assert ("/vms", "ansible@pve", "AnsibleVM", 0) in _acls(tmp_path)
 
 
-def test_a_privilege_the_role_lacks_is_never_said_to_be_held(tmp_path: Path) -> None:
-    # A role made without SDN.Use: granting it on the bridge would give nothing, and the user lacks it there.
+def test_a_privilege_the_role_lacked_is_granted_once_the_role_has_it(tmp_path: Path) -> None:
+    # A role made without SDN.Use: given it first, then granted on the bridge - never said to be held there before.
     state = {"roles": {"AnsibleVM": [p for p in ROLE if p != "SDN.Use"]}}
     result = _access(tmp_path, state=state)
     assert result.returncode == 0, result.stderr
-    assert "role AnsibleVM exists without SDN.Use" in result.stderr
-    assert "lacks SDN.Use on /sdn/zones/localnetwork/vmbr0, which role AnsibleVM does not give either" in (
-        result.stderr
-    )
+    writes = _writes(tmp_path)
+    assert writes[0] == "pveum role modify AnsibleVM --append 1 --privs SDN.Use"
+    assert "pveum acl modify /sdn/zones/localnetwork/vmbr0 --users ansible@pve --roles AnsibleVM" in writes
     assert "holds what it needs on /sdn" not in result.stderr
-    assert not [write for write in _writes(tmp_path) if write.startswith("pveum acl modify /sdn")]
 
 
 def test_a_user_that_holds_privileges_on_root_is_warned_of_before_its_token(tmp_path: Path) -> None:

@@ -108,6 +108,10 @@ def _pvesh(state: dict, words: list[str]) -> tuple[int, object]:
         if parts[2] not in state["users"]:
             return _refuse(f"no such user ('{parts[2]}')"), None
         return 0, {"enable": 1, "expire": 0}
+    if parts == ["access", "acl"]:
+        # As Proxmox lists them: each ACL's path, its user's or group's name, the role and whether it propagates.
+        keys = ("path", "ugid", "roleid", "propagate", "type")
+        return 0, [{key: acl[key] for key in keys if key in acl} for acl in state["acls"]]
     if parts[:2] == ["access", "users"] and len(parts) == 5 and parts[3] == "token":
         token = state["tokens"].get(f"{parts[2]}!{parts[4]}")
         if token is None:
@@ -135,6 +139,17 @@ def _pveum(state: dict, words: list[str]) -> tuple[int, object]:
             if unknown:
                 return _refuse(f"invalid privilege '{unknown[0]}'"), None
             state["roles"][role] = [p for p in privileges if p]
+            return 0, None
+        case ["role", "modify", role]:
+            # As pveum: --append 1 adds the privileges given to what the role holds; without it, they replace it.
+            if role not in state["roles"]:
+                return _refuse(f"role '{role}' does not exist"), None
+            privileges = [p for p in options.get("privs", "").replace(";", ",").replace(" ", ",").split(",") if p]
+            unknown = [p for p in privileges if p not in _known(state)]
+            if unknown:
+                return _refuse(f"invalid privilege '{unknown[0]}'"), None
+            kept = state["roles"][role] if options.get("append") == "1" else []
+            state["roles"][role] = [*kept, *(p for p in privileges if p not in kept)]
             return 0, None
         case ["user", "add", user]:
             if user in state["users"]:

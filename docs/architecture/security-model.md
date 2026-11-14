@@ -14,7 +14,9 @@ unchecked by default are trade-offs
 with what to do in [Sharing the host](../getting-started/proxmox-access.md#sharing-the-host) and
 [Trusting the Proxmox certificate](../getting-started/proxmox-access.md#trusting-the-proxmox-certificate).
 `tools/proxmox-access.sh` makes the token: `just init` runs it on the Proxmox host over root SSH only after
-showing what it would run and taking a `y`, it creates only what is missing and changes nothing that exists, and
+showing what it would run and taking a `y`, it creates only what is missing and changes nothing that exists but
+the role, to which it appends a privilege it lacks (never taking one away) - for every user the role is granted
+to, as one person's `y` reaches all who share it ([Sharing the host](../getting-started/proxmox-access.md#sharing-the-host)) - and
 the token's secret goes from the script's stdout into the encrypted vault under `no_log` - never on the screen or
 a command line. A vault it cannot write deletes the token again, since its secret, shown once, would be lost.
 

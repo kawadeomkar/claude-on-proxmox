@@ -319,6 +319,7 @@ def status_fleet(
             nodes,
             [e for e in listing if isinstance(e, dict) and e.get("type", "qemu") in ("qemu", "lxc")],
             settings.get("api_user") or "",
+            _host_flag(settings),
         ),
         "template": template
         if template
@@ -340,15 +341,18 @@ def status_fleet(
     }
 
 
-def status_capacity(nodes, entries, user=""):
+def status_capacity(nodes, entries, user="", host_flag=""):
     """Each node's CPU threads and memory beside what the guests on it hold - every VM and container, this project's and
     others' - for
     the size of the next one: how much memory is in use now and free, and how much the running VMs could take of it
     (``unallocated``, which ballooning and an idle guest can leave above what is free). A node's figures are read only
     with Sys.Audit; without it Proxmox lists the node alone, ``read`` is false, and ``grant`` says how to give it to
-    ``user``, the API token's: the lines the report prints, and an agent reads in the JSON."""
+    ``user``, the API token's: the lines the report prints, and an agent reads in the JSON - just init's run, ending
+    with ``host_flag``, on a host of one node, and the commands in a cluster, where that run grants it on
+    one node only."""
+    named = sorted((n for n in nodes or [] if isinstance(n, dict) and n.get("node")), key=lambda n: n["node"])
     shown = []
-    for node in sorted((n for n in nodes or [] if isinstance(n, dict) and n.get("node")), key=lambda n: n["node"]):
+    for node in named:
         on = [e for e in entries if e.get("node") == node["node"] and not e.get("template")]
         held = {
             state: {
@@ -376,7 +380,9 @@ def status_capacity(nodes, entries, user=""):
                 "memory_free": int(memory) - int(used) if read else None,
                 "unallocated": int(memory) - held["running"]["memory"] if read else None,
                 **held,
-                "grant": [] if read or node.get("status", "") not in ("online", "") else grant(node["node"], user),
+                "grant": []
+                if read or node.get("status", "") not in ("online", "")
+                else grant(node["node"], user, host_flag, cluster=len(named) > 1),
             }
         )
     return shown

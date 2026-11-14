@@ -247,11 +247,43 @@ def test_capacity_is_each_node_s_threads_and_memory_beside_what_its_vms_hold() -
     # How to read a node it cannot, for the token's user - in the JSON an agent reads, too - and on the node: the role
     # alone is not enough where it is granted elsewhere. Nothing for a node it read, or one that is down.
     assert pve["grant"] == [] and pve3["grant"] == []
-    assert pve2["grant"][1:] == [
+    # A cluster: just init's run grants it on the one node root SSH reaches, so the lines are the commands, which hold
+    # for any node (RP-2).
+    assert pve2["grant"] == [
+        "to read them, ansible@pve needs Sys.Audit on /nodes/pve2, read-only; as root on a node of the cluster:",
         "pveum role modify AnsibleVM --append 1 --privs Sys.Audit",
         "pveum acl modify /nodes/pve2 --users ansible@pve --roles AnsibleVM",
     ]
     assert S.status_capacity(NODES, VMS, "ops@pam")[1]["grant"][2].endswith("--users ops@pam --roles AnsibleVM")
+
+
+def test_a_node_of_its_own_is_offered_by_just_init_for_its_host() -> None:
+    # A host of one node: just init's run, which adds both by itself, never the commands it runs over root SSH - and
+    # with more than one host, the host's, so that it reaches this one whichever is current (RP-1).
+    (alone,) = S.status_capacity([{"node": "nuc", "status": "online"}], [], "ansible@pve", " --host nuc")
+    assert alone["grant"] == [
+        "to read them, ansible@pve needs Sys.Audit on /nodes/nuc, read-only:",
+        "just init --host nuc, at a terminal and with root SSH to the host, offers to add it to the role AnsibleVM"
+        " and grant it there",
+    ]
+    (current,) = S.status_capacity([{"node": "pve", "status": "online"}], [])
+    assert current["grant"][1].startswith("just init, at a terminal")
+    # However long the host's name, the report wraps the line to its width.
+    long = S.status_capacity([{"node": "pve", "status": "online"}], [], "", " --host " + "n" * 60)
+    model = {
+        "title": "agent-warehouse",
+        "proxmox": {"nodes": ["pve"]},
+        "settings": {},
+        "vms": [],
+        "sections": ["capacity"],
+        "attention": [],
+        "counts": {"problem": 0, "unread": 0, "todo": 0},
+        "exit": 0,
+        "capacity": long,
+    }
+    text = status_text(model)
+    assert all(len(line) <= WIDTH for line in text.splitlines()), text
+    assert "just init --host " + "n" * 60 in " ".join(text.split())
 
 
 def test_the_capacity_section_fits_the_report_and_says_how_to_read_a_node_it_cannot() -> None:
@@ -271,7 +303,6 @@ def test_the_capacity_section_fits_the_report_and_says_how_to_read_a_node_it_can
     assert "16 CPU threads, 12% busy · memory" in text and "24 / 64 GiB, 40 free" in text
     assert "its running VMs and containers hold 8 vCPUs and 16 GiB (25% of its memory)" in text
     assert "its stopped VMs would take 2 vCPUs" in text
-    assert "pveum role modify AnsibleVM --append 1 --privs Sys.Audit" in text
     assert "pveum acl modify /nodes/pve2 --users ansible@pve --roles AnsibleVM" in text
     assert "offline: nothing on it can be read" in text
 
@@ -282,6 +313,7 @@ def test_just_status_reads_the_node_where_the_token_may_and_changes_nothing(tmp_
     assert report["rc"] in (0, 1, 2), report["stderr"][-2000:]
     capacity = {node["node"]: node for node in model["capacity"]}
     assert not capacity["pve"]["read"]
+    # The fake lists a cluster, so the lines are the commands, which hold for any node.
     assert "pveum acl modify /nodes/pve --users ansible@pve --roles AnsibleVM" in capacity["pve"]["grant"]
     _pve(fleet, "PUT", "fake/privileges", token="ansible", path="/nodes/pve", privs="Sys.Audit")
     report, model = _status_run(tmp_path / "after", fleet, "-e", json.dumps({"status_only": "vms,capacity"}))
