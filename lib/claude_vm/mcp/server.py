@@ -180,7 +180,6 @@ class Server:
         refusal = checkout.run_refusal(config, checkout.head(config, self.env()))
         if refusal:
             raise ToolError(refusal)
-        arguments = with_host(config, arguments)
         recipe = recipes.recipe_of(self.dumped(), tool)
         try:
             argv = recipes.command(config, recipe, tool, arguments, {"ATTENDED": self.attended()})
@@ -188,6 +187,9 @@ class Server:
             raise ToolError(str(error)) from error
         jobs.prune(config.checkout, int(recipes.settings(config)["LOG_RETENTION_DAYS"]))
         title = " ".join([tool_recipe(tool), *argv[argv.index(recipe["name"]) + 1 :]])
+        where = titled_host(config, tool, arguments)
+        if where:
+            title += f" --host={where}"
         job = jobs.start(config.checkout, config.python, argv, self.env(), tool, title)
         return await self.follow(job, 0, wait_seconds, ctx)
 
@@ -275,13 +277,14 @@ def _layout(config):
 
 def run_host(config, host: str, names: list[str]) -> str:
     """The host a run is against, where the checkout has more than one: the one given, else the one the VMs named are
-    on, as their aliases record, else the current one. "" with one host, which nothing names, and for names on two
-    hosts, which the run refuses itself."""
+    on, as their aliases record - each name hyphenated, as the justfile takes it - else the current one. "" with one
+    host, which nothing names, and for names on two hosts, which the run refuses itself."""
     layout = _layout(config)
     if not layout.many():
         return ""
     if host:
         return host
+    names = [name.replace("_", "-") for name in names]
     try:
         on = sorted(set(layout.origins(names).values())) if names else []
         if len(on) == 1:
@@ -294,13 +297,15 @@ def run_host(config, host: str, names: list[str]) -> str:
         return ""
 
 
-def with_host(config, arguments: dict[str, Any]) -> dict[str, Any]:
-    """A run tool's arguments with the host it is against named, where the checkout has more than one and none was
-    given: the job's title, and every line that shows it, then says the host."""
-    if "host" not in arguments or arguments["host"]:
-        return arguments
+def titled_host(config, tool: str, arguments: dict[str, Any]) -> str:
+    """The host a run tool's job title names, where the checkout has more than one and none was given: the one the run
+    will resolve, so the title and every line that shows it say where it runs. Only the title's: the run is given no
+    --host it was not, so it resolves its host as at a terminal - a VM's alias, else the current host - and init, whose
+    --host is the host it sets up, is never given one."""
+    if tool == "init" or "host" not in arguments or arguments["host"]:
+        return ""
     named = arguments.get("names") or [name for name in [arguments.get("name")] if name]
-    return {**arguments, "host": run_host(config, "", named)}
+    return run_host(config, "", named)
 
 
 class Typed(BaseModel):
@@ -437,7 +442,8 @@ def tools(server: Server) -> list[Tool]:
     ) -> str:
         config = server.check(vault=True)
         layout = _layout(config)
-        unplaced = layout.many() and bool(set(names or []) - set(layout.origins(names or [])))
+        hyphenated = [name.replace("_", "-") for name in names or []]
+        unplaced = layout.many() and bool(set(hyphenated) - set(layout.origins(hyphenated)))
         refusal = deploy_refusal(names, only, check, host, unplaced)
         if refusal:
             raise ToolError(refusal)
@@ -539,7 +545,7 @@ def tools(server: Server) -> list[Tool]:
 
     async def ask_setting(ctx: Context, name: str = "", value: str = "", reset: bool = False, host: str = "") -> Elicit:
         """Before the person is asked: the client, the allow list, the value, then what the setting is now."""
-        server.check(vault=True)
+        config = server.check(vault=True)
         terminal = f"just settings {name} --value=<value>"
         refusal = (
             client_refusal(ctx, "settings_set", terminal)
@@ -550,12 +556,24 @@ def tools(server: Server) -> list[Tool]:
             raise ToolError(refusal)
         if bool(value) == bool(reset):
             raise ToolError("settings_set takes a value, or reset to put the default back: one of the two")
-        report, _ = await server.report("settings", {"name": name, "host": host}, {0})
+        # The file written, and the value it holds now as a run reads it: with more than one host, a host in hosts/
+        # named is its own local.yml, and anything else the shared one, every host's, read as the first host's runs
+        # read it - never the current host's value, which its own file may set over the shared one.
+        where, read = "local.yml", host
+        layout = _layout(config)
+        if layout.many():
+            first = layout.first()
+            if host and (first is None or host != first.name):
+                where = f"hosts/{host}/group_vars/all/local.yml, {host}'s own"
+            else:
+                where = "inventory/group_vars/all/local.yml, every host's, which a host's own local.yml outranks"
+                read = first.name if first is not None else host
+        report, _ = await server.report("settings", {"name": name, "host": read}, {0})
         rows = [row for row in report.get("settings") or [] if isinstance(row, dict) and row.get("name") == name]
         current = json.dumps(rows[0].get("value")) if rows and rows[0].get("value") is not None else ""
         # A host named is the file written, its own local.yml: part of what is confirmed.
         typed = f"{confirm.code('settings_set', name, value, str(reset), *([host] if host else []))} {name}"
-        return Elicit(confirm.setting_message(name, current, "" if reset else value, typed), Typed)
+        return Elicit(confirm.setting_message(name, current, "" if reset else value, typed, where), Typed)
 
     async def settings_set(
         ctx: Context,

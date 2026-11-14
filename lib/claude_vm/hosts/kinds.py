@@ -32,6 +32,10 @@ class Kind(Checked):
     # other host's, in its own. Each is refused in the other's file.
     secret_shared: str
     secret_host: str
+    # What the inventory defaults make from the run's host - where its API is, the secret it is sent - and no settings
+    # file may set: one in the shared files would outrank that for every host, and send one host another's token. With
+    # more than one host the resolver refuses each in every file a run reads.
+    from_host: tuple[str, ...]
     # What just host shows of each host beside its address: a column's heading and the setting it shows (always's).
     shown: tuple[tuple[str, str], ...]
 
@@ -54,6 +58,13 @@ KINDS: Final[Mapping[str, Kind]] = {
         never_inherited=("vm_ipconfig", "vm_nameservers", "proxmox_template_custom", "claude_ssh_host_domain"),
         secret_shared="vault_proxmox_api_token_secret",
         secret_host="vault_host_proxmox_api_token_secret",
+        from_host=(
+            "proxmox_api_host",
+            "proxmox_api_token_secret",
+            "proxmox_api_url",
+            "proxmox_api_headers",
+            "proxmox_api_module_defaults",
+        ),
         shown=(("NODE", "proxmox_node"),),
     ),
 }

@@ -212,7 +212,7 @@
           would send this machine's own connections there. The other VMs' aliases are written.
           {% if claude_ssh_unnamed | length > 0 %}A name with a dot gets its alias only from a run that names it, so
           that a VM someone else named github.com never gets one: just deploy {{ claude_ssh_unnamed | join(',') }}
-          --only ssh-config, if {{ 'it is' if claude_ssh_unnamed | length == 1 else 'they are' }} yours. An alias
+          --only ssh-config{{ claude_host_flag | default('') }}, if {{ 'it is' if claude_ssh_unnamed | length == 1 else 'they are' }} yours. An alias
           {{ 'it has' if claude_ssh_unnamed | length == 1 else 'they have' }} already is left as it was.{% endif %}
           {% if claude_ssh_renamed | length > 0 %}Rename {{ claude_ssh_renamed | join(', ') }} in Proxmox, or ask whoever
           made {{ 'it' if claude_ssh_renamed | length == 1 else 'them' }}.{% endif %}

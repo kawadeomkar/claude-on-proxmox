@@ -246,8 +246,6 @@
             if init_vault_readable and init_github_set | length == 0 and init_answers.github_user is not defined
                and init_host_name | length == 0
             else []) }}
-    # How a command names the host this run sets up: nothing for the first host.
-    init_host_flag: "{{ ' --host ' ~ init_host_name if init_host_name | length > 0 else '' }}"
     # What is left to do at the end, as the report says it and NEXT STEPS
     # records it: each value still to set, and a vault no recipe can use yet.
     # Names and how to set them only, never a value. A template that renders

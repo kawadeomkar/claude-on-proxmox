@@ -250,7 +250,10 @@ against 41 s.
    ([§7.5](custom-code.md#75-callback_pluginsagent_warehousepy--the-waits-and-next-steps)), names the
    VMs from `vm_name` alone, through the play var `claude_vm_confirm_names`: a `vars_prompt` is
    templated before any inventory variable is in scope, `-e` answer or not, so naming
-   `claude_vm_names` failed every run.
+   `claude_vm_names` failed every run. With more than one host it names the host too
+   (`claude_vm_confirm_host`), from the two things it can see: Ansible's own `groups['proxmox']`, the run's
+   inventory, and the `claude_hosts_other` the justfile passes as an extra var - a name both hosts have is
+   never deleted after a question that did not say where.
 2. List the cluster (§4.3, step 1) and assert every requested name exists among this project's VMs.
    Asking for a name that was never created is an error naming the VMs that *do* exist, not a
    confirmation prompt followed by silence. A name that exists but is untagged gets a hint: tag it,
@@ -701,9 +704,12 @@ machine's connections to that host for good. A name an untagged VM carries is le
 `destroy.yml` refuses such a VM. While any tagged VM is listed without a name, which is what a node that is
 down looks like (§4.3), nothing else is pruned, because any block could be that VM's. A listing says
 nothing of another host's VMs, so a block recording another host is never pruned here - one of the checkout's
-other hosts unsaid, one of a host it does not have (swapped out of `inventory/hosts.yml` by hand, or removed)
-said, for the user to remove once its VM is gone. A block with no record is this host's while the checkout has
-one host, and pruned as before; with more than one it could be any host's, and is left and said. With names,
+other hosts unsaid, one of a host it does not have (swapped out of `inventory/hosts.yml` by hand under another
+name, or removed) said, for the user to remove once its VM is gone. Two hosts swapped by hand under one name -
+`pve`, as `just init` names every first host - are one host to the records, and a prune against either removes
+the other's aliases: two hosts are `hosts/`'s. A block with no record is this host's while the checkout has one
+host, and pruned as before; with more than one it could be any host's, and is left and said, and `just status`
+says one whose VM no host lists, which only a hand removes. With names,
 only those VMs are refreshed and nothing is pruned. Two
 tagged VMs of one name are refused as discovery refuses them: an alias of that name would point at
 one at random.
@@ -1100,9 +1106,13 @@ and the vault, and the validate of a YAML write - is in `playbooks/vars/init.yml
 `tools/check host init` makes `hosts/<name>/` from `tools/templates/host/` where a file is missing - never without
 `--address` or a terminal to ask one at, nor in a checkout of one host, where a bare word was 2.4's address - and
 hands both playbooks `init_host` (the host's name, the vault's name for its token, what it sets for itself, its
-default VM's name) and the four files pointed into its folder. The questions are then only the host's: its address
-and its token, the secret written as `vault_host_proxmox_api_token_secret`; the GitHub username and the VPN are the
-shared files' and asked of the first host alone.
+default VM's name, whether it is the current host) and the four files pointed into its folder. The questions are
+then only the host's: its address and its token, the secret written as `vault_host_proxmox_api_token_secret`; the
+GitHub username and the VPN are the shared files' and asked of the first host alone, and given for another are
+refused. So is an exported `AGENT_WAREHOUSE_TOKEN_SECRET` for another host, which may be the first host's: its
+secret is typed or in `--token-secret-file`. Nor is a host set up while the shared vault is encrypted and no
+password file opens it: the vault this run writes would be encrypted with a `.vault_pass` made anew, which opens
+neither. Without `--host`, `just init` works on the current host, as every command does.
 
 It reads `hosts.yml` and `local.yml`, and the vault: as text when it is plaintext, through `ansible-vault
 decrypt --output -` under `no_log` when it is encrypted and there is a password (`.vault_pass`, or

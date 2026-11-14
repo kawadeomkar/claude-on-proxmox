@@ -274,7 +274,7 @@
           {{ 'is up at ' ~ hostvars[claude_vm_name_item].proxmox_vm_address
              if hostvars[claude_vm_name_item].proxmox_vm_address | default('') | length > 0
              else 'is stopped and was left that way, so it is not configured. Start it, or re-run with:'
-                  ~ ' just deploy ' ~ claude_vm_name_item ~ ' --start'
+                  ~ ' just deploy ' ~ claude_vm_name_item ~ ' --start' ~ (claude_host_flag | default(''))
              if hostvars[claude_vm_name_item].proxmox_vm_stopped | default(false) | bool
              else 'failed - see its error above - so it is not configured.' }}
       loop: "{{ claude_vm_names }}"

@@ -20,7 +20,11 @@ hosts/
 ```
 
 `hosts/` is git-ignored. A host's name is lowercase letters, digits and `-`, at most 31, and none of `current`,
-`machines`, `localhost` or a stage of `just deploy`.
+`machines`, `localhost` or a stage of `just deploy`: the first host's too, as `inventory/hosts.yml` names it, once
+there is another, since every line that names one of its VMs then says `--host <name>`. A host's folder holds its
+`hosts.yml` and `group_vars/` and nothing else Ansible reads as inventory: another `.yml`, `.yaml` or `.json` file, or
+another folder, is refused, since a Proxmox host there would be sent this host's token. A file of a host's that is
+not YAML stops that host's runs alone, said in its place.
 
 A run against `nuc` reads the shared settings, then `nuc`'s over them, so any setting can differ per host: a
 smaller `vm_cores`, a `claude_ssh_host_domain` for its LAN, `proxmox_template_golden` on one host only. Two kinds of
@@ -36,7 +40,10 @@ setting are refused rather than taken from the shared files, since each describe
 
 The token is never the first host's: a host whose vault has no `vault_host_proxmox_api_token_secret` fails before
 anything is asked of it, and the first host's `vault_proxmox_api_token_secret` in a host's vault, or a host's name
-in the shared vault, is refused.
+in the shared vault, is refused. Nor may any of the files set what a run makes from its host - `proxmox_api_host`,
+`proxmox_api_token_secret`, `proxmox_api_url`, `proxmox_api_headers`, `proxmox_api_module_defaults` - which would
+outrank that for every host: a host's address is the `ansible_host` of its `hosts.yml`, and its secret is in its
+vault.
 
 ## Setting up another host
 
@@ -54,12 +61,22 @@ a bare `just deploy` there never makes a second VM of the first host's default n
 
 A host is created only with its address, given as `--address` or typed at the question. Scripted, with no terminal,
 `--address` is needed; and in a checkout of one host, `just init --host <word>` without `--address` stops rather than
-take the word for a host's name, as 2.4 took it for an address ([Upgrading](upgrading.md#more-than-one-host-from-25)).
-`just init --host nuc` again asks for what is still missing, as `just init` does.
+take the word for a host's name, as 2.4 took it for an address ([Upgrading](upgrading.md#more-than-one-host-from-25)),
+the name of the one host included. `just init --host nuc` again asks for what is still missing, and `just init` alone
+works on the current host, as every command does: the first host's until `just host` chooses another.
+
+Its token's secret is typed at the question, or given in a file, `--token-secret-file`: an exported
+`AGENT_WAREHOUSE_TOKEN_SECRET`, as [the first deploy](../getting-started/first-deploy.md) sets for the first host, is
+refused, since left in the shell it would be the first host's. `--github-user` and `--tailscale` are refused beside
+another host: they go to `just init --host <first>`. Its vault is encrypted with the shared vault's password, so
+while that vault is encrypted with a password you type, put it in `.vault_pass` (readable by you alone) first.
 
 The aliases written before 2.5 record no host, and a VM named by one runs against the current host, which may not be
-its own once there are two. Run `just deploy --only ssh-config` against the first host once, before or after setting
-up the second: every alias of a VM it lists is written again, recording it.
+its own once there are two. Run `just deploy --only ssh-config` once before setting up the second host, or with
+`--host <first>` after it: every alias of a running VM the first host lists is written again, recording it. A VM that
+is stopped is not, nor one whose name has a dot, which only a run that names it writes: start it, or run
+`just deploy <name> --only ssh-config`. Until then its alias is the current host's, and `just status` says one whose VM
+no host has any more, which no prune removes: delete its block from `~/.ssh/agent-warehouse.conf` by hand.
 
 `just vault --host nuc` edits that host's vault, and `just settings` shows the run's host's values - the current
 host's, or the one `--host` names - each host file a layer of its own above the shared ones. `just settings vm_cores
@@ -101,6 +118,9 @@ A VM name belongs to one host, so a VM you name is found wherever it is:
 | `just login alpha beta`, on two hosts | refused: one host per run |
 | anything with `--host` | that host, even for a name another host's alias records: a warning, and the VM of the name on that host |
 
+A run an alias sends to another host than the current one says so, and `just destroy`'s question names the host it
+deletes from.
+
 The lookup is the managed SSH config on this machine, so it needs no host to answer; with `claude_ssh_config: false`
 nothing records where a VM is, and every run is the current host's. A VM whose name another host's alias holds is
 refused before anything is created, and the next `just init --host` writes `vm_default_name: <host>-default`, so a
@@ -136,7 +156,9 @@ name, and refuses one that does; a host that does not answer is said, and the ru
 ## What hosts do not do
 
 - **A VM stays on the host it was made on.** To move one, `just destroy` it, which saves what of its Claude Code
-  sessions exists only there, then `just deploy <name> --host <other>`.
+  sessions exists only there, then `just deploy <name> --host <other>`, with its `--repos`, `--cores`, `--memory`
+  and `--disk` again: they were kept in Proxmox, on the old host. The sessions saved go on on this machine
+  ([Its Claude Code sessions](destroy.md#its-claude-code-sessions)); the new VM starts without them.
 - **The GitHub account and the VPN are set up once, for every host.** `just init --host` asks neither again, and
   Tailscale's auth key joins each host's VMs to the same tailnet. A setting in a host's own `local.yml`, or a secret
   in its `vault.yml`, outranks the shared one for its runs, where one host's VMs need another.
@@ -152,10 +174,12 @@ With more than one host, every run says which host it is against, where a mistak
 
 - the live run's first line, `agent-warehouse  deploy alpha · nuc · started 10:02`, and its last;
 - the run lock, so a second run is told which host the one under way is on;
+- `just destroy`'s question, CONFIRM DELETION: `This deletes alpha on nuc and its disks.`;
+- a run that a VM's alias sends to another host than the current one, before anything starts;
 - every line a run prints or writes onto a VM that tells you what to run - NEXT STEPS, a retry, the session notes
   and their "Signed in" rows, the Claude terminal's lines, `just status`'s ATTENTION - ends with `--host <name>`, so a
   line pasted later reaches that VM whichever host is current, and the notes' first line names the host;
 - `just destroy`'s saved `sessions.json`, which records the host the VM was on;
 - through [MCP](agents.md), the `hosts` tool lists the hosts and every run tool takes `host`, and names it in the
   job's title when it is not given; no tool changes the current host, a deploy that may create a VM must name one,
-  and `destroy`'s dialog names the host and its code holds it.
+  `destroy`'s dialog names the host and its code holds it, and `settings_set`'s names the `local.yml` it writes.

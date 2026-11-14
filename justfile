@@ -145,8 +145,11 @@ vault_args := 'set --; [ ! -f ' + quote(VAULT_PASS) + ' ] || set -- "$@" --vault
 # extra-vars on whitespace, so make's VM_NAME="alpha beta" once became alpha
 # and only half the fleet was created. Then, with more than one host, the
 # others' names and addresses ($host_extra, host_env's): the guards that keep
-# them out of a VM's name, its alias and destroy's forgetting of a key.
-vm_args := vault_args + '; [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"; [ -z "$host_extra" ] || set -- "$@" -e "$host_extra"'
+# them out of a VM's name, its alias and destroy's forgetting of a key. And for
+# a host in hosts/, its inventory sources ($host_sources), each a -i: never an
+# exported ANSIBLE_INVENTORY, which the editor and every other program the run
+# starts would inherit, and carry into a later run against another host.
+vm_args := vault_args + '; [ -z "$names" ] || set -- "$@" -e "{\"vm_name\": \"$names\"}"; [ -z "$host_extra" ] || set -- "$@" -e "$host_extra"; for source in $(printf %s "$host_sources" | tr , " "); do set -- "$@" -i "$source"; done'
 # A run with no terminal on stdin has nobody to approve a sign-in: no page
 # opens and nothing reaches the clipboard, since nobody is there to use them,
 # and just deploy skips its sign-ins, which would otherwise start by themselves
@@ -165,16 +168,18 @@ no_tty_args := '[ -t 0 ] || if [ ' + quote(ATTENDED) + ' = 1 ]; then set -- "$@"
 # editor a run starts would inherit and hold.
 take_lock := 'tools/check lock ' + quote(RUN_LOCK) + ' "$$"'
 # The run's host (tools/check host): the one --host names ($on), else nested_host's, else the one the VMs named ($names)
-# are on, as their aliases record, else the one hosts/current names, else the first; refused as the resolver says - a host not set up, a setting of the shared files no host inherits, a token
-# in the wrong vault. Then, for the lines after it: ANSIBLE_INVENTORY exported for a host in hosts/ - the shared
-# controller.yml, then the host's folder, whose group_vars outrank the shared ones - and $host, $hosts_many (set with
-# more than one host), $settings_files, $vault_files, $host_sources, $host_extra and $host_routed (set where the names
-# chose the host). A line of the recipe's script after
-# its own rules and before its lock, since the lock's title names the host; the environment's bin found first, whose
-# Python reads the hosts' YAML. The assignment's own line, since a refusal in a command substitution under eval would
-# go unseen. With one host - nothing in HOSTS_DIR - and none asked for, there is nothing to choose: the run is as it
-# always was, the resolver not started.
-host_env := find_bin + '; if [ -z "$on" ] && [ -z ' + quote(nested_host) + ' ] && [ -z "$(ls -A ' + quote(HOSTS_DIR) + ' 2>/dev/null)" ]; then host= hosts_many= settings_files=' + quote(SETTINGS_FILES) + ' vault_files=' + quote(VAULT_FILE) + ' host_sources= host_extra= host_routed=; else host_said=$(tools/check host "$bin" env${host_lenient:+ --lenient} --checkout=' + quote(justfile_directory()) + ' --hosts-dir=' + quote(HOSTS_DIR) + ' --vault-file=' + quote(VAULT_FILE) + ' --settings-files=' + quote(SETTINGS_FILES) + ' --vault-pass=' + quote(VAULT_PASS) + ' --nested=' + quote(nested_host) + ' --host="$on" --names="$names"); eval "$host_said"; fi'
+# are on, as their aliases record, else the one hosts/current names, else the first; refused as the resolver says - a
+# host not set up, a setting of the shared files no host inherits, an internal made from the run's host that a settings
+# file sets, a token in the wrong vault, an exported ANSIBLE_INVENTORY beside more than one host. Then, for the lines
+# after it: $host, $hosts_many (set with more than one host), $settings_files, $vault_files, $host_sources (a host in
+# hosts/: the shared controller.yml, then the host's folder, whose group_vars outrank the shared ones, each a -i of the
+# run's), $host_extra and $host_unplaced (the names no alias places on a host). A line of the recipe's script after its
+# own rules and before its lock, since the lock's title names the host; the environment's bin found first, whose Python
+# reads the hosts' YAML. The assignment's own line, since a refusal in a command substitution under eval would go
+# unseen. With one host - nothing in HOSTS_DIR - and none asked for, there is nothing to choose: the run is as it always
+# was, the resolver not started. $host_lenient set, a host lacking a setting it sets for itself is taken (just settings,
+# just vault); $host_readonly set, nothing is written (just status).
+host_env := find_bin + '; if [ -z "$on" ] && [ -z ' + quote(nested_host) + ' ] && [ -z "$(ls -A ' + quote(HOSTS_DIR) + ' 2>/dev/null)" ]; then host= hosts_many= settings_files=' + quote(SETTINGS_FILES) + ' vault_files=' + quote(VAULT_FILE) + ' host_sources= host_extra= host_unplaced=; else host_said=$(tools/check host "$bin" env${host_lenient:+ --lenient}${host_readonly:+ --read-only} --checkout=' + quote(justfile_directory()) + ' --hosts-dir=' + quote(HOSTS_DIR) + ' --vault-file=' + quote(VAULT_FILE) + ' --settings-files=' + quote(SETTINGS_FILES) + ' --vault-pass=' + quote(VAULT_PASS) + ' --nested=' + quote(nested_host) + ' --host="$on" --names="$names"); eval "$host_said"; fi'
 
 # deploy's stages, which deploy asks about when one is given as a VM name
 # (below). A recipe's name is a VM name there like any other: deploy takes
@@ -241,7 +246,10 @@ help *RECIPE:
 # --host <name> sets up another host of the checkout's, in hosts/<name>/
 # (tools/check host init): its address, its token and what the checks find of
 # it, written into its own files, with every setting it sets for itself; the
-# GitHub account and the VPN are every host's, and not asked again. A host is
+# GitHub account and the VPN are every host's, and not asked again. Without
+# --host, the current host's, as every command's: the first host's until just
+# host chose another. Another host's token secret comes from
+# --token-secret-file alone: an exported one may be the first host's. A host is
 # never created without --address or a terminal to ask for one, nor while the
 # checkout has no other: there, a bare word was 2.4's address, which is
 # --address from 2.5. Through 2.x a --host value with a dot or a colon is still
@@ -281,10 +289,6 @@ init ADDRESS='' ON='' TOKEN_USER='' TOKEN_ID='' TOKEN_SECRET_FILE='' GITHUB_USER
       esac
       host_name=$on ;;
     esac
-    if [ -n "$host_name" ] && [ -n "$github_user$tailscale" ]; then
-      echo "error: the GitHub account and the VPN are every host's, in the shared files: give --github-user and --tailscale to just init alone" >&2
-      exit 1
-    fi
     # A relative file is where just was started, not this directory, where the
     # recipe runs; ~ is left for the playbook to expand.
     case "$token_secret_file" in '' | /* | '~'*) ;; *) token_secret_file={{ quote(invocation_directory()) }}/$token_secret_file ;; esac
@@ -350,11 +354,13 @@ init ADDRESS='' ON='' TOKEN_USER='' TOKEN_ID='' TOKEN_SECRET_FILE='' GITHUB_USER
       test -f "$file" || { (umask 077 && cp "$file.example" "$file"); copied="$copied $file"; }
     done
     [ -z "$copied" ] || echo "Created$copied from their .example files (git-ignored)."
-    # The host's own files, for another host: its folder, and each file from tools/templates/host/ where it is missing.
-    # Then what both playbooks are pointed at - its files, the vault's name for its token, what it sets for itself -
-    # as JSON ($init_host_json), and its inventory sources.
+    # The host's own files, for another host - the one --host names, else the current one: its folder, and each file
+    # from tools/templates/host/ where it is missing. Then what both playbooks are pointed at - its files, the vault's
+    # name for its token, what it sets for itself - as JSON ($init_host_json), and its inventory sources. Refused for
+    # another host: a value for the shared files (the GitHub account, the VPN), and an exported token secret, which
+    # may be the first host's.
     init_settings_files={{ quote(SETTINGS_FILES) }} init_vault={{ quote(VAULT_FILE) }} init_made=
-    host_said=$(tools/check host "$bin" init "$host_name" --checkout={{ quote(justfile_directory()) }} --hosts-dir={{ quote(HOSTS_DIR) }} --address="$address" ${asking:+--asking})
+    host_said=$(tools/check host "$bin" init "$host_name" --checkout={{ quote(justfile_directory()) }} --hosts-dir={{ quote(HOSTS_DIR) }} --vault-pass={{ quote(VAULT_PASS) }} --address="$address" ${asking:+--asking} ${github_user:+--shared} ${tailscale:+--shared} ${token_secret_file:+--secret-file})
     eval "$host_said"
     [ -z "$init_made" ] || echo "Created $init_made from tools/templates/host/ (git-ignored)."
     set -- "$@" -e "$init_host_json"
@@ -380,7 +386,7 @@ init ADDRESS='' ON='' TOKEN_USER='' TOKEN_ID='' TOKEN_SECRET_FILE='' GITHUB_USER
       exit 0
     fi
     [ ! -f {{ quote(VAULT_PASS) }} ] || set -- --vault-password-file {{ quote(VAULT_PASS) }} "$@"
-    [ -z "$host_sources" ] || { ANSIBLE_INVENTORY=$host_sources; export ANSIBLE_INVENTORY; }
+    for source in $(printf %s "$host_sources" | tr , ' '); do set -- "$@" -i "$source"; done
     {{ run_logged }} init "$bin/ansible-playbook" "$@" {{ ANSIBLE_ARGS }} playbooks/init_check.yml
     # A host set up and checked, at a terminal: the offer to make it the current one.
     if [ -n "$host_name" ] && [ -n "$asking" ] && [ "$(tools/check host "$bin" current --checkout={{ quote(justfile_directory()) }} --hosts-dir={{ quote(HOSTS_DIR) }})" != "$host_name" ]; then
@@ -619,14 +625,14 @@ deploy STAGE='' CHECK='' ON='' ROLES='' START='' CORES='' MEMORY='' DISK='' REPO
       exit 1
     fi
     {{ host_env }}
-    # A VM name is one host's: a deploy that may make the VMs named, which no alias here records, asks every other host
-    # for each name first (tools/status --taken: GETs only, each host with its own token), and refuses one found there.
+    # A VM name is one host's: a deploy that may make the VMs named asks every other host for each name no alias here
+    # places on a host (tools/status --taken: GETs only, each host with its own token), and refuses one found there.
     # A host that does not answer is said, and the run goes on: the alias its next write makes still catches it.
-    if [ -n "$hosts_many" ] && [ -n "$names" ] && [ -z "$host_routed" ] && [ -z "$check$roles" ] && { [ -z "$stage" ] || [ "$stage" = provision ]; }; then
+    if [ -n "$hosts_many" ] && [ -n "$host_unplaced" ] && [ -z "$check$roles" ] && { [ -z "$stage" ] || [ "$stage" = provision ]; }; then
       others=$(tools/check host "$bin" every --except="$host" --checkout={{ quote(justfile_directory()) }} --hosts-dir={{ quote(HOSTS_DIR) }} --vault-file={{ quote(VAULT_FILE) }} --vault-pass={{ quote(VAULT_PASS) }})
       {{ vault_args }}
-      taken=$("$bin/python" tools/status --taken --hosts "$others" --names "$names" --only vms "$@")
-      for name in $(printf %s "$names" | tr , ' '); do
+      taken=$("$bin/python" tools/status --taken --hosts "$others" --names "$host_unplaced" --only vms "$@")
+      for name in $(printf %s "$host_unplaced" | tr , ' '); do
         on_host=$(printf '%s\n' "$taken" | awk -v n="$name" '$1 == "taken" && $2 == n { print $3; exit }')
         [ -z "$on_host" ] || { echo "error: $name is a VM of $on_host already, and a VM name belongs to one host: just deploy $name runs it there, or give this one another name" >&2; exit 1; }
       done
@@ -797,14 +803,18 @@ status ON='' ONLY='' JSON='' *NAMES:
       {{ vault_args }}
       set -- "$@" --hosts "$hosts_said" --cache {{ quote(absolute_path(STATUS_DIR)) }}
     else
+      # Read-only, as the whole of status is: the resolver keeps no check it made.
+      host_readonly=1
       {{ host_env }}
       tools/check vault $vault_files
       tools/check settings "$bin" $settings_files
       {{ vault_args }}
       for file in $vault_files; do set -- "$@" --vault-file "$file"; done
-      # One host's, from a checkout of more: its settings and upgrades kept apart from the others'. A host in hosts/ is
-      # read through its sources as -i, so that its files key the settings kept.
+      # One host's, from a checkout of more: its settings and upgrades kept apart from the others', and the other hosts
+      # handed to it as to every run, so that the lines it says name its host. A host in hosts/ is read through its
+      # sources as -i, so that its files key the settings kept.
       set -- "$@" --cache {{ quote(absolute_path(STATUS_DIR)) }}${hosts_many:+/$host}
+      [ -z "$host_extra" ] || set -- "$@" --host-extra "$host_extra"
       for source in $(printf %s "$host_sources" | tr , ' '); do set -- "$@" -i "$source"; done
     fi
     [ -z "$names" ] || set -- "$@" --names "$names"

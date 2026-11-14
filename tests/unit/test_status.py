@@ -1641,6 +1641,20 @@ def test_a_reboot_says_each_editors_windows_as_the_editors_list_names_them() -> 
     assert text.endswith("; 1 claude process is open there"), text
 
 
+def test_with_more_than_one_host_every_line_names_the_host_after_a_space() -> None:
+    # " --host <name>", as a run's own lines end: made one line with the rest of the settings, it lost its space and
+    # was joined to the line's last word, as "ssh-config--host nuc" (live, 2026-11-13).
+    fleet = _fleet()
+    fleet["vms"][0]["address"] = "192.0.2.60"
+    fleet["settings"]["host_flag"] = " --host nuc"
+    found = {"localhost": {"fleet": fleet}, "alpha": {"ssh": {"reached": True, "system": {**SYSTEM, "claude": 1}}}}
+    model = S.status_report(found, "now", 1_800_000_000)
+    (reboot,) = [it["command"] for it in model["attention"] if it["text"].startswith("waits for a reboot")]
+    assert reboot.endswith("then just deploy --only ssh-config --host nuc"), reboot
+    named = [it["command"] for it in model["attention"] if "--host" in (it.get("command") or "")]
+    assert named and all(" --host nuc" in command for command in named), named
+
+
 def test_a_vm_is_dated_by_its_disk_and_drawn_from_then_on() -> None:
     # A clone carries the template's meta ctime (Proxmox VE 9.2, on a real clone); its disk's ctime is its own.
     # And Proxmox keeps a VMID's history: a VM made an hour ago under a reused ID shows none of the one before it.

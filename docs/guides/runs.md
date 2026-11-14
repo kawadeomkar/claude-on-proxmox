@@ -133,10 +133,11 @@ question, which Ansible does not log.
 
 ## One run at a time
 
-`just deploy` (but `--check`), `just login`, `just code`, `just destroy`, `just init` and `just install` take one lock,
-whether you run them at a terminal or an agent runs them through the MCP server ([Agents in other
-projects](agents.md)): two deploys at once could take the same VM ID, and runs share the managed SSH config. A second
-one is refused before it does anything, naming what holds the lock:
+`just deploy` (but `--check`), `just login`, `just code`, `just destroy`, `just init`, `just install` and `just host`
+with a name (a switch or a removal) take one lock, whether you run them at a terminal or an agent runs them through
+the MCP server ([Agents in other projects](agents.md)): two deploys at once could take the same VM ID, runs share the
+managed SSH config, and a run under way ends on the host it started on. A second one is refused before it does
+anything, naming what holds the lock:
 
 ```
 error: just deploy beta is running (pid 51234, started Sun Nov 8 14:02:10 2026 UTC): one run that changes something

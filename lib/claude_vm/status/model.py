@@ -62,6 +62,13 @@ CONFIG_KEYS = (
 # ------------------------------------------------------------------------------------------------- cleaning ----
 
 
+def _host_flag(settings):
+    """What ends every just line status says of a VM, with more than one host: " --host <name>", as a run's own lines
+    end - its space put back, since status_clean made the setting one line, trimmed - else ""."""
+    flag = str(settings.get("host_flag") or "").strip()
+    return f" {flag}" if flag else ""
+
+
 def status_clean(value, limit=FIELD_LIMIT):
     """``value`` with every string in it made one line of plain text: a role's line (key "line") cut to LINE_LIMIT,
     every other string to ``limit``. Keys are cleaned too. Numbers, booleans and None are kept."""
@@ -560,6 +567,7 @@ def _full(used, total):
 
 
 def _drift_item(vm, drift, settings):
+    on = _host_flag(settings)
     hardware = drift.get("hardware") or []
     cloud_init = drift.get("cloud_init") or []
     if not hardware and not cloud_init:
@@ -593,7 +601,7 @@ def _drift_item(vm, drift, settings):
     if cloud_init:
         parts.append(f"{'Its' if parts else 'its'} cloud-init {and_list(cloud_init)} differ from the settings")
     text = ". ".join(parts)
-    command = f"just ANSIBLE_ARGS='-e proxmox_vm_force_update=true' deploy {name} --only provision"
+    command = f"just ANSIBLE_ARGS='-e proxmox_vm_force_update=true' deploy {name} --only provision{on}"
     note = f"(this also resets {name}'s tags, and starts it if it is stopped"
     if cloud_init:
         note += "; its next boot then runs as a new cloud-init instance, which regenerates its SSH host keys"
@@ -604,6 +612,8 @@ def _vm_items(vm, settings, live):
     """The attention items of one VM, from what was read of it."""
     items = []
     name = vm.get("name") or f"VMID {vm.get('vmid')}"
+    # With more than one host, what ends each just line, so that pasted later it reaches this host's VM.
+    on = _host_flag(settings)
     add = functools.partial(_add, items, name)
     skipped = vm.get("skipped")
     if skipped == "node":
@@ -627,7 +637,7 @@ def _vm_items(vm, settings, live):
     if skipped == "nameless":
         return items
     if vm.get("unfinished"):
-        add("todo", "its first deploy did not finish", f"just deploy {name}")
+        add("todo", "its first deploy did not finish", f"just deploy {name}{on}")
     api = vm.get("api")
     # A VM of the inventory's, with discovery off, is never asked of Proxmox.
     if api is None and not live and vm.get("read") and not vm.get("inventory"):
@@ -665,7 +675,7 @@ def _vm_items(vm, settings, live):
             )
     aliases = settings.get("aliases_enabled")
     if aliases and vm.get("address") and vm.get("alias") is False and status == "running":
-        add("todo", "it has no SSH alias", "just deploy --only ssh-config")
+        add("todo", "it has no SSH alias", f"just deploy --only ssh-config{on}")
     return items
 
 
@@ -749,6 +759,7 @@ def _ssh_refusal(vm, ssh, settings):
     name = vm.get("name")
     address = vm.get("address") or name
     user = settings.get("vm_user") or "dev"
+    on = _host_flag(settings)
     said = ssh.get("unreachable") or ""
     kind = ssh.get("refusal") or status_refusal(said)
     if kind == "changed":
@@ -756,13 +767,13 @@ def _ssh_refusal(vm, ssh, settings):
             f"not read: the SSH host key at {address} is not the one this machine holds. {name} was rebuilt or"
             " renamed, or another machine answers at that address",
             f"find out which first. If {name} was rebuilt or renamed: ssh-keygen -R {address}, then just deploy"
-            f" {name} --only configure",
+            f" {name} --only configure{on}",
         )
     if kind == "unknown":
         return (
             f"not read: this machine holds no SSH host key for {address}, and status adds none. Its address"
             " changed, or nothing here has connected to it yet",
-            f"just deploy {name} --only configure takes a new VM's key, as every run does; or ssh {user}@{address}"
+            f"just deploy {name} --only configure{on} takes a new VM's key, as every run does; or ssh {user}@{address}"
             " true, which shows you the fingerprint and asks first",
         )
     if kind == "timeout":
@@ -820,6 +831,7 @@ def _ssh_items(vm, settings, live, now):
     name = vm.get("name")
     add = functools.partial(_add, items, name)
     user = settings.get("vm_user") or "dev"
+    on = _host_flag(settings)
     ssh = vm.get("ssh")
     if not vm.get("needs_ssh"):
         return items
@@ -868,9 +880,9 @@ def _ssh_items(vm, settings, live, now):
             add(
                 "todo",
                 text,
-                "restart it from Proxmox once they are done, then just deploy --only ssh-config"
+                f"restart it from Proxmox once they are done, then just deploy --only ssh-config{on}"
                 if busy
-                else "restart it from Proxmox, then just deploy --only ssh-config",
+                else f"restart it from Proxmox, then just deploy --only ssh-config{on}",
             )
         if isinstance(system.get("security"), int) and system["security"] > 0:
             waits = "waits" if system["security"] == 1 else "wait"
@@ -882,12 +894,12 @@ def _ssh_items(vm, settings, live, now):
     claude = ssh.get("claude")
     if claude:
         if not claude.get("installed"):
-            add("todo", "Claude Code is not installed", f"just deploy {name} --tags claude_code")
+            add("todo", "Claude Code is not installed", f"just deploy {name} --tags claude_code{on}")
         elif not claude.get("api_key") and not claude.get("login_stored"):
             add(
                 "todo",
                 "not signed in. Run "
-                + (claude.get("login_command") or f"just login {name} --only claude")
+                + (claude.get("login_command") or f"just login {name} --only claude{on}")
                 + " to sign in from your machine: it opens the sign-in page and asks for the code the page shows.",
                 source="claude_code",
             )
@@ -898,15 +910,15 @@ def _ssh_items(vm, settings, live, now):
                 "problem",
                 f"Remote Control is not running: {unit} is {said}",
                 f"ssh {user}@{vm.get('address') or name} journalctl -u {unit} -n 50, then just deploy {name}"
-                " --tags claude_code starts it again",
+                f" --tags claude_code{on} starts it again",
             )
         elif state == "not-set-up":
-            add("todo", "Remote Control is not set up", f"just deploy {name} --tags claude_code")
+            add("todo", "Remote Control is not set up", f"just deploy {name} --tags claude_code{on}")
         elif state == "stopped" and claude.get("login_stored"):
             add(
                 "todo",
                 "Remote Control is stopped",
-                f"just deploy {name} --tags claude_code starts it, or says what stops it",
+                f"just deploy {name} --tags claude_code{on} starts it, or says what stops it",
             )
     github = ssh.get("github")
     if github:
@@ -918,21 +930,21 @@ def _ssh_items(vm, settings, live, now):
     if tailscale and tailscale.get("enabled"):
         case = tailscale.get("case")
         if case == "check-daemon-down":
-            add("problem", "tailscaled is not running", f"just deploy {name} --tags tailscale starts it")
+            add("problem", "tailscaled is not running", f"just deploy {name} --tags tailscale{on} starts it")
         elif case == "check-no-package":
-            add("todo", "Tailscale is not installed", f"just deploy {name} --tags tailscale installs it")
+            add("todo", "Tailscale is not installed", f"just deploy {name} --tags tailscale{on} installs it")
         elif case == "would-join":
             add(
                 "todo",
                 "Tailscale is not signed in; vault_tailscale_auth_key joins it",
-                f"just deploy {name} --tags tailscale",
+                f"just deploy {name} --tags tailscale{on}",
             )
         elif tailscale.get("left") and tailscale.get("line"):
             add("todo", tailscale["line"], source="tailscale")
     return items
 
 
-def _template_items(template):
+def _template_items(template, on=""):
     """The template, when the next just deploy rebuilds it: it differs from what its settings would build, and
     proxmox_template_rebuild leaves rebuilding on. Kept as it is, it is only said on its line."""
     drift = template.get("drift") or []
@@ -946,7 +958,7 @@ def _template_items(template):
         f"the template {template.get('name')} differs from its settings ({'; '.join(drift)}), so the next just"
         " deploy rebuilds it, over root SSH"
     )
-    return [_item("todo", "template", text, "just deploy --only template rebuilds it now")]
+    return [_item("todo", "template", text, f"just deploy --only template{on} rebuilds it now")]
 
 
 def _storage_items(storages):
@@ -1076,7 +1088,7 @@ def status_report(found, read_at="", now=None, live=False):
         items += _vm_items(vm, settings, live)
         items += _ssh_items(vm, settings, live, now)
     items += _storage_items(fleet.get("storages") or [])
-    items += _template_items(fleet.get("template") or {})
+    items += _template_items(fleet.get("template") or {}, _host_flag(settings))
     # Two VMs of one name each say the same thing about it: once is enough.
     seen = set()
     items = [it for it in items if (key := (it["level"], it["vm"], it["text"])) not in seen and not seen.add(key)]

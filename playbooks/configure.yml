@@ -118,9 +118,10 @@
           {{ inventory_hostname }}: cloud-init's first boot ended in an error
           ({{ configure_cloud_init_where }}), so the VM may be half set up. /var/log/cloud-init-output.log on it says why.
           Building it again is the sure way past a failure that will not repeat - a mirror, a corrupted download:
-          just destroy {{ inventory_hostname }}, then just deploy {{ inventory_hostname }}. Or
-          repair it by hand, then ANSIBLE_ARGS='-e configure_wait_for_cloud_init=false'
-          just deploy {{ inventory_hostname }} --only configure.
+          just destroy {{ inventory_hostname }}{{ claude_host_flag | default('') }}, then just deploy
+          {{ inventory_hostname }}{{ claude_host_flag | default('') }}. Or repair it by hand, then
+          ANSIBLE_ARGS='-e configure_wait_for_cloud_init=false' just deploy {{ inventory_hostname }} --only
+          configure{{ claude_host_flag | default('') }}.
       when:
         - configure_wait_for_cloud_init | default(true) | bool
         - configure_cloud_init.rc | default(0) not in [0, 2]
@@ -172,7 +173,8 @@
               {{ inventory_hostname }} was cloned from a golden template built with other image options than its
               own: {{ configure_golden_mine | option_differences(configure_golden_shared) | join(', ') }}. Set them
               in local.yml or as the VM's host vars, never under the claude_vms group, which the build cannot see;
-              then just destroy {{ inventory_hostname }} and deploy it again, or set proxmox_template_golden to false.
+              then just destroy {{ inventory_hostname }}{{ claude_host_flag | default('') }} and deploy it again, or
+              set proxmox_template_golden to false.
             quiet: true
 
   roles:

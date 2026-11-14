@@ -213,7 +213,13 @@ def test_each_child_reads_its_host_alone_and_keeps_what_it_can_in_a_folder_of_it
     opts = argparse.Namespace(
         names="", only="vms", cache="/c", vault_password_file=".vault_pass", extra=[], private_key=""
     )
-    host = {"name": "nuc", "sources": ["inventory/controller.yml", "hosts/nuc"], "vault_files": ["a.yml", "b.yml"]}
+    others = {"claude_hosts_other": [{"name": "pve", "address": "192.0.2.10"}]}
+    host = {
+        "name": "nuc",
+        "sources": ["inventory/controller.yml", "hosts/nuc"],
+        "vault_files": ["a.yml", "b.yml"],
+        "extra": others,
+    }
     argv = status_hosts.command(opts, host)
     assert argv[1:] == [
         str(STATUS),
@@ -228,11 +234,73 @@ def test_each_child_reads_its_host_alone_and_keeps_what_it_can_in_a_folder_of_it
         "b.yml",
         "--vault-password-file",
         ".vault_pass",
+        # The other hosts, as every run against nuc is handed them: its lines then say --host nuc. Never as -e, which
+        # would keep no settings.
+        "--host-extra",
+        json.dumps(others),
         "-i",
         "inventory/controller.yml",
         "-i",
         "hosts/nuc",
     ]
+
+
+def test_each_line_says_its_host_where_its_command_ends_before_what_it_does() -> None:
+    from claude_vm.status import model
+
+    settings = {"host_flag": " --host nuc", "vm_user": "dev", "aliases_enabled": True}
+    service = {"LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead"}
+    vm = {
+        "name": "alpha",
+        "unfinished": True,
+        "state": "running",
+        "address": "192.0.2.5",
+        "alias": False,
+        "api": {},
+        "needs_ssh": True,
+        "ssh": {
+            "tailscale": {"enabled": True, "case": "check-daemon-down"},
+            "claude": {"installed": True, "login_stored": True, "remote_control_wanted": True, "service": service},
+        },
+    }
+    items = model._vm_items(vm, settings, False) + model._ssh_items(vm, settings, False, 0)
+    commands = [item["command"] for item in items]
+    assert "just deploy alpha --host nuc" in commands
+    assert "just deploy --only ssh-config --host nuc" in commands
+    assert "just deploy alpha --tags tailscale --host nuc starts it" in commands
+    assert "just deploy alpha --tags claude_code --host nuc starts it, or says what stops it" in commands
+    # With one host, as they always were.
+    alone = {**settings, "host_flag": ""}
+    items = model._vm_items(vm, alone, False) + model._ssh_items(vm, alone, False, 0)
+    commands = [item["command"] for item in items]
+    assert "just deploy alpha --tags tailscale starts it" in commands and not any("--host" in c for c in commands)
+
+
+def test_a_host_said_on_one_line_is_wrapped_to_the_reports_width_and_cut_to_the_frames() -> None:
+    from claude_vm.status import hosts as status_hosts
+
+    said = "nuc · cannot be read: " + "a reason that goes on " * 12
+    whole = status_hosts._said(said, None).split("\n")
+    assert len(whole) > 1 and all(len(line) <= 100 for line in whole)
+    assert " ".join(whole) == said.strip()
+    assert "\n" not in status_hosts._said(said, 80) and len(status_hosts._said(said, 80)) <= 80
+
+
+def test_an_alias_that_records_no_host_whose_vm_no_host_lists_is_said_on_the_current_host() -> None:
+    from claude_vm.status import hosts as status_hosts
+
+    def report(*names, **proxmox):
+        return {"vms": [{"name": n} for n in names], "proxmox": proxmox, "settings": {"names": []}, "attention": []}
+
+    blocks = [{"name": "old", "origin": ""}, {"name": "alpha", "origin": ""}]
+    reports = {"pve": report("alpha"), "nuc": report("beta")}
+    status_hosts.reconcile(reports, blocks, "nuc")
+    (said,) = reports["nuc"]["attention"]
+    assert said["vm"] == "old" and "its SSH alias records no host" in said["text"] and reports["pve"]["attention"] == []
+    # A host not read: it may have that VM, so nothing is said.
+    reports = {"pve": report("alpha"), "nuc": report(unread="it did not answer")}
+    status_hosts.reconcile(reports, blocks, "pve")
+    assert not any(item["vm"] == "old" for item in reports["pve"]["attention"])
 
 
 def test_a_creating_deploy_is_told_which_host_has_each_name(tmp_path, two) -> None:

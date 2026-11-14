@@ -92,6 +92,8 @@ FLEET = {
         # Every editor's name by its key, in the editors list's order, for the windows a VM has open of each.
         "editor_names": "{{ dict(claude_editors | default({}) | dict2items | map(attribute='key')"
         " | zip(claude_editors | default({}) | dict2items | map(attribute='value.name', default=''))) }}",
+        # What ends every just line said of a VM, with more than one host: " --host <name>", as a run's own lines.
+        "host_flag": "{{ claude_host_flag }}",
     },
 }
 # What the run was given on the command line, kept apart: no snapshot holds these.
@@ -358,6 +360,8 @@ class Ansible:
             Display().display = say
         init_plugin_loader([])
         extra = list(opts.extra)
+        if getattr(opts, "host_extra", ""):
+            extra.append(opts.host_extra)
         if opts.names:
             extra.append(json.dumps({"vm_name": opts.names}))
         if opts.only:
@@ -489,6 +493,8 @@ def _digest(opts) -> str:
     ]
     # The sources' order is their precedence: said as given, where the files below are sorted.
     digest.update(f"sources={json.dumps(sources)}\n".encode())
+    # The other hosts, which the lines said name the run's host by.
+    digest.update(f"host_extra={getattr(opts, 'host_extra', '')}\n".encode())
     for path in sorted(str(path) for group in groups for path in group):
         try:
             info = os.stat(path)

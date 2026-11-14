@@ -136,6 +136,8 @@
           {% if claude_ssh_prune.unknown | length > 0 %}
           Left alone, no host recorded: {{ claude_ssh_prune.unknown | join(', ') }}. With more than one host, any of them
           could have that VM; the next write of its alias records its host, and a prune against that host removes it.
+          One whose VM no host has any more stays until you remove its block from {{ claude_ssh_config_file }} by hand:
+          just status names each.
           {% endif %}
           {% if claude_ssh_prune.nameless | length > 0 %}
           Nothing pruned: VMID {{ claude_ssh_prune.nameless | join(', ') }} is tagged "{{ claude_vm_tag }}" but listed
@@ -144,5 +146,6 @@
           Run this again once every node reports.
           {% endif %}
           {% if vm_name is defined %}
-          Only the VMs named were refreshed; a fleet-wide `just deploy --only ssh-config` also prunes.
+          Only the VMs named were refreshed; a fleet-wide
+          `just deploy --only ssh-config{{ claude_host_flag | default('') }}` also prunes.
           {% endif %}

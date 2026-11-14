@@ -1146,6 +1146,23 @@ def test_destroy_asks_under_a_block_that_names_the_vms_and_never_logs_it(tmp_pat
     assert "This deletes" not in log
 
 
+def test_with_more_than_one_host_destroy_asks_naming_the_host_it_deletes_from(tmp_path):
+    # A name both hosts have, the run sent to the other one by its alias: the question says whose VM goes, read from
+    # the run's own inventory and the other hosts the justfile hands it - all a vars_prompt can see.
+    proxmox = tmp_path / "proxmox.yml"
+    proxmox.write_text(yaml.safe_dump({"proxmox": {"hosts": {"nuc": {"ansible_host": "192.0.2.20"}}}}))
+    steps = [(b"Type yes to continue", b"no\n", 0, "canonical")]
+    extra = {"vm_name": "alpha", "claude_hosts_other": [{"name": "pve", "address": "192.0.2.10"}]}
+    rc, output, _ = _run_at_a_terminal(tmp_path, DESTROY, {}, extra, steps=steps, args=["-i", str(proxmox)])
+    assert rc != 0
+    assert "\r\nThis deletes alpha on nuc and its disks.\r\n" in output, output
+    # With one host, as before: no host to tell apart.
+    rc, output, _ = _run_at_a_terminal(
+        tmp_path, DESTROY, {}, {"vm_name": "alpha"}, steps=steps, args=["-i", str(proxmox)]
+    )
+    assert rc != 0 and "\r\nThis deletes alpha and its disks.\r\n" in output, output
+
+
 def test_destroy_release_defaults_to_on():
     defaults = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults.yml").read_text())
     assert defaults["destroy_release"] is True

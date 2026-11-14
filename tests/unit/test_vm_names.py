@@ -243,7 +243,9 @@ def test_destroy_keeps_the_alias_and_the_name_key_of_another_hosts_vm(tmp_path, 
         },
     )
     managed = tmp_path / "ssh.conf"
-    managed.write_text(_block("alpha", "pve") + _block("beta", "nuc"))
+    # gamma's records a host the checkout no longer has - the first host before it was renamed - which is no one's to
+    # keep, as the alias write takes it over.
+    managed.write_text(_block("alpha", "pve") + _block("beta", "nuc") + _block("gamma", "old-name"))
     plays = yaml.safe_load((PLAYBOOKS / "destroy.yml").read_text())
     forget = next(play for play in plays if play.get("name") == "Forget the SSH alias of each deleted VM")
     names = [task.get("name") for task in forget["tasks"]]
@@ -253,10 +255,17 @@ def test_destroy_keeps_the_alias_and_the_name_key_of_another_hosts_vm(tmp_path, 
     doomed = root / "doomed.yml"
     doomed.write_text(
         yaml.safe_dump(
-            {"claude_vm_doomed": {"hosts": {"alpha": {"claude_vm_deleted": True}, "beta": {"claude_vm_deleted": True}}}}
+            {
+                "claude_vm_doomed": {
+                    "hosts": {name: {"claude_vm_deleted": True} for name in ("alpha", "beta", "gamma")},
+                }
+            }
         )
     )
-    report = _run(root, root / "forget.yml", {}, *_proxmox_inventory(root), "-i", str(doomed), timeout=120)
+    others = json.dumps({"claude_hosts_other": [{"name": "nuc", "address": "192.0.2.20"}]})
+    report = _run(
+        root, root / "forget.yml", {}, *_proxmox_inventory(root), "-i", str(doomed), "-e", others, timeout=120
+    )
     assert report["rc"] == 0, report["stderr"][-2000:]
     assert _recorded(managed) == {"beta": "nuc"}
     said = _messages(report, "Say which aliases stay with another host")["localhost"]

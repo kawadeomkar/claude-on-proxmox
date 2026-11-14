@@ -3,27 +3,29 @@
 host from; just host's list, its switch and its removal. tools/check host runs it with the environment's Python.
 
     tools/host env --checkout <dir> --hosts-dir <dir> --vault-file <file> --settings-files <files> --vault-pass <file>
-                   [--host <name>] [--nested <name>] [--names <a,b>]
+                   [--host <name>] [--nested <name>] [--names <a,b>] [--lenient] [--read-only]
     tools/host list --checkout <dir> --hosts-dir <dir> [--json]
     tools/host switch --checkout <dir> --hosts-dir <dir> <name>
     tools/host remove --checkout <dir> --hosts-dir <dir> <name>
-    tools/host init --checkout <dir> --hosts-dir <dir> [--address <address>] [--asking] [<name>]
+    tools/host init --checkout <dir> --hosts-dir <dir> --vault-pass <file> [--address <address>] [--asking] [--shared]
+                    [--secret-file] [<name>]
     tools/host current --checkout <dir> --hosts-dir <dir>
     tools/host every --checkout <dir> --hosts-dir <dir> [--except <name>] [--vault-file <file>] [--vault-pass <file>]
 
 env prints, for the recipe to eval, the host of the run - --host, else the host --nested names (a recipe run inside
-another's, its host passed as the justfile's nested_host=), else the one hosts/current names, else the first host - as
-shell assignments: host, hosts_many, settings_files, vault_files, host_sources and host_extra, and ANSIBLE_INVENTORY
-exported for a host in hosts/. Or it refuses, saying why on standard error, and exits 1, before anything starts.
-Every value it prints is held to a pattern first, and printed quoted. With --lenient, as just settings and just vault
-ask it, a host that lacks a setting it sets for itself is taken, and what a run would read of it is not checked: they
-are how that is put right.
+another's, its host passed as the justfile's nested_host=), else the one the VMs named are on, as their SSH aliases
+record, else the one hosts/current names, else the first host - as shell assignments: host, hosts_many,
+settings_files, vault_files, host_sources (each a -i of the run's, for a host in hosts/), host_extra and host_unplaced.
+Or it refuses, saying why on standard error, and exits 1, before anything starts. Every value it prints is held to a
+pattern first, and printed quoted. With --lenient, as just settings and just vault ask it, a host that lacks a setting
+it sets for itself is taken, and what a run would read of it is not checked: they are how that is put right. With
+--read-only, as just status asks it, nothing is written, hosts/.checked.json included.
 
-init sets up a host for just init --host, from tools/templates/host/: its folder and each file it lacks, the hosts.yml
-naming it; then prints what just init's playbooks are pointed at - its files, the vault's name for its token, what it
-sets for itself - as JSON, for the recipe to pass on, with its inventory sources. Without a name, the first host's.
-A host is never created without an address given or a terminal to ask for one, nor at all while the checkout has no
-other: there, a bare word was 2.3's address.
+init sets up a host for just init, from tools/templates/host/: its folder and each file it lacks, the hosts.yml naming
+it; then prints what just init's playbooks are pointed at - its files, the vault's name for its token, what it sets for
+itself - as JSON, for the recipe to pass on, with its inventory sources. Without a name, the current host's, as every
+command's: the first host's until another is chosen. A host is never created without an address given or a terminal
+to ask for one, nor at all while the checkout has no other: there, a bare word was 2.4's address.
 """
 
 from __future__ import annotations
@@ -45,6 +47,8 @@ TEMPLATES = REPO / "tools" / "templates" / "host"
 
 # An address a host's hosts.yml gives it, as it may reach a run: a host name or an IP address, one word.
 ADDRESS = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:_-]{0,252}")
+# Where just init reads the token's secret from, but for --token-secret-file: the name from 2.0, then 1.x's.
+SECRET_VARIABLES = ("AGENT_WAREHOUSE_TOKEN_SECRET", "CLAUDE_ON_PROXMOX_TOKEN_SECRET")
 
 
 def _refuse(said: str) -> int:
@@ -58,24 +62,44 @@ def _password_files(given: str) -> list[str]:
     return [one for at, one in enumerate(files) if one and one not in files[:at] and os.path.isfile(one)]
 
 
-def _vaults_hold_their_own(layout: hosts.Layout, host: hosts.Host, password: str) -> str:
+def _encrypted(path: Path) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(14) == b"$ANSIBLE_VAULT"
+    except OSError:
+        return False
+
+
+def _vaults_hold_their_own(layout: hosts.Layout, host: hosts.Host, password: str, keep: bool) -> str:
     """Why the vaults would send a host the wrong secret, or "": the shared vault holds the first host's token under
     the kind's shared name and never another host's, and a host's vault its own under the host name and never the
-    shared one. defaults.yml picks the name by where the run's host was defined, so either in the other's file would
-    defeat it. Opened in memory to read the names alone; kept as checked, by the files' sizes and times, until one
-    changes."""
-    shared, own = layout.checkout / hosts.SHARED_VAULT, layout._path(host.vault_file)
+    shared one; and neither sets what the inventory defaults make from the run's host. defaults.yml picks the name by
+    where the run's host was defined, so either in the other's file would defeat it. Opened in memory to read the names
+    alone; kept as checked, by the files' sizes and times, until one changes - but by a run that writes nothing."""
+    kind = host.kind
+    shared = layout.checkout / hosts.SHARED_VAULT
+    own = None if host.first else layout._path(host.vault_file)
     checked = layout.hosts_dir / ".checked.json"
-    key = hosts.checked_digest([shared, own])
+    key = hosts.checked_digest([shared] if own is None else [shared, own])
     try:
         if key and json.loads(checked.read_text(encoding="utf-8")).get(host.name) == key:
             return ""
     except (OSError, ValueError, AttributeError):
         pass
     files = _password_files(password)
-    shared_names, own_names = hosts.vault_names(shared, files), hosts.vault_names(own, files)
-    kind = host.kind
-    if shared_names is not None and kind.secret_host in shared_names:
+    shared_names = hosts.vault_names(shared, files)
+    own_names = None if own is None else hosts.vault_names(own, files)
+    for file, names in ((hosts.SHARED_VAULT, shared_names), (host.vault_file, own_names)):
+        made = [name for name in kind.from_host if names is not None and name in names]
+        if made:
+            return (
+                f"{file} sets {', '.join(made)}, which the inventory defaults make from the run's host - where its API "
+                f"is, and the secret it is sent - and which a vault would set for "
+                f"{'every host' if file == hosts.SHARED_VAULT else host.name} alike: take "
+                f"{'it' if len(made) == 1 else 'them'} out with just vault"
+                f"{'' if file == hosts.SHARED_VAULT else ' --host ' + host.name}"
+            )
+    if not host.first and shared_names is not None and kind.secret_host in shared_names:
         return (
             f"{hosts.SHARED_VAULT} sets {kind.secret_host}, which is a host's own and belongs in its vault: a host "
             f"whose vault lacked it would be sent this one. Move it with just vault, and just vault --host {host.name}"
@@ -90,7 +114,21 @@ def _vaults_hold_their_own(layout: hosts.Layout, host: hosts.Host, password: str
             f"{host.vault_file} does not set {kind.secret_host}, {host.name}'s secret: just init --host {host.name}, "
             f"or set it with just vault --host {host.name}"
         )
-    if shared_names is not None and own_names is not None and key:
+    # A vault no password here opens - a vault ID's, a client script's - is Ansible's to open: said, never kept as
+    # checked, and the run goes on, the token rule still sending the host the secret of its own vault's name alone.
+    unopened = [
+        file
+        for file, path, names in ((hosts.SHARED_VAULT, shared, shared_names), (host.vault_file, own, own_names))
+        if path is not None and names is None and _encrypted(path)
+    ]
+    if unopened:
+        print(
+            f"warning: {' and '.join(unopened)} could not be opened here (a vault ID's password, or a client "
+            "script's), so the names of the secrets in it are not checked before the run",
+            file=sys.stderr,
+        )
+        return ""
+    if keep and shared_names is not None and (own is None or own_names is not None) and key:
         try:
             kept = json.loads(checked.read_text(encoding="utf-8"))
             kept = kept if isinstance(kept, dict) else {}
@@ -107,9 +145,10 @@ def _vaults_hold_their_own(layout: hosts.Layout, host: hosts.Host, password: str
     return ""
 
 
-def _what_a_run_reads(layout: hosts.Layout, host: hosts.Host, opts) -> str:
-    """Why a run against a host in hosts/ would read what is not its own, or "": a setting of one network the shared
-    files set and it does not, a token under the other vault's name."""
+def _what_a_run_reads(layout: hosts.Layout, host: hosts.Host, opts, keep: bool) -> str:
+    """Why a run against a host, beside another, would read what is not its own, or "": a setting of one network the
+    shared files set and a host in hosts/ does not, an internal made from the run's host that a settings file sets, a
+    token under the other vault's name."""
     lines = layout.never_inherited(host)
     if lines:
         return (
@@ -117,28 +156,33 @@ def _what_a_run_reads(layout: hosts.Layout, host: hosts.Host, opts) -> str:
             f"network or one host, and {host.local_file} does not: add {'it' if len(lines) == 1 else 'them'} "
             f"there for {host.name}, the value or the setting's default to say none"
         )
-    return _vaults_hold_their_own(layout, host, opts.vault_pass)
+    for file, made in layout.made_from_host(host).items():
+        return (
+            f"{file} sets {', '.join(made)}, which the inventory defaults make from the run's host - where its API is, "
+            "and the secret it is sent - and which a settings file would set for "
+            f"{'every host' if file == hosts.SHARED_LOCAL else host.name} alike: take "
+            f"{'it' if len(made) == 1 else 'them'} out. A host's address is ansible_host in its hosts.yml, and its "
+            f"secret {host.kind.secret_shared} in the shared vault for the first host, {host.kind.secret_host} in its "
+            "own for another"
+        )
+    return _vaults_hold_their_own(layout, host, opts.vault_pass, keep)
 
 
 def every(opts, layout: hosts.Layout) -> int:
-    """Every host, for just status to read each: its name, whether it is the current one, its sources and vaults,
-    and why it cannot be read, if anything does - said in its own block, never refusing the others'. --except leaves
-    one out: a creating deploy asks the others for the names it would make."""
-    try:
-        current = layout.resolve("")
-    except hosts.Refused as refused:
-        return _refuse(str(refused))
+    """Every host, for just status to read each: its name, whether it is the current one, its sources and vaults, the
+    other hosts its run is handed, and why it cannot be read, if anything does - said in its own block, never refusing
+    the others'. --except leaves one out: a creating deploy asks the others for the names it would make. Writes
+    nothing."""
+    current = layout.resolve("")
     out = []
     for host in layout.every():
         if host.name == opts.except_:
             continue
-        problem = host.problem
-        if not problem and not host.first:
-            problem = _what_a_run_reads(layout, host, opts)
+        problem = host.problem or _what_a_run_reads(layout, host, opts, keep=False)
         if not problem:
             for vault in [hosts.SHARED_VAULT] if host.first else [hosts.SHARED_VAULT, host.vault_file]:
                 path = layout._path(vault)
-                if not path.is_file() or not path.read_bytes().startswith(b"$ANSIBLE_VAULT"):
+                if not path.is_file() or not _encrypted(path):
                     problem = (
                         f"{vault} is missing or not encrypted: just vault{'' if host.first else ' --host ' + host.name}"
                     )
@@ -148,6 +192,7 @@ def every(opts, layout: hosts.Layout) -> int:
                 "current": current is not None and host.name == current.name,
                 "sources": host.sources,
                 "vault_files": [opts.vault_file] if host.first else [hosts.SHARED_VAULT, host.vault_file],
+                "extra": {"claude_hosts_other": layout.others_of(host)},
                 "problem": problem,
             }
         )
@@ -162,12 +207,10 @@ def env(opts, layout: hosts.Layout) -> int:
     many = layout.many()
     routed = False
     names = [name for name in opts.names.split(",") if name]
+    origins: dict[str, str] = {}
     if many and names:
         # A VM name is one host's, and its alias records which: a named VM is found where it is.
-        try:
-            origins = layout.origins(names)
-        except hosts.Refused as refused:
-            return _refuse(str(refused))
+        origins = layout.origins(names)
         if given:
             elsewhere = {name: origin for name, origin in origins.items() if origin != given}
             if elsewhere:
@@ -192,28 +235,30 @@ def env(opts, layout: hosts.Layout) -> int:
                     "one host: run each host's on its own, with --host"
                 )
             given, routed = (on[0], True) if on else ("", False)
-    try:
-        # One host, and none asked for: nothing to choose, and nothing read - the run is as it always was.
-        host = layout.resolve(given, opts.lenient) if given or many or layout.current_name() else None
-    except hosts.Refused as refused:
-        return _refuse(str(refused))
+    # One host, and none asked for: nothing to choose, and nothing read - the run is as it always was.
+    host = layout.resolve(given, opts.lenient) if given or many or layout.current_name() else None
     overlay = host is not None and not host.first
     sources = ",".join(host.sources) if overlay else ""
-    exported = os.environ.get("ANSIBLE_INVENTORY")
-    if overlay and exported is not None and exported != sources:
-        why = "--host" if opts.host else "the VMs named" if routed else f"{layout.hosts_rel}/current"
-        return _refuse(
-            f"ANSIBLE_INVENTORY is exported, and this run's host is {host.name} ({why}), whose inventory is "
-            f"{sources}: one inventory per run. Unset it to reach {host.name}, or run against the first host"
-        )
+    if many:
+        first = layout.first()
+        if first is not None and first.problem:
+            return _refuse(f"the first host: {first.problem}")
+        # A run's inventory is its host's, given as -i: an exported one would be the run's instead wherever none is
+        # given - every run against the first host - and a host's sources a variable left exported could carry into
+        # a later run against another, titled for it.
+        if os.environ.get("ANSIBLE_INVENTORY"):
+            return _refuse(
+                f"ANSIBLE_INVENTORY is exported, and this checkout has more than one host: each run reads its host's "
+                f"own inventory, {host.name}'s here, and nothing else. Unset it"
+            )
     if overlay:
         if opts.vault_file != hosts.DEFAULT_VAULT or " ".join(opts.settings_files.split()) != hosts.DEFAULT_SETTINGS:
             return _refuse(
                 f"VAULT_FILE and SETTINGS_FILES name the first host's files, and this run's host is {host.name}: give "
                 "them only for a run against the first host"
             )
-    if overlay and not opts.lenient:
-        why = _what_a_run_reads(layout, host, opts)
+    if many and not opts.lenient:
+        why = _what_a_run_reads(layout, host, opts, keep=not opts.read_only)
         if why:
             return _refuse(why)
     others = layout.others_of(host) if many else []
@@ -227,6 +272,21 @@ def env(opts, layout: hosts.Layout) -> int:
         vaults = [hosts.SHARED_VAULT, host.vault_file]
     else:
         settings, vaults = opts.settings_files.split(), [opts.vault_file]
+    if routed:
+        # Said where it is not the host the person would take it for: the run's title and a deletion's question name it
+        # too.
+        try:
+            current = layout.resolve("")
+        except hosts.Refused:
+            current = None
+        if current is not None and current.name != host.name:
+            placed = sorted(origins)
+            print(
+                f"{', '.join(placed)} {'is' if len(placed) == 1 else 'are'} {host.name}'s, as "
+                f"{'its' if len(placed) == 1 else 'their'} SSH alias records: this run is against {host.name}, not the "
+                f"current host, {current.name}.",
+                file=sys.stderr,
+            )
     values = {
         "host": host.name if host else "",
         "hosts_many": "1" if many else "",
@@ -234,14 +294,11 @@ def env(opts, layout: hosts.Layout) -> int:
         "vault_files": " ".join(vaults),
         "host_sources": sources,
         "host_extra": json.dumps({"claude_hosts_other": others}) if many else "",
-        # Whether the VMs named chose the host, their aliases recording it: a creating deploy that they did not asks
-        # the other hosts for the names first.
-        "host_routed": "1" if routed else "",
+        # The VMs named that no alias places on one of the hosts: a creating deploy asks the other hosts for these.
+        "host_unplaced": ",".join(name for name in names if name not in origins) if many else "",
     }
     for name, value in values.items():
         print(f"{name}={shlex.quote(value)}")
-    if overlay:
-        print(f"ANSIBLE_INVENTORY={shlex.quote(sources)}; export ANSIBLE_INVENTORY")
     return 0
 
 
@@ -257,19 +314,43 @@ def init(opts, layout: hosts.Layout) -> int:
     name = opts.name
     # One kind of host so far: the first host's, and every new one's.
     (kind,) = hosts.KINDS.values()
-    if not name:
+    # The current host's, as every command's: the first's until another is chosen - read only where hosts/current
+    # names one, so that a bare just init of one host reads nothing, as before there were hosts.
+    current = "" if name else layout.current_name()
+    if not name and not current:
         return _first_host_init(kind)
     first = layout.first()
+    folders = layout.folders()
+    if not name:
+        if first is not None and current == first.name:
+            return _first_host_init(kind)
+        if current not in folders:
+            return _refuse(
+                f"{layout.hosts_rel}/current names {current}, which is no host of this checkout's: just host <name> "
+                "chooses another"
+            )
+        name = current
+    elif first is not None and name == first.name:
+        if not folders and not opts.address:
+            return _refuse(
+                f"--host names a host from 2.4, and with no other host here, {name} may be 2.3's address of the "
+                f"Proxmox host: give that as --address {name}. {name} is the name of this checkout's one host, which "
+                "just init alone sets up"
+            )
+        return _first_host_init(kind)
+    if opts.shared:
+        # Every host's, in the shared files, which the first host's init writes.
+        return _refuse(
+            f"the GitHub account and the VPN are every host's, in the shared files, and this init is {name}'s: give "
+            f"--github-user and --tailscale to just init{' --host ' + first.name if first is not None else ''}"
+        )
     if first is None:
         return _refuse(
-            f"{hosts.SHARED_HOSTS} names no host yet: just init sets up the first one there, then just init --host "
-            f"{name} another"
+            f"{hosts.SHARED_HOSTS} names no host yet: just init sets up the first one there - given as --address "
+            f"{name}, if {name} is its address - then just init --host <name> another"
         )
-    if name == first.name:
-        return _first_host_init(kind)
     if name in hosts.RESERVED:
         return _refuse(f"{name} is no host's name: never {', '.join(sorted(hosts.RESERVED))}")
-    folders = layout.folders()
     if name not in folders and not opts.address:
         if not folders:
             return _refuse(
@@ -282,7 +363,29 @@ def init(opts, layout: hosts.Layout) -> int:
                 f"{name} is no host of this checkout's yet, and there is no terminal to ask its address at: "
                 f"just init --host {name} --address <address>"
             )
+    if first.problem:
+        return _refuse(f"the first host: {first.problem}")
+    exported = next((variable for variable in SECRET_VARIABLES if os.environ.get(variable)), "")
+    if exported and not opts.secret_file:
+        # The first deploy's guide exports it for the first host: left in the shell, it would be written to this
+        # host's vault and sent to its API as this host's.
+        return _refuse(
+            f"{exported} is exported, and this init is {name}'s, whose token is its own: unset it, and give {name}'s "
+            f"secret in a file only you can read, just init --host {name} --token-secret-file <file>"
+        )
     host = hosts.Host(name=name, folder=f"{layout.hosts_rel}/{name}", first=False, kind=kind)
+    if (
+        _encrypted(layout.checkout / hosts.SHARED_VAULT)
+        and not _password_files(opts.vault_pass)
+        and not _encrypted(layout._path(host.vault_file))
+    ):
+        # just init would make .vault_pass anew for the host's vault, which then opens neither the shared one nor any
+        # run that reads both.
+        return _refuse(
+            f"{hosts.SHARED_VAULT} is encrypted, and there is no {Path(opts.vault_pass).name or '.vault_pass'} or "
+            f"ANSIBLE_VAULT_PASSWORD_FILE to open it with: {name}'s vault is encrypted with the same password, so put "
+            "it in a file only you can read, named by ANSIBLE_VAULT_PASSWORD_FILE or as .vault_pass, first"
+        )
     made = []
     for file in (host.hosts_file, host.local_file, host.vault_file):
         path = layout._path(file)
@@ -306,6 +409,8 @@ def init(opts, layout: hosts.Layout) -> int:
             "secret": kind.secret_host,
             "always": list(kind.always),
             "default_vm": f"{name}-default",
+            # Whether it is the current host already, as a bare just init's is: then no switch is offered.
+            "current": layout.current_name() == name,
             "hosts_said": host.hosts_file,
             "local_said": host.local_file,
             "vault_said": host.vault_file,
@@ -320,11 +425,10 @@ def init(opts, layout: hosts.Layout) -> int:
 
 
 def current(opts, layout: hosts.Layout) -> int:
-    """The current host's name, "" with one host and none chosen: what just init asks before it offers a switch."""
-    try:
-        print(layout.current_name())
-    except hosts.Refused as refused:
-        return _refuse(str(refused))
+    """The current host's name - the one hosts/current names, else the first's - "" with no host at all: what just init
+    asks before it offers a switch."""
+    host = layout.resolve("")
+    print(host.name if host else "")
     return 0
 
 
@@ -342,7 +446,11 @@ def listing(opts, layout: hosts.Layout) -> int:
         every = layout.every()
         current = layout.resolve("") if every else None
     except hosts.Refused as refused:
-        every, current = layout.every(), None
+        try:
+            every = layout.every()
+        except hosts.Refused:
+            every = []
+        current = None
         said = str(refused)
     else:
         said = ""
@@ -366,7 +474,7 @@ def listing(opts, layout: hosts.Layout) -> int:
         print(json.dumps({"current": current.name if current else None, "hosts": rows, "problem": said or None}))
         return 0
     if not rows:
-        print("No host yet: just init sets up the first, in inventory/hosts.yml.")
+        print(f"{said}." if said else "No host yet: just init sets up the first, in inventory/hosts.yml.")
         return 0
     headings = []
     for kind in hosts.KINDS.values():
@@ -395,10 +503,7 @@ def listing(opts, layout: hosts.Layout) -> int:
 
 
 def switch(opts, layout: hosts.Layout) -> int:
-    try:
-        host = layout.switch(opts.name)
-    except hosts.Refused as refused:
-        return _refuse(str(refused))
+    host = layout.switch(opts.name)
     print(f"{host.name} is the current host: every command runs against it, and --host <name> reaches another once.")
     return 0
 
@@ -413,11 +518,7 @@ def remove(opts, layout: hosts.Layout) -> int:
         )
     if name not in layout.folders():
         return _refuse(f"{layout.hosts_rel}/{name} is no host's folder: just host lists them")
-    try:
-        current = layout.current_name()
-    except hosts.Refused as refused:
-        return _refuse(str(refused))
-    if name == current:
+    if name == layout.current_name():
         return _refuse(f"{name} is the current host: switch to another first, just host <name>")
     shutil.rmtree(layout.hosts_dir / name)
     print(
@@ -441,8 +542,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--vault-pass", default="")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--lenient", action="store_true")
+    parser.add_argument("--read-only", action="store_true")
     parser.add_argument("--asking", action="store_true")
     parser.add_argument("--address", default="")
+    # just init's: a value given for the shared files (the GitHub account, the VPN), and the token secret's file.
+    parser.add_argument("--shared", action="store_true")
+    parser.add_argument("--secret-file", action="store_true")
     parser.add_argument("--except", dest="except_", default="")
     opts = parser.parse_args(argv)
     for value in (opts.host, opts.nested, opts.name):
@@ -455,7 +560,12 @@ def main(argv: list[str]) -> int:
     action = {**actions, "every": every}[opts.action]
     if opts.action in ("switch", "remove") and not opts.name:
         return _refuse(f"just host {'--remove ' if opts.action == 'remove' else ''}takes the host's name")
-    return action(opts, layout)
+    try:
+        return action(opts, layout)
+    except hosts.Refused as refused:
+        # Whatever the files say that keeps the hosts from being read - a file that is not YAML, hosts/current naming
+        # no host - is said as the recipe's error, never a traceback.
+        return _refuse(str(refused))
 
 
 if __name__ == "__main__":

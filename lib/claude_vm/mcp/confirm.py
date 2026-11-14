@@ -69,11 +69,11 @@ def destroy_message(names: list[str], report: dict, typed: str, host: str = "") 
     return "\n".join(lines)
 
 
-def setting_message(name: str, current: str, new: str, typed: str) -> str:
-    """The setting's dialog: the setting, its value now and the one it would have, and what to type - all in the first
-    lines, which Claude Code shows unfolded."""
+def setting_message(name: str, current: str, new: str, typed: str, where: str = "local.yml") -> str:
+    """The setting's dialog: the setting, the file it is written in, its value there now and the one it would have, and
+    what to type - all in the first lines, which Claude Code shows unfolded."""
     return (
-        f"This changes {name} in local.yml, for every run from now on: now {one_line(current, 120) or '(its default)'},"
+        f"This changes {name} in {where}, for every run from now on: now {one_line(current, 120) or '(its default)'},"
         f" new {one_line(new, 120) or '(its default)'}.\n"
         f"To change it, type: {typed}"
     )

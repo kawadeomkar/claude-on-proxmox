@@ -111,8 +111,8 @@ PROXMOX_ELSEWHERE = {
     "lib/claude_vm/refs.py": 3,
     "lib/claude_vm/run/model.py": 4,
     # The kinds of host, as literal data, each naming its own settings once by design: the resolver, just host and just
-    # status read them there.
-    "lib/claude_vm/hosts/kinds.py": 5,
+    # status read them there. With them, the internals made from the run's host that no settings file may set.
+    "lib/claude_vm/hosts/kinds.py": 10,
     "lib/claude_vm/status/engine.py": 16,
     "lib/claude_vm/status/model.py": 18,
     "lib/claude_vm/status/settings.py": 5,

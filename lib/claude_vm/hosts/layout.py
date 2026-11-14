@@ -38,6 +38,13 @@ class Refused(Exception):
     """What the resolver will not do, said as the recipe's error."""
 
 
+def name_refusal(name: str) -> str:
+    """Why ``name`` can be no host's name, or "": the rule every --host, folder and hosts/current is held to."""
+    if NAME.fullmatch(name) and name not in RESERVED:
+        return ""
+    return f"a host's name is lowercase letters, digits and -, at most 31, and never {', '.join(sorted(RESERVED))}"
+
+
 class _Loader:
     """YAML as Ansible writes it: a tag such as !vault is a value, never a key, and read as None."""
 
@@ -169,6 +176,9 @@ class Layout:
         kind, names = found
         values = _hosts_of(data).get(names[0], {})
         local = _yaml(self.checkout / SHARED_LOCAL)
+        # Its name as the inventory gives it, which a second host's runs say as --host <name>: held to the rule beside
+        # another host, and nothing with one host alone, which no command names.
+        why = name_refusal(names[0])
         return Host(
             name=names[0],
             folder=SHARED,
@@ -176,6 +186,10 @@ class Layout:
             kind=kind,
             address=str(values.get("ansible_host") or names[0]),
             local=local if isinstance(local, dict) else {},
+            problem=f"{SHARED_HOSTS} names it {names[0]}, and {why}: rename it there, its address staying its "
+            "ansible_host, to have another host beside it"
+            if why
+            else "",
         )
 
     def folders(self) -> list[str]:
@@ -199,9 +213,23 @@ class Layout:
         if first is not None and first.name == name:
             host.problem = f"{self.hosts_rel}/{name} has the name of the host in {SHARED_HOSTS}: rename the folder"
             return host
-        data = _yaml(self._path(host.hosts_file))
+        # A file of its that is not YAML costs this host alone: said in its place, as any other reason it is unusable.
+        try:
+            data = _yaml(self._path(host.hosts_file))
+            local = _yaml(self._path(host.local_file))
+        except Refused as refused:
+            host.problem = str(refused)
+            return host
         if data is None:
             host.problem = f"not set up: just init --host {name}"
+            return host
+        strays = self._strays(host)
+        if strays:
+            host.problem = (
+                f"{host.folder}/ holds {', '.join(strays)} beside hosts.yml, and Ansible reads every inventory file in "
+                f"a host's folder: any host there would be this run's too. Move {'it' if len(strays) == 1 else 'them'} "
+                "out of the folder"
+            )
             return host
         found = _kind_of(data)
         defined = sorted(_hosts_of(data))
@@ -218,7 +246,6 @@ class Layout:
             host.problem = f"{host.hosts_file} gives {name} no ansible_host, its address: just init --host {name}"
             return host
         host.address = str(values["ansible_host"])
-        local = _yaml(self._path(host.local_file))
         host.local = local if isinstance(local, dict) else {}
         missing = [setting for setting in host.kind.always if host.local.get(setting) in (None, "")]
         if missing:
@@ -228,6 +255,22 @@ class Layout:
                 f"take {SHARED_LOCAL}'s: just init --host {name} writes them"
             )
         return host
+
+    def _strays(self, host: Host) -> list[str]:
+        """What in a host's folder Ansible would read as inventory beside its hosts.yml: a YAML or JSON file - the
+        extensions the yaml plugin takes, the one ansible.cfg enables - or a folder, which it reads through, but for
+        group_vars and host_vars."""
+        try:
+            entries = sorted(os.scandir(self._path(host.folder)), key=lambda entry: entry.name)
+        except OSError:
+            return []
+        return [
+            f"{entry.name}{'/' if entry.is_dir() else ''}"
+            for entry in entries
+            if entry.name != "hosts.yml"
+            and not (entry.name in ("group_vars", "host_vars") and entry.is_dir())
+            and (entry.is_dir() or os.path.splitext(entry.name)[1] in (".yml", ".yaml", ".json"))
+        ]
 
     def others(self) -> list[Host]:
         return [self.other(name) for name in self.folders()]
@@ -344,6 +387,20 @@ class Layout:
         shared = shared if isinstance(shared, dict) else {}
         return [name for name in host.kind.never_inherited if name in shared and name not in host.local]
 
+    def made_from_host(self, host: Host) -> dict[str, list[str]]:
+        """Of the internals the inventory defaults make from the run's host, those a local.yml the run reads sets, by
+        file: the shared one, and a host's own."""
+        if host.kind is None:
+            return {}
+        files = [SHARED_LOCAL] if host.first else [SHARED_LOCAL, host.local_file]
+        found = {}
+        for file in files:
+            values = _yaml(self._path(file))
+            names = [name for name in host.kind.from_host if isinstance(values, dict) and name in values]
+            if names:
+                found[file] = names
+        return found
+
     # ------------------------------------------------------------------------------------------- writing ----
 
     def switch(self, name: str) -> Host:
@@ -358,9 +415,33 @@ class Layout:
         return host
 
 
+# What each password script said in this run: run once, as it may ask a person.
+_said: dict[str, bytes] = {}
+
+
+def _password(path: str) -> bytes | None:
+    """A password file's password, as Ansible reads one: an executable file is run, its standard input and error left to
+    it so that it can ask, and says it on its output. None for a vault client script, which takes a vault ID Ansible
+    alone knows, or a script that fails."""
+    if not (os.access(path, os.X_OK) and not os.path.isdir(path)):
+        return Path(path).read_bytes().strip()
+    if Path(path).stem.endswith("-client"):
+        return None
+    whole = os.path.abspath(path)
+    if whole not in _said:
+        import subprocess
+
+        try:
+            _said[whole] = subprocess.run([whole], stdout=subprocess.PIPE, check=True).stdout.strip(b"\r\n")
+        except (OSError, subprocess.SubprocessError):
+            return None
+    return _said[whole]
+
+
 def vault_names(path: Path, password_files: list[str]) -> set[str] | None:
     """The names a vault file sets, never its values: decrypted in memory with the first password file that opens it,
-    as Ansible opens it. None where it cannot be read or opened here - Ansible says why when the run reads it."""
+    as Ansible opens it, a password script run as Ansible runs it. None where it cannot be read or opened here - a
+    vault ID's password, a client script's - which the caller says."""
     try:
         data = path.read_bytes()
     except OSError:
@@ -370,11 +451,11 @@ def vault_names(path: Path, password_files: list[str]) -> set[str] | None:
 
         for password_file in password_files:
             try:
-                password = Path(password_file).read_bytes().strip()
+                password = _password(password_file)
             except OSError:
                 continue
-            if os.access(password_file, os.X_OK):
-                return None  # a script, which may ask: left to Ansible
+            if password is None:
+                continue
             try:
                 data = VaultLib([("default", VaultSecret(password))]).decrypt(data)
                 break

@@ -2,12 +2,14 @@
 the rule in the inventory defaults that sends each host its own token.
 
 A host is an inventory source laid over the shared one: the first stays in inventory/, each other is a folder of its
-own under hosts/, and a run against it gets ANSIBLE_INVENTORY=inventory/controller.yml,hosts/<name>. Everything here
-runs against made-up layouts in tmp_path, with fake secrets only:
+own under hosts/, and a run against it gets -i inventory/controller.yml -i hosts/<name>. Everything here runs against
+made-up layouts in tmp_path, with fake secrets only:
 
-- the resolver: which host a run gets, and every refusal - a host not set up, a bad name, hosts/current naming no
-  host, an exported ANSIBLE_INVENTORY, a host without a setting each host sets for itself, a setting of one network
-  the shared files set and the host's do not, a token under the wrong name in either vault;
+- the resolver: which host a run gets, and every refusal - a host not set up, a bad name, the first host's among them,
+  hosts/current naming no host, an exported ANSIBLE_INVENTORY beside more than one host, a host without a setting
+  each host sets for itself, a setting of one network the shared files set and the host's do not, an internal made
+  from the run's host that a settings file sets, a token under the wrong name in either vault, a file that is not
+  YAML or a stray inventory file in a host's folder;
 - the token rule, through ansible-playbook itself: the right secret per host however the sources are spelt, and a
   host whose vault has none failing undefined, before anything - never sent the first host's.
 """
@@ -16,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -117,7 +120,7 @@ def _resolve(root: Path, *args: str, env: dict | None = None) -> dict[str, str]:
     """What env prints for a recipe to eval, as the values the shell would set."""
     said = _tool(root, "env", f"--vault-pass={root / '.vault_pass'}", *args, env=env)
     assert said.returncode == 0, said.stderr
-    names = "host hosts_many settings_files vault_files host_sources host_extra"
+    names = "host hosts_many settings_files vault_files host_sources host_extra host_unplaced"
     script = (
         f'{said.stdout}\nfor v in {names}; do eval "printf \'%s=%s\\\\n\' \\"\\$v\\" \\"\\${{$v}}\\""; done\n'
         'printf "inventory=%s\\n" "${ANSIBLE_INVENTORY-unset}"'
@@ -167,7 +170,9 @@ def test_a_host_in_hosts_is_an_inventory_source_over_the_shared_one(tmp_path: Pa
     _host(root, "nuc")
     got = _resolve(root, "--host=nuc")
     assert got["host"] == "nuc" and got["hosts_many"] == "1"
-    assert got["host_sources"] == "inventory/controller.yml,hosts/nuc" == got["inventory"]
+    # Its sources, which the recipe gives the run as -i: never exported, which every program the run starts would
+    # inherit.
+    assert got["host_sources"] == "inventory/controller.yml,hosts/nuc" and got["inventory"] == "unset"
     assert got["vault_files"] == "inventory/group_vars/all/vault.yml hosts/nuc/group_vars/all/vault.yml"
     assert got["settings_files"] == (
         "inventory/group_vars/all/local.yml hosts/nuc/hosts.yml hosts/nuc/group_vars/all/local.yml"
@@ -188,11 +193,10 @@ def test_the_current_host_is_hosts_current_and_the_first_without_it(tmp_path: Pa
     assert _resolve(root, "--host=pve")["host"] == "pve"
 
 
-def test_a_nested_recipe_runs_against_its_parents_host_and_takes_its_inventory_for_its_own(tmp_path: Path) -> None:
+def test_a_nested_recipe_runs_against_its_parents_host(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
     _host(root, "nuc")
-    sources = "inventory/controller.yml,hosts/nuc"
-    assert _resolve(root, "--nested=nuc", env={"ANSIBLE_INVENTORY": sources})["host"] == "nuc"
+    assert _resolve(root, "--nested=nuc")["host"] == "nuc"
     said = _refused(root, "--nested=nuc", "--host=pve")
     assert "--host pve in a run against nuc: one host per run" in said
 
@@ -261,13 +265,15 @@ def test_a_setting_of_one_network_the_shared_files_set_is_never_inherited(tmp_pa
     assert _resolve(root, "--host=lab")["host"] == "lab"
 
 
-def test_an_exported_inventory_is_left_alone_for_the_first_host_and_refused_for_another(tmp_path: Path) -> None:
+def test_an_exported_inventory_is_left_alone_with_one_host_and_refused_beside_more(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
-    _host(root, "nuc")
-    left = _tool(root, "env", env={"ANSIBLE_INVENTORY": "/somewhere/else"})
+    left = _tool(root, "env", "--host=pve", env={"ANSIBLE_INVENTORY": "/somewhere/else"})
     assert left.returncode == 0 and "ANSIBLE_INVENTORY" not in left.stdout
-    said = _refused(root, "--host=nuc", env={"ANSIBLE_INVENTORY": "/somewhere/else"})
-    assert "ANSIBLE_INVENTORY is exported, and this run's host is nuc (--host)" in said
+    _host(root, "nuc")
+    # The first host's run too, which no -i is given: one a run against nuc left exported would be its inventory.
+    for args in (["--host=nuc"], ["--host=pve"], []):
+        said = _refused(root, *args, env={"ANSIBLE_INVENTORY": "inventory/controller.yml,hosts/nuc"})
+        assert "ANSIBLE_INVENTORY is exported, and this checkout has more than one host" in said
 
 
 def test_the_first_hosts_files_given_beside_another_host_are_refused(tmp_path: Path) -> None:
@@ -319,6 +325,125 @@ def test_a_vault_check_that_passed_is_kept_until_a_vault_changes(tmp_path: Path)
     # A vault rewritten with the wrong name: its size and time change, and it is read again.
     _encrypt(root / "hosts" / "nuc" / "group_vars" / "all" / "vault.yml", {"vault_proxmox_api_token_secret": "x"}, root)
     assert "the first host's name" in _refused(root, "--host=nuc")
+
+
+def test_status_keeps_no_check(tmp_path: Path) -> None:
+    # just status writes only into .cache/status/: it checks the vaults as every run does, and keeps nothing.
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    assert _resolve(root, "--host=nuc", "--read-only")["host"] == "nuc"
+    every = _tool(root, "every", f"--vault-pass={root / '.vault_pass'}")
+    assert every.returncode == 0, every.stderr
+    assert not (root / "hosts" / ".checked.json").exists()
+
+
+def test_a_password_script_opens_the_vaults_for_the_check_and_one_no_password_here_opens_is_said(
+    tmp_path: Path,
+) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "nuc", vault={"vault_proxmox_api_token_secret": NUC_SECRET})
+    # Run as Ansible runs one: what it prints is the password.
+    script = root / "vault-pass.sh"
+    script.write_text(f"#!/bin/sh\necho {PASSWORD}\n")
+    script.chmod(0o700)
+    said = _tool(root, "env", f"--vault-pass={script}", "--host=nuc")
+    assert said.returncode == 1 and "the first host's name for its secret" in said.stderr
+    # A client script takes a vault ID only Ansible knows: the run goes on, the check said not made.
+    client = root / "vault-client.sh"
+    client.write_text(f"#!/bin/sh\necho {PASSWORD}\n")
+    client.chmod(0o700)
+    said = _tool(root, "env", f"--vault-pass={client}", "--host=nuc")
+    assert said.returncode == 0, said.stderr
+    assert "could not be opened here" in said.stderr and NUC_SECRET not in said.stderr
+    assert not (root / "hosts" / ".checked.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("where", "values", "said"),
+    [
+        (
+            "shared",
+            {"proxmox_api_token_secret": "{{ vault_proxmox_api_token_secret }}"},
+            "inventory/group_vars/all/local.yml sets proxmox_api_token_secret",
+        ),
+        (
+            "own",
+            {**ALWAYS, "proxmox_api_host": "192.0.2.10"},
+            "hosts/nuc/group_vars/all/local.yml sets proxmox_api_host",
+        ),
+    ],
+    ids=["shared", "own"],
+)
+def test_an_internal_made_from_the_runs_host_is_refused_in_a_settings_file(
+    tmp_path: Path, where: str, values: dict, said: str
+) -> None:
+    # Set there, it would outrank the rule that sends each host its own token, at its own address.
+    root = _checkout(tmp_path, local=values if where == "shared" else None)
+    _host(root, "nuc", local=values if where == "own" else None)
+    assert said in _refused(root, "--host=nuc")
+    if where == "shared":
+        # The shared files are every host's: a run against the first host is refused as well.
+        assert said in _refused(root, "--host=pve")
+
+
+def test_an_internal_made_from_the_runs_host_is_refused_in_a_vault(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    shared = {"vault_proxmox_api_token_secret": FIRST_SECRET, "proxmox_api_token_secret": FIRST_SECRET}
+    _encrypt(root / "inventory" / "group_vars" / "all" / "vault.yml", shared, root)
+    _host(root, "nuc")
+    said = _refused(root, "--host=nuc")
+    assert "inventory/group_vars/all/vault.yml sets proxmox_api_token_secret" in said
+    assert FIRST_SECRET not in said
+
+
+def test_a_host_whose_files_are_not_yaml_costs_that_host_alone(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    (root / "hosts" / "nuc" / "group_vars" / "all" / "local.yml").write_text("proxmox_node: [\n")
+    said = _refused(root, "--host=nuc")
+    assert "hosts/nuc/group_vars/all/local.yml is not YAML at line" in said and "Traceback" not in said
+    # The other hosts' runs go on, and status reads them, nuc a block of its own.
+    assert _resolve(root, "--host=pve")["host"] == "pve"
+    every = _tool(root, "every", f"--vault-pass={root / '.vault_pass'}")
+    assert every.returncode == 0, every.stderr
+    assert "is not YAML" in next(one for one in json.loads(every.stdout) if one["name"] == "nuc")["problem"]
+    # The first host's: said, never a traceback.
+    (root / "inventory" / "hosts.yml").write_text("all: [\n")
+    for action in (["env"], ["every"], ["list"], ["current"]):
+        done = _tool(root, *action, f"--vault-pass={root / '.vault_pass'}")
+        assert "Traceback" not in done.stderr, done.stderr
+    said = _refused(root)
+    assert "inventory/hosts.yml is not YAML" in said
+
+
+def test_an_inventory_file_beside_a_hosts_yml_is_refused(tmp_path: Path) -> None:
+    # Ansible reads every inventory file in a host's folder: a proxmox host in another would be sent the host's secret.
+    root = _checkout(tmp_path)
+    folder = _host(root, "nuc")
+    (folder / "old.yml").write_text(_hosts_yml("pve", "192.0.2.10"))
+    (folder / "notes.txt").write_text("no inventory: the yaml plugin reads no .txt\n")
+    (folder / "hosts.yml.bak").write_text("skipped: the inventory ignores a .bak\n")
+    said = _refused(root, "--host=nuc")
+    assert "hosts/nuc/ holds old.yml beside hosts.yml" in said
+    (folder / "old.yml").unlink()
+    (folder / "old").mkdir()
+    assert "hosts/nuc/ holds old/ beside hosts.yml" in _refused(root, "--host=nuc")
+    (folder / "old").rmdir()
+    assert _resolve(root, "--host=nuc")["host"] == "nuc"
+
+
+@pytest.mark.parametrize("name", ["PVE", "pve.lan"])
+def test_the_first_hosts_name_is_held_to_the_rule_once_there_is_another(tmp_path: Path, name: str) -> None:
+    root = _checkout(tmp_path)
+    (root / "inventory" / "hosts.yml").write_text(_hosts_yml(name, "192.0.2.10"))
+    # Alone, nothing names it.
+    assert _resolve(root)["host"] == ""
+    # No second host beside it until it is renamed, its --host lines being refused.
+    refused = _tool(root, "init", "nuc", "--address=192.0.2.20", f"--vault-pass={root / '.vault_pass'}")
+    assert refused.returncode == 1 and f"the first host: inventory/hosts.yml names it {name}" in refused.stderr
+    assert not (root / "hosts" / "nuc").exists()
+    _host(root, "nuc")
+    assert f"the first host: inventory/hosts.yml names it {name}" in _refused(root, "--host=nuc")
 
 
 # ------------------------------------------------------------------------- listing, switching, removing ----
@@ -458,8 +583,6 @@ def test_the_rule_is_one_expression_with_no_variable_of_its_own() -> None:
     rule = defaults["proxmox_api_token_secret"]
     assert "inventory_dir" in rule and "vault_host_proxmox_api_token_secret" in rule
     # Every name it reads is Ansible's own, or one of the two vault names: none a setting could set.
-    import re
-
     names = set(re.findall(r"\b([a-z_][a-z0-9_]*)\b", rule)) - {"if", "not", "or", "else", "default", "trim", "none"}
     assert names == {
         "vault_proxmox_api_token_secret",
@@ -525,8 +648,10 @@ def test_a_run_against_a_host_in_hosts_gets_its_inventory_and_the_others_for_its
     lock = tmp_path / "run.lock"
     result = _just_here(root, "deploy", "--host", "nuc", "alpha", settings=(f"RUN_LOCK={lock}",))
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (tmp_path / "inventory.txt").read_text() == "inventory/controller.yml,hosts/nuc\n"
+    # Its sources as -i, never exported: the editor the run opens would inherit them.
+    assert (tmp_path / "inventory.txt").read_text() == "unset\n"
     (run,) = _runs(tmp_path, "ansible-playbook")
+    assert [run[at + 1] for at, arg in enumerate(run) if arg == "-i"] == ["inventory/controller.yml", "hosts/nuc"]
     others = run[run.index('{"claude_hosts_other": [{"name": "pve", "address": "192.0.2.10"}]}') - 1]
     assert others == "-e"
     # The lock says which host the run is against, with more than one.
@@ -552,7 +677,7 @@ def test_with_one_host_a_run_is_as_it_was(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "inventory.txt").read_text() == "unset\n"
     (run,) = _runs(tmp_path, "ansible-playbook")
-    assert not any("claude_hosts_other" in arg for arg in run)
+    assert not any("claude_hosts_other" in arg for arg in run) and "-i" not in run
     assert lock.read_text().splitlines()[2] == "destroy alpha"
 
 
@@ -763,8 +888,9 @@ def test_a_run_through_an_overlay_asks_its_host_alone_and_its_vms_take_its_setti
 # are pointed at. Never a host made from 2.4's habit, a bare word that was an address.
 
 
-def _init_said(root: Path, *args: str) -> dict:
-    said = _tool(root, "init", *args)
+def _init_said(root: Path, *args: str, env: dict | None = None) -> dict:
+    # The host's name straight after the action, as the recipe gives it: argparse takes no positional after an option.
+    said = _tool(root, "init", *args, f"--vault-pass={root / '.vault_pass'}", env=env)
     assert said.returncode == 0, said.stderr
     values = {}
     for line in said.stdout.splitlines():
@@ -830,11 +956,65 @@ def test_a_host_that_lacks_its_own_settings_is_still_reached_leniently(tmp_path:
 
 
 def test_the_current_host_is_said_for_just_inits_offer(tmp_path: Path) -> None:
-    root = _checkout(tmp_path)
-    assert _tool(root, "current").stdout == "\n"
+    # The one every command runs against: the first host until another is chosen.
+    assert _tool(_checkout(tmp_path / "none", first=False), "current").stdout == "\n"
+    root = _checkout(tmp_path / "one")
+    assert _tool(root, "current").stdout == "pve\n"
     _host(root, "nuc")
     (root / "hosts" / "current").write_text("nuc\n")
     assert _tool(root, "current").stdout == "nuc\n"
+
+
+def test_a_bare_init_sets_up_the_current_host(tmp_path: Path) -> None:
+    # As every command runs against it: the first host's until another is chosen.
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    assert json.loads(_init_said(root)["init_host_json"])["init_host"]["name"] == ""
+    (root / "hosts" / "current").write_text("nuc\n")
+    said = json.loads(_init_said(root)["init_host_json"])["init_host"]
+    assert said["name"] == "nuc" and said["current"] is True
+    assert json.loads(_init_said(root, "pve")["init_host_json"])["init_host"]["name"] == ""
+    (root / "hosts" / "current").write_text("gone\n")
+    refused = _tool(root, "init", f"--vault-pass={root / '.vault_pass'}")
+    assert refused.returncode == 1 and "hosts/current names gone, which is no host of this checkout's" in refused.stderr
+
+
+def test_the_one_hosts_name_alone_may_be_2_4_s_address_and_stops(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    refused = _tool(root, "init", "pve", f"--vault-pass={root / '.vault_pass'}", "--asking")
+    assert refused.returncode == 1 and "give that as --address pve" in refused.stderr
+    assert not (root / "hosts" / "current").exists()
+    # With the address, it is the first host's init, as with another host beside it.
+    assert json.loads(_init_said(root, "pve", "--address=192.0.2.10")["init_host_json"])["init_host"]["name"] == ""
+    _host(root, "lab")
+    assert json.loads(_init_said(root, "pve")["init_host_json"])["init_host"]["name"] == ""
+
+
+def test_another_hosts_init_takes_neither_the_shared_settings_nor_an_exported_secret(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    shared = _tool(root, "init", "nuc", "--shared", f"--vault-pass={root / '.vault_pass'}")
+    assert shared.returncode == 1 and "give --github-user and --tailscale to just init --host pve" in shared.stderr
+    assert json.loads(_init_said(root, "pve", "--shared")["init_host_json"])["init_host"]["name"] == ""
+    # A secret exported for the first host, left in the shell: never written to nuc's vault, or sent to its API.
+    for variable in ("AGENT_WAREHOUSE_TOKEN_SECRET", "CLAUDE_ON_PROXMOX_TOKEN_SECRET"):
+        exported = _tool(root, "init", "nuc", f"--vault-pass={root / '.vault_pass'}", env={variable: FIRST_SECRET})
+        assert exported.returncode == 1 and f"{variable} is exported, and this init is nuc's" in exported.stderr
+        assert FIRST_SECRET not in exported.stderr
+    # Given a file, the file is read, and the exported one never.
+    assert _init_said(root, "nuc", "--secret-file", env={"AGENT_WAREHOUSE_TOKEN_SECRET": FIRST_SECRET})
+    # The first host's init reads it, as it always has.
+    assert _init_said(root, env={"AGENT_WAREHOUSE_TOKEN_SECRET": FIRST_SECRET})
+
+
+def test_a_host_is_never_set_up_with_a_password_that_does_not_open_the_shared_vault(tmp_path: Path) -> None:
+    # The shared vault encrypted with a password typed at ansible-vault: just init would make .vault_pass anew.
+    root = _checkout(tmp_path)
+    (root / ".vault_pass").unlink()
+    refused = _tool(root, "init", "nuc", "--address=192.0.2.20", f"--vault-pass={root / '.vault_pass'}")
+    assert refused.returncode == 1
+    assert "is encrypted, and there is no .vault_pass or ANSIBLE_VAULT_PASSWORD_FILE" in refused.stderr
+    assert not (root / "hosts" / "nuc").exists()
 
 
 # ---------------------------------------------------------------------------------------- a named VM's host ----
@@ -876,6 +1056,23 @@ def test_names_on_two_hosts_are_one_run_too_many(tmp_path: Path) -> None:
     assert "the VMs named are on 2 hosts (alpha on nuc; beta on pve)" in said
 
 
+def test_a_run_a_vms_alias_sends_to_another_host_says_so_and_names_what_no_alias_places(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    _aliases(root, alpha="nuc", beta="pve")
+    said = _tool(root, "env", f"--vault-pass={root / '.vault_pass'}", "--names=alpha,newvm")
+    assert said.returncode == 0, said.stderr
+    assert "alpha is nuc's, as its SSH alias records: this run is against nuc, not the current host, pve." in (
+        said.stderr
+    )
+    # The names a creating deploy asks the other hosts about: those no alias places.
+    assert _resolve(root, "--names=alpha,newvm")["host_unplaced"] == "newvm"
+    # On the current host already: nothing to say, and nothing to ask.
+    quiet = _tool(root, "env", f"--vault-pass={root / '.vault_pass'}", "--names=beta")
+    assert quiet.returncode == 0 and quiet.stderr == "", quiet.stderr
+    assert _resolve(root, "--names=beta")["host_unplaced"] == ""
+
+
 def test_host_given_beside_a_name_another_host_has_reaches_its_own_vm_of_the_name_and_says_so(
     tmp_path: Path,
 ) -> None:
@@ -910,8 +1107,12 @@ def test_a_recipe_given_a_vm_another_host_has_runs_against_that_host(tmp_path: P
     _aliases(root, alpha="nuc")
     result = _just_here(root, "login", "alpha")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (tmp_path / "inventory.txt").read_text() == "inventory/controller.yml,hosts/nuc\n"
-    assert len(_runs(tmp_path, "ansible-playbook")) == 1
+    (run,) = _runs(tmp_path, "ansible-playbook")
+    assert [run[at + 1] for at, arg in enumerate(run) if arg == "-i"] == ["inventory/controller.yml", "hosts/nuc"]
+    # Said, since the current host is another: alpha is nuc's.
+    assert "alpha is nuc's, as its SSH alias records: this run is against nuc, not the current host, pve." in (
+        result.stderr
+    )
 
 
 def test_status_with_more_than_one_host_reads_every_host(tmp_path: Path) -> None:
@@ -986,6 +1187,20 @@ def test_a_deploy_of_a_vm_an_alias_places_or_of_the_fleet_asks_no_other_host(tmp
         result = _just_here(root, "deploy", *args)
         assert result.returncode == 0, result.stderr
     assert _runs(tmp_path, "python") == []
+
+
+def test_a_deploy_asks_the_other_hosts_for_each_name_no_alias_places_beside_one_that_does(tmp_path: Path) -> None:
+    # alpha's alias sends the run to the first host; newvm, which no alias places, may still be another host's.
+    from test_justfile import _runs
+
+    root = _checkout_copy(tmp_path)
+    _host_copy(root, "nuc")
+    _aliases(root, alpha="pve")
+    _status_says(tmp_path, "taken newvm nuc")
+    refused = _just_here(root, "deploy", "alpha", "newvm")
+    assert refused.returncode != 0 and "newvm is a VM of nuc already" in refused.stderr
+    (asked,) = _runs(tmp_path, "python")
+    assert asked[asked.index("--names") + 1] == "newvm"
 
 
 def test_a_runs_host_is_handed_to_its_live_header_with_more_than_one_host(tmp_path: Path) -> None:
@@ -1069,3 +1284,33 @@ def test_no_recipe_resolves_its_host_twice_and_a_part_of_one_is_handed_the_host_
             if ["variable", "self"] in fragments:
                 assert 'nested_host="$host"' in text, name
     assert sorted(resolving) == ["code", "deploy", "destroy", "login", "settings", "status", "vault"]
+
+
+# A just line that names a VM, or a host's own fleet or template, as a run prints it or writes it onto a VM: with more
+# than one host it ends with the host, so that pasted later it reaches that host whichever is current.
+NAMING = re.compile(r"just (?:deploy|login|code|destroy) (?:\{\{|' ~|\" ~|--only (?:ssh-config|template)\b)")
+# What a line ends its host with: claude_host_flag, a role's <role>_host_flag, init's, the editor plan's, the notes' own
+# {{ on }}, or a role's command made with one.
+ENDS = re.compile(r"host_flag|editor_flag|\{\{ on \}\}|_command\b")
+
+
+def test_every_line_that_names_a_vm_names_its_host() -> None:
+    files = [REPO / "deploy.yml", *(REPO / "playbooks").rglob("*.yml"), *(REPO / "playbooks").rglob("*.j2")]
+    files += [path for path in (REPO / "roles").rglob("*.yml") if "molecule" not in path.parts]
+    files += list((REPO / "roles").rglob("*.j2"))
+    missing = []
+    for path in sorted(files):
+        # The list of what the project writes here, which every VM's notes show: what each is, not a line to run.
+        if path == REPO / "playbooks" / "vars" / "controller_writes.yml":
+            continue
+        text = path.read_text()
+        lines = text.splitlines()
+        for found in NAMING.finditer(text):
+            at = text.count("\n", 0, found.start())
+            if lines[at].lstrip().startswith("#"):
+                continue
+            rest = text[found.end() : found.end() + 260]
+            following = re.search(r"\bjust ", rest)
+            if not ENDS.search(rest[: following.start()] if following else rest):
+                missing.append(f"{path.relative_to(REPO)}:{at + 1}")
+    assert missing == [], missing

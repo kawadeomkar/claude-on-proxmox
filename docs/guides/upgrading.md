@@ -21,7 +21,14 @@ host changes nothing, but:
   `--address`, rather than set up a second host by accident.
 - **Each SSH alias records its host** (`# origin: pve` in `~/.ssh/agent-warehouse.conf`). An alias written before
   2.5 has none, and the next write of its VM records it; until then it is the one host's. Before you add a second
-  host, `just deploy --only ssh-config` writes them all again, so a VM you name is found on its own host.
+  host, `just deploy --only ssh-config` writes the alias of every running VM again, so a VM you name is found on its
+  own host; a stopped VM's, and one whose name has a dot, wait for a run that reaches it
+  ([Setting up another host](hosts.md#setting-up-another-host)).
+- **The Proxmox host is defined in `inventory/hosts.yml`.** One an inventory of your own defines elsewhere
+  (`ANSIBLE_INVENTORY=inventory,~/pve/hosts.yml`) is from 2.5 a host of its own, sent the secret its folder's vault
+  holds as `vault_host_proxmox_api_token_secret`, and every run fails, that name undefined, where it has none: move
+  the host into `inventory/hosts.yml`, or set it up as another host with `just init --host`. Beside a second host,
+  an exported `ANSIBLE_INVENTORY` is refused: each run reads its host's own.
 
 ## The project is called agent-warehouse
 

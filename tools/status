@@ -3,7 +3,7 @@
 
     "$bin/python" tools/status [--names <a,b>] [--only <sections>] [--json] [--cache <dir>]
                                [--vault-file <file>]... [--vault-password-file <file>] [-i <inventory>]... [-e <vars>]
-                               [--private-key <file>] [--hosts <json>]
+                               [--private-key <file>] [--host-extra <json>] [--hosts <json>]
 
 The engine (lib/claude_vm/status/engine.py) reads and draws; this says what it was given. -e, -i and --private-key are
 ANSIBLE_ARGS' (or a test's), and any other of those is warned of and ignored: just status runs no playbook.
@@ -36,6 +36,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--vault-password-file", default="")
     parser.add_argument("-i", "--inventory", action="append", default=[])
     parser.add_argument("-e", "--extra-vars", dest="extra", action="append", default=[])
+    # With more than one host, the others' names and addresses, as tools/check host hands them to every run (JSON,
+    # {"claude_hosts_other": [...]}): what the lines said name the run's host by. Unlike -e, the settings are kept.
+    parser.add_argument("--host-extra", default="")
     parser.add_argument("--private-key", "--key-file", dest="private_key", default="")
     parser.add_argument("-J", "--ask-vault-password", "--ask-vault-pass", dest="ask_vault", action="store_true")
     # Every host of the checkout's, as tools/check host every lists them: each read by a child of this one, which

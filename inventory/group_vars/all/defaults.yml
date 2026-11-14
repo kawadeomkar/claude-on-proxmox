@@ -440,9 +440,14 @@ claude_ssh_blocks: >-
       or (lookup('ansible.builtin.file', claude_ssh_config_legacy_file, errors='ignore')
           if claude_ssh_config_legacy_file | length > 0 else '')
       or '') | ssh_config_blocks }}
-# The VMs whose alias records another host than this run's: theirs to keep,
-# which destroy removes neither the alias nor the <name>.<domain> key of.
-claude_ssh_names_elsewhere: "{{ claude_ssh_blocks | ssh_config_elsewhere(claude_ssh_origin) | map(attribute='name') | list }}"
+# The VMs whose alias records another of the checkout's hosts than this run's:
+# theirs to keep, which destroy removes neither the alias nor the
+# <name>.<domain> key of. A block recording a host the checkout no longer has
+# is no one's, as the alias write takes it: a host renamed in hosts.yml leaves
+# its VMs' blocks recording its old name.
+claude_ssh_names_elsewhere: >-
+  {{ claude_ssh_blocks | ssh_config_elsewhere(claude_ssh_origin, claude_hosts_other | map(attribute='name') | list)
+     | map(attribute='name') | list }}
 claude_ssh_config_include: true
 claude_ssh_host_domain: ""
 claude_ssh_identity_file: ""

@@ -315,7 +315,8 @@
                  ~ ', where just code cannot see it, so make sure none was editing ' ~ code_target ~ '.'
                  if code_session_remote_control.rc | default(1) == 0 else '')
               ~ (' github_projects_update_existing is on, so the next just deploy ' ~ claude_vm_names[0]
-                 ~ ' --only configure switches ' ~ code_target ~ ' back to its default branch.'
+                 ~ ' --only configure' ~ claude_host_flag | default('') ~ ' switches ' ~ code_target
+                 ~ ' back to its default branch.'
                  if github_projects_update_existing | default(false) | bool else '') }}
     # The one VM this play opens, among the tagged ones: claude_vm_names[0].
     # Not claude_vm_requested, which narrows by name only when vm_name is
@@ -347,6 +348,7 @@
     code_later: >-
       {{ claude_vm_names[0] ~ ' is stopped, and this deploy left it so: it was not configured, signed in or opened in'
          ~ ' ' ~ code_editor_name ~ '. To start it and finish the deploy: just deploy ' ~ claude_vm_names[0] ~ ' --start'
+         ~ (claude_host_flag | default(''))
          if code_status | default('') == 'stopped'
          else code_failure ~ ' ' ~ code_editor_name ~ ' was not opened; to open it later: just code ' ~ claude_vm_names[0] ~ code_editor_flag }}
 
@@ -679,11 +681,12 @@
                  if code_close else 'The projects there are: ' ~ code_names | join(', ') ~ '.' }}
               {%- elif code_project and code_root_there | bool -%}
               {{ code_root }} on {{ claude_vm_names[0] }} holds no projects yet.
-              `just deploy {{ claude_vm_names[0] }} --only configure` clones your repositories into it.
+              `just deploy {{ claude_vm_names[0] }} --only configure{{ claude_host_flag | default('') }}` clones your
+              repositories into it.
               {%- else -%}
               {{ code_root }} does not exist on {{ claude_vm_names[0] }} yet: the VM has not been configured,
-              or vm_projects_dir points somewhere else. `just deploy {{ claude_vm_names[0] }} --only configure` creates it and
-              clones your repositories into it.
+              or vm_projects_dir points somewhere else. `just deploy {{ claude_vm_names[0] }} --only
+              configure{{ claude_host_flag | default('') }}` creates it and clones your repositories into it.
               {%- endif -%}
             quiet: true
 

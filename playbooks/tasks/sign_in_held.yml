@@ -25,7 +25,7 @@
     msg: >-
       {{ inventory_hostname }}: {{ claude_vm_sign_in_service }}'s sign-in was not started, since
       {{ 'this run has no terminal to ask at' if claude_vm_login_unasked | bool else 'its Claude sign-in was skipped' }}:
-      just login {{ inventory_hostname }} --only {{ claude_vm_sign_in }} starts it.
+      just login {{ inventory_hostname }} --only {{ claude_vm_sign_in }}{{ claude_host_flag | default('') }} starts it.
   register: claude_vm_sign_in_held_said
   when:
     - claude_vm_login_held | bool or claude_vm_login_unasked | bool

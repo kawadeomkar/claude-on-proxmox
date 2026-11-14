@@ -18,6 +18,7 @@ import os
 import signal
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 from datetime import datetime
@@ -60,6 +61,8 @@ def command(opts, host: dict) -> list[str]:
         argv += ["--vault-file", vault]
     if opts.vault_password_file:
         argv += ["--vault-password-file", opts.vault_password_file]
+    if host.get("extra"):
+        argv += ["--host-extra", json.dumps(host["extra"])]
     for source in host["sources"]:
         argv += ["-i", source]
     for extra in opts.extra:
@@ -108,15 +111,16 @@ class HostsScreen:
         return f"agent-warehouse  {self.now_said()} · {hosts} · {model.plural(vms, 'VM')}"
 
     def block(self, name: str, report: dict | None, color: bool, glyph=None, cols=None) -> str:
-        """One host's part: its report under its own title, what it is still reading, or why it is not read."""
+        """One host's part: its report under its own title, what it is still reading, or why it is not read - wrapped
+        to the report's width when it is printed whole, and cut to the frame's while it is drawn."""
         current = "▸ " if self.hosts[name].get("current") else ""
         problem = self.hosts[name].get("problem")
         if problem:
-            return model.one_line(f"{current}{name} · cannot be read: {problem}", cols or 400)
+            return _said(f"{current}{name} · cannot be read: {problem}", cols)
         if report is None:
             child = self.child(name)
             if child is not None and child.end is not None and child.end.get("failed"):
-                return model.one_line(f"{current}{name} · the read failed: {child.end['failed']}", cols or 400)
+                return _said(f"{current}{name} · the read failed: {child.end['failed']}", cols)
             title = f"{current}{name} · reading Proxmox"
             return status_view.skeleton_text(title, self.sections, color, glyph=glyph, cols=cols)
         titled = {**report, "title": _titled(report, name, current)}
@@ -172,6 +176,14 @@ class HostsScreen:
             self.out.print([(self.text(reports, True) if self.color else plain, plain)])
 
 
+def _said(line: str, cols) -> str:
+    """A host's one line: cut to the frame while it is drawn, wrapped to the report's width once it is printed whole,
+    a report being wrapped, never cut."""
+    if cols:
+        return model.one_line(line, cols)
+    return "\n".join(textwrap.wrap(model.one_line(line, 4000), status_view.WIDTH, break_on_hyphens=False))
+
+
 def _titled(report: dict, name: str, current: str) -> str:
     """A host's report's title, its own: the host's name in place of the run's, which the whole report's title says."""
     title = report.get("title") or ""
@@ -195,9 +207,10 @@ def _ended(children: list[Child]) -> None:
             proc.end(child.process.pid, signum=signal.SIGTERM)
 
 
-def reconcile(reports: dict, blocks: list[dict]) -> None:
+def reconcile(reports: dict, blocks: list[dict], current: str | None = None) -> None:
     """What only every host's listing together shows, added to the hosts' own ATTENTION: an alias recorded for a host
-    whose listing has no VM of that name, and a name two hosts each have a VM of."""
+    whose listing has no VM of that name, one that records no host whose VM no host lists - on ``current``'s - and a
+    name two hosts each have a VM of."""
     listed = {name: {vm.get("name") for vm in report["vms"]} for name, report in reports.items() if report is not None}
     for name, report in reports.items():
         if report is None or report["proxmox"].get("unread") or None in listed[name] or report["settings"]["names"]:
@@ -229,15 +242,25 @@ def reconcile(reports: dict, blocks: list[dict]) -> None:
                         "rename one of them in Proxmox",
                     )
                 )
-    # Each line that says what to run names its host: pasted later, it reaches that host's VM whichever is current.
-    for name, report in reports.items():
-        for item in report["attention"] if report is not None else []:
-            command = item.get("command") or ""
-            if (
-                command.startswith(("just deploy", "just login", "just code", "just destroy"))
-                and "--host" not in command
-            ):
-                item["command"] = f"{command} --host {name}"
+    # An alias that records no host - written before 2.5 - whose VM no host lists: no prune removes it, since any host
+    # could have had it. Said once every host's listing is whole, on the current host's report.
+    whole = all(
+        report is not None and not report["proxmox"].get("unread") and None not in listed[name]
+        for name, report in reports.items()
+    )
+    if whole and current in reports:
+        everywhere = set().union(*listed.values())
+        for block in blocks:
+            if not block["origin"] and block["name"] not in everywhere:
+                reports[current]["attention"].append(
+                    model._item(
+                        "todo",
+                        block["name"],
+                        "its SSH alias records no host, from before 2.5, and no host lists a VM of that name: no "
+                        "prune removes it",
+                        "remove its block from the managed SSH config by hand",
+                    )
+                )
     for report in reports.values():
         if report is not None:
             counts = {level: sum(1 for it in report["attention"] if it["level"] == level) for level in model.LEVELS}
@@ -347,7 +370,7 @@ def run(opts, hosts: list[dict]) -> int:
                     print(f"taken {vm['name']} {name}")
         return 0
     blocks = _blocks(next((child.settings for child in children if child.settings), {}))
-    reconcile(reports, blocks)
+    reconcile(reports, blocks, next((name for name, one in problems.items() if one.get("current")), None))
     screen.finish(reports)
     for child in children:
         for line in child.stderr.strip().splitlines():

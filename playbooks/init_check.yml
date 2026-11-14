@@ -171,7 +171,8 @@
     init_deploy_next: >-
       {{ 'Next: just deploy alpha, which creates a VM named alpha (any name will do).' if init_host_name | length == 0
          else 'Next: just deploy alpha --host ' ~ init_host_name ~ ', which creates a VM named alpha on ' ~ init_host_name
-              ~ ' (any name will do), or just host ' ~ init_host_name ~ ' to make it the current host.' }}
+              ~ (' (any name will do).' if init_host.current | default(false) | bool
+                 else ' (any name will do), or just host ' ~ init_host_name ~ ' to make it the current host.') }}
     # What is left to do, as the report and the failure say it, for NEXT
     # STEPS: each problem with its fix; what could not be checked, when
     # nothing is wrong; otherwise just deploy. A template that renders nothing
@@ -635,8 +636,8 @@
         init_results: >-
           {{ init_results + [{'ok': init_template_bridge | length > 0 and init_lacks | length == 0, 'text':
              ("the template's net0 has no bridge, or its configuration could not be read: every clone inherits"
-              ~ ' that NIC, so its VMs would be unreachable. Rebuild the template (just deploy --only template, after'
-              ~ ' removing it), with proxmox_bridge set')
+              ~ ' that NIC, so its VMs would be unreachable. Rebuild the template (just deploy --only template'
+              ~ init_host_flag ~ ', after removing it), with proxmox_bridge set')
              if init_template_bridge | length == 0 else
              ('bridge ' ~ init_template_bridge ~ ", the template's: the token has SDN.Use on it")
              if init_lacks | length == 0 else

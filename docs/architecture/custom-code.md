@@ -1160,8 +1160,11 @@ of its own its modules name. Why: [§15.6](decisions.md#156-agents-run-the-recip
   (`just host --json`); none switches or removes one. Every run tool takes `host`. `destroy`'s dialog names the host it
   deletes from, and its code holds the host, so an answer for one host's `alpha` is none for another's; the run is
   then given that host, whatever is current by the time it starts (`run_host`: the host given, else where the VMs'
-  aliases place them, else the current one). Every run tool names the host it is against the same way
-  (`with_host`), so the job's title, and every line that shows it, says the host.
+  aliases place them - each name hyphenated, as the justfile takes it - else the current one). Every run tool's job
+  title names its host the same way (`titled_host`), and the title alone: the run is given no `--host` it was not, so
+  it resolves its host as at a terminal, and `init`, whose `--host` is the host it sets up, is given none. With more
+  than one host, `settings_set`'s dialog names the file it writes - a host's own `local.yml` where one is named, else
+  the shared one, every host's - and shows the value there.
 - **`ATTENDED`.** A run tool passes `ATTENDED=1` - the pages open and the sign-ins run, and nothing asks - exactly when
   the session is an interactive one on this machine: Claude Code gives its servers `CLAUDE_CODE_ENTRYPOINT=cli` then,
   `sdk-cli` for `claude -p`, and the server reads `SSH_CONNECTION` from its own environment. `just mcp --attended`
@@ -1239,8 +1242,8 @@ trusted, so a mistake in it can leave a VM less ready, never wrong.
 A checkout can drive more than one Proxmox host. A host is an inventory source laid over the shared one, never a
 variable: the first host stays in `inventory/` (`inventory/hosts.yml` and the shared `group_vars/all/`), and each
 other is a folder of its own, `hosts/<name>/` - its `hosts.yml`, the one host of the `proxmox` group named as the
-folder, and its `group_vars/all/local.yml` and `vault.yml`. A run against it gets
-`ANSIBLE_INVENTORY=inventory/controller.yml,hosts/<name>`: `inventory/controller.yml` as a file source loads the shared
+folder, and its `group_vars/all/local.yml` and `vault.yml`. A run against it is given
+`-i inventory/controller.yml -i hosts/<name>`: `inventory/controller.yml` as a file source loads the shared
 `group_vars/all/` beside it but not `inventory/hosts.yml`, so `groups['proxmox']` holds that host alone, and the
 host's `group_vars/all/` come second, so they outrank the shared ones. Every playbook and role then works as written:
 `proxmox_api_host`, `hosts: proxmox`, the template's build, init's checks and the name refusals all read the run's one
@@ -1251,12 +1254,21 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
   host of the run - `--host`, else a nested recipe's `nested_host=`, else the host the VMs named are on, as their
   aliases record (`# origin`; names on two hosts are refused, one host per run, and beside `--host` a name another
   host's alias records is warned of and reached on the host given), else `hosts/current`'s, else the first - and, for the
-  lines after it, `ANSIBLE_INVENTORY` exported for a host in `hosts/`, `$settings_files` and `$vault_files` (the
-  shared ones first) for the checks, `$host_sources` for `tools/status`'s `-i`, and `$host_extra`, the other hosts'
-  names and addresses, which `vm_args` passes as `claude_hosts_other`. With one host, and none asked for, it reads
+  lines after it, `$settings_files` and `$vault_files` (the shared ones first) for the checks, `$host_sources`, each a
+  `-i` of the run's (`vm_args`, `tools/status`), `$host_extra`, the other hosts' names and addresses, which `vm_args`
+  passes as `claude_hosts_other`, and `$host_unplaced`, the names no alias places on a host, which a deploy that may
+  create them asks the other hosts about. A host's sources are never exported as `ANSIBLE_INVENTORY`: the editor and
+  every other program a run starts would inherit them, and carry them into a later run, titled for another host. A
+  run the aliases send to another host than the current one says so. With one host, and none asked for, it reads
   nothing and a run is as it always was. `VAULT_FILE`, `SETTINGS_FILES` and `INIT_FILES` stay the first host's, and
-  given beside another host are refused; an `ANSIBLE_INVENTORY` you exported is left alone for the first host and
-  refused beside another.
+  given beside another host are refused; an `ANSIBLE_INVENTORY` you exported is left alone with one host, and
+  beside more refused for every run, the first host's - given no `-i`, which would read it - among them.
+- **What the files say is never a traceback.** A file that is not YAML, a stray inventory file in a host's folder -
+  any `.yml`, `.yaml` or `.json` beside its `hosts.yml`, or a folder but `group_vars` and `host_vars`, all of which
+  Ansible reads, so a Proxmox host there would be sent this host's secret - is that host's problem, said where the
+  host is: a run against another goes on, and `just status` shows it in the host's block. A host's name is held to
+  the rule wherever it comes from: the first host's, from `inventory/hosts.yml`, once there is another, since every
+  line of theirs says it as `--host <name>`.
 - **The kinds table** (`kinds.py`): for each kind of host, as literal data, its inventory group, the settings each
   host of that kind always sets for itself, those of one network that are never inherited, its secret's two vault
   names and what `just host` shows. The resolver, `just host` and `just status` read it and name no Proxmox setting.
@@ -1266,8 +1278,13 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
   folder (its `inventory_dir` is localhost's), and `vault_host_proxmox_api_token_secret` otherwise - one expression,
   keyed on where Ansible recorded the host, with no variable a git-ignored file could set to switch it off. A host
   whose vault lacks it is an undefined variable before any request. The resolver refuses either name in the other's
-  vault, reading the vaults' names in memory with the recipe's password file and keeping a check that passed in
-  `hosts/.checked.json`, by the files' sizes and times. The kind's always-written settings (for Proxmox, the node,
+  vault, reading the vaults' names in memory with the recipe's password file - a password script run as Ansible runs
+  it; a vault no password here opens, a vault ID's or a client script's, is said and left to Ansible - and keeping a
+  check that passed in `hosts/.checked.json`, by the files' sizes and times, but for `just status`'s (`--read-only`),
+  which writes only into `.cache/status/`. Nor may a settings file or a vault set what the inventory defaults make
+  from the run's host (the kind's `from_host`: `proxmox_api_host`, `proxmox_api_token_secret`, `proxmox_api_url`,
+  `proxmox_api_headers`, `proxmox_api_module_defaults`), which would outrank the rule for every host: beside another
+  host, each is refused in every file a run reads. The kind's always-written settings (for Proxmox, the node,
   storage, bridge, API user, token ID, port, certificate checking and template VMID) are refused missing from the
   host's `local.yml`, naming `just init --host`; and a setting of one network (`vm_ipconfig`, `vm_nameservers`,
   `proxmox_template_custom`, `claude_ssh_host_domain`) the shared `local.yml` sets and the host's does not is refused,
@@ -1280,13 +1297,19 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
   under the run lock, so a run under way ends on the host it started on, and `--remove` deletes a host's folder after
   its name is typed at a terminal - never the current host's or the first's, and never its VMs.
 - **`just init --host <name>`** sets one up (`tools/check host init`, [§4.12](lifecycle.md#412-playbooksinit_settingsyml)),
-  and **`just vault --host`** and **`just settings`** reach a host leniently (`--lenient`): one that lacks a setting
-  it sets for itself, since they are how that is put right.
+  and `just init` alone works on the current host, as every command does. For a host in `hosts/`, a value for the
+  shared files (`--github-user`, `--tailscale`) is refused, and so is an exported token secret, which the first
+  deploy's guide exports for the first host: `--token-secret-file` gives a host's own. Nor is one set up while the
+  shared vault is encrypted and no password file opens it, since init would make `.vault_pass` anew. **`just vault
+  --host`** and **`just settings`** reach a host leniently (`--lenient`): one that lacks a setting it sets for itself,
+  since they are how that is put right.
 - **`just status`** reads every host at once, a child process each, drawn as one report
   ([§4.6](lifecycle.md#46-toolsstatus--read-only-drawn-live)); with `--host`, one host. It reads a host in `hosts/`
-  through its sources as `-i`, so that its files key the settings kept,
-  every vault loaded (`--vault-file` each), and keeps each host's settings in a folder of its own,
-  `.cache/status/<host>/`; the token's vault name is kept with the snapshot.
+  through its sources as `-i`, so that its files key the settings kept, every vault loaded (`--vault-file` each), and
+  the other hosts handed to it as to every run (`--host-extra`, kept with the settings, unlike `-e`), and keeps each
+  host's settings in a folder of its own, `.cache/status/<host>/`; the token's vault name is kept with the snapshot.
+  An alias from before 2.5, which records no host, whose VM no host lists is said on the current host's report: no
+  prune removes it.
 - **A line that says what to run names the host.** With more than one host, `claude_host_flag` (`" --host <name>"`,
   empty with one) ends every `just ... <vm>` line a run prints or writes onto a VM: the retries (`retry_line`,
   `sign_in_failed.yml`); the roles' commands, which NEXT STEPS and their messages say, through `claude_code_host_flag`,
@@ -1295,5 +1318,7 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
   its report and the Claude terminal's lines; and the session notes, whose header names the host and which carry it
   in a marker (`<!-- agent-warehouse:on --host <name> -->`) that `session_notes.py`, the window's notes task, reads
   for the rows it writes - a host's name only, so no helper's arguments changed. A VM named is found by its alias
-  anyway; the flag reaches it where no alias records it. `just status`'s ATTENTION adds it in the parent, and
-  destroy's `sessions.json` records the host.
+  anyway; the flag reaches it where no alias records it. `just status`'s lines take it from its settings
+  (`host_flag`), where each command ends and before what it then says, and destroy's question and `sessions.json`
+  name the host. `tests/unit/test_hosts.py` reads every playbook, role and template for a `just` line naming a VM, or a
+  host's fleet or template, without it.

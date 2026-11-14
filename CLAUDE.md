@@ -84,8 +84,8 @@ go before it (`just ANSIBLE_ARGS=-vvv deploy alpha`).
 - A recipe that includes another's work runs it as `{{ self }} <recipe>`, which passes on every setting (a
   recursive just begins without the command line's `BIN=`), and as `{{ self }} live_run=<its name> <recipe>` to
   make it a stage of its own run.
-- A recipe that changes something - `deploy` (but `--check`), `login`, `code`, `destroy`, `init`, `install` - takes
-  the run lock (`{{ take_lock }} <title>`) as the first line after its rules. `ATTENDED` (someone at the screen with
+- A recipe that changes something - `deploy` (but `--check`), `login`, `code`, `destroy`, `init`, `install`, `host`
+  with a name - takes the run lock (`{{ take_lock }} <title>`) as the first line after its rules. `ATTENDED` (someone at the screen with
   no terminal: `no_tty_args` then turns the asking off and nothing else) and `RUN_LOCK` are read from the command
   line alone, as `BIN` is: a variable of the same name some other tool exports changes nothing.
 - A recipe drawn in parts (`lint`, `init`, `test`) exports its title and its state's path (`live_state`), sets
@@ -342,28 +342,42 @@ if apt fails to resolve a mirror, that is the machine, not the change.
   [§7.14](docs/architecture/custom-code.md#714-libclaude_vmhosts-and-toolshost--the-checkouts-hosts) and
   [§15.8](docs/architecture/decisions.md#158-a-host-is-an-inventory-source-not-a-variable) first.
     - The first host stays in `inventory/`; each other is `hosts/<name>/` (git-ignored, refused by
-      `tests/check_no_local_files.sh`), run as `ANSIBLE_INVENTORY=inventory/controller.yml,hosts/<name>`, so
+      `tests/check_no_local_files.sh`), run with `-i inventory/controller.yml -i hosts/<name>`, so
       `groups['proxmox']` is that host alone and no playbook or role names a host. Only `tools/check host`
       (`lib/claude_vm/hosts/`) knows a path: every VM recipe's `{{ host_env }}` line asks it, after the rules and
       before the lock, and reads `$vault_files`, `$settings_files` and `$host_sources` from it, never `VAULT_FILE` or
       `SETTINGS_FILES`, which stay the first host's and are refused beside another.
+    - A host's sources are each a `-i` of the run's, never an exported `ANSIBLE_INVENTORY`: the editor and every
+      program a run starts would inherit it into a later run against another host. Beside another host, one you
+      exported is refused for every run, the first host's too, which no `-i` overrides it for.
     - `proxmox_api_token_secret` is one expression keyed on `inventory_dir`: the shared vault's
       `vault_proxmox_api_token_secret` only while the run's Proxmox host was defined beside localhost, else the
       host's own `vault_host_proxmox_api_token_secret`, undefined before any request where its vault has none. Never
       a helper variable beside it, which a git-ignored file could set; the resolver refuses either name in the
-      other's vault.
+      other's vault, and, beside another host, any settings file or vault a run reads that sets what the defaults make
+      from the run's host (the kind's `from_host`: the token's secret, the API's address, URL, headers and module
+      defaults), which would outrank the rule for every host.
+    - Only a host's `hosts.yml` is inventory in its folder: Ansible reads every `.yml`, `.yaml` and `.json` there,
+      and every folder but `group_vars` and `host_vars`, so the resolver refuses another. What a host's files say is
+      that host's problem, said in its place, never a traceback, and a run against another goes on.
     - The kinds table (`lib/claude_vm/hosts/kinds.py`) names each host's always-written settings, which the
       resolver requires, and those of one network, which it never lets the shared files supply.
     - `claude_hosts_other` (the other hosts' names and addresses, from the resolver) feeds
       `claude_vm_inventory_hosts`, `claude_vm_inventory_addresses` and with it `proxmox_vm_known_hosts_kept`.
-    - `just host <name>` switches under the run lock; no agent changes the current host.
+    - `just host <name>` switches under the run lock; no agent changes the current host. `just init` alone works on
+      the current host, as every command does; another host's init takes no exported token secret, which may be the
+      first host's, and no value of the shared files'.
+    - `just destroy`'s question names the host beside another, read from the run's own `groups['proxmox']` and the
+      `claude_hosts_other` the justfile hands it: all a `vars_prompt` can see.
     - A VM name is one host's: a VM named runs against the host its alias records (`origins`, the managed SSH config
       alone), names on two hosts are refused, and `--host` beside a name another host's alias records is a warning:
       the run reaches that host's VM of the name, and `vm_names.yml` refuses the runs that would write its alias.
     - A line a run prints or writes onto a VM that says what to run ends with `claude_host_flag` (` --host <name>`
       with more than one host, empty with one): the retries, the roles' commands through `<role>_host_flag`,
-      `code_editor_flag` and the editor plan's own `host_flag`, which `validate` holds apart from `--editor`, and the
-      session notes, whose rows `session_notes.py` names it in from the notes' marker. A new such line takes it too.
+      `code_editor_flag` and the editor plan's own `host_flag`, which `validate` holds apart from `--editor`, the
+      session notes, whose rows `session_notes.py` names it in from the notes' marker, and `just status`'s lines,
+      from its settings' `host_flag`, where each command ends. A new such line takes it too:
+      `test_every_line_that_names_a_vm_names_its_host` fails on one that does not.
     - `tests/unit/test_hosts.py` runs the resolver on made-up layouts, the token rule through ansible-playbook, and
       the project's playbooks through an overlay against two fake Proxmox hosts with different secrets; the
       `provision` scenario's `second_host.yml` provisions, aliases and destroys a VM through one.

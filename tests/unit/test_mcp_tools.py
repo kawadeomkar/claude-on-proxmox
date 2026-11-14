@@ -219,14 +219,21 @@ def test_a_run_is_against_the_host_given_else_where_its_vm_is_else_the_current_o
     assert server.run_host(config, "", ["alpha"]) == "nuc"
     # Names on two hosts: none, and the run refuses them itself.
     assert server.run_host(config, "", ["beta", "gamma"]) == ""
-    # A run tool's arguments name it, so the job's title does.
-    assert server.with_host(config, {"names": ["beta"], "host": ""})["host"] == "nuc"
-    assert server.with_host(config, {"name": "", "host": ""})["host"] == "nuc"
-    assert server.with_host(config, {"names": ["beta"], "host": "pve"})["host"] == "pve"
-    assert "host" not in server.with_host(config, {"names": ["beta"]})
+    # A name as the justfile takes it, hyphenated: my_vm is my-vm.
+    (tmp_path / "aliases.conf").write_text(
+        "# BEGIN agent-warehouse: my-vm\n# origin: pve\nHost my-vm\n# END agent-warehouse: my-vm\n"
+    )
+    assert server.run_host(config, "", ["my_vm"]) == "pve"
+    # The job's title names the host the run will resolve; the run itself is given none it was not, and init, whose
+    # --host is the host it sets up, none at all.
+    assert server.titled_host(config, "login", {"names": ["my_vm"], "host": ""}) == "pve"
+    assert server.titled_host(config, "code", {"name": "", "host": ""}) == "nuc"
+    assert server.titled_host(config, "login", {"names": ["beta"], "host": "pve"}) == ""
+    assert server.titled_host(config, "install", {}) == ""
+    assert server.titled_host(config, "init", {"github_user": "someone", "host": ""}) == ""
     # One host: nothing named.
     one = tmp_path / "one"
     one.mkdir()
     single = Config(checkout=one, python="", just="", uv="", path="", home="")
     assert server.run_host(single, "", ["alpha"]) == ""
-    assert server.with_host(single, {"names": ["alpha"], "host": ""})["host"] == ""
+    assert server.titled_host(single, "login", {"names": ["alpha"], "host": ""}) == ""
