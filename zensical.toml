@@ -51,6 +51,7 @@ nav = [
     { "During a run" = "guides/runs.md" },
     { "Agents in other projects" = "guides/agents.md" },
     { "Tearing down" = "guides/destroy.md" },
+    { "More than one Proxmox host" = "guides/hosts.md" },
     { "What the VM trusts" = "guides/what-the-vm-trusts.md" },
     { "Upgrading" = "guides/upgrading.md" },
   ] },

@@ -85,6 +85,13 @@ MUST_BLOCK = [
     ".vault_pass.txt",
     ".env",
     ".env.local",
+    # The checkout's other hosts: each one's address, settings and vault, and the current host's name.
+    "hosts/current",
+    "hosts/nuc/hosts.yml",
+    "hosts/nuc/group_vars/all/local.yml",
+    "hosts/nuc/group_vars/all/vault.yml",
+    "hosts/nuc/notes.txt",
+    "hosts/.checked.json",
     # Run logs name the Proxmox host and every VM by address.
     ".logs/20261007-203015-deploy.log",
     ".logs/notes.txt",
@@ -130,6 +137,11 @@ MUST_ALLOW = [
     "molecule/configure/group_vars/all/defaults.yml",
     # Ordinary project files.
     "inventory/controller.yml",
+    # A host's files as just init --host writes them, and the code that reads hosts/: only the folder at the top is.
+    "tools/templates/host/hosts.yml.example",
+    "tools/templates/host/group_vars/all/local.yml.example",
+    "tools/host",
+    "lib/claude_vm/hosts/layout.py",
     "inventory/group_vars/all/defaults.yml",
     # A split-out defaults file is not the proxmox inventory plugin's config:
     # Ansible skips group_vars/ and host_vars/ when it walks inventory/.

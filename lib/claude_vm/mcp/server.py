@@ -311,11 +311,11 @@ def tools(server: Server) -> list[Tool]:
     """The tools, each with its recipe's schema where the justfile could be read, else its function's own: a server that
     cannot read it still lists them, and each answers with why."""
 
-    async def status(names: list[str] | None = None, only: str = "") -> CallToolResult:
+    async def status(names: list[str] | None = None, only: str = "", host: str = "") -> CallToolResult:
         server.check(vault=True)
         return await server.json_tool(
             "status",
-            {"names": names or [], "only": only},
+            {"names": names or [], "only": only, "host": host},
             keep=("exit", "title", "vms", "capacity", "attention", "counts"),
             narrow="give names, or only (vms, work, ...), to read the rest",
             ok={0, 1, 2},
@@ -368,6 +368,7 @@ def tools(server: Server) -> list[Tool]:
         memory: str = "",
         disk: str = "",
         repos: str = "",
+        host: str = "",
         wait_seconds: int | None = None,
     ) -> str:
         server.check(vault=True)
@@ -375,13 +376,13 @@ def tools(server: Server) -> list[Tool]:
         if refusal:
             raise ToolError(refusal)
         arguments = {"names": names or [], "only": only, "check": check, "tags": tags, "start": start}
-        arguments |= {"cores": cores, "memory": memory, "disk": disk, "repos": repos}
+        arguments |= {"cores": cores, "memory": memory, "disk": disk, "repos": repos, "host": host}
         return await server.run("deploy", arguments, wait_seconds, ctx)
 
     async def login(
-        ctx: Context, names: list[str] | None = None, only: str = "", wait_seconds: int | None = None
+        ctx: Context, names: list[str] | None = None, only: str = "", host: str = "", wait_seconds: int | None = None
     ) -> str:
-        return await server.run("login", {"names": names or [], "only": only}, wait_seconds, ctx)
+        return await server.run("login", {"names": names or [], "only": only, "host": host}, wait_seconds, ctx)
 
     async def code(
         ctx: Context,
@@ -389,12 +390,13 @@ def tools(server: Server) -> list[Tool]:
         project: str = "",
         editor: str = "",
         session: str = "",
+        host: str = "",
         wait_seconds: int | None = None,
     ) -> str:
         refusal = session_refusal(server.check(vault=False), server.environ, session)
         if refusal:
             raise ToolError(refusal)
-        arguments = {"name": name, "project": project, "editor": editor, "session": session}
+        arguments = {"name": name, "project": project, "editor": editor, "session": session, "host": host}
         return await server.run("code", arguments, wait_seconds, ctx)
 
     async def install(ctx: Context, wait_seconds: int | None = None) -> str:
@@ -432,7 +434,7 @@ def tools(server: Server) -> list[Tool]:
         jobs.stop(found, "cancel")
         return await server.follow(found, end, 45, ctx)
 
-    async def ask_destroy(ctx: Context, names: list[str] | None = None) -> Elicit:
+    async def ask_destroy(ctx: Context, names: list[str] | None = None, host: str = "") -> Elicit:
         """Before the person is asked: the client, the names, the lock, then what each VM holds."""
         config = server.check(vault=True)
         hyphenated = [name.replace("_", "-") for name in names or []]
@@ -445,7 +447,7 @@ def tools(server: Server) -> list[Tool]:
         held = jobs.lock_holder(config.checkout)
         if held:
             raise ToolError(f"{held}: wait for it to end, then ask again. Nothing was asked or deleted.")
-        report, _ = await server.report("status", {"names": hyphenated, "only": "vms,work"}, {0, 1, 2})
+        report, _ = await server.report("status", {"names": hyphenated, "only": "vms,work", "host": host}, {0, 1, 2})
         typed = f"{confirm.code('destroy', *hyphenated)} {' '.join(hyphenated)}"
         return Elicit(confirm.destroy_message(hyphenated, report, typed), Typed)
 
@@ -453,6 +455,7 @@ def tools(server: Server) -> list[Tool]:
         ctx: Context,
         answer: Annotated[ElicitationResult[Typed], Resolve(ask_destroy)],
         names: list[str] | None = None,
+        host: str = "",
         wait_seconds: int | None = None,
     ) -> str:
         hyphenated = [name.replace("_", "-") for name in names or []]
@@ -460,7 +463,7 @@ def tools(server: Server) -> list[Tool]:
         refused = answered(answer, typed)
         if refused:
             raise ToolError(f"Nothing was deleted: {refused}. At a terminal: just destroy {' '.join(hyphenated)}")
-        arguments = {"names": hyphenated, "confirm": ",".join(hyphenated)}
+        arguments = {"names": hyphenated, "confirm": ",".join(hyphenated), "host": host}
         return await server.run("destroy", arguments, wait_seconds, ctx)
 
     async def ask_setting(ctx: Context, name: str = "", value: str = "", reset: bool = False) -> Elicit:

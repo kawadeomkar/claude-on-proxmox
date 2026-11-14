@@ -36,6 +36,10 @@ patterns=(
   # include_vars and -e @file can load from anywhere. Exact names outside
   # group_vars/, because "local" also begins ordinary files such as locale.yml.
   '(^|/)(local|secrets?|vault[^/]*)\.(ya?ml|json)$'
+  # The checkout's hosts but the first, one folder each (just host): a host's
+  # address, its settings and its vault, and hosts/current. Whatever a folder
+  # holds, and the folder of that name only at the top, where just looks for it.
+  '^hosts/'
   # Credentials.
   '(^|/)\.vault_pass'
   '(^|/)\.env'

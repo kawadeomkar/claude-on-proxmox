@@ -212,6 +212,8 @@ def _safe(tmp_path: Path, galaxy_rc: int = 0) -> list[str]:
         f"LOG_DIR={tmp_path / 'logs'}",
         f"STATUS_DIR={tmp_path / 'status'}",
         f"LIVE_DIR={tmp_path / 'live'}",
+        # The checkout's other hosts: none, whatever this checkout has, so every run is of the one host.
+        f"HOSTS_DIR={tmp_path / 'hosts'}",
     ]
 
 
@@ -326,7 +328,7 @@ def test_no_parameter_shares_its_name_with_an_assignment() -> None:
 def test_self_passes_on_every_setting() -> None:
     # A recipe that runs another (test lints, init installs) runs it through self, which would otherwise drop the
     # command line's BIN= and the rest.
-    settings = just_settings() | {"stamp", "live_run"}
+    settings = just_settings() | {"stamp", "live_run", "nested_host"}
     passed = set(re.findall(r" ([A-Za-z_]+)=", _evaluate("self")))
     assert passed == settings, (passed, settings)
 
@@ -397,7 +399,8 @@ def test_a_recipe_without_the_tools_says_just_install(tmp_path: Path) -> None:
         "login", settings=[f"BIN={tmp_path / 'empty'}", f"VAULT_FILE={_vault(tmp_path)}", _settings_files(tmp_path)]
     )
     assert result.returncode != 0
-    assert f"no ansible-galaxy in [{tmp_path / 'empty'}]" in _output(result)
+    # The first tool a VM recipe runs is the environment's Python, which reads its host's files (tools/check host).
+    assert f"no python in [{tmp_path / 'empty'}]" in _output(result)
     assert "Run: just install" in _output(result)
 
 
@@ -906,6 +909,7 @@ ONE_WORD = {
     "vagrant": "destroy",
     "clean": "logs",
     "settings": "tailscale",
+    "host": "nuc",
 }
 
 

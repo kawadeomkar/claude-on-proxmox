@@ -143,6 +143,7 @@ of roles, `tailscale_ssh` is a setting's, and `repo` a repository's on the VM.
 | `just settings tailscale` | A role's settings, each value and where it was set, as above; `just settings tailscale_ssh --value true` sets one, `--reset` puts it back |
 | `just destroy alpha` | Save the Claude sessions only the VM has, sign it out of Claude, GitHub and Tailscale, then delete it |
 | `just logs` | The log of every run, newest first |
+| `just host nuc` | With more than one Proxmox host, make one the current host, which every command runs against; `--host nuc` on a command reaches it once ([More than one host](docs/guides/hosts.md)) |
 | `ssh alpha` | The alias `just deploy` and `just code` keep pointed at the VM's address, in `~/.ssh/agent-warehouse.conf` (one `Include` line added to `~/.ssh/config`) |
 
 `just deploy` does each of its parts on its own too: `just deploy alpha --tags claude_code` re-applies one

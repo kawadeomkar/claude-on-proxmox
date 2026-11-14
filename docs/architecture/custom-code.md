@@ -1222,3 +1222,50 @@ trusted, so a mistake in it can leave a VM less ready, never wrong.
   `groups`, a vault name, a `no_log` option, and any lookup but a literal `ansible.builtin.file` of the role's own
   `files/`, which the digest hashes. No `image` option is `no_log`, and each role's `image_options` records exactly its
   `image` entry point's options, but those that read the VM's facts.
+
+## 7.14 `lib/claude_vm/hosts/` and `tools/host` — the checkout's hosts
+
+A checkout can drive more than one Proxmox host. A host is an inventory source laid over the shared one, never a
+variable: the first host stays in `inventory/` (`inventory/hosts.yml` and the shared `group_vars/all/`), and each
+other is a folder of its own, `hosts/<name>/` - its `hosts.yml`, the one host of the `proxmox` group named as the
+folder, and its `group_vars/all/local.yml` and `vault.yml`. A run against it gets
+`ANSIBLE_INVENTORY=inventory/controller.yml,hosts/<name>`: `inventory/controller.yml` as a file source loads the shared
+`group_vars/all/` beside it but not `inventory/hosts.yml`, so `groups['proxmox']` holds that host alone, and the
+host's `group_vars/all/` come second, so they outrank the shared ones. Every playbook and role then works as written:
+`proxmox_api_host`, `hosts: proxmox`, the template's build, init's checks and the name refusals all read the run's one
+host. `hosts/current` names the current host; `hosts/` is git-ignored and refused by `tests/check_no_local_files.sh`.
+
+- **One resolver** (`tools/check host`, which runs `tools/host`; the layout in `layout.py`) is the one place that
+  knows a path. Each VM recipe asks it, in the line `{{ host_env }}`, after its own rules and before its lock: the
+  host of the run - `--host`, else a nested recipe's `host=`, else `hosts/current`'s, else the first - and, for the
+  lines after it, `ANSIBLE_INVENTORY` exported for a host in `hosts/`, `$settings_files` and `$vault_files` (the
+  shared ones first) for the checks, `$host_sources` for `tools/status`'s `-i`, and `$host_extra`, the other hosts'
+  names and addresses, which `vm_args` passes as `claude_hosts_other`. With one host, and none asked for, it reads
+  nothing and a run is as it always was. `VAULT_FILE`, `SETTINGS_FILES` and `INIT_FILES` stay the first host's, and
+  given beside another host are refused; an `ANSIBLE_INVENTORY` you exported is left alone for the first host and
+  refused beside another.
+- **The kinds table** (`kinds.py`): for each kind of host, as literal data, its inventory group, the settings each
+  host of that kind always sets for itself, those of one network that are never inherited, its secret's two vault
+  names and what `just host` shows. The resolver, `just host` and `just status` read it and name no Proxmox setting.
+- **What never falls through.** The first host's own settings live in the shared files, so a host in `hosts/` would
+  inherit whatever it leaves unset. Its token's secret: `proxmox_api_token_secret` in the inventory defaults reads the
+  shared `vault_proxmox_api_token_secret` only while the run's Proxmox host was defined in the shared inventory's own
+  folder (its `inventory_dir` is localhost's), and `vault_host_proxmox_api_token_secret` otherwise - one expression,
+  keyed on where Ansible recorded the host, with no variable a git-ignored file could set to switch it off. A host
+  whose vault lacks it is an undefined variable before any request. The resolver refuses either name in the other's
+  vault, reading the vaults' names in memory with the recipe's password file and keeping a check that passed in
+  `hosts/.checked.json`, by the files' sizes and times. The kind's always-written settings (for Proxmox, the node,
+  storage, bridge, API user, token ID, port, certificate checking and template VMID) are refused missing from the
+  host's `local.yml`, naming `just init --host`; and a setting of one network (`vm_ipconfig`, `vm_nameservers`,
+  `proxmox_template_custom`, `claude_ssh_host_domain`) the shared `local.yml` sets and the host's does not is refused,
+  naming the line to add.
+- **The other hosts stay protected.** With one host in each run's inventory, three guards would lose sight of the
+  others: `claude_vm_inventory_hosts`, `claude_vm_inventory_addresses` and with them `proxmox_vm_known_hosts_kept`
+  add `claude_hosts_other`, so no VM is named after another host, no alias takes its address, and destroy never
+  forgets its key.
+- **`just host`** lists the hosts from their files alone, writes `hosts/current` anew and renames it over the old
+  under the run lock, so a run under way ends on the host it started on, and `--remove` deletes a host's folder after
+  its name is typed at a terminal - never the current host's or the first's, and never its VMs.
+- **`just status`** reads a host in `hosts/` through its sources as `-i`, so that its files key the settings kept,
+  every vault loaded (`--vault-file` each), and keeps each host's settings in a folder of its own,
+  `.cache/status/<host>/`; the token's vault name is kept with the snapshot.

@@ -55,6 +55,7 @@ just settings vm_cores --value 4     # set one setting in local.yml, held to its
 just settings vm_cores --reset       # back to its default: its line out of local.yml, its example's line back
 just code alpha [--project repo] [--session <id>]   # refresh one alias, copy recent Claude sessions, open the VM in the editor (VS Code with a Claude terminal by default; --editor zed)
 just logs                            # the run logs, newest first: read these instead of asking for terminal output
+just host                            # the checkout's Proxmox hosts (the first in inventory/, each other in hosts/<name>/); just host nuc makes one current; --host nuc on deploy, code, login, destroy, status reaches it once
 just mcp                             # register the MCP server with Claude Code: sessions in any project run these commands
 just docs                            # regenerate the wiki's reference pages; serve previews the site, build builds it strictly
 ```
@@ -337,6 +338,27 @@ if apt fails to resolve a mirror, that is the machine, not the change.
       scenario (its `defaults.yml` the project's) sets `vpn: tailscale` and the Vagrantfile `tailscale_enabled:
       true`, or with none the default they would stop covering Tailscale without failing. The template is never
       signed in to anything.
+- **A host is an inventory source laid over the shared one, and nothing of one host's reaches another.** Read
+  [§7.14](docs/architecture/custom-code.md#714-libclaude_vmhosts-and-toolshost--the-checkouts-hosts) and
+  [§15.8](docs/architecture/decisions.md#158-a-host-is-an-inventory-source-not-a-variable) first.
+    - The first host stays in `inventory/`; each other is `hosts/<name>/` (git-ignored, refused by
+      `tests/check_no_local_files.sh`), run as `ANSIBLE_INVENTORY=inventory/controller.yml,hosts/<name>`, so
+      `groups['proxmox']` is that host alone and no playbook or role names a host. Only `tools/check host`
+      (`lib/claude_vm/hosts/`) knows a path: every VM recipe's `{{ host_env }}` line asks it, after the rules and
+      before the lock, and reads `$vault_files`, `$settings_files` and `$host_sources` from it, never `VAULT_FILE` or
+      `SETTINGS_FILES`, which stay the first host's and are refused beside another.
+    - `proxmox_api_token_secret` is one expression keyed on `inventory_dir`: the shared vault's
+      `vault_proxmox_api_token_secret` only while the run's Proxmox host was defined beside localhost, else the
+      host's own `vault_host_proxmox_api_token_secret`, undefined before any request where its vault has none. Never
+      a helper variable beside it, which a git-ignored file could set; the resolver refuses either name in the
+      other's vault.
+    - The kinds table (`lib/claude_vm/hosts/kinds.py`) names each host's always-written settings, which the
+      resolver requires, and those of one network, which it never lets the shared files supply.
+    - `claude_hosts_other` (the other hosts' names and addresses, from the resolver) feeds
+      `claude_vm_inventory_hosts`, `claude_vm_inventory_addresses` and with it `proxmox_vm_known_hosts_kept`.
+    - `just host <name>` switches under the run lock; no agent changes the current host.
+    - `tests/unit/test_hosts.py` runs the resolver on made-up layouts, the token rule through ansible-playbook, and
+      the project's playbooks through an overlay against two fake Proxmox hosts with different secrets.
 - **The project writes exactly three things outside the repo on the controller, and has VS Code's own CLI
   write a fourth, and Claude Code's own CLI a fifth.** Read [On the controller](docs/architecture/security-model.md#on-the-controller) and
   [§4.8](docs/architecture/lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml) first.

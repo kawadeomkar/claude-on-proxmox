@@ -13,6 +13,7 @@ every other test of a recipe, which would otherwise take turns in this checkout'
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -208,13 +209,24 @@ def test_clean_refuses_while_a_live_run_holds_the_lock(tmp_path):
     assert subprocess.run([str(CHECK), "unheld", str(lock)]).returncode == 0
 
 
+def _body(text: str, recipe: str) -> str:
+    """A recipe's script, from its line in the justfile to the blank line after it: never an assignment of its name."""
+    match = re.search(rf"^{recipe}( [A-Z*][^\n]*)?:\n", text, flags=re.M)
+    return text[match.end() :].split("\n\n", 1)[0] if match else ""
+
+
 def test_every_recipe_that_changes_something_takes_the_lock_after_its_rules():
     text = (REPO / "justfile").read_text()
-    for recipe in ("deploy", "login", "code", "destroy", "init", "install"):
-        body = text.split(f"\n{recipe} ", 1)[1].split("\n\n", 1)[0]
+    for recipe in ("deploy", "login", "code", "destroy", "init", "install", "host"):
+        body = _body(text, recipe)
         assert "{{ take_lock }}" in body, recipe
-        assert body.index("{{ take_lock }}") < body.index("{{ find_bin }}") or recipe == "install", recipe
+        if "{{ host_env }}" in body:
+            # After the run's host, which its title names, and before every check of what the run needs.
+            assert body.index("{{ host_env }}") < body.index("{{ take_lock }}") < body.index("tools/check vault"), (
+                recipe
+            )
+        else:
+            assert body.index("{{ take_lock }}") < body.index("{{ find_bin }}") or recipe in ("install", "host"), recipe
     for recipe in ("status", "settings", "logs", "lint", "test", "docs", "vault", "help", "mcp", "vagrant"):
-        body = text.split(f"\n{recipe} ", 1)[1].split("\n\n", 1)[0] if f"\n{recipe} " in text else ""
-        body = body or text.split(f"\n{recipe}:", 1)[1].split("\n\n", 1)[0]
-        assert "take_lock" not in body, recipe
+        body = _body(text, recipe)
+        assert body and "take_lock" not in body, recipe

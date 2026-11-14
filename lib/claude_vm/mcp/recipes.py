@@ -71,6 +71,8 @@ NO_TOOL = {
     "vagrant": "a contributor's command",
     "clean": "a contributor's command",
     "mcp": "it registers this server: the person's command",
+    "host": "the current host is the terminal's, as the default VM is: no agent changes it, and each run tool takes "
+    "the host it runs against as host",
 }
 
 # Options a tool's recipe has that the tool does not take, and why, by tool.

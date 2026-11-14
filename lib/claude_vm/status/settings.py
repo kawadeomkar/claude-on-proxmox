@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 from .. import wiring
+from ..hosts.kinds import KINDS
 from . import model
 
 REPO = Path(__file__).resolve().parents[3]
@@ -34,7 +35,9 @@ REPO = Path(__file__).resolve().parents[3]
 # from it (tailscale_hostname) is replaced by the VM's own.
 PLACEHOLDER = "status_placeholder.vm"
 SECRET_MARK = "@@status-proxmox-token@@"
-TOKEN_VAR = "vault_proxmox_api_token_secret"
+TOKEN_VAR = KINDS["proxmox"].secret_shared
+# Every name the vault may hold the run's token under: the first host's, and each kind's own for a host in hosts/.
+TOKEN_VARS = tuple(dict.fromkeys(name for kind in KINDS.values() for name in (kind.secret_shared, kind.secret_host)))
 PASSWORD_VAR = "vault_vm_password"
 ROLES = ("proxmox_vm", "proxmox_template", "claude_code", "github_projects", "tailscale")
 
@@ -297,27 +300,37 @@ def _password(path: str) -> bytes:
     return _answers[whole]
 
 
+def _vault_files(opts) -> list[str]:
+    """The vault files the run loads, in their order: the shared one, then a host's own in hosts/ (tools/check host)."""
+    given = opts.vault_file
+    return [given] if isinstance(given, str) and given else [one for one in given or [] if one]
+
+
 def _vault_values(opts) -> dict:
+    """What the vaults hold, merged as Ansible merges them: a later file's value of a name over an earlier one's."""
     import yaml
 
-    data = Path(opts.vault_file).read_bytes()
-    if data.startswith(b"$ANSIBLE_VAULT"):
-        for path in _password_files(opts):
-            try:
-                data = _vault_open(data, _password(path))
-                break
-            except (OSError, Stale):
-                continue
-        else:
-            raise Stale("no password file opens the vault")
-    try:
-        values = yaml.load(data, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)) or {}
-    except yaml.YAMLError as error:
-        # What Ansible alone reads, as !unsafe: it is asked instead, and no snapshot is kept.
-        raise Stale("the vault is more than plain YAML") from error
-    if not isinstance(values, dict):
-        raise Stale("the vault is not a mapping")
-    return values
+    merged = {}
+    for file in _vault_files(opts):
+        data = Path(file).read_bytes()
+        if data.startswith(b"$ANSIBLE_VAULT"):
+            for path in _password_files(opts):
+                try:
+                    data = _vault_open(data, _password(path))
+                    break
+                except (OSError, Stale):
+                    continue
+            else:
+                raise Stale("no password file opens the vault")
+        try:
+            values = yaml.load(data, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)) or {}
+        except yaml.YAMLError as error:
+            # What Ansible alone reads, as !unsafe: it is asked instead, and no snapshot is kept.
+            raise Stale("the vault is more than plain YAML") from error
+        if not isinstance(values, dict):
+            raise Stale("the vault is not a mapping")
+        merged.update(values)
+    return merged
 
 
 # ---------------------------------------------------------------------------------------------------- Ansible ----
@@ -474,6 +487,8 @@ def _digest(opts) -> str:
         _collections(),
         ssh.glob("*.pub"),
     ]
+    # The sources' order is their precedence: said as given, where the files below are sorted.
+    digest.update(f"sources={json.dumps(sources)}\n".encode())
     for path in sorted(str(path) for group in groups for path in group):
         try:
             info = os.stat(path)
@@ -510,7 +525,7 @@ def read_json(path):
 
 def _usable(opts):
     """Whether this run may read or write a snapshot: no -e, and a folder to keep it in."""
-    return bool(opts.cache and opts.vault_file and not opts.extra)
+    return bool(opts.cache and _vault_files(opts) and not opts.extra)
 
 
 def _from_snapshot(opts) -> dict:
@@ -519,7 +534,11 @@ def _from_snapshot(opts) -> dict:
         raise Stale("no snapshot for these files")
     config = kept["config"]
     values = _vault_values(opts)
-    secret = str(values[TOKEN_VAR]).strip()
+    # The vault's name for this host's token, as the snapshot was kept: a host in hosts/ has its own (kinds.py).
+    token = kept.get("token", TOKEN_VAR)
+    if token not in TOKEN_VARS:
+        raise Stale("no token of a host's kind")
+    secret = str(values[token]).strip()
     config["fleet"]["headers"] = {k: v.replace(SECRET_MARK, secret) for k, v in config["fleet"]["headers"].items()}
     config["run"] = {"names": opts.names.split(",") if opts.names else [], "only": opts.only}
     config["password"] = lambda name="": str(values.get(PASSWORD_VAR) or "")
@@ -533,15 +552,14 @@ def _keep(opts, config, secret, password, say=None) -> None:
         values = _vault_values(opts)
     except (OSError, KeyError, ValueError, Stale):
         return
-    if (
-        not secret
-        or str(values.get(TOKEN_VAR, "")).strip() != secret
-        or str(values.get(PASSWORD_VAR) or "") != password
-    ):
+    # Which of the vault's names the run's token is: the first host's, or a host's own in hosts/. Neither, and the
+    # token is no vault value read as it is: nothing is kept.
+    token = next((name for name in TOKEN_VARS if secret and str(values.get(name, "")).strip() == secret), "")
+    if not token or str(values.get(PASSWORD_VAR) or "") != password:
         return
     kept = {key: value for key, value in config.items() if key not in ("run", "password")}
     # Looked for as JSON writes each: a quote or a backslash in one is escaped there.
-    text = json.dumps({"key": _digest(opts), "config": kept}, default=str)
+    text = json.dumps({"key": _digest(opts), "token": token, "config": kept}, default=str)
     text = text.replace(json.dumps(secret)[1:-1], SECRET_MARK)
     held = sorted(
         str(name)

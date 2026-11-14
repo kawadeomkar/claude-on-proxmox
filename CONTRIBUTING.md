@@ -153,9 +153,10 @@ A release is an annotated tag on `main`, named `vMAJOR.MINOR.PATCH` by
 and only that:
 
 - the `just` commands people use - `init`, `install`, `vault`, `deploy`, `status`, `login`, `code`, `destroy`,
-  `settings`, `logs`, `mcp` and `help` - and their options;
+  `settings`, `logs`, `host`, `mcp` and `help` - and their options;
 - the settings `local.yml.example` and `vault.yml.example` list, and the shape of `inventory/hosts.yml`: the
-  `proxmox` group, its host and that host's `ansible_host`;
+  `proxmox` group, its host and that host's `ansible_host`; and of a host in `hosts/<name>/` beside it (from 2.5):
+  its `hosts.yml` of that shape, its `group_vars/all/local.yml` and `vault.yml`, and `hosts/current`;
 - the role names `just deploy --tags` takes: `common`, `vscode_server`, `dev_tools`, `claude_code`,
   `github_projects` and `tailscale`;
 - the settings every recipe takes from the environment or before its name: `ANSIBLE_ARGS`, `LOG_DIR`,

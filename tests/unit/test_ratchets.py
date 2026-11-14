@@ -102,16 +102,20 @@ PROXMOX_OWN = re.compile(
 )
 PROXMOX_ELSEWHERE = {
     "deploy.yml": 2,
-    "inventory/group_vars/all/defaults.yml": 30,
+    # The token's rule names its two vault names (a host's own, from 2.5: docs/architecture/custom-code.md §7.14).
+    "inventory/group_vars/all/defaults.yml": 32,
     "inventory/group_vars/all/local.yml.example": 4,
     "inventory/group_vars/all/vault.yml.example": 2,
     "lib/claude_vm/ansible/engine.py": 4,
     "lib/claude_vm/mcp/confirm.py": 4,
     "lib/claude_vm/refs.py": 3,
     "lib/claude_vm/run/model.py": 4,
+    # The kinds of host, as literal data, each naming its own settings once by design: the resolver, just host and just
+    # status read them there.
+    "lib/claude_vm/hosts/kinds.py": 5,
     "lib/claude_vm/status/engine.py": 16,
     "lib/claude_vm/status/model.py": 18,
-    "lib/claude_vm/status/settings.py": 6,
+    "lib/claude_vm/status/settings.py": 5,
     "lib/claude_vm/tui/run.py": 3,
     "lib/claude_vm/tui/status.py": 3,
     "lib/claude_vm/wiring.py": 1,

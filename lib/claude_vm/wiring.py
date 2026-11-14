@@ -41,17 +41,25 @@ def wiring() -> tuple[dict, dict[str, list[str]]]:
     The wiring is a variable whose whole value is one setting, as in defaults.yml
     (`claude_code_login_desktop: "{{ login_desktop }}"`) or a role's defaults
     (`proxmox_vm_cores: "{{ vm_cores | default(2) }}"`, which is where vm_cores' default lives), trimmed or not
-    (`proxmox_api_token_secret: "{{ vault_proxmox_api_token_secret | trim }}"`).
+    (`vault_vm_password`'s); or one of two by a rule, trimmed (`proxmox_api_token_secret: "{{ (vault_a if ... else
+    vault_b) | trim }}"`, the first host's secret or a host's own), which both set.
     Role defaults load first and defaults.yml after, as Ansible ranks them.
     """
     import yaml
 
+    either = re.compile(r"^\{\{\s*\((\w+)\s+if\b.*\belse\s+(\w+)\)\s*\|\s*trim\s*\}\}$", re.S)
     wire = re.compile(r"""^(\w+): "\{\{ (\w+)(?: \| trim)?(?: \| default\((.*)\))? \}\}"$""")
     defaults: dict = {}
     feeds: dict[str, list[str]] = {}
     files = sorted((ROOT / "roles").glob("*/defaults/main.yml")) + [GROUP_VARS / "defaults.yml"]
     for path in files:
-        defaults.update(yaml.safe_load(path.read_text()) or {})
+        loaded = yaml.safe_load(path.read_text()) or {}
+        defaults.update(loaded)
+        for name, value in loaded.items():
+            m = either.match(value.strip()) if isinstance(value, str) else None
+            if m:
+                for source in m.groups():
+                    feeds.setdefault(source, []).append(name)
         for line in path.read_text().splitlines():
             m = wire.match(line)
             if m:

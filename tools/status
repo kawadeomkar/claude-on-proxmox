@@ -2,7 +2,7 @@
 """just status: what every VM this project created is doing, and what needs doing next, changing nothing.
 
     "$bin/python" tools/status [--names <a,b>] [--only <sections>] [--json] [--cache <dir>]
-                               [--vault-file <file>] [--vault-password-file <file>] [-i <inventory>] [-e <vars>]
+                               [--vault-file <file>]... [--vault-password-file <file>] [-i <inventory>]... [-e <vars>]
                                [--private-key <file>]
 
 The engine (lib/claude_vm/status/engine.py) reads and draws; this says what it was given. -e, -i and --private-key are
@@ -30,7 +30,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--only", default="")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--cache", default="")
-    parser.add_argument("--vault-file", default="")
+    # The shared vault, then a host's own in hosts/ (tools/check host): one --vault-file each, in that order.
+    parser.add_argument("--vault-file", action="append", default=[])
     parser.add_argument("--vault-password-file", default="")
     parser.add_argument("-i", "--inventory", action="append", default=[])
     parser.add_argument("-e", "--extra-vars", dest="extra", action="append", default=[])

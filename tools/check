@@ -5,7 +5,10 @@
 # dependency.
 #
 #   tools/check checkout <directory>   just was started there: refuse another checkout
-#   tools/check vault <file>           the vault exists and is encrypted
+#   tools/check host <bin> env|list|switch|remove ...
+#                                        the checkout's hosts (tools/host): the host of a run and the files it is
+#                                        read from, or just host's list, switch and removal
+#   tools/check vault <file>...        each vault exists and is encrypted
 #   tools/check collections <bin>      the Galaxy collections are requirements.yml's pins
 #   tools/check names <name>...        VM names: letters, digits and . _ - , only, from a letter or digit
 #   tools/check size <cores> <memory> <disk>   deploy's size: whole numbers, memory M or G, disk G or T
@@ -42,11 +45,27 @@ checkout)
     exit 1
   fi
   ;;
+host)
+  # The one place that knows where a checkout's hosts are (lib/claude_vm/hosts/): the first in inventory/, each
+  # other in hosts/<name>/. Run with the environment's Python (<bin>), which reads their YAML, and opens a vault only
+  # to read the names it sets.
+  bin=$2
+  shift 2
+  test -x "$bin/python" || { echo "error: no python in [$bin], the bin of the project's Python environment. Run: just install" >&2; exit 1; }
+  exec "$bin/python" -I "$(dirname "$0")/host" "$@"
+  ;;
 vault)
   # Without vault.yml a playbook dies inside the cluster listing on an
-  # undefined variable; plaintext, it would be used as it is.
-  test -f "$2" || { echo "error: $2 missing. Run: just init" >&2; exit 1; }
-  head -c 14 "$2" | grep -q '^\$ANSIBLE_VAULT' || { echo "error: $2 is not encrypted. Run: just vault" >&2; exit 1; }
+  # undefined variable; plaintext, it would be used as it is. A run against a
+  # host in hosts/ reads two: the shared one, and the host's.
+  shift
+  for file in "$@"; do
+    # A host's own, in hosts/<name>/, is made and edited for that host.
+    folder=${file%/group_vars/all/vault.yml} host=
+    case "$folder" in "$file" | inventory | */inventory) ;; *) host=" --host ${folder##*/}" ;; esac
+    test -f "$file" || { echo "error: $file missing. Run: just init$host" >&2; exit 1; }
+    head -c 14 "$file" | grep -q '^\$ANSIBLE_VAULT' || { echo "error: $file is not encrypted. Run: just vault$host" >&2; exit 1; }
+  done
   ;;
 collections)
   # Each checkout has its own collections (tools/env-run --collections, which
@@ -416,7 +435,7 @@ sys.exit(1 if found else 0)
 PYTHON
   ;;
 *)
-  echo "usage: tools/check checkout <directory> | vault <file> | collections <bin> | names <name>... | project <name> | session <id> | sections <list> | settings <bin> <file>... | lock <file> <pid> <title> | unheld <file>" >&2
+  echo "usage: tools/check checkout <directory> | host <bin> <action> ... | vault <file>... | collections <bin> | names <name>... | project <name> | session <id> | sections <list> | settings <bin> <file>... | lock <file> <pid> <title> | unheld <file>" >&2
   exit 2
   ;;
 esac

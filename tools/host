@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""The checkout's hosts (lib/claude_vm/hosts/): which host a run is against, and the files and inventory it reads that
+host from; just host's list, its switch and its removal. tools/check host runs it with the environment's Python.
+
+    tools/host env --checkout <dir> --hosts-dir <dir> --vault-file <file> --settings-files <files> --vault-pass <file>
+                   [--host <name>] [--nested <name>] [--names <a,b>]
+    tools/host list --checkout <dir> --hosts-dir <dir> [--json]
+    tools/host switch --checkout <dir> --hosts-dir <dir> <name>
+    tools/host remove --checkout <dir> --hosts-dir <dir> <name>
+
+env prints, for the recipe to eval, the host of the run - --host, else the host --nested names (a recipe run inside
+another's, its host passed as the justfile's nested_host=), else the one hosts/current names, else the first host - as
+shell assignments: host, hosts_many, settings_files, vault_files, host_sources and host_extra, and ANSIBLE_INVENTORY
+exported for a host in hosts/. Or it refuses, saying why on standard error, and exits 1, before anything starts.
+Every value it prints is held to a pattern first, and printed quoted.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import shutil
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "lib"))  # the controller's package (docs/architecture/custom-code.md §7.10)
+from claude_vm.hosts import layout as hosts  # noqa: E402
+
+# An address a host's hosts.yml gives it, as it may reach a run: a host name or an IP address, one word.
+ADDRESS = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:_-]{0,252}")
+
+
+def _refuse(said: str) -> int:
+    print(f"error: {said}", file=sys.stderr)
+    return 1
+
+
+def _password_files(given: str) -> list[str]:
+    """The vault's password files, as Ansible tries them: the recipe's, then ANSIBLE_VAULT_PASSWORD_FILE's."""
+    files = [given, os.path.expanduser(os.environ.get("ANSIBLE_VAULT_PASSWORD_FILE", ""))]
+    return [one for at, one in enumerate(files) if one and one not in files[:at] and os.path.isfile(one)]
+
+
+def _vaults_hold_their_own(layout: hosts.Layout, host: hosts.Host, password: str) -> str:
+    """Why the vaults would send a host the wrong secret, or "": the shared vault holds the first host's token under
+    the kind's shared name and never another host's, and a host's vault its own under the host name and never the
+    shared one. defaults.yml picks the name by where the run's host was defined, so either in the other's file would
+    defeat it. Opened in memory to read the names alone; kept as checked, by the files' sizes and times, until one
+    changes."""
+    shared, own = layout.checkout / hosts.SHARED_VAULT, layout._path(host.vault_file)
+    checked = layout.hosts_dir / ".checked.json"
+    key = hosts.checked_digest([shared, own])
+    try:
+        if key and json.loads(checked.read_text(encoding="utf-8")).get(host.name) == key:
+            return ""
+    except (OSError, ValueError, AttributeError):
+        pass
+    files = _password_files(password)
+    shared_names, own_names = hosts.vault_names(shared, files), hosts.vault_names(own, files)
+    kind = host.kind
+    if shared_names is not None and kind.secret_host in shared_names:
+        return (
+            f"{hosts.SHARED_VAULT} sets {kind.secret_host}, which is a host's own and belongs in its vault: a host "
+            f"whose vault lacked it would be sent this one. Move it with just vault into {host.vault_file}"
+        )
+    if own_names is not None and kind.secret_shared in own_names:
+        return (
+            f"{host.vault_file} sets {kind.secret_shared}, the first host's name for its secret: {host.name}'s is "
+            f"{kind.secret_host}. Rename it there"
+        )
+    if own_names is not None and kind.secret_host not in own_names:
+        return (
+            f"{host.vault_file} does not set {kind.secret_host}, {host.name}'s secret: just init --host {host.name} "
+            "sets it"
+        )
+    if shared_names is not None and own_names is not None and key:
+        try:
+            kept = json.loads(checked.read_text(encoding="utf-8"))
+            kept = kept if isinstance(kept, dict) else {}
+        except (OSError, ValueError):
+            kept = {}
+        kept[host.name] = key
+        temporary = checked.with_name(f".checked.{os.getpid()}")
+        try:
+            with open(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as out:
+                json.dump(kept, out)
+            os.replace(temporary, checked)
+        except OSError:
+            pass
+    return ""
+
+
+def env(opts, layout: hosts.Layout) -> int:
+    given = opts.host or opts.nested
+    if opts.host and opts.nested and opts.host != opts.nested:
+        return _refuse(f"--host {opts.host} in a run against {opts.nested}: one host per run")
+    many = layout.many()
+    try:
+        # One host, and none asked for: nothing to choose, and nothing read - the run is as it always was.
+        host = layout.resolve(given) if given or many or layout.current_name() else None
+    except hosts.Refused as refused:
+        return _refuse(str(refused))
+    overlay = host is not None and not host.first
+    sources = ",".join(host.sources) if overlay else ""
+    exported = os.environ.get("ANSIBLE_INVENTORY")
+    if overlay and exported is not None and exported != sources:
+        why = "--host" if opts.host else f"{layout.hosts_rel}/current"
+        return _refuse(
+            f"ANSIBLE_INVENTORY is exported, and this run's host is {host.name} ({why}), whose inventory is "
+            f"{sources}: one inventory per run. Unset it to reach {host.name}, or run against the first host"
+        )
+    if overlay:
+        if opts.vault_file != hosts.DEFAULT_VAULT or " ".join(opts.settings_files.split()) != hosts.DEFAULT_SETTINGS:
+            return _refuse(
+                f"VAULT_FILE and SETTINGS_FILES name the first host's files, and this run's host is {host.name}: give "
+                "them only for a run against the first host"
+            )
+        lines = layout.never_inherited(host)
+        if lines:
+            return _refuse(
+                f"{hosts.SHARED_LOCAL} sets {', '.join(lines)}, which describe{'s' if len(lines) == 1 else ''} one "
+                f"network or one host, and {host.local_file} does not: add {'it' if len(lines) == 1 else 'them'} "
+                f"there for {host.name}, the value or the setting's default to say none"
+            )
+        why = _vaults_hold_their_own(layout, host, opts.vault_pass)
+        if why:
+            return _refuse(why)
+    others = layout.others_of(host) if many else []
+    for other in others:
+        if other["address"] and not ADDRESS.fullmatch(other["address"]):
+            return _refuse(
+                f"{other['name']}'s ansible_host is no address or host name, one word: fix it in its hosts.yml"
+            )
+    if overlay:
+        settings = [hosts.SHARED_LOCAL, host.hosts_file, host.local_file]
+        vaults = [hosts.SHARED_VAULT, host.vault_file]
+    else:
+        settings, vaults = opts.settings_files.split(), [opts.vault_file]
+    values = {
+        "host": host.name if host else "",
+        "hosts_many": "1" if many else "",
+        "settings_files": " ".join(settings),
+        "vault_files": " ".join(vaults),
+        "host_sources": sources,
+        "host_extra": json.dumps({"claude_hosts_other": others}) if many else "",
+    }
+    for name, value in values.items():
+        print(f"{name}={shlex.quote(value)}")
+    if overlay:
+        print(f"ANSIBLE_INVENTORY={shlex.quote(sources)}; export ANSIBLE_INVENTORY")
+    return 0
+
+
+def _defaults(checkout: Path) -> dict:
+    """The inventory defaults, as YAML reads them: a setting a host's files leave unset shows its default."""
+    try:
+        found = hosts._yaml(checkout / "inventory" / "group_vars" / "all" / "defaults.yml")
+    except hosts.Refused:
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def listing(opts, layout: hosts.Layout) -> int:
+    try:
+        every = layout.every()
+        current = layout.resolve("") if every else None
+    except hosts.Refused as refused:
+        every, current = layout.every(), None
+        said = str(refused)
+    else:
+        said = ""
+    defaults = _defaults(layout.checkout)
+    rows = []
+    for host in every:
+        shown = host.shown()
+        for _, setting in host.kind.shown if host.kind else ():
+            if shown["settings"].get(setting) in (None, ""):
+                shown["settings"][setting] = defaults.get(setting) if host.first else None
+        rows.append(
+            {
+                **shown,
+                "kind": host.kind.key if host.kind else None,
+                "first": host.first,
+                "current": current is not None and host.name == current.name,
+                "problem": host.problem,
+            }
+        )
+    if opts.json:
+        print(json.dumps({"current": current.name if current else None, "hosts": rows, "problem": said or None}))
+        return 0
+    if not rows:
+        print("No host yet: just init sets up the first, in inventory/hosts.yml.")
+        return 0
+    headings = []
+    for kind in hosts.KINDS.values():
+        headings += [heading for heading in kind.shown if heading not in headings]
+    table = [["  HOST", "ADDRESS", *(heading for heading, _ in headings), "SETTINGS", ""]]
+    for row in rows:
+        cells = [
+            str(row["settings"].get(setting) if row["settings"].get(setting) is not None else "-")
+            for _, setting in headings
+        ]
+        note = "the current host" if row["current"] else row["problem"]
+        name = f"{'▸' if row['current'] else ' '} {row['name']}"
+        table.append([name, row["address"] or "-", *cells, f"{row['folder']}/", note])
+    widths = [max(len(line[at]) for line in table) for at in range(len(table[0]) - 1)]
+    for line in table:
+        columns = "  ".join(cell.ljust(width) for cell, width in zip(line, widths, strict=False))
+        print(f"{columns}  {line[-1]}" if line[-1] else columns.rstrip())
+    print()
+    if said:
+        print(f"{said}.")
+    if len(rows) > 1:
+        print("just host <name> switches; --host <name> on a command reaches another host once.")
+    else:
+        print("One host: just init --host <name> sets up another.")
+    return 0
+
+
+def switch(opts, layout: hosts.Layout) -> int:
+    try:
+        host = layout.switch(opts.name)
+    except hosts.Refused as refused:
+        return _refuse(str(refused))
+    print(f"{host.name} is the current host: every command runs against it, and --host <name> reaches another once.")
+    return 0
+
+
+def remove(opts, layout: hosts.Layout) -> int:
+    name = opts.name
+    first = layout.first()
+    if first is not None and name == first.name:
+        return _refuse(
+            f"{name} is the first host, whose settings are {hosts.SHARED}/'s: just host --remove removes "
+            "only a host in hosts/"
+        )
+    if name not in layout.folders():
+        return _refuse(f"{layout.hosts_rel}/{name} is no host's folder: just host lists them")
+    try:
+        current = layout.current_name()
+    except hosts.Refused as refused:
+        return _refuse(str(refused))
+    if name == current:
+        return _refuse(f"{name} is the current host: switch to another first, just host <name>")
+    shutil.rmtree(layout.hosts_dir / name)
+    print(
+        f"Removed {layout.hosts_rel}/{name}/, this checkout's settings and token for {name}. Its VMs are still there "
+        "on it, and their SSH aliases here: a fleet-wide just deploy --only ssh-config prunes none of them."
+    )
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="tools/host")
+    parser.add_argument("action", choices=["env", "list", "switch", "remove"])
+    parser.add_argument("name", nargs="?", default="")
+    parser.add_argument("--checkout", required=True)
+    parser.add_argument("--hosts-dir", required=True)
+    parser.add_argument("--host", default="")
+    parser.add_argument("--nested", default="")
+    parser.add_argument("--names", default="")
+    parser.add_argument("--vault-file", default=hosts.DEFAULT_VAULT)
+    parser.add_argument("--settings-files", default=hosts.DEFAULT_SETTINGS)
+    parser.add_argument("--vault-pass", default="")
+    parser.add_argument("--json", action="store_true")
+    opts = parser.parse_args(argv)
+    for value in (opts.host, opts.nested, opts.name):
+        if value and not hosts.NAME.fullmatch(value):
+            return _refuse(f"a host's name is lowercase letters, digits and -, at most 31 (got: [{value}])")
+    checkout = Path(opts.checkout)
+    hosts_dir = Path(opts.hosts_dir)
+    layout = hosts.Layout(checkout, hosts_dir if hosts_dir.is_absolute() else checkout / hosts_dir)
+    action = {"env": env, "list": listing, "switch": switch, "remove": remove}[opts.action]
+    if opts.action in ("switch", "remove") and not opts.name:
+        return _refuse(f"just host {'--remove ' if opts.action == 'remove' else ''}takes the host's name")
+    return action(opts, layout)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

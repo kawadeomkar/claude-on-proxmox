@@ -198,9 +198,11 @@ user's choice. What was decided, and why:
   them, and `tools/check settings` names the new name while one is set ([Upgrading](../guides/upgrading.md#names-11-added)).
   The new name wins wherever both are set, `-e` of the old one included; `just settings` writes the new name and
   takes the old one out, so the two are never left side by side, one of them doing nothing.
-- **One hypervisor per checkout.** A second one is a provider of its own, its VMs found and listed through entry
-  points of its role, read by static imports as the editors' files are; the `just status --json` keys 1.0 promises,
-  some of them Proxmox's (`vmid`, `node`, `proxmox`), stay for every provider.
+- **One provider per run** (one hypervisor per checkout until 2.5, [§15.8](#158-a-host-is-an-inventory-source-not-a-variable)).
+  A second hypervisor is a provider of its own, its VMs found and listed through entry points of its role, read by
+  static imports as the editors' files are; the `just status --json` keys 1.0 promises, some of them Proxmox's
+  (`vmid`, `node`, `proxmox`), stay for every provider. Every run reaches exactly one host, so one kind of host:
+  one provider's plays, imported statically, still hold, and a checkout may hold hosts of more than one kind.
 - **The names runs left behind move only with a migration** (decided November 2026, for 2.0, when the project
   became agent-warehouse): the tag, the markers and drop-ins on each VM, just code's helpers there - the shared one's
   path is in a task of the user's own - and its ownership marker, the managed SSH config's file and blocks, the
@@ -297,3 +299,29 @@ and a 28 ms tunnel, cold SSH each time. Today's playbook drew its first VM rows 
   precedence is written again, and every other recipe.
 - **Not to be built again** unless a report grows reads that need a module's guarantees (an idempotent write, a
   `become` with a fresh password prompt); `just status` is read-only by rule, so it should not.
+
+## 15.8 A host is an inventory source, not a variable
+
+*Decided 11 November 2026, for 2.5: each step only adds, and a checkout with one host sees no change.*
+
+One checkout drives more than one Proxmox host - a homelab and a NUC - and moving between them was swapping
+`inventory/hosts.yml` and the vault's token by hand, while a prune against one deleted the other's SSH aliases.
+
+- **A host is a folder of its own settings, laid over the shared ones** ([§7.14](custom-code.md#714-libclaude_vmhosts-and-toolshost--the-checkouts-hosts)):
+  `hosts/<name>/`, a second inventory source after `inventory/controller.yml`. With it, `groups['proxmox']` holds
+  that host alone, so no playbook or role changes: Ansible's own precedence does the rest. Rejected: a variable
+  naming the host in every playbook, which every read of the API, every `hosts: proxmox` play and every guard would
+  have had to learn; and one run over several hosts, which every interlock - the name refusals, the ownership tag's
+  checks, the token - would have had to learn per host.
+- **The first host stays where it is**, in `inventory/`: no migration, and a checkout of one host sees nothing new.
+  Moving every host under `hosts/` is a change to the resolver alone, should it be wanted.
+- **One resolver knows the layout** (`tools/check host`): every recipe asks it for its run's host and the files and
+  sources that host is read from, never a path of its own.
+- **Nothing of the first host's falls through to another.** Its token's secret by a committed rule keyed on where
+  Ansible recorded the host, with no variable to switch it off - run on fake values against two fake APIs before it
+  was written - and every setting that describes one machine or one network required in, or refused missing from,
+  the host's own files.
+- **The current host is the terminal's**: `just host <name>` switches it, under the run lock, and no agent changes it;
+  `--host` on a command reaches another once.
+- **Each alias records its host** (`# origin: <host>`), and a run prunes, re-points and removes only its own host's,
+  so a listing of one host never takes another's VMs for gone.

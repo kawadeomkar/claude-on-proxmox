@@ -32,6 +32,9 @@ secrets.y*ml
 secrets.json
 vault*.y*ml
 vault*.json
+# The checkout's hosts but the first (just host, just init --host): each one's
+# address, settings and token, and which is current.
+/hosts/
 # Credentials.
 .vault_pass*
 .env*
