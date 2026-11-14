@@ -534,6 +534,78 @@ def test_fleet_wide_an_alias_a_dotted_name_was_given_by_name_is_left_as_it_was(t
     assert "Rename pve in Proxmox" in result.stdout
 
 
+# ------------------------------------------------------------- the origin ---
+# Each block records the host its VM was found on, the run's claude_ssh_origin (the inventory's Proxmox host), so
+# that a run against one host never points or removes the alias of another's VM (docs/architecture/lifecycle.md §4.8).
+
+NUC = {"claude_hosts_other": [{"name": "nuc", "address": "192.0.2.100"}]}
+
+
+def _recorded(tmp_path: Path) -> dict[str, str]:
+    """Each block's name and the host it records, "" for none."""
+    blocks = re.findall(
+        r"^# BEGIN agent-warehouse: (\S+)\n(.*?)^# END agent-warehouse: \1$", _managed(tmp_path), flags=re.M | re.S
+    )
+    return {name: (re.findall(r"^# origin: (\S+)$", body, flags=re.M) or [""])[0] for name, body in blocks}
+
+
+def test_each_block_records_its_host_and_ssh_reads_past_it(tmp_path: Path) -> None:
+    result = _run(tmp_path, [ALPHA, BETA], claude_ssh_origin="pve")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "# BEGIN agent-warehouse: alpha\n# origin: pve\nHost alpha\n    HostName 192.0.2.51\n" in _managed(tmp_path)
+    assert _recorded(tmp_path) == {"alpha": "pve", "beta": "pve"}
+    assert _resolve(tmp_path, "alpha")["hostname"] == "192.0.2.51"
+    again = _run(tmp_path, [ALPHA, BETA], claude_ssh_origin="pve")
+    assert again.returncode == 0 and _changed(again) == 0, again.stdout + again.stderr
+
+
+def test_a_block_with_no_record_is_recorded_by_its_next_write(tmp_path: Path) -> None:
+    # As every version before 2.5 wrote them: the host is unknown until a write of that VM records it.
+    assert _run(tmp_path, [ALPHA, BETA]).returncode == 0
+    assert _recorded(tmp_path) == {"alpha": "", "beta": ""}
+    result = _run(tmp_path, [ALPHA], claude_ssh_origin="nuc", **NUC)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _recorded(tmp_path) == {"alpha": "nuc", "beta": ""}
+
+
+def test_a_block_of_a_host_the_checkout_no_longer_has_is_taken_over(tmp_path: Path) -> None:
+    assert _run(tmp_path, [ALPHA], claude_ssh_origin="lab").returncode == 0
+    result = _run(tmp_path, [{**ALPHA, "address": "192.0.2.71"}], claude_ssh_origin="pve", **NUC)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _recorded(tmp_path) == {"alpha": "pve"}
+    assert _resolve(tmp_path, "alpha")["hostname"] == "192.0.2.71"
+
+
+def test_a_name_given_whose_alias_is_another_hosts_is_refused_and_nothing_is_written(tmp_path: Path) -> None:
+    assert _run(tmp_path, [ALPHA], claude_ssh_origin="nuc").returncode == 0
+    before = _managed(tmp_path)
+    result = _run(
+        tmp_path, [{**ALPHA, "address": "192.0.2.72"}, BETA], claude_ssh_origin="pve", **NUC, **_named("alpha", "beta")
+    )
+    assert result.returncode != 0
+    said = _failed(result)
+    assert said.startswith("Not writing an alias for alpha: the alias of that name is the VM of nuc"), said
+    assert _managed(tmp_path) == before
+
+
+def test_fleet_wide_a_vm_whose_alias_is_another_hosts_is_left_out_and_the_rest_written(tmp_path: Path) -> None:
+    assert _run(tmp_path, [ALPHA], claude_ssh_origin="nuc").returncode == 0
+    result = _run(tmp_path, [{**ALPHA, "address": "192.0.2.72"}, BETA], claude_ssh_origin="pve", **NUC)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _recorded(tmp_path) == {"alpha": "nuc", "beta": "pve"}
+    assert _resolve(tmp_path, "alpha")["hostname"] == "192.0.2.51"
+    assert "No alias for alpha (the alias of that name is nuc's VM)" in result.stdout
+    assert "beta: ssh beta" in result.stdout and "alpha: ssh alpha" not in result.stdout
+
+
+def test_removing_an_alias_removes_its_block_whatever_it_records(tmp_path: Path) -> None:
+    # Which aliases to remove is the caller's (destroy keeps another host's); the task file removes what it is given.
+    assert _run(tmp_path, [ALPHA, BETA], claude_ssh_origin="nuc").returncode == 0
+    removed = _run(tmp_path, [{"name": "alpha"}], state="absent", claude_ssh_origin="pve", **NUC)
+    assert removed.returncode == 0, removed.stdout + removed.stderr
+    assert _recorded(tmp_path) == {"beta": "nuc"}
+
+
 # ---------------------------------------------------------------- guards ---
 # These keep `just test` out of the developer's ~/.ssh.
 

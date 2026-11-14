@@ -251,10 +251,10 @@ LINES = [
         'r"^# BEGIN (?P<by>agent-warehouse|claude-on-proxmox): (?P<name>\\S+)$\\n(?P<body>.*?)'
         '^# END (?P=by): (?P=name)$",',
     ),
-    (
-        "lib/claude_vm/status/model.py",
-        'return re.findall(r"(?m)^# BEGIN (?:agent-warehouse|claude-on-proxmox): (\\S+)$", text or "")',
-    ),
+    # And the host each block records its VM was found on (2.5), which the prune, destroy and the next write go by:
+    # written as a comment line of the block, read by one pattern.
+    ("playbooks/tasks/ssh_config.yml", "# origin: {{ claude_ssh_origin }}"),
+    ("lib/claude_vm/proxmox.py", 'ORIGIN_RE = re.compile(r"^# origin: (?P<origin>\\S+)$", re.M)'),
     ("tools/env-run", 'checkout=$(basename "$here")-$(printf %s "$here" | cksum | cut -d \' \' -f 1)'),
     ("tools/env-run", "data=${XDG_DATA_HOME:-$HOME/.local/share}/agent-warehouse/checkouts/$checkout"),
     ("tools/env-run", "legacy=${XDG_DATA_HOME:-$HOME/.local/share}/claude-on-proxmox/checkouts/$checkout"),

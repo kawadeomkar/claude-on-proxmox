@@ -42,3 +42,23 @@
   when:
     - claude_vm_names_alias | default(false) | bool
     - claude_ssh_config | default(true) | bool
+
+# A VM name belongs to one host: where the alias of a name records another of
+# the checkout's hosts (claude_hosts_other), that host has the VM of the name,
+# and this run would point the alias here - or, creating one, make a second VM
+# of it. Read from the managed file alone, so refused before Proxmox is asked.
+- name: vm_names | Refuse a name another host's VM has
+  vars:
+    claude_vm_names_theirs: >-
+      {{ claude_ssh_blocks | selectattr('name', 'in', claude_vm_names)
+         | ssh_config_elsewhere(claude_ssh_origin, claude_hosts_other | map(attribute='name') | list) }}
+  ansible.builtin.assert:
+    that: claude_vm_names_theirs | length == 0
+    fail_msg: >-
+      {% for claude_vm_theirs in claude_vm_names_theirs %}{{ claude_vm_theirs.name }} is a VM of
+      {{ claude_vm_theirs.origin }}{{ '; ' if not loop.last else '' }}{% endfor %}, as the SSH alias of the name
+      records in {{ claude_ssh_config_file }}, and a VM name belongs to one host. Give this host's VM another name.
+    quiet: true
+  when:
+    - claude_vm_names_alias | default(false) | bool
+    - claude_ssh_config | default(true) | bool

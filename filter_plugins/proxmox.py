@@ -16,6 +16,7 @@ PROXMOX = (
     "proxmox_disk_bytes",
     "ssh_config_blocks",
     "ssh_config_prune",
+    "ssh_config_elsewhere",
     "vms_not_named",
     "built_template",
     "duplicate_names",

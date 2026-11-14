@@ -371,8 +371,11 @@ if apt fails to resolve a mirror, that is the machine, not the change.
       reserved range.
     - Deleting a VM never forgets the Proxmox host's key, or another inventory host's
       (`proxmox_vm_known_hosts_kept`), whatever address the VM reported last.
-    - A block is only ever written for a tagged VM and holds only what ssh reads; pruning removes blocks, never
-      VMs. The `Include` is added only when `ssh -G` says the user's config does not reach the managed file
+    - A block is only ever written for a tagged VM and holds only what ssh reads, and its origin: one comment,
+      `# origin: <host>` (`claude_ssh_origin`), the host its VM was found on. Pruning removes blocks, never
+      VMs, and only this host's: a block recording another host is never pruned, re-pointed or removed by a run
+      against this one (`ssh_config_elsewhere`), and one with no record only while the checkout has one host.
+      The `Include` is added only when `ssh -G` says the user's config does not reach the managed file
       yet, and never rewrites or changes the mode of the user's file.
 - **`just code` writes in one directory of its own on the VM, the session copies and one fast-forward aside,
   and never answers VS Code's, Zed's or Claude Code's security questions.** Read

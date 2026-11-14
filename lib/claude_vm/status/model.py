@@ -16,7 +16,14 @@ import re
 import time
 from datetime import UTC, datetime
 
-from ..proxmox import NO_TEMPLATE_RECORD, built_template, proxmox_notes_repos, proxmox_tags, scsi0_storage
+from ..proxmox import (
+    NO_TEMPLATE_RECORD,
+    built_template,
+    proxmox_notes_repos,
+    proxmox_tags,
+    scsi0_storage,
+    ssh_config_blocks,
+)
 from ..proxmox import proxmox_read_grant as grant
 from ..refs import NAME
 from ..text import and_list, one_line, plural
@@ -381,10 +388,11 @@ def status_storages(lists, storage):
 
 
 def status_aliases(text, enabled=True):
-    """The VM names the managed SSH config has an alias for, or None with the aliases off."""
+    """The VM names the managed SSH config has an alias for, or None with the aliases off: its blocks as the prune and
+    the writes read them (``ssh_config_blocks``), by either version's markers."""
     if not enabled:
         return None
-    return re.findall(r"(?m)^# BEGIN (?:agent-warehouse|claude-on-proxmox): (\S+)$", text or "")
+    return [block["name"] for block in ssh_config_blocks(text or "")]
 
 
 # ------------------------------------------------------------------------------------------- one VM's API ----

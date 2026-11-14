@@ -10,6 +10,9 @@
 #                     code_editor_flag, put after the name as it is given
 #   claude_ssh_state  present (the default) or absent
 #
+# And from the inventory: claude_ssh_origin, the host whose VMs these are, which
+# each block records, and claude_hosts_other, the checkout's other hosts.
+#
 # Never set_fact either name in a calling play. A fact outranks task vars,
 # so a play that builds its list as a claude_ssh_vms fact and later imports
 # this file again with `claude_ssh_vms: <another list>` acts on the fact:
@@ -47,6 +50,13 @@
 # otherwise stop every alias refresh of the user's own fleet. With names given,
 # it is refused below. Set again on every import, both states, so no earlier
 # run's list is ever read: the rest of this file writes claude_ssh_written.
+#
+# A block already kept that records another of the checkout's hosts
+# (claude_hosts_other) is the alias of that host's VM of the name, and a VM name
+# is one host's: a run against this host never points it here. Named, that is
+# refused below (and by tasks/vm_names.yml before anything is created);
+# fleet-wide, the VM is left out and said. A block with no record, or one of a
+# host the checkout no longer has, is nobody's, and the write records this host.
 - name: ssh_config | Work out which VMs get an alias
   vars:
     claude_ssh_refusals: >-
@@ -54,12 +64,26 @@
                                              claude_vm_names_chosen | default([]))
          if claude_ssh_state | default('present') == 'present' else [] }}
     claude_ssh_strict: "{{ vm_name is defined }}"
+    claude_ssh_kept_blocks: >-
+      {{ ((lookup('ansible.builtin.file', claude_ssh_config_file, errors='ignore')
+           or (lookup('ansible.builtin.file', claude_ssh_config_legacy_file, errors='ignore')
+               if claude_ssh_config_legacy_file | default('') | length > 0 else '')
+           or '') | ssh_config_blocks)
+         if claude_ssh_state | default('present') == 'present' else [] }}
+    claude_ssh_theirs_now: >-
+      {{ claude_ssh_kept_blocks
+         | ssh_config_elsewhere(claude_ssh_origin | default(''),
+                                claude_hosts_other | default([]) | map(attribute='name') | list)
+         | selectattr('name', 'in', claude_ssh_vms | map(attribute='name') | list) | list }}
   ansible.builtin.set_fact:
     claude_ssh_refused: "{{ claude_ssh_refusals if claude_ssh_strict | bool else [] }}"
     claude_ssh_left_out: "{{ [] if claude_ssh_strict | bool else claude_ssh_refusals }}"
+    claude_ssh_theirs: "{{ claude_ssh_theirs_now }}"
     claude_ssh_written: >-
       {{ claude_ssh_vms if claude_ssh_strict | bool
-         else claude_ssh_vms | rejectattr('name', 'in', claude_ssh_refusals | map(attribute='name') | list) | list }}
+         else claude_ssh_vms
+              | rejectattr('name', 'in', (claude_ssh_refusals + claude_ssh_theirs_now) | map(attribute='name') | list)
+              | list }}
 
 # The managed file's name through 1.x (claude_ssh_config_legacy_file) is moved
 # to its name from 2.0 once, with its blocks' markers, before anything is read
@@ -156,6 +180,25 @@
           }}{{ '; ' if not loop.last else '' }}{% endfor %}). Rename the VM in Proxmox.
         quiet: true
 
+    - name: ssh_config | Refuse to point another host's alias at this host's VM
+      ansible.builtin.assert:
+        that: vm_name is not defined or claude_ssh_theirs | length == 0
+        fail_msg: >-
+          Not writing an alias for {{ claude_ssh_theirs | map(attribute='name') | join(', ') }}: the alias of
+          {{ 'that name' if claude_ssh_theirs | length == 1 else 'those names' }} is the VM of
+          {{ claude_ssh_theirs | map(attribute='origin') | unique | join(', ') }}, as its block in
+          {{ claude_ssh_config_file }} records, and a VM name belongs to one host. Rename this host's VM in Proxmox.
+        quiet: true
+
+    - name: ssh_config | Say which VMs keep another host's alias
+      ansible.builtin.debug:
+        msg: >-
+          No alias for {% for claude_ssh_why in claude_ssh_theirs %}{{ claude_ssh_why.name }} (the alias of that name
+          is {{ claude_ssh_why.origin }}'s VM){{ '; ' if not loop.last else '' }}{% endfor %}: a VM name belongs to one
+          host, and the alias stays with the host its block records. Rename this host's
+          {{ 'VM' if claude_ssh_theirs | length == 1 else 'VMs' }} in Proxmox.
+      when: claude_ssh_theirs | length > 0
+
     # A name with a dot is left out only because nobody named it: said apart, with
     # the run that writes its alias, and an alias it has already is left as it is.
     - name: ssh_config | Say which VMs get no alias
@@ -202,13 +245,18 @@
         mode: "0700"
 
     # HostName is the address the guest agent reported, or <name>.<domain> when
-    # the network resolves VM names (ssh_hostname). Nothing else is recorded: the
-    # block holds what ssh reads and no state of this project's. Each write is
-    # validated by the real ssh client parsing the file, so a bad option fails
-    # this task instead of every `ssh` on this machine.
+    # the network resolves VM names (ssh_hostname). The block holds what ssh
+    # reads, and one comment ssh skips: the host the VM was found on
+    # (claude_ssh_origin), which the prune, destroy and the next write go by -
+    # no other state of this project's. Each write is validated by the real ssh
+    # client parsing the file, so a bad option fails this task instead of every
+    # `ssh` on this machine.
     - name: ssh_config | Write the alias for each VM
       vars:
         claude_ssh_block: |-
+          {% if claude_ssh_origin | default('') | length > 0 %}
+          # origin: {{ claude_ssh_origin }}
+          {% endif %}
           Host {{ claude_ssh_vm.name }}
               HostName {{ claude_ssh_vm | ssh_hostname(claude_ssh_host_domain | default('')) }}
               User {{ claude_ssh_vm.user }}

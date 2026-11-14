@@ -397,6 +397,24 @@ claude_ssh_config_legacy_file: >-
   {{ (claude_ssh_config_file | dirname) ~ '/claude-on-proxmox.conf'
      if claude_ssh_config_file | basename == 'agent-warehouse.conf' else '' }}
 claude_ssh_user_config: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/config"
+# The host whose VMs this run reaches, by its inventory name, as each alias
+# block records it (# origin, tasks/ssh_config.yml): the prune, destroy and the
+# next write go by it. Empty without a Proxmox host in the inventory (a static
+# one, as Vagrant's), when a block records none. Not a setting.
+claude_ssh_origin: "{{ groups['proxmox'][0] if groups['proxmox'] | default([]) else '' }}"
+# The checkout's other hosts, as {name, address}: tools/check host hands them
+# to every run against one host. Not a setting.
+claude_hosts_other: []
+# The managed file's alias blocks, each as {name, origin}, as the file is when a
+# task asks - by its 1.x name while that is the one there. Not a setting.
+claude_ssh_blocks: >-
+  {{ (lookup('ansible.builtin.file', claude_ssh_config_file, errors='ignore')
+      or (lookup('ansible.builtin.file', claude_ssh_config_legacy_file, errors='ignore')
+          if claude_ssh_config_legacy_file | length > 0 else '')
+      or '') | ssh_config_blocks }}
+# The VMs whose alias records another host than this run's: theirs to keep,
+# which destroy removes neither the alias nor the <name>.<domain> key of.
+claude_ssh_names_elsewhere: "{{ claude_ssh_blocks | ssh_config_elsewhere(claude_ssh_origin) | map(attribute='name') | list }}"
 claude_ssh_config_include: true
 claude_ssh_host_domain: ""
 claude_ssh_identity_file: ""

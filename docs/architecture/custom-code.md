@@ -44,13 +44,18 @@ NIC is `net1` out of the fleet.
 a VMID in the detail — `500 Internal Server Error: VM 4013 is not running` — which failed
 the fleet listing and `just deploy --only configure` for the whole fleet over one stopped VM.
 
-**`ssh_config_blocks(content)`** — the alias blocks in the managed file, as `{name}`, in file order. **`ssh_config_prune(blocks, resources,
-tag_pattern, hosts)`** — the decision `just deploy --only ssh-config` makes fleet-wide, as data: `prune` (no VM of
-that name anywhere), `untagged` (a VM of that name exists without the tag; left alone), `nameless`
-(tagged VMs the listing shows without a name, a node that is down), which when non-empty empties
-`prune` into `held`, and `refused` (a name no alias may have, an address or one of `hosts`, as
-`ssh_alias_refusal` says, which an earlier version wrote: removed whatever the listing shows). Pure, so every
-rule is a unit test rather than a fake-API fixture.
+**`ssh_config_blocks(content)`** — the alias blocks in the managed file, as `{name, origin}`, in file order:
+`origin` is the host the block records (`# origin: <host>`, from 2.5), `""` for none. **`ssh_config_elsewhere(blocks,
+origin, others)`** — the blocks that record another host than the run's, `{name, origin}`; with `others`, only
+those of the checkout's other hosts. **`ssh_config_prune(blocks, resources, tag_pattern, hosts, origin,
+others)`** — the decision `just deploy --only ssh-config` makes fleet-wide, as data: `prune` (no VM of that name
+anywhere on this host), `untagged` (a VM of that name exists without the tag; left alone), `nameless` (tagged VMs
+the listing shows without a name, a node that is down), which when non-empty empties `prune` into `held`,
+`refused` (a name no alias may have, an address or one of `hosts`, as `ssh_alias_refusal` says, which an earlier
+version wrote: removed whatever the listing shows or the block records), `elsewhere` (blocks recording a host the
+checkout does not have, whose VM this listing lacks: left, and said; another of `others`' is left unsaid) and
+`unknown` (blocks with no record while the checkout has other hosts: left, and said). Pure, so every rule is a
+unit test rather than a fake-API fixture.
 
 **`ssh_alias_refusal(name, hosts, chosen)`** — why a VM's name cannot be its alias, or `""`: a name ssh reads
 as an address (`192.0.2.10`, `3232235777`, `0x7f000001`: one to four parts between dots, each decimal, octal or

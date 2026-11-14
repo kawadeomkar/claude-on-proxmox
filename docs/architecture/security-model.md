@@ -226,7 +226,7 @@ the tools keep for themselves:
 | Where | What | Written by | When | Taken out by |
 |---|---|---|---|---|
 | `~/.ssh/known_hosts` | each VM's SSH host key, and the Proxmox host's | ssh, on first contact (`StrictHostKeyChecking=accept-new`) | every run that reaches a VM or the Proxmox host | `just destroy`: the VM's lines, never the Proxmox host's |
-| `~/.ssh/agent-warehouse.conf` (`claude_ssh_config_file`) | one `Host` block per VM, so `ssh <vm>` reaches it | `just deploy`, `just code` (`playbooks/tasks/ssh_config.yml`) | `claude_ssh_config` on (the default) | `just deploy --only ssh-config` prunes a VM that is gone; `just destroy` the VM's |
+| `~/.ssh/agent-warehouse.conf` (`claude_ssh_config_file`) | one `Host` block per VM, so `ssh <vm>` reaches it, recording the host the VM is on | `just deploy`, `just code` (`playbooks/tasks/ssh_config.yml`) | `claude_ssh_config` on (the default) | `just deploy --only ssh-config` prunes a VM that is gone from its host; `just destroy` the VM's |
 | one `Include` line at the top of `~/.ssh/config` (`claude_ssh_user_config`) | makes ssh read the file above | the same, once | `claude_ssh_config_include` on, while ssh does not reach the file yet | nothing: it is yours to remove |
 | `~/.local/share/agent-warehouse/checkouts/<folder>-<checksum>` (under `$XDG_DATA_HOME` when set) | this checkout's Galaxy collections, and its Python environment when you bring no virtualenv | `just install` | always | `just clean env` |
 | VS Code's Remote - SSH extension, in `~/.vscode/extensions/` | Microsoft's extension, from VS Code's marketplace | VS Code's own CLI, when `just code` finds it missing | `editor: vscode` | VS Code |
@@ -257,7 +257,9 @@ when it parses as one IPv4 address, and a name or an address that is not one pla
 newline in either would add a directive (`ProxyCommand` runs here). Its name is Proxmox's, chosen by whoever
 made it, and the managed file is included ahead of the user's own config: a name ssh would take for another host
 gets no alias, refused when named and left out of a fleet-wide refresh, said, and a name with a dot gets one only
-when the user names it ([§4.8](lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml)). A VM
+when the user names it ([§4.8](lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml)). Each block
+records the host its VM was found on, and a run against one host never points, prunes or removes another host's
+block: one host's listing would otherwise take another's VMs for gone, and its prune delete their aliases. A VM
 named after a host of the inventory is kept out wherever a name becomes a host
 ([§4.3](lifecycle.md#43-playbooksdiscoveryml)). SSH agent forwarding to the VM is off
 and documented as a choice: the VM user is root-equivalent and runs an AI agent, and `ForwardAgent`

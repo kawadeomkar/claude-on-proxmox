@@ -605,16 +605,30 @@ every writer goes through one task file so the block format cannot drift. Inputs
 `{name, address, user, workspace?}` and a state; `workspace` only feeds the connect line, and only
 `configure`, which has read it on the VM, passes it. The managed file,
 `~/.ssh/agent-warehouse.conf` (`claude_ssh_config_file`), holds one `blockinfile` block per VM,
-with what ssh reads and nothing else - no state of this project's is kept in a user's ssh config:
+with what ssh reads and one comment ssh skips, the host the VM was found on - no other state of this
+project's is kept in a user's ssh config:
 
 ```
 # BEGIN agent-warehouse: alpha
+# origin: pve                    ← claude_ssh_origin: the run's Proxmox host, by its inventory name
 Host alpha
     HostName 192.0.2.51          ← or alpha.<claude_ssh_host_domain>
     User dev
     ServerAliveInterval 30       ← claude_ssh_options, verbatim
 # END agent-warehouse: alpha
 ```
+
+**The origin.** Each block records the host its VM was found on (`claude_ssh_origin`, the first host of the
+inventory's `proxmox` group, from 2.5), since a run reaches one host's listing and nothing of another's. A
+comment rather than a change to the markers, so ssh, every parser and a checkout of an older version read the
+block as before; `ssh_config_blocks` returns it as `origin`, `""` for a block with no record, as every version
+before 2.5 wrote them. A block with no record, or one recording a host the checkout no longer has, is nobody's:
+the next write of that VM records this run's host. One recording another of the checkout's hosts
+(`claude_hosts_other`, which the host resolver hands each run) is that host's VM's alias, and a VM name belongs
+to one host: a write that names the VM is refused before anything is written, and `tasks/vm_names.yml` refuses
+the name before anything is created; fleet-wide the VM is left out and said. `destroy.yml` removes the alias,
+and forgets the `<name>.<domain>` host key, only of a VM whose block records no other host
+(`claude_ssh_names_elsewhere`): a block recording another host is that host's VM's, and stays.
 
 Through 1.x the managed file was `~/.ssh/claude-on-proxmox.conf`, its markers `claude-on-proxmox`
 (`claude_ssh_config_legacy_file`, beside the default only). The first run of this task file in 2.0, writing
@@ -662,11 +676,16 @@ named run wrote is left as it was, and the message names the run that refreshes 
 a host of the inventory, which is left out and said as discovery says it, keeping a workspace an
 earlier configure recorded, then pruning through `ssh_config_prune`
 ([§7.1](custom-code.md#71-filter_pluginsproxmoxpy)). Pruning removes blocks, never VMs, and only a block
-whose name no VM in the cluster carries any more - or one no alias may have, a name ssh reads as an address
+of this host's whose name no VM in its cluster carries any more - or one no alias may have, a name ssh reads as an address
 or one the inventory reaches a host by, which an earlier version wrote and which would otherwise take this
 machine's connections to that host for good. A name an untagged VM carries is left alone and reported, as
 `destroy.yml` refuses such a VM. While any tagged VM is listed without a name, which is what a node that is
-down looks like (§4.3), nothing else is pruned, because any block could be that VM's. With names, only those VMs are refreshed and nothing is pruned. Two
+down looks like (§4.3), nothing else is pruned, because any block could be that VM's. A listing says
+nothing of another host's VMs, so a block recording another host is never pruned here - one of the checkout's
+other hosts unsaid, one of a host it does not have (swapped out of `inventory/hosts.yml` by hand, or removed)
+said, for the user to remove once its VM is gone. A block with no record is this host's while the checkout has
+one host, and pruned as before; with more than one it could be any host's, and is left and said. With names,
+only those VMs are refreshed and nothing is pruned. Two
 tagged VMs of one name are refused as discovery refuses them: an alias of that name would point at
 one at random.
 

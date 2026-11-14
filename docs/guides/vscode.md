@@ -86,6 +86,7 @@ be anyone's, and would get this machine's `git push`.
 ```
 # ~/.ssh/agent-warehouse.conf
 # BEGIN agent-warehouse: alpha
+# origin: pve
 Host alpha
     HostName 192.0.2.51
     User dev
@@ -106,6 +107,12 @@ left alone and reported instead: a name that an *untagged* VM still carries (not
 reason about, exactly as `just destroy` refuses it), and anything at all while a tagged VM is listed
 without a name, which is what a node that is down looks like. `just deploy alpha --only ssh-config`
 refreshes one VM and never prunes.
+
+Each block records the Proxmox host its VM was found on (`# origin: pve`), and a run against one host
+prunes, re-points and removes only that host's blocks: a block another host recorded is left, so a
+prune against one host never deletes another's aliases. A block with no record - every one before 2.5
+wrote - is taken as this host's while the checkout has one host, and the next write of that VM
+records it.
 
 On a network whose DNS resolves VM names (a router that registers DHCP leases, or avahi with
 `local`), set `claude_ssh_host_domain: lan` and every alias points at `alpha.lan` instead of the

@@ -316,6 +316,7 @@ class TestGuestAddresses:
 
 ssh_config_blocks = proxmox_filters.ssh_config_blocks
 ssh_config_prune = proxmox_filters.ssh_config_prune
+ssh_config_elsewhere = proxmox_filters.ssh_config_elsewhere
 
 MANAGED = """# BEGIN agent-warehouse: alpha
 Host alpha
@@ -624,9 +625,24 @@ class TestProxmoxName:
         assert checks.proxmox_names(None, "storage") == [] == checks.proxmox_names_refused(None, "storage")
 
 
+def block(name, origin=""):
+    return {"name": name, "origin": origin}
+
+
 class TestSshConfigBlocks:
     def test_reads_every_block_in_file_order(self):
-        assert ssh_config_blocks(MANAGED) == [{"name": "alpha"}, {"name": "beta"}, {"name": "old"}]
+        assert ssh_config_blocks(MANAGED) == [block("alpha"), block("beta"), block("old")]
+
+    def test_reads_the_host_each_block_records(self):
+        text = MANAGED.replace("Host alpha\n", "# origin: nuc\nHost alpha\n").replace(
+            "Host old\n", "Host old\n# origin: pve\n"
+        )
+        assert ssh_config_blocks(text) == [block("alpha", "nuc"), block("beta"), block("old", "pve")]
+
+    def test_a_record_outside_a_block_is_no_blocks(self):
+        # Only a line inside the block's own markers: one after its END belongs to no VM.
+        text = MANAGED.replace("# END agent-warehouse: alpha\n", "# END agent-warehouse: alpha\n# origin: nuc\n")
+        assert ssh_config_blocks(text)[:2] == [block("alpha"), block("beta")]
 
     def test_empty_for_nothing(self):
         assert ssh_config_blocks("") == []
@@ -650,18 +666,42 @@ class TestSshConfigBlocks:
             ssh_config_blocks(["Host alpha"])
 
 
+NOTHING = {"prune": [], "held": [], "untagged": [], "nameless": [], "refused": [], "elsewhere": [], "unknown": []}
+
+
 class TestSshConfigPrune:
-    BLOCKS = [{"name": "alpha"}, {"name": "beta"}, {"name": "old"}]
+    BLOCKS = [block("alpha"), block("beta"), block("old")]
 
     def test_prunes_only_a_name_no_vm_carries(self):
         fleet = [vm("alpha", 9001), vm("beta", 9002), vm("ubuntu-24.04-cloudinit", 9000, tags=None)]
-        assert ssh_config_prune(self.BLOCKS, fleet, TAG) == {
-            "prune": ["old"],
-            "held": [],
-            "untagged": [],
-            "nameless": [],
-            "refused": [],
-        }
+        assert ssh_config_prune(self.BLOCKS, fleet, TAG) == {**NOTHING, "prune": ["old"]}
+
+    def test_prunes_a_block_this_host_records(self):
+        blocks = [block("alpha", "pve"), block("old", "pve")]
+        assert ssh_config_prune(blocks, [vm("alpha", 9001)], TAG, None, "pve")["prune"] == ["old"]
+
+    def test_never_prunes_a_block_another_host_records(self):
+        # The NUC's VMs are in no listing of the homelab's, swapped in by hand or one of the checkout's hosts.
+        blocks = [block("alpha", "pve"), block("gamma", "nuc"), block("delta", "lab")]
+        result = ssh_config_prune(blocks, [vm("alpha", 9001)], TAG, None, "pve", ["nuc"])
+        assert result["prune"] == []
+        # The checkout's other host's is its own, unsaid; one of a host it does not have is said.
+        assert result["elsewhere"] == [{"name": "delta", "origin": "lab"}]
+
+    def test_a_block_another_host_records_whose_name_this_host_lists_is_left_for_the_write(self):
+        blocks = [block("alpha", "lab")]
+        assert ssh_config_prune(blocks, [vm("alpha", 9001)], TAG, None, "pve") == NOTHING
+
+    def test_a_block_with_no_record_is_this_hosts_with_one_host_and_nobodys_with_several(self):
+        fleet = [vm("alpha", 9001)]
+        assert ssh_config_prune([block("old")], fleet, TAG, None, "pve")["prune"] == ["old"]
+        result = ssh_config_prune([block("old")], fleet, TAG, None, "pve", ["nuc"])
+        assert result["prune"] == [] and result["unknown"] == ["old"]
+
+    def test_a_name_no_alias_may_have_goes_whatever_host_it_records(self):
+        # It would take this machine's connections to that host, so it is no host's to keep.
+        result = ssh_config_prune([block("pve", "nuc")], [], TAG, ["pve", "localhost"], "pve", ["nuc"])
+        assert result["refused"] == ["pve"]
 
     def test_keeps_a_block_whose_vm_was_rebuilt_under_a_new_vmid(self):
         # The present pass rewrites it for the new VM; nothing to prune.
@@ -687,7 +727,7 @@ class TestSshConfigPrune:
         # A node that is down: Proxmox drops the name but keeps the tags.
         fleet = [vm("alpha", 9001), vm("beta", 9002), vm(None, 8001)]
         result = ssh_config_prune(self.BLOCKS, fleet, TAG)
-        assert result == {"prune": [], "held": ["old"], "untagged": [], "nameless": ["8001"], "refused": []}
+        assert result == {**NOTHING, "held": ["old"], "nameless": ["8001"]}
 
     def test_a_nameless_untagged_vm_holds_nothing(self):
         fleet = [vm("alpha", 9001), vm("beta", 9002), vm(None, 8000, tags=None)]
@@ -695,7 +735,7 @@ class TestSshConfigPrune:
 
     def test_removes_an_alias_no_vm_may_have_whatever_carries_it(self):
         # An earlier version wrote these; tagged VMs still carry pve and 3232235777, a node is down, and still both go.
-        blocks = [{"name": "alpha"}, {"name": "pve"}, {"name": "3232235777"}, {"name": "alpha.lab"}]
+        blocks = [block("alpha"), block("pve"), block("3232235777"), block("alpha.lab")]
         fleet = [vm("alpha", 9001), vm("pve", 9002), vm("3232235777", 9003), vm("alpha.lab", 9004), vm(None, 8001)]
         result = ssh_config_prune(blocks, fleet, TAG, ["pve", "localhost"])
         assert result["refused"] == ["pve", "3232235777"]
@@ -713,11 +753,34 @@ class TestSshConfigPrune:
             vm("beta", 9002, tags="ansible;agent-warehouse"),
         ]
         result = ssh_config_prune(self.BLOCKS[:2], fleet, TAG)
-        assert result == {"prune": [], "held": [], "untagged": [], "nameless": [], "refused": []}
+        assert result == NOTHING
 
     def test_rejects_non_lists(self):
         with pytest.raises(ValueError, match="as lists"):
             ssh_config_prune({"name": "alpha"}, [], TAG)
+
+
+class TestSshConfigElsewhere:
+    BLOCKS = [block("alpha", "pve"), block("beta", "nuc"), block("gamma"), block("delta", "lab")]
+
+    def test_every_block_another_host_records(self):
+        assert ssh_config_elsewhere(self.BLOCKS, "pve") == [
+            {"name": "beta", "origin": "nuc"},
+            {"name": "delta", "origin": "lab"},
+        ]
+
+    def test_only_those_of_the_checkouts_other_hosts_when_given(self):
+        assert ssh_config_elsewhere(self.BLOCKS, "pve", ["nuc"]) == [{"name": "beta", "origin": "nuc"}]
+        assert ssh_config_elsewhere(self.BLOCKS, "pve", []) == []
+
+    def test_a_block_with_no_record_is_nobodys(self):
+        assert ssh_config_elsewhere([block("gamma")], "pve") == []
+        # Nor does a run with no host of its own (a static inventory) make every block another's but those with none.
+        assert ssh_config_elsewhere(self.BLOCKS, "") == [b for b in self.BLOCKS if b["origin"]]
+
+    def test_rejects_non_lists(self):
+        with pytest.raises(ValueError, match="as a list"):
+            ssh_config_elsewhere({"name": "alpha"}, "pve")
 
 
 # ------------------------------------------------------------------------------- the template and its record ---

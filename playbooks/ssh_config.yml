@@ -16,7 +16,10 @@
 # a name, which is what a node that is down looks like (held, and reported).
 # What it always removes: an alias no VM may have - a name ssh reads as an
 # address, or one the inventory reaches a host by - which an earlier version
-# wrote. Read-only against Proxmox.
+# wrote. A block records the host its VM was found on (# origin), and the prune
+# reads only this host's listing: a block of another host is never pruned here,
+# and one with no record only while the checkout has this one host. Read-only
+# against Proxmox.
 - name: Refresh the SSH aliases from Proxmox
   hosts: localhost
   gather_facts: false
@@ -43,11 +46,7 @@
     # What is kept already, for the prune below.
     - name: Read the aliases already kept
       ansible.builtin.set_fact:
-        claude_ssh_existing: >-
-          {{ (lookup('ansible.builtin.file', claude_ssh_config_file, errors='ignore')
-              or (lookup('ansible.builtin.file', claude_ssh_config_legacy_file, errors='ignore')
-                  if claude_ssh_config_legacy_file | length > 0 else '')
-              or '') | ssh_config_blocks }}
+        claude_ssh_existing: "{{ claude_ssh_blocks }}"
 
     # The workspace is only shown in the connect line, and this play never
     # connects to a VM to read its home: vm_projects_dir when it is set, and
@@ -86,8 +85,11 @@
       ansible.builtin.set_fact:
         claude_ssh_prune: >-
           {{ claude_ssh_existing
-             | ssh_config_prune(claude_vm_all.json.data, claude_vm_tag_pattern, claude_vm_inventory_names)
-             if vm_name is not defined else {'prune': [], 'held': [], 'untagged': [], 'nameless': [], 'refused': []} }}
+             | ssh_config_prune(claude_vm_all.json.data, claude_vm_tag_pattern, claude_vm_inventory_names,
+                                claude_ssh_origin, claude_hosts_other | map(attribute='name') | list)
+             if vm_name is not defined
+             else {'prune': [], 'held': [], 'untagged': [], 'nameless': [], 'refused': [], 'elsewhere': [],
+                   'unknown': []} }}
 
     - name: Remove the aliases of VMs that are gone, and those no VM may have
       ansible.builtin.import_tasks: tasks/ssh_config.yml
@@ -99,6 +101,10 @@
 
     - name: Report what was kept, pruned and left alone
       vars:
+        claude_ssh_elsewhere_said: >-
+          {{ claude_ssh_prune.elsewhere | map(attribute='name')
+             | zip(claude_ssh_prune.elsewhere | map(attribute='origin'))
+             | map('join', ' (') | map('regex_replace', '$', ')') | join(', ') }}
         claude_ssh_unaddressed: >-
           {{ claude_vm_addressed | selectattr('name', 'defined') | selectattr('address', 'equalto', '')
              | map(attribute='name') | list
@@ -121,6 +127,15 @@
           {% if claude_ssh_prune.untagged | length > 0 %}
           Left alone: {{ claude_ssh_prune.untagged | join(', ') }}. A VM of that name exists but is not tagged
           "{{ claude_vm_tag }}", so it is not this project's. Remove the alias by hand if it is stale.
+          {% endif %}
+          {% if claude_ssh_prune.elsewhere | length > 0 %}
+          Left alone, recorded for a host this checkout does not have: {{ claude_ssh_elsewhere_said }}.
+          The prune reads only {{ claude_ssh_origin }}'s VMs: remove such a block from {{ claude_ssh_config_file }}
+          by hand once its VM is gone.
+          {% endif %}
+          {% if claude_ssh_prune.unknown | length > 0 %}
+          Left alone, no host recorded: {{ claude_ssh_prune.unknown | join(', ') }}. With more than one host, any of them
+          could have that VM; the next write of its alias records its host, and a prune against that host removes it.
           {% endif %}
           {% if claude_ssh_prune.nameless | length > 0 %}
           Nothing pruned: VMID {{ claude_ssh_prune.nameless | join(', ') }} is tagged "{{ claude_vm_tag }}" but listed

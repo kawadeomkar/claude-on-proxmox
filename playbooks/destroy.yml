@@ -450,6 +450,11 @@
   vars:
     ansible_connection: local
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # <name>.<domain> answers for this host's VM only while the alias of the
+    # name is this host's: one recording another host is that host's VM's, and
+    # keeps its key, as it keeps its alias below.
+    proxmox_vm_known_hosts_domain: >-
+      {{ '' if inventory_hostname in claude_ssh_names_elsewhere else claude_ssh_host_domain }}
 
   # A deletion that fails - a stop that timed out, a VM with protection on, an
   # API error - is recorded and raised at the end of the run, not here: a play
@@ -517,12 +522,31 @@
         claude_vm_stop_query: "{{ claude_vm_release_started | default([]) | rejectattr('name', 'in', claude_vm_gone) | list }}"
         claude_vm_stop_why: then not deleted
 
+    # But an alias that records another host: the VM of that name there, whose
+    # alias it stays.
     - name: Remove the aliases
       ansible.builtin.import_tasks: tasks/ssh_config.yml
       vars:
         claude_ssh_state: absent
-        claude_ssh_vms: "{{ claude_vm_gone | map('community.general.dict_kv', 'name') | list }}"
+        claude_ssh_vms: >-
+          {{ claude_vm_gone | reject('in', claude_ssh_names_elsewhere) | map('community.general.dict_kv', 'name')
+             | list }}
       when: claude_ssh_config | default(true) | bool
+
+    - name: Say which aliases stay with another host
+      vars:
+        claude_ssh_theirs_kept: >-
+          {{ claude_ssh_blocks | selectattr('name', 'in', claude_vm_gone)
+             | ssh_config_elsewhere(claude_ssh_origin) }}
+      ansible.builtin.debug:
+        msg: >-
+          Kept the SSH {{ 'alias' if claude_ssh_theirs_kept | length == 1 else 'aliases' }} of
+          {% for claude_ssh_block in claude_ssh_theirs_kept %}{{ claude_ssh_block.name }} (it records
+          {{ claude_ssh_block.origin }}){{ ', ' if not loop.last else '' }}{% endfor %}: the alias of a name is the VM
+          of the host its block records, and this run deleted {{ claude_ssh_origin }}'s.
+      when:
+        - claude_ssh_config | default(true) | bool
+        - claude_ssh_theirs_kept | length > 0
 
     # One line per VM asked for, whatever became of it, and only one: a VM
     # deleted says what it was released from, or - for one that was not: no

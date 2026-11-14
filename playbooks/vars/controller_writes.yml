@@ -33,10 +33,10 @@ code_controller_writes:
   - id: ssh_config
     path: "`~/.ssh/agent-warehouse.conf`"
     setting: claude_ssh_config_file
-    what: "one `Host` block per VM, so `ssh <vm>` reaches it"
+    what: "one `Host` block per VM, so `ssh <vm>` reaches it, recording the host the VM is on"
     writer: "`just deploy`, `just code` (`playbooks/tasks/ssh_config.yml`)"
     when: "`claude_ssh_config` on (the default)"
-    removed_by: "`just deploy --only ssh-config` prunes a VM that is gone; `just destroy` the VM's"
+    removed_by: "`just deploy --only ssh-config` prunes a VM that is gone from its host; `just destroy` the VM's"
     sources:
       - playbooks/tasks/ssh_config.yml
     invariant: "`~/.ssh/agent-warehouse.conf`"

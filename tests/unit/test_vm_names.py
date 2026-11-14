@@ -81,8 +81,22 @@ def _creating(tmp_path: Path, base: str, playbook: str, names: str, *inventory: 
     return _playbook(tmp_path, base, path, *inventory, "-e", extra)
 
 
-def _block(name: str) -> str:
-    return f"# BEGIN agent-warehouse: {name}\nHost {name}\n    HostName 192.0.2.99\n# END agent-warehouse: {name}\n"
+def _block(name: str, origin: str = "") -> str:
+    record = f"# origin: {origin}\n" if origin else ""
+    body = f"{record}Host {name}\n    HostName 192.0.2.99\n"
+    return f"# BEGIN agent-warehouse: {name}\n{body}# END agent-warehouse: {name}\n"
+
+
+def _recorded(path: Path) -> dict[str, str]:
+    """Each block of the managed file at path, by name, and the host it records ("" for none)."""
+    blocks = re.findall(
+        r"^# BEGIN agent-warehouse: (\S+)\n(.*?)^# END agent-warehouse: \1$", path.read_text(), flags=re.M | re.S
+    )
+    return {name: (re.findall(r"^# origin: (\S+)$", body, flags=re.M) or [""])[0] for name, body in blocks}
+
+
+# The checkout's other host, as tools/check host hands it to a run against this one.
+NUC = json.dumps({"claude_hosts_other": [{"name": "nuc", "address": "192.0.2.100"}]})
 
 
 def _task(report: dict, name: str) -> dict:
@@ -157,6 +171,101 @@ def test_a_fleet_wide_refresh_removes_an_alias_no_vm_may_have_and_leaves_a_dotte
     # The tagged VMs named pve and localhost get no alias, and the run says so, as discovery does.
     said = _messages(report, LEFT_OUT)["localhost"]
     assert "localhost" in said and "pve" in said
+
+
+def test_a_fleet_wide_refresh_records_this_host_and_prunes_only_its_own_blocks(tmp_path, fleet) -> None:
+    # The homelab's run (pve here) knows nothing of the NUC's VMs: before each block recorded its host, the NUC's
+    # aliases were "gone" from this listing and pruned. The fake lists a tagged VM without a name (a node that is down),
+    # which holds the prune: what it would remove is held, and what it never removes is not even that.
+    managed = tmp_path / "ssh.conf"
+    managed.write_text(_block("old", "pve") + _block("theirs", "nuc") + _block("lab-vm", "lab") + _block("unrecorded"))
+    report = _refresh(tmp_path, fleet)
+    assert report["rc"] == 0, report["stderr"][-2000:]
+    assert _recorded(managed) == {
+        "old": "pve",
+        "theirs": "nuc",
+        "lab-vm": "lab",
+        "unrecorded": "",
+        "alpha": "pve",
+        "beta": "pve",
+    }
+    # One host: a block with no record is this host's, held with its own; another host's is left, whoever has it.
+    prune = _task(report, "Decide what to prune")["ansible_facts"]["claude_ssh_prune"]
+    assert prune["held"] == ["old", "unrecorded"] and prune["unknown"] == []
+    assert prune["elsewhere"] == [{"name": "theirs", "origin": "nuc"}, {"name": "lab-vm", "origin": "lab"}]
+    said = _messages(report, "Report what was kept, pruned and left alone")["localhost"]
+    assert "Left alone, recorded for a host this checkout does not have: theirs (nuc), lab-vm (lab)." in said
+
+    # The checkout's other host, as tools/check host says: its blocks are its own, unsaid, and one with no record is
+    # anybody's now - left, and said.
+    managed.write_text(_block("theirs", "nuc") + _block("unrecorded"))
+    report = _refresh(tmp_path, fleet, "-e", NUC)
+    assert report["rc"] == 0, report["stderr"][-2000:]
+    assert _recorded(managed) == {"theirs": "nuc", "unrecorded": "", "alpha": "pve", "beta": "pve"}
+    prune = _task(report, "Decide what to prune")["ansible_facts"]["claude_ssh_prune"]
+    assert prune["unknown"] == ["unrecorded"] and prune["held"] == [] and prune["elsewhere"] == []
+    said = _messages(report, "Report what was kept, pruned and left alone")["localhost"]
+    assert "Left alone, no host recorded: unrecorded." in said and "theirs" not in said
+
+
+def test_a_name_another_hosts_vm_has_is_refused_before_proxmox_is_asked(tmp_path, fleet) -> None:
+    calls = tmp_path / "pve" / "calls.log"
+    before = calls.read_text() if calls.exists() else ""
+    (tmp_path / "ssh.conf").write_text(_block("delta", "nuc"))
+    report = _creating(tmp_path, fleet, "provision.yml", "alpha,delta", "-e", NUC)
+    assert report["rc"] != 0
+    refused = _refused(report)
+    assert len(refused) == 1, refused
+    assert refused[0]["msg"].startswith("delta is a VM of nuc, as the SSH alias of the name records"), refused
+    assert calls.read_text() == before
+    # A host the checkout does not have is no one's to keep the name for: the checks deploy makes first pass it.
+    (tmp_path / "ssh.conf").write_text(_block("delta", "lab"))
+    root = status_root(tmp_path, fleet, FROM_THE_HOST)
+    play = yaml.safe_load((REPO / "deploy.yml").read_text())[0]
+    tasks = [{**task, "ansible.builtin.import_tasks": f"{PLAYBOOKS / 'tasks'}/vm_names.yml"} for task in play["tasks"]]
+    (root / "first.yml").write_text(yaml.safe_dump([{**play, "tasks": tasks}]))
+    extra = json.dumps({"vm_name": "delta"})
+    report = _run(root, root / "first.yml", {}, *_proxmox_inventory(root), "-e", extra, "-e", NUC, timeout=120)
+    assert report["rc"] == 0, report["stderr"][-2000:]
+
+
+def test_destroy_keeps_the_alias_and_the_name_key_of_another_hosts_vm(tmp_path, fleet) -> None:
+    # destroy.yml's last play, from its start to the line that names what stayed: alpha was this host's, and beta's
+    # alias records the NUC, whose VM of that name it is.
+    root = status_root(
+        tmp_path,
+        fleet,
+        {
+            **FROM_THE_HOST,
+            "claude_ssh_user_config": str(tmp_path / "config"),
+            "claude_ssh_config_include": False,
+            "claude_ssh_host_domain": "lan",
+        },
+    )
+    managed = tmp_path / "ssh.conf"
+    managed.write_text(_block("alpha", "pve") + _block("beta", "nuc"))
+    plays = yaml.safe_load((PLAYBOOKS / "destroy.yml").read_text())
+    forget = next(play for play in plays if play.get("name") == "Forget the SSH alias of each deleted VM")
+    names = [task.get("name") for task in forget["tasks"]]
+    forget["tasks"] = forget["tasks"][: names.index("Say which aliases stay with another host") + 1]
+    forget = json.loads(json.dumps(forget).replace('"tasks/', f'"{PLAYBOOKS / "tasks"}/'))
+    (root / "forget.yml").write_text(yaml.safe_dump([forget]))
+    doomed = root / "doomed.yml"
+    doomed.write_text(
+        yaml.safe_dump(
+            {"claude_vm_doomed": {"hosts": {"alpha": {"claude_vm_deleted": True}, "beta": {"claude_vm_deleted": True}}}}
+        )
+    )
+    report = _run(root, root / "forget.yml", {}, *_proxmox_inventory(root), "-i", str(doomed), timeout=120)
+    assert report["rc"] == 0, report["stderr"][-2000:]
+    assert _recorded(managed) == {"beta": "nuc"}
+    said = _messages(report, "Say which aliases stay with another host")["localhost"]
+    assert said.startswith("Kept the SSH alias of beta (it records nuc): the alias of a name is the VM of the host")
+
+    # And the delete play forgets <name>.<domain> only for this host's: the role's input, as that play sets it.
+    delete = next(play for play in plays if play.get("name") == "Delete the VMs on Proxmox")
+    domain = delete["vars"]["proxmox_vm_known_hosts_domain"]
+    assert "inventory_hostname in claude_ssh_names_elsewhere" in domain and "claude_ssh_host_domain" in domain
 
 
 @pytest.mark.parametrize("playbook", ["deploy.yml", "provision.yml"])

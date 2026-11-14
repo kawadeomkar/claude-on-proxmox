@@ -170,26 +170,64 @@ BLOCK_RE = re.compile(
     r"^# BEGIN (?P<by>agent-warehouse|claude-on-proxmox): (?P<name>\S+)$\n(?P<body>.*?)^# END (?P=by): (?P=name)$",
     re.M | re.S,
 )
+# Inside a block, the one line that is no ssh option: where the VM was found, the inventory name of the Proxmox host
+# whose run wrote it (from 2.5). A comment, so ssh, and a checkout of an older version, read the block as before.
+ORIGIN_RE = re.compile(r"^# origin: (?P<origin>\S+)$", re.M)
 
 
 def ssh_config_blocks(content):
-    """The alias blocks in a managed ssh config, as ``{name}``, in file order."""
+    """The alias blocks in a managed ssh config, as ``{name, origin}``, in file order.
+
+    ``origin`` is what the block records of where its VM is - a host's name - or ``""`` for a block with no record,
+    as every version before 2.5 wrote them: its host is unknown, and the next write of that VM records it.
+    """
     if content is None:
         content = ""
     if not isinstance(content, str):
         raise ValueError(f"ssh_config_blocks expects the file's text, got {type(content).__name__}")
-    return [{"name": match.group("name")} for match in BLOCK_RE.finditer(content)]
+    blocks = []
+    for match in BLOCK_RE.finditer(content):
+        origin = ORIGIN_RE.search(match.group("body"))
+        blocks.append({"name": match.group("name"), "origin": origin.group("origin") if origin else ""})
+    return blocks
 
 
-def ssh_config_prune(blocks, resources, tag_pattern, hosts=None):
+def ssh_config_elsewhere(blocks, origin, others=None):
+    """The blocks of ``blocks`` (``ssh_config_blocks``'s) that record another host than ``origin``, the run's own, as
+    ``{name, origin}`` in file order: the alias of a VM that is that host's, which a run against this one must neither
+    point elsewhere nor remove.
+
+    With ``others`` given - the names of the other hosts this checkout has - only those recording one of them: a host
+    this checkout no longer has is no one's to keep a block for, and a write takes the block over. A block with no
+    record is nobody's here: its host is unknown.
+    """
+    if not isinstance(blocks, list):
+        raise ValueError("ssh_config_elsewhere expects the blocks as a list")
+    known = None if others is None else {str(other) for other in others}
+    return [
+        {"name": block.get("name", ""), "origin": block["origin"]}
+        for block in blocks
+        if isinstance(block, dict)
+        and block.get("origin")
+        and block["origin"] != origin
+        and (known is None or block["origin"] in known)
+    ]
+
+
+def ssh_config_prune(blocks, resources, tag_pattern, hosts=None, origin="", others=None):
     """Which alias blocks a fleet-wide refresh should remove, and which it must not.
 
     ``blocks`` is what ``ssh_config_blocks`` read; ``resources`` the cluster's
     ``/cluster/resources`` listing; ``tag_pattern`` the project's whole-tag
-    regex; ``hosts`` the names this machine reaches the inventory's hosts by.
+    regex; ``hosts`` the names this machine reaches the inventory's hosts by;
+    ``origin`` the name of the host whose listing this is, and ``others`` the
+    names of the checkout's other hosts.
     Pruning only ever removes alias blocks, never VMs, and a block was
     only ever written for a tagged VM, so the question is just whether that VM
-    is still there. Returns a dict:
+    is still there - on this host. A listing says nothing of another host's VMs,
+    so a block that records another host is never removed for its VM's absence
+    here, whether that host is one of ``others`` or not: a host swapped out of
+    ``inventory/hosts.yml`` by hand is still there. Returns a dict:
 
     - ``refused``: names no alias may have, whatever VM carries them: one ssh
       reads as an address, or one of ``hosts`` (``ssh_alias_refusal``). An
@@ -206,6 +244,14 @@ def ssh_config_prune(blocks, resources, tag_pattern, hosts=None):
       which is what a node that is down looks like. Any block could be one of
       those VMs, so when this is non-empty nothing is pruned: ``prune`` is
       empty and the names it would have held are in ``held`` instead.
+    - ``elsewhere``: ``{name, origin}`` of the blocks recorded for a host that
+      is not one of the checkout's (not ``origin``, not in ``others``) whose VM
+      this listing lacks: left alone, and said. A block recorded for one of
+      ``others`` is left too, unsaid: it is that host's.
+    - ``unknown``: names of blocks with no record whose VM this listing lacks,
+      while the checkout has other hosts (``others``): any of them could hold
+      it, so it is left, and said. With one host, such a block is that host's,
+      and pruned as before records were written.
     """
     if not isinstance(blocks, list) or not isinstance(resources, list):
         raise ValueError("ssh_config_prune expects the blocks and the cluster listing as lists")
@@ -214,15 +260,32 @@ def ssh_config_prune(blocks, resources, tag_pattern, hosts=None):
     tagged_names = {vm["name"] for vm in tagged if vm.get("name")}
     all_names = {vm["name"] for vm in qemu if vm.get("name")}
     nameless = [str(vm.get("vmid", "?")) for vm in tagged if not vm.get("name")]
+    others = {str(other) for other in others or []}
 
-    result = {"prune": [], "held": [], "untagged": [], "nameless": nameless, "refused": []}
+    result = {
+        "prune": [],
+        "held": [],
+        "untagged": [],
+        "nameless": nameless,
+        "refused": [],
+        "elsewhere": [],
+        "unknown": [],
+    }
     for block in blocks:
         name = block.get("name", "")
         why, unnamed = _alias_refusal(name, hosts, None)
         if why and not unnamed:
             result["refused"].append(name)
             continue
+        recorded = block.get("origin") or ""
+        if recorded and recorded != origin:
+            if recorded not in others and name not in tagged_names:
+                result["elsewhere"].append({"name": name, "origin": recorded})
+            continue
         if name in tagged_names:
+            continue
+        if not recorded and others:
+            result["unknown"].append(name)
             continue
         if name in all_names:
             result["untagged"].append(name)
