@@ -966,3 +966,62 @@ def test_a_group_var_of_hosts_yml_ranks_below_local_yml_as_ansibles_does(scenari
 def test_a_group_no_inventory_has_brings_no_warning(scenarios) -> None:
     result = _run(scenarios, "base", "--", "proxmox_vm")
     assert result.returncode == 0 and "Could not match supplied host pattern" not in result.stderr
+
+
+# ------------------------------------------------------------------------------------------- another host ---
+# A host in hosts/ (just host): its folder read over the shared inventory, as a run against it reads them, and its own
+# local.yml and vault.yml a layer each, above the shared ones. --value and --reset write the shared local.yml unless
+# the recipe names the host (--write-host), and its file is then the one changed.
+
+HOST_SECRET = "nuc-token-secret-fake-0000"
+
+
+def _host_folder(scenarios: dict, tmp_path: Path) -> Path:
+    folder = tmp_path / "hosts" / "nuc"
+    (folder / "group_vars" / "all").mkdir(parents=True)
+    hosts = {
+        "all": {"children": {"proxmox": {"hosts": {"nuc": {"ansible_host": "192.0.2.20", "ansible_user": "root"}}}}}
+    }
+    (folder / "hosts.yml").write_text(yaml.safe_dump(hosts))
+    (folder / "group_vars" / "all" / "local.yml").write_text("vm_cores: 2\nproxmox_node: nuc1\n")
+    vault = folder / "group_vars" / "all" / "vault.yml"
+    vault.write_text(yaml.safe_dump({"vault_host_proxmox_api_token_secret": HOST_SECRET}))
+    env = {"PATH": os.environ["PATH"], "HOME": str(scenarios["root"] / "home"), **QUIET}
+    _vault_tool("encrypt", "--vault-password-file", str(scenarios["root"] / "pw"), str(vault), env=env)
+    return folder
+
+
+def test_another_hosts_own_files_outrank_the_shared_ones_and_are_named(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    folder = _host_folder(scenarios, tmp_path)
+    result = _run(scenarios, inventory, f"--host-folder={folder}", "--json=true", "--all=true")
+    assert HOST_SECRET not in result.stdout + result.stderr
+    rows = _rows(result)["rows"]
+    # The shared local.yml sets 4 cores; the NUC's own, 2.
+    assert rows["vm_cores"]["value"] == 2 and rows["vm_cores"]["set_in"] == f"{folder}/local.yml"
+    assert rows["proxmox_node"]["value"] == "nuc1"
+    # A setting the host leaves alone is the shared file's.
+    assert rows["login_desktop"]["set_in"] == "local.yml"
+    # Its address, from its own hosts.yml, and its token, a secret of its own vault's, said set and never shown.
+    assert rows["ansible_host"]["value"] == "192.0.2.20"
+
+
+def test_a_write_names_the_host_only_when_asked_and_says_what_outranks_it(scenarios, tmp_path) -> None:
+    inventory = _writable(scenarios, tmp_path)
+    folder = _host_folder(scenarios, tmp_path)
+    own = folder / "group_vars" / "all" / "local.yml"
+    before = own.read_text()
+    shared = _set(scenarios, inventory, "vm_cores", "6", f"--host-folder={folder}", "--json=true")
+    assert shared.returncode == 0, shared.stderr
+    assert "vm_cores: 6\n" in _local(inventory).read_text() and own.read_text() == before
+    said = json.loads(shared.stdout)
+    assert said["wrote"]["file"] == "inventory/group_vars/all/local.yml"
+    # Written in the shared file, but the host's own outranks it for a run against the host: said.
+    assert any(note.startswith(f"but {folder}/local.yml outranks it") for note in said["notes"]), said["notes"]
+    written = _set(scenarios, inventory, "vm_cores", "3", f"--host-folder={folder}", "--write-host=true", "--json=true")
+    assert written.returncode == 0, written.stderr
+    assert "vm_cores: 3\n" in own.read_text()
+    assert json.loads(written.stdout)["wrote"]["file"] == f"{folder}/group_vars/all/local.yml"
+    reset = _run(scenarios, inventory, f"--host-folder={folder}", "--write-host=true", "--reset=true", "--", "vm_cores")
+    assert reset.returncode == 0, reset.stderr
+    assert "vm_cores" not in yaml.safe_load(own.read_text())

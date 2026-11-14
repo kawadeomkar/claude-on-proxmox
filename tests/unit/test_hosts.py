@@ -751,3 +751,82 @@ def test_a_run_through_an_overlay_asks_its_host_alone_and_its_vms_take_its_setti
         "# BEGIN agent-warehouse: alpha\n# origin: pve\n" in text
         and "# BEGIN agent-warehouse: beta\n# origin: nuc\n" in text
     )
+
+
+# ------------------------------------------------------------------------------------- setting a host up ----
+# tools/host init, as just init --host runs it: the host's folder from tools/templates/host/, and what the playbooks
+# are pointed at. Never a host made from 2.4's habit, a bare word that was an address.
+
+
+def _init_said(root: Path, *args: str) -> dict:
+    said = _tool(root, "init", *args)
+    assert said.returncode == 0, said.stderr
+    values = {}
+    for line in said.stdout.splitlines():
+        name, value = line.split("=", 1)
+        values[name] = subprocess.run(["bash", "-c", f"printf %s {value}"], capture_output=True, text=True).stdout
+    return values
+
+
+def test_init_of_the_first_host_reads_nothing_and_names_the_shared_secret(tmp_path: Path) -> None:
+    root = _checkout(tmp_path, first=False)
+    said = _init_said(root)
+    assert json.loads(said["init_host_json"]) == {"init_host": {"name": "", "secret": "vault_proxmox_api_token_secret"}}
+    assert said["host_sources"] == ""
+
+
+def test_a_bare_word_with_no_other_host_is_2_4_s_address_and_makes_nothing(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    refused = _tool(root, "init", "nuc", "--asking")
+    assert refused.returncode == 1 and "give it as --address nuc" in refused.stderr
+    assert list((root / "hosts").iterdir()) == []
+
+
+def test_a_new_host_needs_an_address_or_a_terminal_to_ask_one_at(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "lab")
+    refused = _tool(root, "init", "nuc")
+    assert refused.returncode == 1 and "no terminal to ask its address at" in refused.stderr
+    assert not (root / "hosts" / "nuc").exists()
+    assert _init_said(root, "nuc", "--asking")["init_made"]
+
+
+def test_init_makes_the_hosts_files_from_its_examples_and_points_the_playbooks_there(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    said = _init_said(root, "nuc", "--address=192.0.2.20")
+    folder = root / "hosts" / "nuc"
+    assert said["init_made"].split() == [
+        "hosts/nuc/hosts.yml",
+        "hosts/nuc/group_vars/all/local.yml",
+        "hosts/nuc/group_vars/all/vault.yml",
+    ]
+    hosts = yaml.safe_load((folder / "hosts.yml").read_text())
+    assert list(hosts["all"]["children"]["proxmox"]["hosts"]) == ["nuc"]
+    assert "# vm_default_name: nuc-default" in (folder / "group_vars" / "all" / "local.yml").read_text()
+    for path in folder.rglob("*.yml"):
+        assert oct(path.stat().st_mode & 0o777) == "0o600", path
+    given = json.loads(said["init_host_json"])
+    assert given["init_vault_file"] == str(folder / "group_vars" / "all" / "vault.yml")
+    assert given["init_host"]["secret"] == "vault_host_proxmox_api_token_secret"
+    assert given["init_host"]["default_vm"] == "nuc-default" and "proxmox_node" in given["init_host"]["always"]
+    assert said["host_sources"] == "inventory/controller.yml,hosts/nuc"
+    # Run again, it makes nothing it has, and the host is not set up until just init has written its settings.
+    assert _init_said(root, "nuc")["init_made"] == ""
+    assert "does not set proxmox_node" in _refused(root, "--host=nuc")
+
+
+def test_a_host_that_lacks_its_own_settings_is_still_reached_leniently(tmp_path: Path) -> None:
+    # just settings and just vault are how such a host is put right.
+    root = _checkout(tmp_path)
+    _host(root, "nuc", local={})
+    assert "does not set proxmox_node" in _refused(root, "--host=nuc")
+    said = _tool(root, "env", f"--vault-pass={root / '.vault_pass'}", "--host=nuc", "--lenient")
+    assert said.returncode == 0 and "hosts/nuc/group_vars/all/vault.yml" in said.stdout
+
+
+def test_the_current_host_is_said_for_just_inits_offer(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    assert _tool(root, "current").stdout == "\n"
+    _host(root, "nuc")
+    (root / "hosts" / "current").write_text("nuc\n")
+    assert _tool(root, "current").stdout == "nuc\n"

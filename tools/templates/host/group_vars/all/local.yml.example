@@ -1,0 +1,20 @@
+---
+# just init --host <name> copies this to hosts/<name>/group_vars/all/local.yml (git-ignored) and writes each
+# setting below in place of its line: the ones each host sets for itself, which a run against the host refuses to
+# take from the shared inventory/group_vars/all/local.yml. Anything else set here outranks the shared files for a run
+# against this host alone - inventory/group_vars/all/local.yml.example describes every setting
+# (docs/guides/hosts.md).
+
+# ---------------------------------------------------------------- Proxmox ---
+# proxmox_node: pve
+# proxmox_storage: local-lvm
+# proxmox_bridge: vmbr0
+# proxmox_api_user: ansible@pve
+# proxmox_api_token_id: ansible
+# proxmox_api_port: 8006
+# proxmox_validate_certs: true
+# proxmox_template_vmid: 9000
+
+# -------------------------------------------------------------------- VMs ---
+# The VM a bare just deploy against this host makes: never the first host's, as a VM name is one host's.
+# vm_default_name: pve-default

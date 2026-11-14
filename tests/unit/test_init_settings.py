@@ -514,7 +514,7 @@ def test_given_values_that_differ_from_set_ones_fail_and_write_nothing(tmp_path:
     report = _init(tmp_path, files, {"init_given": {"host": "pve.lan", "token_user": "other@pve", "tailscale": "on"}})
     assert report["rc"] != 0
     failure = "\n".join(_failures(report).values())
-    assert "--host pve.lan" in failure and "already sets 10.0.0.5" in failure
+    assert "--address pve.lan" in failure and "already sets 10.0.0.5" in failure
     assert "--token-user other@pve" in failure
     assert "--tailscale on, but inventory/group_vars/all/local.yml already sets tailscale_enabled: false" in failure
     assert _snapshot(files) == before
@@ -532,7 +532,7 @@ def test_a_scripted_run_given_some_values_writes_them_and_fails_naming_the_rest(
     # values fails, naming them.
     assert report["rc"] != 0
     failure = "\n".join(_failures(report).values())
-    assert "the Proxmox host address (--host)" in failure and "--github-user" in failure
+    assert "the Proxmox host address (--address)" in failure and "--github-user" in failure
     assert "the API token secret" not in failure
     # And NEXT STEPS keeps what it still lacks, though it fails: not what was given.
     line = _init_next(report)["init_settings"]
@@ -563,7 +563,7 @@ def test_given_values_that_break_their_rules_fail_without_a_prompt(tmp_path: Pat
     report = _init(tmp_path, files, {"init_given": given, "init_ask": True})
     assert report["rc"] != 0
     failure = "\n".join(_failures(report).values())
-    assert "--host (https://pve.lan) is not" in failure
+    assert "--address (https://pve.lan) is not" in failure
     assert "--github-user (octo--cat) is not" in failure
     assert "--token-user and --token-id (ansible!ansible) are not" in failure
     assert "the secret in --token-secret-file" in failure and "36-character secret" in failure
@@ -1195,7 +1195,7 @@ def test_next_steps_keep_each_value_still_to_set(tmp_path: Path, asking: bool) -
     # Each paragraph one line, as NEXT STEPS prints it.
     no_prompt = (
         "Nothing is asked without a terminal, or with --no-prompt: run just init at one, give the values on its command"
-        " line (just init --host ... in docs/getting-started/first-deploy.md), or edit the files and run just vault."
+        " line (just init --address ... in docs/getting-started/first-deploy.md), or edit the files and run just vault."
     )
     plaintext = (
         "vault.yml is still plaintext, which every recipe refuses: just vault encrypts it, or just init does at a"
@@ -1419,3 +1419,87 @@ def test_the_inventory_is_the_controller_alone_with_no_group_vars_beside_it():
     }
     for where in (INVENTORY.parent, PLAYBOOK.parent):
         assert not (where / "group_vars").exists() and not (where / "host_vars").exists()
+
+
+# ------------------------------------------------------------------------------------------- another host ----
+# just init --host nuc: the files hosts/nuc/ holds, made from tools/templates/host/ as tools/check host init makes
+# them, and init_host as it gives it. Only what is the host's own is asked or written: its address and its token, the
+# secret under the vault's name for a host's own; the GitHub account and the VPN are every host's.
+
+TEMPLATES = REPO / "tools" / "templates" / "host"
+HOST_SECRET_LINE = f'vault_host_proxmox_api_token_secret: "{SECRET}"'
+
+
+def _host_files(root: Path, name: str = "nuc") -> tuple[dict, dict]:
+    """The host's three files under root, as just init --host makes them, the vars pointing the playbook at them, and
+    init_host."""
+    folder = root / "checkout" / "hosts" / name
+    files = {}
+    for var, relative in (
+        ("init_hosts_file", "hosts.yml"),
+        ("init_local_file", "group_vars/all/local.yml"),
+        ("init_vault_file", "group_vars/all/vault.yml"),
+    ):
+        path = folder / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = (TEMPLATES / f"{relative}.example").read_text()
+        path.write_text(
+            text.replace("\n        pve:\n", f"\n        {name}:\n").replace("pve-default", f"{name}-default")
+        )
+        files[var] = str(path)
+    files["init_vault_pass_file"] = str(root / "checkout" / ".vault_pass")
+    host = {
+        "name": name,
+        "secret": "vault_host_proxmox_api_token_secret",
+        "always": ["proxmox_node", "proxmox_storage"],
+        "default_vm": f"{name}-default",
+        "hosts_said": f"hosts/{name}/hosts.yml",
+        "local_said": f"hosts/{name}/group_vars/all/local.yml",
+        "vault_said": f"hosts/{name}/group_vars/all/vault.yml",
+    }
+    return files, host
+
+
+def test_another_host_is_given_its_address_and_its_own_token_and_nothing_of_every_hosts(tmp_path: Path) -> None:
+    files, host = _host_files(tmp_path)
+    given = {"host": "192.0.2.20", "token_secret_file": str(_secret_file(tmp_path))}
+    report = _init(tmp_path, files, {"init_given": given, "init_host": host})
+    assert report["rc"] == 0, _failures(report)
+    hosts = yaml.safe_load(Path(files["init_hosts_file"]).read_text())
+    assert hosts["all"]["children"]["proxmox"]["hosts"] == {
+        "nuc": {"ansible_host": "192.0.2.20", "ansible_user": "root"}
+    }
+    vault = _decrypt(files)
+    # Under the host's own name, never the first host's, and nothing else of the shared vault's.
+    assert HOST_SECRET_LINE in vault and "\nvault_proxmox_api_token_secret:" not in vault
+    assert "vault_github_username" not in vault
+    # No VPN written for it: the VPN is every host's, in the shared local.yml.
+    assert "vpn:" not in Path(files["init_local_file"]).read_text()
+    said = _said(report, "Say what was written, and what is left")
+    assert "hosts/nuc/hosts.yml" in said and "hosts/nuc/group_vars/all/vault.yml" in said
+    assert "Optional, with just vault" not in said
+    assert _init_next(report)["init_settings"] == ""
+
+
+def test_at_a_terminal_another_host_is_asked_nothing_of_every_hosts(tmp_path: Path) -> None:
+    files, host = _host_files(tmp_path)
+    given = {"host": "192.0.2.20", "token_secret_file": str(_secret_file(tmp_path))}
+    rc, output, _ = _init_at_a_terminal(tmp_path, files, [], {"init_given": given, "init_host": host})
+    assert rc == 0, output
+    assert "USER INPUT REQUIRED" not in output
+    assert GITHUB_PROMPT.decode() not in output and TAILSCALE_PROMPT.decode() not in output
+    assert HOST_SECRET_LINE in _decrypt(files)
+
+
+def test_another_host_s_token_secret_given_twice_differently_is_refused_naming_its_vault(tmp_path: Path) -> None:
+    files, host = _host_files(tmp_path)
+    given = {"host": "192.0.2.20", "token_secret_file": str(_secret_file(tmp_path))}
+    assert _init(tmp_path, files, {"init_given": given, "init_host": host})["rc"] == 0
+    other = tmp_path / "other"
+    other.mkdir()
+    given["token_secret_file"] = str(_secret_file(other, "99999999-2222-3333-4444-555555555555\n"))
+    report = _init(tmp_path, files, {"init_given": given, "init_host": host})
+    assert report["rc"] != 0
+    failure = "\n".join(_failures(report).values())
+    assert "differs from the token secret hosts/nuc/group_vars/all/vault.yml already holds" in failure
+    assert "just vault --host nuc" in failure

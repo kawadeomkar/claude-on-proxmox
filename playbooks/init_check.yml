@@ -29,6 +29,13 @@
 # starts with init_, like init_settings.yml's, whose init_ask, init_given,
 # files, placeholders and reads of local.yml and the vault it shares through
 # vars/init.yml.
+#
+# For another host (init_host: just init --host), the run reads that host's
+# sources over the shared ones, as every run against it does, and once every
+# check has passed it writes into the host's own local.yml each setting the host
+# sets for itself that it does not set yet - the node, the storage and the bridge
+# as the checks settled them, the rest as the shared files have them - and its
+# default VM's name: a run against the host refuses it until then.
 - name: Check what just deploy will need of Proxmox
   hosts: localhost
   gather_facts: false
@@ -61,10 +68,11 @@
     init_token: "{{ proxmox_api_user }}!{{ proxmox_api_token_id }}"
     init_proxmox_host: "{{ groups['proxmox'][0] if groups['proxmox'] | default([]) else '' }}"
     init_missing: >-
-      {{ (['the Proxmox host address (inventory/hosts.yml)']
+      {{ (['the Proxmox host address (' ~ init_hosts_said ~ ')']
           if proxmox_api_host | default('') in ['', init_host_placeholder] else [])
-         + (['the API token secret (the vault)']
-            if vault_proxmox_api_token_secret | default('', true) in ['', init_secret_placeholder] else []) }}
+         + (['the API token secret (' ~ init_vault_said ~ ')']
+            if lookup('ansible.builtin.vars', init_secret_var, default='') | default('', true)
+               in ['', init_secret_placeholder] else []) }}
     init_api_ok: "{{ init_version.status | default(0) == 200 }}"
     init_major: "{{ (init_version.json.data.version | default('0')).split('.')[0] | int }}"
     init_agent_privilege: "{{ 'VM.GuestAgent.Audit' if init_major | int >= 9 else 'VM.Monitor' }}"
@@ -160,7 +168,10 @@
     # check here reads: while it is the example's, init_settings.yml's NEXT
     # STEPS names it, and just deploy is not next.
     init_github_set: "{{ github_username | default('', true) | string not in ['', init_github_placeholder] }}"
-    init_deploy_next: "Next: just deploy alpha, which creates a VM named alpha (any name will do)."
+    init_deploy_next: >-
+      {{ 'Next: just deploy alpha, which creates a VM named alpha (any name will do).' if init_host_name | length == 0
+         else 'Next: just deploy alpha --host ' ~ init_host_name ~ ', which creates a VM named alpha on ' ~ init_host_name
+              ~ ' (any name will do), or just host ' ~ init_host_name ~ ' to make it the current host.' }}
     # What is left to do, as the report and the failure say it, for NEXT
     # STEPS: each problem with its fix; what could not be checked, when
     # nothing is wrong; otherwise just deploy. A template that renders nothing
@@ -247,8 +258,8 @@
              "https://" ~ init_endpoint ~ "'s certificate is not trusted (" ~ init_api_message ~ '): trust the'
              ~ ' Proxmox CA as docs/getting-started/proxmox-access.md says, or leave proxmox_validate_certs off'
              if init_api_message is search('CERTIFICATE_VERIFY_FAILED|certificate verify failed') else
-             'nothing answered at https://' ~ init_endpoint ~ ' (' ~ init_api_message ~ '): check the address in'
-             ~ ' inventory/hosts.yml, and that this machine reaches it'
+             'nothing answered at https://' ~ init_endpoint ~ ' (' ~ init_api_message ~ '): check the address in '
+             ~ init_hosts_said ~ ', and that this machine reaches it'
              if init_version.status | default(-1) == -1 else
              'Proxmox at ' ~ init_endpoint ~ ' answered ' ~ init_version.status ~ ': ' ~ init_api_message }}
 
@@ -395,8 +406,8 @@
         init_results: >-
           {{ init_results + [{'ok': false, 'text': 'the template '
              ~ ('differs from its settings' if init_template_rebuilt | bool else 'is not built yet')
-             ~ ', and just deploy builds it over SSH to the host of the proxmox group in inventory/hosts.yml, which'
-             ~ ' has none'}] }}
+             ~ ', and just deploy builds it over SSH to the host of the proxmox group in ' ~ init_hosts_said
+             ~ ', which has none'}] }}
       when: (not init_template_built | bool or init_template_rebuilt | bool) and init_proxmox_host | length == 0
 
     # -------------------------------------------------------------- root SSH ---
@@ -696,6 +707,33 @@
              if init_public_keys.files | default([]) | length > 0 else
              ('the VMs would get no SSH key, and ' ~ init_ssh_dir ~ ' has no public key: make one with ssh-keygen'
               ~ ' -t ed25519')}] }}
+
+    # ------------------------------------------------- another host's own ---
+    # A host of just init --host's: what it sets for itself, in its own
+    # local.yml (init_host.always), where it does not set it yet - the node, the
+    # storage and the bridge as the checks above settled them, the rest as this
+    # run reads them, the shared files' - and its default VM's name, never the
+    # first host's, as a VM name is one host's. Only once every check passed: a
+    # value the checks could not hold to the host is never written for it, and a
+    # run against the host refuses it until each is there.
+    - name: Read the host's local.yml again
+      ansible.builtin.slurp:
+        src: "{{ init_local_file }}"
+      register: init_host_local_read
+      when: (init_host_name | length > 0) and init_problems | length == 0 and init_unchecked | length == 0
+
+    - name: Write what the host sets for itself into its local.yml
+      ansible.builtin.include_tasks: tasks/init_local_setting.yml
+      vars:
+        init_setting_key: "{{ item }}"
+        init_setting_value: >-
+          {{ init_host.default_vm if item == 'vm_default_name' else lookup('ansible.builtin.vars', item) }}
+      loop: >-
+        {{ (init_host.always | default([]) + ['vm_default_name'])
+           | reject('in', (init_host_local_read.content | b64decode | from_yaml) or {}) | list
+           if init_host_local_read is not skipped else [] }}
+      # The host's name was given on the command line (just init --host): a value given, as every write's is.
+      when: (init_host_name | length > 0) and init_problems | length == 0 and init_unchecked | length == 0
 
     # ---------------------------------------------------------------- the end ---
     - name: Say what each check found

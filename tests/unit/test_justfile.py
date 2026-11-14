@@ -399,8 +399,7 @@ def test_a_recipe_without_the_tools_says_just_install(tmp_path: Path) -> None:
         "login", settings=[f"BIN={tmp_path / 'empty'}", f"VAULT_FILE={_vault(tmp_path)}", _settings_files(tmp_path)]
     )
     assert result.returncode != 0
-    # The first tool a VM recipe runs is the environment's Python, which reads its host's files (tools/check host).
-    assert f"no python in [{tmp_path / 'empty'}]" in _output(result)
+    assert f"no ansible-galaxy in [{tmp_path / 'empty'}]" in _output(result)
     assert "Run: just install" in _output(result)
 
 
@@ -1664,6 +1663,7 @@ def _init_settings(tmp_path: Path, settings_body: str = "") -> list[str]:
         f"VAULT_PASS={tmp_path / '.vault_pass'}",
         f"LOG_DIR={tmp_path / 'logs'}",
         f"LIVE_DIR={tmp_path / 'live'}",
+        f"HOSTS_DIR={tmp_path / 'hosts'}",
     ]
     return settings
 
@@ -1870,7 +1870,7 @@ def test_no_prompt_asks_nothing_even_at_a_terminal(tmp_path: Path) -> None:
 
 
 GIVEN = [
-    "--host", "pve.lan", "--token-user", "deploy@pam", "--token-id", "claude", "--github-user", "octo-cat",
+    "--address", "pve.lan", "--token-user", "deploy@pam", "--token-id", "claude", "--github-user", "octo-cat",
     "--tailscale", "off", "--storage", "local-zfs", "--bridge", "vmbr1",
 ]  # fmt: skip
 
@@ -1913,6 +1913,23 @@ def test_no_value_given_passes_no_init_given(tmp_path: Path) -> None:
     assert not any("init_given" in arg for run in runs for arg in run), runs
 
 
+def test_init_s_host_with_a_dot_or_a_colon_is_still_the_address_and_said(tmp_path: Path) -> None:
+    # 2.4's just init --host pve.lan, through 2.x: --host names a host from 2.5, and a bare word is never an address.
+    result, runs = _init(tmp_path, "--host", "pve.lan")
+    assert result.returncode == 0, _output(result)
+    assert "is taken for --address pve.lan, as before" in result.stderr
+    given = json.loads(next(arg for arg in runs[0] if arg.startswith('{"init_given"')))
+    assert given["init_given"]["host"] == "pve.lan"
+    refused, runs = _init(tmp_path / "both", "--host", "pve.lan", "--address", "pve.example")
+    assert refused.returncode != 0 and "its address is --address" in refused.stderr and runs == []
+
+
+@pytest.mark.parametrize("option", [["--github-user", "octo-cat"], ["--tailscale", "on"]])
+def test_init_of_another_host_refuses_what_is_every_hosts(tmp_path: Path, option: list[str]) -> None:
+    result, runs = _init(tmp_path, "--host", "nuc", *option)
+    assert result.returncode != 0 and "are every host's, in the shared files" in result.stderr and runs == []
+
+
 def test_an_exported_value_is_not_given(tmp_path: Path) -> None:
     result, runs = _init(tmp_path, env={"HOST": "exported.lan", "GITHUB_USER": "exported"})
     assert result.returncode == 0, _output(result)
@@ -1920,7 +1937,7 @@ def test_an_exported_value_is_not_given(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "option", ["host", "token-user", "token-id", "token-secret-file", "github-user", "storage", "bridge"]
+    "option", ["address", "host", "token-user", "token-id", "token-secret-file", "github-user", "storage", "bridge"]
 )
 @pytest.mark.parametrize("value", ["a'b", 'a"b', "a b", "$(x)", "a`b", "a;b", "a\nb", "ålpha"])
 def test_a_given_value_outside_its_characters_is_refused_before_anything_runs(
@@ -1942,7 +1959,7 @@ def test_tailscale_is_on_or_off(tmp_path: Path) -> None:
     [
         pytest.param([f"TOKEN_SECRET={SECRET}"], id="make-s-spelling"),
         pytest.param([f"AGENT_WAREHOUSE_TOKEN_SECRET={SECRET}"], id="the-variable"),
-        pytest.param(["--host", "pve.lan", SECRET], id="a-bare-word"),
+        pytest.param(["--address", "pve.lan", SECRET], id="a-bare-word"),
         pytest.param(["--token-secret", SECRET], id="an-option"),
         pytest.param([f"--token-secret={SECRET}"], id="an-option-with-its-value"),
     ],
@@ -1966,7 +1983,7 @@ def test_a_word_after_init_s_options_is_refused_naming_the_two_ways_in(tmp_path:
 
 
 def test_the_secret_in_the_environment_reaches_no_argument(tmp_path: Path) -> None:
-    result, runs = _init(tmp_path, "--host", "pve.lan", env={"AGENT_WAREHOUSE_TOKEN_SECRET": SECRET})
+    result, runs = _init(tmp_path, "--address", "pve.lan", env={"AGENT_WAREHOUSE_TOKEN_SECRET": SECRET})
     assert result.returncode == 0, _output(result)
     assert SECRET not in "\n".join(arg for run in runs for arg in run) + _output(result)
 

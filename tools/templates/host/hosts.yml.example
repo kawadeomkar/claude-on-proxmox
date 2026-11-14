@@ -1,0 +1,11 @@
+---
+# just init --host <name> copies this to hosts/<name>/hosts.yml (git-ignored), the name in place of pve, and writes
+# the host's address, given or asked for, in place of 192.0.2.10. One host, named as its folder, in the proxmox group,
+# and no other: a run against it reads this file as its inventory, over the shared one (docs/guides/hosts.md).
+all:
+  children:
+    proxmox:
+      hosts:
+        pve:
+          ansible_host: 192.0.2.10 # IP of this Proxmox host (also used for the API)
+          ansible_user: root

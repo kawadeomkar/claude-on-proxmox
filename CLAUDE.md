@@ -32,7 +32,7 @@ checkout (`tools/env-run --collections`), and every recipe and `tools/env-run <t
 
 ```
 just install                         # sync the environment (yours, or this checkout's own, made with uv) to uv.lock + the Galaxy collections; --lock after editing a pin
-just init                            # once: just install + the git hook + the local config, asking for what a first deploy needs
+just init                            # once: just install + the git hook + the local config, asking for what a first deploy needs (--address pve.lan; --host nuc --address ... sets up another host)
 just vault                           # encrypt the vault while it is plaintext, edit it once it is encrypted
 just lint                            # uv lock --check, yamllint --strict, ansible-lint (production), ruff, just --fmt --check, --syntax-check, the other pre-commit hooks
 just lint syntax                     # some of them: lock, yaml, ansible, python, just, syntax, hooks
@@ -540,7 +540,10 @@ if apt fails to resolve a mirror, that is the machine, not the change.
       `init_answer`, typed or picked from the menu the live engine asks a yes or no or a choice as, whose answers
       are what the typed ones are (`init_ask_menu`).
     - Every write is under `init_ask` (a terminal, and no `--no-prompt`) or under a value given on the command
-      line (`init_given`), which never overwrites: one that differs from what is set fails the run, naming both.
+      line (`init_given`, or `--host`'s name for another host's own settings), which never overwrites: one that
+      differs from what is set fails the run, naming both. Another host (`init_host`) is asked only its address and
+      token, its secret written as `vault_host_proxmox_api_token_secret`, and gets each setting it sets for itself
+      only once every check passed.
       `hosts.yml` and `local.yml` are changed by one validated `lineinfile` each, on the example's own line.
     - Every later run reads `local.yml` as a template, so a node, storage or bridge name the host reported is
       held to Proxmox's own format (`proxmox_name`) before it is offered or written, and

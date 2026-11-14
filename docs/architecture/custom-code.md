@@ -875,7 +875,9 @@ trusted as a template. What a setting is - each role's `argument_specs`, main's 
 `local.yml.example` - comes from `lib/claude_vm/wiring.py`, the reference pages' own model.
 
 **Where a value was set** is the highest layer that holds the name - `hosts.yml`, `vault.yml`, `local.yml`, or a
-default - and, for a default that is an expression, the names it reads, followed through the wiring (Jinja's own
+default; for a host in `hosts/` (`--host-folder`, from the recipe's resolver), its own `vault.yml` and `local.yml`
+above the shared ones, the inventory its sources over the shared `controller.yml` as a run against it reads them, and
+`--value` and `--reset` writing its `local.yml` only with `--write-host`, when `--host` named it - and, for a default that is an expression, the names it reads, followed through the wiring (Jinja's own
 parse) to the file a person edits: `claude_code_login_desktop` is false because of `login_desktop` in
 `local.yml`. What a run sets above the inventory is read from the playbooks: a playbook no other imports is the run
 of the recipe of the same name, and the `vars:` it passes - on an import, a play, a role, an `add_host` - through
@@ -1266,6 +1268,9 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
 - **`just host`** lists the hosts from their files alone, writes `hosts/current` anew and renames it over the old
   under the run lock, so a run under way ends on the host it started on, and `--remove` deletes a host's folder after
   its name is typed at a terminal - never the current host's or the first's, and never its VMs.
+- **`just init --host <name>`** sets one up (`tools/check host init`, [§4.12](lifecycle.md#412-playbooksinit_settingsyml)),
+  and **`just vault --host`** and **`just settings`** reach a host leniently (`--lenient`): one that lacks a setting
+  it sets for itself, since they are how that is put right.
 - **`just status`** reads a host in `hosts/` through its sources as `-i`, so that its files key the settings kept,
   every vault loaded (`--vault-file` each), and keeps each host's settings in a folder of its own,
   `.cache/status/<host>/`; the token's vault name is kept with the snapshot.

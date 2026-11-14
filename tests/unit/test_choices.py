@@ -254,7 +254,7 @@ def test_just_init_asks_the_question_rather_than_warn_of_it(tmp_path):
         check=False,
     )
     assert result.returncode == 0 and result.stderr == "", result.stderr
-    assert 'tools/check settings "$bin" --asking {{ SETTINGS_FILES }}' in (REPO / "justfile").read_text()
+    assert 'tools/check settings "$bin" --asking $init_settings_files' in (REPO / "justfile").read_text()
 
 
 def test_check_settings_finds_the_defaults_whatever_cdpath_says(tmp_path):

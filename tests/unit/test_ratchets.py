@@ -123,8 +123,8 @@ PROXMOX_ELSEWHERE = {
     "playbooks/configure.yml": 1,
     "playbooks/destroy.yml": 14,
     "playbooks/discover.yml": 2,
-    "playbooks/init_check.yml": 38,
-    "playbooks/init_settings.yml": 16,
+    "playbooks/init_check.yml": 37,
+    "playbooks/init_settings.yml": 12,
     "playbooks/provision.yml": 26,
     "playbooks/ssh_config.yml": 2,
     "playbooks/tailscale_login.yml": 1,
@@ -135,7 +135,12 @@ PROXMOX_ELSEWHERE = {
     "playbooks/tasks/vm_marks.yml": 6,
     "playbooks/tasks/vpn_members.yml": 2,
     "playbooks/tasks/vm_stop.yml": 4,
+    # The token secret's vault name for the first host, the default where just init sets up no other.
+    "playbooks/vars/init.yml": 1,
     "playbooks/templates/vm_session.md.j2": 2,
+    # The examples just init --host copies for another host: the settings it sets for itself, and its token.
+    "tools/templates/host/group_vars/all/local.yml.example": 3,
+    "tools/templates/host/group_vars/all/vault.yml.example": 3,
 }
 
 

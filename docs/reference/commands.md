@@ -50,7 +50,8 @@ environment where `python3` is not it.
 | Recipe | What it does |
 |---|---|
 | `just init` | Set up this checkout, then ask for what a first deploy needs |
-| &emsp;`--host HOST` | The Proxmox host's address, for inventory/hosts.yml |
+| &emsp;`--address ADDRESS` | The Proxmox host's address, for its hosts.yml |
+| &emsp;`--host ON` | Set up another host of this checkout, by its name (just host lists them); a value with a dot or a colon is taken for --address through 2.x |
 | &emsp;`--token-user TOKEN_USER` | The API token's user, when it is not ansible@pve |
 | &emsp;`--token-id TOKEN_ID` | The API token's ID, the part after its user's !, when it is not ansible |
 | &emsp;`--token-secret-file TOKEN_SECRET_FILE` | A file holding the token's secret (or AGENT_WAREHOUSE_TOKEN_SECRET in the environment; never on the command line) |
@@ -62,6 +63,7 @@ environment where `python3` is not it.
 | `just install` | Install the locked Python packages and the Galaxy collections: into your virtualenv, or this checkout's own |
 | &emsp;`--lock` | Update uv.lock after editing a pin in pyproject.toml, installing nothing (uv from PATH) |
 | `just vault` | Encrypt the vault, or edit it once it is encrypted |
+| &emsp;`--host ON` | That host's own vault, which holds its token, rather than the shared one (just host lists them) |
 | `just deploy [<name>...]` | Create, configure and sign in the VM(s), then open them in your editor |
 | &emsp;`--only STAGE` | Run one stage and nothing after it: template (the cloud-init template, if missing), provision (create and start), configure (every tagged VM, unless named) or ssh-config (refresh the SSH aliases; without names, also prune those of VMs that are gone) |
 | &emsp;`--check` | Dry-run configuration: ansible-playbook --check --diff (every tagged VM, unless named) |
@@ -92,6 +94,7 @@ environment where `python3` is not it.
 | &emsp;`--all` | Every setting of local.yml, and which secrets of vault.yml are set |
 | &emsp;`--changed` | Only what local.yml or vault.yml changes from the defaults; alone, all of it |
 | &emsp;`--json` | The report as JSON, alone on standard output |
+| &emsp;`--host ON` | That host's values rather than the current host's; beside --value or --reset, its own local.yml is the one changed |
 | &emsp;`--reset` | Put the one setting named back to its default: its line out of local.yml, its example's back |
 | &emsp;`--value VALUE` | Set the one setting named to this value, in local.yml (never a secret: just vault; an empty value is none: --reset) |
 | &emsp;`<name>` | A role (tailscale) or one variable or setting (tailscale_ssh); none shows how to use this |

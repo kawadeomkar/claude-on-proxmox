@@ -10,6 +10,18 @@ Every target that runs Ansible compares the installed collections with those pin
 naming `just install`, while one differs. They live in the checkout's own folder
 (`tools/env-run --collections`), so another clone or worktree keeps its own, on its own versions.
 
+## More than one host, from 2.5
+
+2.5 lets one checkout drive more than one Proxmox host ([More than one Proxmox host](hosts.md)). A checkout of one
+host changes nothing, but:
+
+- **`just init --host` names a host.** The Proxmox host's address is `--address` from 2.5:
+  `just init --address pve.lan`. Through 2.x a `--host` value with a dot or a colon is still taken for the address,
+  and said; a bare word is a host's name, and in a checkout of one host `just init --host pve` stops, naming
+  `--address`, rather than set up a second host by accident.
+- **Each SSH alias records its host** (`# origin: pve` in `~/.ssh/agent-warehouse.conf`). An alias written before
+  2.4 has none, and the next write of its VM records it; until then it is the one host's.
+
 ## The project is called agent-warehouse
 
 From 2.0 the project is called agent-warehouse, since it is to run more models than Claude Code and more
@@ -390,7 +402,7 @@ its name, and settings (`ANSIBLE_ARGS`, `LOG_DIR`, `PYTHON`) are exported or go 
 | `make code alpha SESSION=<id>` | `just code alpha --session <id>` |
 | `make login alpha TYPE=github` | `just login alpha --only github` |
 | `make list`, `make destroy alpha`, `make logs`, `make vault` | `just status`, `just destroy alpha`, `just logs`, `just vault` |
-| `make init HOST=pve.lan GITHUB_USER=octocat PROMPT=no` | `just init --host pve.lan --github-user octocat --no-prompt` (each `NAME=` is a `--name`) |
+| `make init HOST=pve.lan GITHUB_USER=octocat PROMPT=no` | `just init --address pve.lan --github-user octocat --no-prompt` (each `NAME=` is a `--name`; `HOST=` is `--address` from 2.5) |
 | `make install TYPE=lock` | `just install --lock` |
 | `make lint TYPE=yaml`, `make test TYPE=unit`, `make docs TYPE=serve` | `just lint yaml`, `just test unit`, `just docs serve` |
 | `make test ROLE=common` | `just test --role common` |

@@ -1,0 +1,9 @@
+---
+# just init --host <name> copies this to hosts/<name>/group_vars/all/vault.yml (git-ignored) and writes the host's
+# API token secret into it, encrypted with the checkout's .vault_pass; just vault --host <name> edits it. The shared
+# inventory/group_vars/all/vault.yml holds everything else - the GitHub token, the VM password - for every host.
+
+# The API token secret for this host's proxmox_api_user. Under its own name, never the first host's
+# vault_proxmox_api_token_secret: a run against this host reads this one alone, and fails without it rather than
+# send another host's.
+vault_host_proxmox_api_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

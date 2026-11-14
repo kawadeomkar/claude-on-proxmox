@@ -96,12 +96,13 @@ Nor does it offer to set up the API access: run `tools/proxmox-access.sh` on the
 
 ```console
 $ (umask 077; printf %s "$PVE_SECRET" > ~/.config/pve-token)
-$ just init --host pve.lan --github-user octocat --token-secret-file ~/.config/pve-token
+$ just init --address pve.lan --github-user octocat --token-secret-file ~/.config/pve-token
 ```
 
 | Option | Answers |
 |---|---|
-| `--host` | The Proxmox host's address |
+| `--address` | The Proxmox host's address (`--host` through 2.4, which a value with a dot or a colon still is) |
+| `--host` | Another Proxmox host of this checkout's, by its name: [More than one Proxmox host](../guides/hosts.md#setting-up-another-host) |
 | `--token-user`, `--token-id` | The token's user (`ansible@pve`) and ID (`ansible`), each only when it differs |
 | `--token-secret-file` | A file holding the token's secret, a relative path from where you run `just`; or `AGENT_WAREHOUSE_TOKEN_SECRET` exported in the environment, from a CI secret or `read -rs`, never typed into a command (`CLAUDE_ON_PROXMOX_TOKEN_SECRET`, its name through 1.x, is read while it is unset) |
 | `--github-user` | Your GitHub username |

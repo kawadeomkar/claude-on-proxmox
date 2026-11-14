@@ -1077,6 +1077,14 @@ syntax check and ansible-lint would take it for a playbook. What it shares with 
 `init_ask`, `init_given`, the files, the placeholders the examples ship with, what it reads of `local.yml`
 and the vault, and the validate of a YAML write - is in `playbooks/vars/init.yml`, which both load.
 
+`just init --host <name>` sets up another host of the checkout's ([§7.14](custom-code.md#714-libclaude_vmhosts-and-toolshost--the-checkouts-hosts)):
+`tools/check host init` makes `hosts/<name>/` from `tools/templates/host/` where a file is missing - never without
+`--address` or a terminal to ask one at, nor in a checkout of one host, where a bare word was 2.4's address - and
+hands both playbooks `init_host` (the host's name, the vault's name for its token, what it sets for itself, its
+default VM's name) and the four files pointed into its folder. The questions are then only the host's: its address
+and its token, the secret written as `vault_host_proxmox_api_token_secret`; the GitHub username and the VPN are the
+shared files' and asked of the first host alone.
+
 It reads `hosts.yml` and `local.yml`, and the vault: as text when it is plaintext, through `ansible-vault
 decrypt --output -` under `no_log` when it is encrypted and there is a password (`.vault_pass`, or
 `ANSIBLE_VAULT_PASSWORD_FILE`); an encrypted vault with neither is left alone, and said. Every `ansible-vault`
@@ -1160,7 +1168,11 @@ checks run next and say what comes after.
 password looked for when the recipe runs, since the questions may have just made `.vault_pass` - so it sees
 the settings exactly as `just deploy` will. The recipe skips it, with one line, when the vault is
 encrypted and neither `.vault_pass` nor `ANSIBLE_VAULT_PASSWORD_FILE` can open it. One play on `localhost`,
-every task a read (held by `tests/unit/test_init_check.py`):
+every task a read (held by `tests/unit/test_init_check.py`) but the settings it writes. For another host
+(`init_host`), the run reads that host's sources over the shared ones, as every run against it, and once every check
+has passed writes into the host's `local.yml` each setting the host sets for itself that it does not set yet - the
+node, the storage and the bridge as the checks settled them, the rest as this run reads them - and its default VM's
+name, `<name>-default`; the host's name was given on the command line, a value given as every write's is:
 
 1. **Configured yet?** With the address or the secret still the example's, it says what is missing and ends:
    nothing is checked, and that is no problem.

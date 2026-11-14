@@ -478,7 +478,7 @@ RECORDED = """
 """
 LONG = (
     "Nothing is asked without a terminal, or with --no-prompt: run just init at one, give the values on its command"
-    " line (just init --host ... in docs/getting-started/first-deploy.md), or edit the files and run just vault."
+    " line (just init --address ... in docs/getting-started/first-deploy.md), or edit the files and run just vault."
 )
 
 

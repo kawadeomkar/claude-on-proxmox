@@ -280,7 +280,7 @@ def test_the_check_catches_what_it_is_for() -> None:
     assert "just refuses it" in _problem(recipes["lint"], recipes, ["docs"])
     assert _problem(recipes["logs"], recipes, ["lists", "them"]) is None
     assert _problem(recipes["help"], recipes, ["deploy"]) is None
-    assert _problem(recipes["init"], recipes, ["--host", "pve.lan", "--no-prompt"]) is None
+    assert _problem(recipes["init"], recipes, ["--address", "pve.lan", "--no-prompt"]) is None
     assert _problem(recipes["deploy"], recipes, ["--tags", "$roles"]) is None
     # Settings before the recipe, which the test holds to the justfile's.
     [(_, _, settings, recipe, words)] = _matches("just ANSIBLE_ARGS='-f 30' LOG_DIR=x deploy alpha")

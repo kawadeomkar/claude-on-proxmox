@@ -70,7 +70,7 @@ So the agent starts only where its port exists, and every other listed service w
 test` runs the `test` target. So the `Makefile` grew an argument language of its own on make
 variables - `TYPE=`, `VM_NAME=`, `TAGS=`, `ROLE=`, `PROJECT=`, eleven of `init`'s - and about two hundred
 lines of parse-time guards against a stray word becoming a target, a VM name or an expansion. [`just`](https://github.com/casey/just)
-recipes take options and words of their own (`just deploy alpha --tags claude_code`, `just init --host
+recipes take options and words of their own (`just deploy alpha --tags claude_code`, `just init --address
 pve.lan --no-prompt`), each held to a pattern before anything runs, with help that `just help <recipe>`
 and the [Commands](../reference/commands.md) page read from the recipe itself. What each command does
 did not change.

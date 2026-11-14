@@ -321,11 +321,16 @@ def tools(server: Server) -> list[Tool]:
             ok={0, 1, 2},
         )
 
-    async def settings(name: str = "", all: bool = False, changed: bool = False) -> CallToolResult:  # noqa: A002
+    async def settings(  # noqa: A002
+        name: str = "",
+        all: bool = False,
+        changed: bool = False,
+        host: str = "",  # noqa: A002
+    ) -> CallToolResult:
         server.check(vault=bool(name or all or changed))
         return await server.json_tool(
             "settings",
-            {"name": name, "all": all, "changed": changed},
+            {"name": name, "all": all, "changed": changed, "host": host},
             keep=("target", "settings", "roles", "options"),
             narrow="name one role or setting to read it",
             ok={0},
@@ -466,7 +471,7 @@ def tools(server: Server) -> list[Tool]:
         arguments = {"names": hyphenated, "confirm": ",".join(hyphenated), "host": host}
         return await server.run("destroy", arguments, wait_seconds, ctx)
 
-    async def ask_setting(ctx: Context, name: str = "", value: str = "", reset: bool = False) -> Elicit:
+    async def ask_setting(ctx: Context, name: str = "", value: str = "", reset: bool = False, host: str = "") -> Elicit:
         """Before the person is asked: the client, the allow list, the value, then what the setting is now."""
         server.check(vault=True)
         terminal = f"just settings {name} --value=<value>"
@@ -479,10 +484,11 @@ def tools(server: Server) -> list[Tool]:
             raise ToolError(refusal)
         if bool(value) == bool(reset):
             raise ToolError("settings_set takes a value, or reset to put the default back: one of the two")
-        report, _ = await server.report("settings", {"name": name}, {0})
+        report, _ = await server.report("settings", {"name": name, "host": host}, {0})
         rows = [row for row in report.get("settings") or [] if isinstance(row, dict) and row.get("name") == name]
         current = json.dumps(rows[0].get("value")) if rows and rows[0].get("value") is not None else ""
-        typed = f"{confirm.code('settings_set', name, value, str(reset))} {name}"
+        # A host named is the file written, its own local.yml: part of what is confirmed.
+        typed = f"{confirm.code('settings_set', name, value, str(reset), *([host] if host else []))} {name}"
         return Elicit(confirm.setting_message(name, current, "" if reset else value, typed), Typed)
 
     async def settings_set(
@@ -491,14 +497,15 @@ def tools(server: Server) -> list[Tool]:
         name: str = "",
         value: str = "",
         reset: bool = False,
+        host: str = "",
     ) -> CallToolResult:
-        typed = f"{confirm.code('settings_set', name, value, str(reset))} {name}"
+        typed = f"{confirm.code('settings_set', name, value, str(reset), *([host] if host else []))} {name}"
         refused = answered(answer, typed)
         if refused:
             raise ToolError(f"Nothing was changed: {refused}. At a terminal: just settings {name} --value=<value>")
         return await server.json_tool(
             "settings_set",
-            {"name": name, "value": value, "reset": reset},
+            {"name": name, "value": value, "reset": reset, "host": host},
             keep=("asked", "wrote", "name", "value"),
             narrow="the setting was written; just settings <name> reads it",
             ok={0},
@@ -506,6 +513,7 @@ def tools(server: Server) -> list[Tool]:
 
     async def init(
         ctx: Context,
+        address: str = "",
         host: str = "",
         token_user: str = "",
         token_id: str = "",
@@ -519,6 +527,7 @@ def tools(server: Server) -> list[Tool]:
         if refusal:
             raise ToolError(refusal)
         arguments = {
+            "address": address,
             "host": host,
             "token_user": token_user,
             "token_id": token_id,

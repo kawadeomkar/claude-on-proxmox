@@ -117,6 +117,9 @@ class Host:
     address: str = ""
     local: dict = field(default_factory=dict)  # its own local.yml (the shared one for the first host)
     problem: str = ""  # why it cannot be used yet: "" for a host that is set up
+    # Its files are its, but it lacks a setting it sets for itself: just settings and just vault may still reach it, to
+    # put that right.
+    incomplete: bool = False
 
     @property
     def sources(self) -> list[str]:
@@ -219,6 +222,7 @@ class Layout:
         host.local = local if isinstance(local, dict) else {}
         missing = [setting for setting in host.kind.always if host.local.get(setting) in (None, "")]
         if missing:
+            host.incomplete = True
             host.problem = (
                 f"{host.local_file} does not set {', '.join(missing)}, which each host sets for itself rather than "
                 f"take {SHARED_LOCAL}'s: just init --host {name} writes them"
@@ -252,30 +256,31 @@ class Layout:
 
     # ------------------------------------------------------------------------------------------- choosing ----
 
-    def named(self, name: str, why: str) -> Host:
-        """The host called ``name``, set up; Refused otherwise, ``why`` saying where the name came from."""
+    def named(self, name: str, why: str, lenient: bool = False) -> Host:
+        """The host called ``name``, set up; Refused otherwise, ``why`` saying where the name came from. ``lenient``
+        takes one that lacks a setting it sets for itself, for just settings and just vault to put it right."""
         first = self.first()
         if first is not None and name == first.name:
             return first
         if name in self.folders():
             host = self.other(name)
-            if host.problem:
+            if host.problem and not (lenient and host.incomplete):
                 raise Refused(f"{why} {name}, which cannot be used: {host.problem}")
             return host
         known = [host.name for host in self.every()]
         raise Refused(
             f"{why} {name}, which is no host of this checkout's ({', '.join(known) or 'none'}): "
-            f"just init --host {name} sets one up"
+            f"just init --host {name} --address <address> sets one up"
         )
 
-    def resolve(self, given: str = "") -> Host | None:
+    def resolve(self, given: str = "", lenient: bool = False) -> Host | None:
         """The host of a run: the one given (--host, or a nested recipe's host=), else the one hosts/current names,
         else the first. None for a checkout with no host at all - before just init - which runs as it always did."""
         if given:
-            return self.named(given, "--host names")
+            return self.named(given, "--host names", lenient)
         current = self.current_name()
         if current:
-            return self.named(current, f"{self.hosts_rel}/current names")
+            return self.named(current, f"{self.hosts_rel}/current names", lenient)
         first = self.first()
         if first is None and self.many():
             raise Refused(

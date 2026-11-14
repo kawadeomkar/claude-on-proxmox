@@ -38,6 +38,30 @@ The token is never the first host's: a host whose vault has no `vault_host_proxm
 anything is asked of it, and the first host's `vault_proxmox_api_token_secret` in a host's vault, or a host's name
 in the shared vault, is refused.
 
+## Setting up another host
+
+```
+$ just init --host nuc --address 192.0.2.20
+```
+
+makes `hosts/nuc/` from the examples in `tools/templates/host/`, then asks only what is that host's own: its token's
+ID and secret, or offers to make the token on it, as `just init` does for the first. The GitHub account and the VPN
+are every host's, and not asked again. Then it checks the host with its settings as a run against it reads them, and
+once every check passes, writes into `hosts/nuc/group_vars/all/local.yml` each setting a host sets for itself - the
+node, storage and bridge it found, the rest as the shared files have them - and `vm_default_name: nuc-default`, so
+a bare `just deploy` there never makes a second VM of the first host's default name. At a terminal it offers to make
+`nuc` the current host.
+
+A host is created only with its address, given as `--address` or typed at the question. Scripted, with no terminal,
+`--address` is needed; and in a checkout of one host, `just init --host <word>` without `--address` stops rather than
+take the word for a host's name, as 2.4 took it for an address ([Upgrading](upgrading.md#more-than-one-host-from-25)).
+`just init --host nuc` again asks for what is still missing, as `just init` does.
+
+`just vault --host nuc` edits that host's vault, and `just settings` shows the run's host's values - the current
+host's, or the one `--host` names - each host file a layer of its own above the shared ones. `just settings vm_cores
+--value 2` writes the shared `local.yml`, as before, and says so when the host's file outranks it; with `--host nuc`
+it writes the host's own.
+
 ## Switching
 
 ```

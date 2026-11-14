@@ -2,7 +2,8 @@
 # Ask for what a first just deploy needs, and write it: just init's first step.
 #
 #   just init                                     asks, at a terminal, for each value still the example's
-#   just init --host pve.lan --github-user octocat    takes those values instead (docs/getting-started/first-deploy.md)
+#   just init --address pve.lan --github-user octocat    takes those values instead (docs/getting-started/first-deploy.md)
+#   just init --host nuc --address 192.0.2.20     another host, in hosts/nuc/ (init_host): its address and token alone
 #
 # Four values have no default that works: the Proxmox host's address
 # (inventory/hosts.yml), the API token's ID when it is not ansible@pve!ansible
@@ -181,8 +182,7 @@
     # write itself, so none of them runs without the others.
     init_vault_writing: "{{ (init_ask | bool or init_any_given | bool) and init_vault_writes | bool }}"
     init_vault_with_secret: >-
-      {{ init_vault_text | with_setting('vault_proxmox_api_token_secret', init_hidden_answers.secret,
-                                        init_secret_placeholder)
+      {{ init_vault_text | with_setting(init_secret_var, init_hidden_answers.secret, init_secret_placeholder)
          if init_hidden_answers.secret is defined else init_vault_text }}
     init_vault_with_github: >-
       {{ init_vault_with_secret | with_setting('vault_github_username', init_answers.github_user,
@@ -213,11 +213,11 @@
     # This run writes vpn: answered or given, and neither vpn nor tailscale_enabled set.
     init_tailscale_writes: >-
       {{ init_answers.tailscale is defined and init_local_settings.tailscale_enabled is not defined
-         and init_local_settings.vpn is not defined }}
+         and init_local_settings.vpn is not defined and init_host_name | length == 0 }}
     # What the report names as optional in the vault: the auth key only while
     # Tailscale is on, could use one, and the vault holds none.
     init_vault_optional: >-
-      {{ ['vault_github_token', 'vault_anthropic_api_key']
+      {{ [] if init_host_name | length > 0 else ['vault_github_token', 'vault_anthropic_api_key']
          + ([] if init_tailscale_key_answered | bool or init_tailscale_key_set | default(false) | bool
                   or init_answers.tailscale | default('') == 'none'
                   or not (init_tailscale_on | bool)
@@ -235,16 +235,19 @@
 
     # Each required value still missing at the end, and how it is set.
     init_missing: >-
-      {{ ([{'what': 'the Proxmox host address', 'flag': '--host',
-            'how': 'just init asks again, or edit inventory/hosts.yml' if init_hosts_writable
-                   else 'inventory/hosts.yml has no "ansible_host: 192.0.2.10" line left to fill in: edit it'}]
+      {{ ([{'what': 'the Proxmox host address', 'flag': '--address',
+            'how': 'just init asks again, or edit ' ~ init_hosts_said if init_hosts_writable
+                   else init_hosts_said ~ ' has no "ansible_host: 192.0.2.10" line left to fill in: edit it'}]
           if init_host_missing and init_answers.host is not defined else [])
          + ([{'what': 'the API token secret', 'flag': '--token-secret-file or AGENT_WAREHOUSE_TOKEN_SECRET',
-              'how': 'just init asks again, or just vault'}]
+              'how': 'just init asks again, or just vault' ~ init_host_flag}]
             if init_vault_readable and not init_secret_set and not init_secret_answered else [])
          + ([{'what': 'the GitHub username', 'flag': '--github-user', 'how': 'just init asks again, or just vault'}]
             if init_vault_readable and init_github_set | length == 0 and init_answers.github_user is not defined
+               and init_host_name | length == 0
             else []) }}
+    # How a command names the host this run sets up: nothing for the first host.
+    init_host_flag: "{{ ' --host ' ~ init_host_name if init_host_name | length > 0 else '' }}"
     # What is left to do at the end, as the report says it and NEXT STEPS
     # records it: each value still to set, and a vault no recipe can use yet.
     # Names and how to set them only, never a value. A template that renders
@@ -268,14 +271,14 @@
       {% endif %}
     init_left_no_prompt: >-
       Nothing is asked without a terminal, or with --no-prompt: run just init at one, give the values on its
-      command line (just init --host ... in docs/getting-started/first-deploy.md), or edit the files and run
+      command line (just init --address ... in docs/getting-started/first-deploy.md), or edit the files and run
       just vault.
     init_left_vault_locked: >-
-      vault.yml is encrypted and there is neither .vault_pass nor ANSIBLE_VAULT_PASSWORD_FILE to open it,
-      so just init leaves it alone: just vault opens it, asking for its password.
+      {{ init_vault_named }} is encrypted and there is neither .vault_pass nor ANSIBLE_VAULT_PASSWORD_FILE to open
+      it, so just init leaves it alone: just vault{{ init_host_flag }} opens it, asking for its password.
     init_left_vault_plaintext: >-
-      vault.yml is still plaintext, which every recipe refuses: just vault encrypts it, or just init
-      does at a terminal.
+      {{ init_vault_named }} is still plaintext, which every recipe refuses: just vault{{ init_host_flag }} encrypts it,
+      or just init does at a terminal.
 
   tasks:
     # It turns pipelining off: every module's file, its arguments in it, then
@@ -355,13 +358,11 @@
         - name: Read what the vault sets
           ansible.builtin.set_fact:
             init_secret_set: >-
-              {{ init_vault_settings.vault_proxmox_api_token_secret | default('', true) | string
-                 not in ['', init_secret_placeholder] }}
+              {{ init_vault_settings[init_secret_var] | default('', true) | string not in ['', init_secret_placeholder] }}
             init_github_set: >-
               {{ init_vault_settings.vault_github_username | default('', true) | string
                  | regex_replace('^' ~ init_github_placeholder ~ '$', '') }}
-            init_secret_held: >-
-              {{ init_vault_settings.vault_proxmox_api_token_secret | default('', true) | string | lower }}
+            init_secret_held: "{{ init_vault_settings[init_secret_var] | default('', true) | string | lower }}"
             init_tailscale_key_set: "{{ init_vault_settings.vault_tailscale_auth_key | default('', true) | length > 0 }}"
           vars:
             init_vault_settings: "{{ ((init_vault_text | from_yaml) or {}) if init_vault_readable else {} }}"
@@ -441,7 +442,7 @@
         init_given_token: >-
           {{ init_given.token_user | default(init_token_user) ~ '!' ~ init_given.token_name | default(init_token_name) }}
         init_given_broken: >-
-          {{ (['--host (' ~ init_given.host ~ ') is not ' ~ ('host' | init_answer_rule) ~ '.']
+          {{ (['--address (' ~ init_given.host ~ ') is not ' ~ ('host' | init_answer_rule) ~ '.']
               if init_given.host is defined and init_given.host | init_answer('host') | length == 0 else [])
              + (['--token-user and --token-id (' ~ init_given_token ~ ') are not ' ~ ('token_id' | init_answer_rule)
                  ~ '.']
@@ -461,15 +462,15 @@
         msg: "{{ init_given_differs | join(' ') }} just init never writes over a value: edit the file to change it."
       vars:
         init_given_differs: >-
-          {{ (['--host ' ~ init_given.host ~ ', but inventory/hosts.yml already sets ' ~ init_hosts_current ~ '.']
+          {{ (['--address ' ~ init_given.host ~ ', but ' ~ init_hosts_said ~ ' already sets ' ~ init_hosts_current ~ '.']
               if init_given.host is defined and not init_host_missing
                  and init_given.host | init_answer('host') | lower
                      != (init_hosts_current | init_answer('host') or init_hosts_current) | lower else [])
-             + (['--token-user ' ~ init_given.token_user ~ ', but inventory/group_vars/all/local.yml already sets '
+             + (['--token-user ' ~ init_given.token_user ~ ', but ' ~ init_local_said ~ ' already sets '
                  ~ init_local_settings.proxmox_api_user ~ '.']
                 if init_given.token_user is defined and init_local_settings.proxmox_api_user is defined
                    and init_given.token_user != init_local_settings.proxmox_api_user else [])
-             + (['--token-id ' ~ init_given.token_name ~ ', but inventory/group_vars/all/local.yml already sets '
+             + (['--token-id ' ~ init_given.token_name ~ ', but ' ~ init_local_said ~ ' already sets '
                  ~ init_local_settings.proxmox_api_token_id ~ '.']
                 if init_given.token_name is defined and init_local_settings.proxmox_api_token_id is defined
                    and init_given.token_name != init_local_settings.proxmox_api_token_id else [])
@@ -493,8 +494,8 @@
     - name: Refuse a given token secret that differs from the one set
       ansible.builtin.fail:
         msg: >-
-          {{ init_secret_flag }} differs from the token secret inventory/group_vars/all/vault.yml already holds.
-          just init never writes over a value: change it with just vault.
+          {{ init_secret_flag }} differs from the token secret {{ init_vault_said }} already holds.
+          just init never writes over a value: change it with just vault{{ init_host_flag }}.
       when: init_secret_given and init_secret_set and init_secret_given_value | init_answer('uuid') != init_secret_held
 
     - name: Refuse a vault value given for a vault this run cannot open
@@ -518,7 +519,7 @@
         init_ask_flag: --github-user
         init_ask_text:
           - The GitHub account whose repositories are cloned onto each VM. Enter to decide later.
-      when: init_vault_readable and init_github_set | length == 0
+      when: init_vault_readable and init_github_set | length == 0 and init_host_name | length == 0
 
     # -------------------------------------------------------------- Tailscale ---
     # Which VPN the VMs use, none or tailscale - a choice, picked with the arrow
@@ -551,8 +552,11 @@
           - "    credential, the VM's device deleted when the VM is."
           - tailscale needs a Tailscale account. none puts Tailscale on no VM, and leaves a VM it is
           - already on as it is. Left for later, it is none until answered. vpn in local.yml changes it.
-      # Never while local.yml sets vpn, which outranks tailscale_enabled: the answer would change nothing.
-      when: init_local_settings.tailscale_enabled is not defined and init_local_settings.vpn is not defined
+      # Never while local.yml sets vpn, which outranks tailscale_enabled: the answer would change nothing. Nor for
+      # another host: the VPN is every host's, in the shared local.yml.
+      when: >-
+        init_local_settings.tailscale_enabled is not defined and init_local_settings.vpn is not defined
+        and init_host_name | length == 0
 
     - name: Write vpn into local.yml
       ansible.builtin.include_tasks: tasks/init_local_setting.yml
@@ -581,7 +585,7 @@
           - during just deploy; this is asked again next time. To always use the page and never be
           - "asked, set tailscale_auth_method: web in local.yml."
       when: >-
-        init_ask | bool and init_vault_readable and init_tailscale_chosen | bool
+        init_ask | bool and init_vault_readable and init_tailscale_chosen | bool and init_host_name | length == 0
         and not init_tailscale_key_set | default(false) | bool
         and init_local_settings.tailscale_auth_method | default('auto') != 'web'
 
@@ -594,7 +598,7 @@
         init_ask_kind: host
         init_ask_hidden: false
         init_ask_given: "{{ init_given.host | default('') }}"
-        init_ask_flag: --host
+        init_ask_flag: --address
         init_ask_text:
           - "The address of your Proxmox host as this machine reaches it: an IP address or a"
           - host name, without https:// or a port. Enter to decide later.
@@ -708,9 +712,9 @@
             - name: Stop at a vault line the answer cannot replace
               ansible.builtin.fail:
                 msg: >-
-                  {{ init_vault_file }}'s vault_proxmox_api_token_secret, vault_github_username or
+                  {{ init_vault_file }}'s {{ init_secret_var }}, vault_github_username or
                   vault_tailscale_auth_key line cannot take the answer in place (a value over several lines?): set it
-                  with just vault.
+                  with just vault{{ init_host_flag }}.
 
         # Only when there is no password anywhere: a .vault_pass of the person's
         # own is never read as text, rewritten or re-moded. One made here is made
@@ -810,25 +814,25 @@
           {% if init_wrote_any | bool %}
           Wrote:
           {% if init_answers.host is defined %}
-            inventory/hosts.yml                  ansible_host: {{ init_answers.host | to_json }}
+            {{ '%-37s' | format(init_hosts_said) }}ansible_host: {{ init_answers.host | to_json }}
           {% endif %}
           {% for key, value in init_token_settings.items() %}
-            inventory/group_vars/all/local.yml   {{ key }}: {{ value | to_json }}
+            {{ '%-37s' | format(init_local_said) }}{{ key }}: {{ value | to_json }}
           {% endfor %}
           {% for key, value in (init_access_wrote | default({})).items() %}
-            inventory/group_vars/all/local.yml   {{ key }}: {{ value | to_json }}
+            {{ '%-37s' | format(init_local_said) }}{{ key }}: {{ value | to_json }}
           {% endfor %}
           {% if init_tailscale_writes | bool %}
-            inventory/group_vars/all/local.yml   vpn: {{ init_tailscale_value | to_json }}
+            {{ '%-37s' | format(init_local_said) }}vpn: {{ init_tailscale_value | to_json }}
           {% endif %}
           {% if init_access_made | default(false) | bool %}
             the Proxmox host                     the token {{ init_access_user }}!{{ init_access_token }}, with what it needs
           {% endif %}
           {% if init_vault_wrote %}
-          {% set init_vault_said = (['the token secret'] if init_secret_answered else [])
+          {% set init_vault_said_values = (['the token secret'] if init_secret_answered else [])
                                    + (['the GitHub username'] if init_answers.github_user is defined else [])
                                    + (['the Tailscale auth key'] if init_tailscale_key_answered | bool else []) %}
-            inventory/group_vars/all/vault.yml   {{ init_vault_said | and_list
+            {{ '%-37s' | format(init_vault_said) }}{{ init_vault_said_values | and_list
                                                     ~ (', ' if init_vault_answered else '') }}encrypted
           {% endif %}
           {% endif %}
@@ -837,7 +841,9 @@
           {% elif not init_wrote_any | bool %}
           Every value a first deploy needs is set.
           {% endif %}
+          {% if init_vault_optional | length > 0 %}
           Optional, with just vault: {{ init_vault_optional | join(', ') }}.
+          {% endif %}
 
     # NEXT STEPS (callback_plugins/agent_warehouse.py): what the report says
     # is left while a value is missing or the vault cannot be opened - the
@@ -855,10 +861,10 @@
     - name: Say that the vault is encrypted
       ansible.builtin.debug:
         msg: >-
-          NOTICE  vault.yml is encrypted (just deploy refuses a plaintext vault). Its password is in
+          NOTICE  {{ init_vault_named }} is encrypted (just deploy refuses a plaintext vault). Its password is in
           {{ '.vault_pass' if init_vault_pass_now else init_vault_password_env }}: keep it{{
           ', since the vault cannot be opened without it' if init_vault_pass_made is changed else '' }}.
-          Edit the vault with just vault.
+          Edit the vault with just vault{{ init_host_flag }}.
       when: init_vault_wrote and not init_vault_encrypted
 
     # A scripted just init that was given values, but not every required one,

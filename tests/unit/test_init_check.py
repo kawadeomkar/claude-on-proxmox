@@ -163,6 +163,46 @@ def _hostname_calls(root: Path) -> str:
     return _text(root / "bin" / "hostname-calls.log")
 
 
+# -------------------------------------------------------------- another host ---
+# just init --host nuc: once every check passed, each setting the host sets for itself goes into its own local.yml
+# (here the test's), as the checks settled it or as this run reads it, and its default VM's name - never before.
+HOST = {
+    "name": "nuc",
+    "secret": "vault_proxmox_api_token_secret",
+    "always": ["proxmox_node", "proxmox_storage", "proxmox_bridge", "proxmox_api_port", "proxmox_template_vmid"],
+    "default_vm": "nuc-default",
+}
+
+
+def test_another_host_is_given_what_it_sets_for_itself_once_every_check_passed(tmp_path: Path, fake_pve: str) -> None:
+    root = tmp_path / "run"
+    report = _check(root, fake_pve, "ssh", extra={"init_host": HOST})
+    assert report["rc"] == 0, _failures(report)
+    local = yaml.safe_load((root / "group_vars" / "all" / "local.yml").read_text())
+    assert {name: local[name] for name in [*HOST["always"], "vm_default_name"]} == {
+        "proxmox_node": "pve",
+        "proxmox_storage": "local-lvm",
+        "proxmox_bridge": "vmbr0",
+        "proxmox_api_port": _port(fake_pve),
+        "proxmox_template_vmid": 9000,
+        "vm_default_name": "nuc-default",
+    }
+    said = _said(report)
+    assert "Next: just deploy alpha --host nuc, which creates a VM named alpha on nuc" in said
+    # Each written once: a second run finds them there, and writes nothing.
+    again = _check(root, fake_pve, "ssh", extra={"init_host": HOST})
+    assert again["rc"] == 0 and (root / "group_vars" / "all" / "local.yml").read_text().count("proxmox_node:") == 1
+
+
+def test_another_host_is_given_nothing_while_a_check_fails(tmp_path: Path, fake_pve: str) -> None:
+    root = tmp_path / "run"
+    wrong = {"vault_proxmox_api_token_secret": "11111111-2222-3333-4444-555555555555"}
+    report = _check(root, fake_pve, "ssh", wrong, extra={"init_host": HOST})
+    assert report["rc"] != 0
+    local = yaml.safe_load((root / "group_vars" / "all" / "local.yml").read_text())
+    assert "vm_default_name" not in local and "proxmox_node" not in local
+
+
 # ------------------------------------------------------------------- the checks ---
 def test_nothing_is_checked_while_a_value_is_the_examples(tmp_path: Path, fake_pve: str) -> None:
     root = tmp_path / "run"
@@ -792,9 +832,14 @@ def test_a_setting_is_written_only_at_a_terminal_or_as_given():
     }
     assert sorted(writers) == [
         "Write proxmox_node into local.yml",
+        "Write what the host sets for itself into its local.yml",
         "init_choose | Write into local.yml {{ init_choose_setting }}",
     ]
     assert writers["Write proxmox_node into local.yml"].startswith("(init_ask | bool) and ")
+    # Another host's own settings: its name given on the command line, just init --host.
+    assert writers["Write what the host sets for itself into its local.yml"].startswith(
+        "(init_host_name | length > 0) and "
+    )
     assert writers["init_choose | Write into local.yml {{ init_choose_setting }}"].startswith(
         "(init_ask | bool or init_choose_given | length > 0) and "
     )

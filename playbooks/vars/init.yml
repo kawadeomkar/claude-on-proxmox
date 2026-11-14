@@ -16,6 +16,20 @@ init_ask: false
 # questions; storage and bridge for the checks.
 init_given: {}
 
+# The host this run sets up, as tools/check host init gives it: empty for the
+# first host, in inventory/; for another, in hosts/<name>/, its name, the
+# vault's name for its token's secret, the settings it sets for itself, its
+# default VM's name and how its files are said. The four files below then point
+# into its folder, given beside it.
+init_host: {}
+init_host_name: "{{ init_host.name | default('') }}"
+init_secret_var: "{{ init_host.secret | default('vault_proxmox_api_token_secret') }}"
+init_hosts_said: "{{ init_host.hosts_said | default('inventory/hosts.yml') }}"
+init_local_said: "{{ init_host.local_said | default('inventory/group_vars/all/local.yml') }}"
+init_vault_said: "{{ init_host.vault_said | default('inventory/group_vars/all/vault.yml') }}"
+# The vault as a sentence names it: vault.yml for the first host's, every host's.
+init_vault_named: "{{ init_host.vault_said | default('vault.yml') }}"
+
 init_root: "{{ playbook_dir | dirname }}"
 init_hosts_file: "{{ init_root }}/inventory/hosts.yml"
 init_local_file: "{{ init_root }}/inventory/group_vars/all/local.yml"

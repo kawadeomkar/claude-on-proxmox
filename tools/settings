@@ -352,28 +352,58 @@ def _set_up(loader: DataLoader, password: str) -> None:
 
 
 class Settings:
-    """Every value, as Ansible gives it to the play that runs each role, with where it was set."""
+    """Every value, as Ansible gives it to the play that runs each role, with where it was set.
 
-    def __init__(self, inventory: Path, password: str):
+    For a host in hosts/ (``host``: its folder, and the name the report gives its files), the inventory is the shared
+    controller.yml and the host's folder, as a run against it reads them, and the host's local.yml and vault.yml are
+    layers of their own above the shared ones. ``write_host``: --value and --reset change the host's local.yml, not the
+    shared one."""
+
+    def __init__(self, inventory: Path, password: str, host: tuple[Path, str] | None = None, write_host: bool = False):
         self.specs = wiring.specs()
         self.defaults, self.feeds = wiring.wiring()
         self.loader = DataLoader()
         self.vault_file = inventory / "group_vars" / "all" / "vault.yml"
-        encrypted = self.vault_file.is_file() and self.vault_file.read_bytes().startswith(b"$ANSIBLE_VAULT")
+        folder, said = host if host else (None, "")
+        self.host_said, self.host_name = said, said.rsplit("/", 1)[-1]
+        host_vault_file = folder / "group_vars" / "all" / "vault.yml" if folder else None
+        vaults = [self.vault_file, *([host_vault_file] if host_vault_file else [])]
+        encrypted = any(each.is_file() and each.read_bytes().startswith(b"$ANSIBLE_VAULT") for each in vaults)
         _set_up(self.loader, password)
         if not password and encrypted:
             raise Refused(
                 "vault.yml is encrypted, and there is no .vault_pass or ANSIBLE_VAULT_PASSWORD_FILE to open it with"
             )
+        sources = [str(inventory / "controller.yml"), str(folder)] if folder else [str(inventory)]
         try:
-            self.inventory = InventoryManager(loader=self.loader, sources=[str(inventory)])
+            self.inventory = InventoryManager(loader=self.loader, sources=sources)
             self.vault = self._read(self.vault_file)
+            self.host_vault = self._read(host_vault_file) if host_vault_file else {}
         except AnsibleError as error:
             if "ecrypt" in str(error):
                 raise Refused(f"vault.yml could not be opened with {password}") from error
             raise
-        self.local_file = inventory / "group_vars" / "all" / "local.yml"
-        self.local = self._read(self.local_file)
+        # The labels the report gives a host's own files, and every file a person edits.
+        self.host_labels = (f"{said}/vault.yml", f"{said}/local.yml") if folder else ()
+        self.users = USERS + self.host_labels
+        self.vault_labels = ("vault.yml", *self.host_labels[:1])
+        self.shared_local = self._read(inventory / "group_vars" / "all" / "local.yml")
+        self.host_local = self._read(folder / "group_vars" / "all" / "local.yml") if folder else {}
+        # Where --value and --reset write, and its name as the messages say it.
+        if folder and write_host:
+            self.local_file, self.local, self.local_name, self.local_example = (
+                folder / "group_vars" / "all" / "local.yml",
+                self.host_local,
+                f"{said}/group_vars/all/local.yml",
+                REPO / "tools" / "templates" / "host" / "group_vars" / "all" / "local.yml.example",
+            )
+        else:
+            self.local_file, self.local, self.local_name, self.local_example = (
+                inventory / "group_vars" / "all" / "local.yml",
+                self.shared_local,
+                LOCAL,
+                LOCAL_EXAMPLE,
+            )
         self.project = self._read(inventory / "group_vars" / "all" / "defaults.yml")
         self.host_vars = inventory / "host_vars"
         self.variables = VariableManager(loader=self.loader, inventory=self.inventory)
@@ -390,7 +420,7 @@ class Settings:
         # otherwise refuse every report. Inline !vault values and no_log values join it as they are templated.
         self.hunted = {
             str(value)
-            for name, value in self.vault.items()
+            for name, value in [*self.vault.items(), *self.host_vault.items()]
             if isinstance(value, str)
             and len(value.strip()) >= 4
             and not self.identifier(name)
@@ -415,7 +445,9 @@ class Settings:
 
     def by_person(self, where: str, name: str, raw) -> bool:
         """Set in a file a person edits, and in the vault to more than nothing or the example's placeholder."""
-        return where in USERS and not (where == "vault.yml" and (raw in ("", None) or self.placeholder(name, raw)))
+        return where in self.users and not (
+            where in self.vault_labels and (raw in ("", None) or self.placeholder(name, raw))
+        )
 
     def placeholder(self, name: str, value) -> bool:
         """Still the example's value, as just init decides it - never by a pattern."""
@@ -458,7 +490,7 @@ class Settings:
         if any(self.no_log(each) for each in fed):
             return None, f"{name} is a secret", "just vault"
         if VaultHelper.get_ciphertext(self.local.get(target), with_tags=False) is not None:
-            return None, f"local.yml holds {target} encrypted (!vault)", LOCAL
+            return None, f"local.yml holds {target} encrypted (!vault)", self.local_name
         if resetting:
             return target, "", ""
         if not role and target not in self.example_settings:
@@ -471,7 +503,7 @@ class Settings:
         if name in self.run_sets and target not in self.example_settings:
             return None, f"{name} is set by a run itself ({'; '.join(self.run_sets[name])})", ""
         if self.spec_for(target, name).get("type") == "raw":
-            return None, f"{name} takes any value, so --value cannot hold it to a type", LOCAL
+            return None, f"{name} takes any value, so --value cannot hold it to a type", self.local_name
         return target, "", ""
 
     def spec_for(self, target: str, name: str, seen: frozenset = frozenset()) -> dict:
@@ -538,23 +570,22 @@ class Settings:
 
     def _read_local(self) -> tuple[str, dict]:
         if not self.local_file.is_file():
-            raise Refused(f"{LOCAL} missing. Run: just init")
+            raise Refused(f"{self.local_name} missing. Run: just init")
         source = self.local_file.read_text()
         try:
             before = tagged(source) or {}
         except yaml.YAMLError as error:
-            raise Refused(f"{LOCAL} is not YAML that reads: nothing was written") from error
+            raise Refused(f"{self.local_name} is not YAML that reads: nothing was written") from error
         if not isinstance(before, dict):
-            raise Refused(f"{LOCAL} is not a mapping of settings: nothing was written")
+            raise Refused(f"{self.local_name} is not a mapping of settings: nothing was written")
         return source, before
 
-    @staticmethod
-    def _line_of(lines: list[str], name: str) -> int | None:
+    def _line_of(self, lines: list[str], name: str) -> int | None:
         """The one line that sets name, or None; two lines of one name are refused, since the last wins."""
         setting = re.compile(rf"^{re.escape(name)}\s*:")
         found = [index for index, line in enumerate(lines) if setting.match(line)]
         if len(found) > 1:
-            raise Refused(f"{LOCAL} sets {name} on {len(found)} lines, and the last wins: keep one, by hand")
+            raise Refused(f"{self.local_name} sets {name} on {len(found)} lines, and the last wins: keep one, by hand")
         return found[0] if found else None
 
     @staticmethod
@@ -583,7 +614,8 @@ class Settings:
             k: v for k, v in before.items() if k not in names
         }:
             raise Refused(
-                f"{LOCAL} is not laid out so {', '.join(sorted(names))} can be changed safely: nothing was written"
+                f"{self.local_name} is not laid out so {', '.join(sorted(names))} can be changed safely: nothing was "
+                "written"
             )
         store.replace(self.local_file, result)
 
@@ -647,14 +679,21 @@ class Settings:
         lines = source.splitlines(keepends=True)
         # The 1.0 name's line out first, so the new name's is placed among what is left.
         if old is not None and old in before and self._take_out(lines, old) is None:
-            raise Refused(f"{LOCAL} sets {old}, but not on a line of its own: change it by hand")
+            raise Refused(f"{self.local_name} sets {old}, but not on a line of its own: change it by hand")
         migrated = old if old is not None and old in before else None
         found = self._line_of(lines, target)
         if found is None and target in before:
             # Set, but not on a line of its own (a quoted key, a flow mapping): a line added would be a second key.
-            raise Refused(f"{LOCAL} sets {target}, but not on a line of its own: change it by hand")
+            raise Refused(f"{self.local_name} sets {target}, but not on a line of its own: change it by hand")
         if found is not None and before.get(target) == value and migrated is None:
-            return {"asked": name, "wrote": None, "name": target, "value": value, "line": found + 1}
+            return {
+                "asked": name,
+                "wrote": None,
+                "name": target,
+                "value": value,
+                "line": found + 1,
+                "file": self.local_name,
+            }
         if found is not None:
             start, end = found, self._value_end(lines, found)
             how = "in place of the line that set it"
@@ -677,11 +716,13 @@ class Settings:
             "how": how,
             "by_hand": by_hand,
             "migrated": migrated,
+            "file": self.local_name,
         }
 
     def example_lines(self, name: str) -> list[str]:
-        """name's commented line in local.yml.example, with its value's further lines, or none."""
-        lines = LOCAL_EXAMPLE.read_text().splitlines(keepends=True)
+        """name's commented line in local.yml.example, with its value's further lines, or none: for a host's own
+        file, its example's (tools/templates/host/)."""
+        lines = self.local_example.read_text().splitlines(keepends=True)
         example = self._commented(name)
         start = next((index for index, line in enumerate(lines) if example.match(line)), None)
         return [] if start is None else lines[start : self._value_end(lines, start, commented=True)]
@@ -705,18 +746,25 @@ class Settings:
         partner = anew.get(target) or next((was for was, now in anew.items() if now == target), None)
         names = [each for each in dict.fromkeys((target, name, partner)) if each and each in before]
         if not names:
-            return {"asked": name, "name": target, "removed": [], "restored": [], "line": None}
+            return {"asked": name, "name": target, "removed": [], "restored": [], "line": None, "file": self.local_name}
         first, restored = None, []
         for each in names:
             taken = self._take_out(lines, each)
             if taken is None:
                 # Set, but not on a line of its own (a flow mapping, a quoted key): not one this can take out.
-                raise Refused(f"{LOCAL} sets {each}, but not on a line of its own: take it out by hand")
+                raise Refused(f"{self.local_name} sets {each}, but not on a line of its own: take it out by hand")
             start, restore = taken
             restored += [each] if restore else []
             first = start if first is None else min(first, start)
         self._replace(before, "".join(lines), dict.fromkeys(names))
-        return {"asked": name, "name": target, "removed": names, "restored": restored, "line": first + 1}
+        return {
+            "asked": name,
+            "name": target,
+            "removed": names,
+            "restored": restored,
+            "line": first + 1,
+            "file": self.local_name,
+        }
 
     def applies(self, target: str) -> list[str]:
         """What puts a setting to use, by the roles of the variables it sets."""
@@ -770,8 +818,9 @@ class Settings:
             "layers": [  # highest first, each named for the file a person edits
                 ("internal", self._read(REPO / "roles" / role / "vars" / "main.yml")),
                 ("hosts.yml", host_layer),
+                *zip(self.host_labels, (self.host_vault, self.host_local), strict=False),
                 ("vault.yml", self.vault),
-                ("local.yml", self.local),
+                ("local.yml", self.shared_local),
                 ("default", self.project),
                 ("hosts.yml", group_layer),
                 ("default", self._read(REPO / "roles" / role / "defaults" / "main.yml")),
@@ -796,10 +845,10 @@ class Settings:
             if ref == "ansible_facts":
                 found["facts"] = True
                 continue
-            if ref in self.vault or ref in self.example_vault or self.no_log(ref):
+            if ref in self.vault or ref in self.host_vault or ref in self.example_vault or self.no_log(ref):
                 found["secret"] = True
             where, raw = self.layer(context, ref)
-            if where in USERS:
+            if where in self.users:
                 found["user"].append((ref, where, self.by_person(where, ref, raw)))
             deeper = self.walk(context, ref, depth + 1)
             found["user"] += deeper["user"]
@@ -817,14 +866,14 @@ class Settings:
             "role": role,
             "kind": "value",
             "value": None,
-            "set_in": where if where in USERS else (via[0][1] if via else "default"),
+            "set_in": where if where in self.users else (via[0][1] if via else "default"),
             "via": [{"name": ref, "file": file} for ref, file in via],
             "evaluated_as": context["group"],
         }
         if name in self.run_sets:
             row["set_by_run"] = self.run_sets[name]
         row["changed"] = self.by_person(where, name, raw) or any(real for _ref, _file, real in made_of["user"])
-        secret = where == "vault.yml" or bool(spec.get("no_log")) or made_of["secret"]  # locks 1, 3, 4
+        secret = where in self.vault_labels or bool(spec.get("no_log")) or made_of["secret"]  # locks 1, 3, 4
         if made_of["facts"]:
             row["kind"] = "on_the_vm"
         elif made_of["per_vm"] and context["placeholder"]:
@@ -846,7 +895,7 @@ class Settings:
                     self.hunted.update(str(item) for item in vaulted if len(str(item)) >= 4)
                 plain = json.loads(json.dumps(value))  # Ansible's tagged types, made plain
                 if secret:
-                    vault_name = via[0][0] if via and via[0][1] == "vault.yml" else name
+                    vault_name = via[0][0] if via and via[0][1] in self.vault_labels else name
                     row["kind"] = "secret"
                     row["secret"] = (
                         "not set"
@@ -933,7 +982,8 @@ class Settings:
         return self.setting(name) | {"section": section}
 
     def vault_row(self, name: str, section: str) -> dict:
-        value = self.vault.get(name)
+        own = name in self.host_vault
+        value = self.host_vault.get(name) if own else self.vault.get(name)
         state = "not set" if value in ("", None) else "placeholder" if self.placeholder(name, value) else "set"
         return {
             "name": name,
@@ -942,10 +992,10 @@ class Settings:
             "kind": "secret",
             "value": None,
             "secret": state,
-            "set_in": "vault.yml",
+            "set_in": self.host_labels[0] if own else "vault.yml",
             "via": [],
             "changed": state == "set",
-            "change": "just vault",
+            "change": f"just vault --host {self.host_name}" if own else "just vault",
         }
 
     def host_row(self) -> dict:
@@ -963,7 +1013,7 @@ class Settings:
             "kind": "placeholder" if address in (None, example) else "value",
             "value": None if address in (None, example) else address,
             "changed": address not in (None, example),
-            "change": "inventory/hosts.yml",
+            "change": f"{self.host_said}/hosts.yml" if self.host_said else "inventory/hosts.yml",
         }
 
     def everything(self) -> list[dict]:
@@ -1001,6 +1051,11 @@ class Settings:
 STYLE = {"local.yml": "y", "hosts.yml": "y", "vault.yml": "m"}
 
 
+def _style(where: str, default: str) -> str:
+    """A file's colour by its name, a host's own (hosts/<name>/vault.yml) as the shared one of that name."""
+    return STYLE.get(where.rsplit("/", 1)[-1], default)
+
+
 def shown(row: dict) -> str:
     kind = row["kind"]
     if kind == "secret":
@@ -1024,8 +1079,8 @@ def source(row: dict) -> tuple[str, str]:
     """Where a row was set, and its style: the person's own file in their colour, a default dim."""
     if row["via"]:
         first = row["via"][0]
-        return f"{first['name']} in {first['file']}", STYLE.get(first["file"], "")
-    return row["set_in"], STYLE.get(row["set_in"], "d")
+        return f"{first['name']} in {first['file']}", _style(first["file"], "")
+    return row["set_in"], _style(row["set_in"], "d")
 
 
 def table(rows: list[dict], heading) -> list[list]:
@@ -1094,7 +1149,7 @@ def one(row: dict) -> list[list]:
     if row.get("wiring"):
         chain.append((f"{row['name']}: {json.dumps(row['wiring'])} in {row['wiring_in']}", "default"))
     for index, (link, file) in enumerate(chain):
-        lines += _field("set by" if index == 0 else "", text.one_line(link, 400), STYLE.get(file, ""))
+        lines += _field("set by" if index == 0 else "", text.one_line(link, 400), _style(file, ""))
     for said in row.get("set_by_run", []):
         lines += _field("runs", said, "c")
     if "default" in row:
@@ -1156,10 +1211,10 @@ def usage(as_json: bool) -> int:
     return 0
 
 
-def _fresh(result: dict, inventory: Path, password: str) -> tuple[Settings, dict | None]:
-    """Every file read again after a change, and the row of what was asked, so what outranks local.yml - a hosts.yml
-    variable, a run - is said rather than missed."""
-    fresh = Settings(inventory, password)
+def _fresh(result: dict, make) -> tuple[Settings, dict | None]:
+    """Every file read again after a change (make() reads them as the first read did), and the row of what was asked,
+    so what outranks local.yml - a host's own file, a hosts.yml variable, a run - is said rather than missed."""
+    fresh = make()
     now = _now(fresh, result["asked"], result["name"])
     fresh.check([now] if now else [])
     return fresh, now
@@ -1177,13 +1232,13 @@ def _said(key: str, result: dict, now: dict | None, notes: list[str], head: str,
     return 0
 
 
-def written(result: dict, as_json: bool, inventory: Path, password: str) -> int:
+def written(result: dict, as_json: bool, make) -> int:
     """Say what --value wrote, and what that changes, read again from every file."""
     target, asked = result["name"], result["asked"]
-    fresh, now = _fresh(result, inventory, password)
+    fresh, now = _fresh(result, make)
     notes = []
     if result["wrote"] is None:
-        notes.append(f"{LOCAL} sets it already, on line {result['line']}: nothing was written")
+        notes.append(f"{result['file']} sets it already, on line {result['line']}: nothing was written")
     else:
         if result.get("migrated"):
             notes.append(
@@ -1191,7 +1246,9 @@ def written(result: dict, as_json: bool, inventory: Path, password: str) -> int:
                 f"{result['migrated']}'s line taken out, since the new name wins where both are set"
             )
         elif result.get("by_hand"):
-            notes.append(f"{LOCAL} sets {asked} itself, which outranks the setting that feeds it: written there")
+            notes.append(
+                f"{result['file']} sets {asked} itself, which outranks the setting that feeds it: written there"
+            )
         elif asked != target and asked not in fresh.named_anew():
             notes.append(f"{asked} is set through {target}, the setting local.yml.example names for it")
         if now and now["kind"] == "value" and now["value"] != result["value"]:
@@ -1200,7 +1257,9 @@ def written(result: dict, as_json: bool, inventory: Path, password: str) -> int:
         notes += fresh.applies(target)
     head = ""
     if result["wrote"] is not None:
-        head = text.one_line(f"wrote {result['wrote']} in {LOCAL}, {result['how']} (line {result['line']})", 1000)
+        head = text.one_line(
+            f"wrote {result['wrote']} in {result['file']}, {result['how']} (line {result['line']})", 1000
+        )
     return _said("wrote", result, now, notes, head, as_json)
 
 
@@ -1214,27 +1273,27 @@ def _now(fresh: Settings, asked: str, target: str) -> dict | None:
     return None
 
 
-def resetted(result: dict, as_json: bool, inventory: Path, password: str) -> int:
+def resetted(result: dict, as_json: bool, make) -> int:
     """Say what --reset took out of local.yml, and the value the setting has now, read again from every file."""
     target, asked = result["name"], result["asked"]
-    fresh, now = _fresh(result, inventory, password)
+    fresh, now = _fresh(result, make)
     notes = []
     if not result["removed"]:
-        notes.append(f"{LOCAL} does not set {target}, so it is at its default already: nothing was written")
+        notes.append(f"{result['file']} does not set {target}, so it is at its default already: nothing was written")
     else:
         if now and now["kind"] == "value":
             notes.append(f"{asked} is now {shown(now)}, from {source(now)[0]}")
         by_hand = sorted(set(wiring.set_by(target, fresh.feeds, fresh.specs)) & set(fresh.local))
         if by_hand:
             notes.append(
-                f"but {LOCAL} sets {', '.join(by_hand)} itself, which outranks {target}: just settings "
+                f"but {result['file']} sets {', '.join(by_hand)} itself, which outranks {target}: just settings "
                 f"{by_hand[0]} --reset takes it out"
             )
         notes += fresh.applies(target)
     head = ""
     if result["removed"]:
         how = "its example's line back in its place" if result["restored"] else "its line taken out"
-        head = f"reset {', '.join(result['removed'])} in {LOCAL}: {how} (line {result['line']})"
+        head = f"reset {', '.join(result['removed'])} in {result['file']}: {how} (line {result['line']})"
     return _said("reset", result, now, notes, head, as_json)
 
 
@@ -1255,6 +1314,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--vault-password-file", default="")
     # The tests' inventory; the recipe never passes it.
     parser.add_argument("--inventory", default=str(REPO / "inventory"))
+    # A host in hosts/ (tools/check host): its folder, read over the shared inventory, and --write-host=true when its
+    # own local.yml is the one --value and --reset change.
+    parser.add_argument("--host-folder", default="")
+    parser.add_argument("--write-host", default="")
     parser.add_argument("name", nargs="?", default="")
     args = parser.parse_args(argv)
     as_json = args.json == "true"
@@ -1269,12 +1332,18 @@ def main(argv: list[str]) -> int:
         return usage(as_json)
     # As ansible-playbook decides it: the file passed, else ANSIBLE_VAULT_PASSWORD_FILE or ansible.cfg's.
     password = args.vault_password_file or (C.DEFAULT_VAULT_PASSWORD_FILE or "")
+    folder = Path(args.host_folder) if args.host_folder else None
+    host = (folder if folder.is_absolute() else REPO / folder, str(args.host_folder).rstrip("/")) if folder else None
+
+    def make() -> Settings:
+        return Settings(Path(args.inventory), password, host, args.write_host == "true")
+
     try:
-        settings = Settings(Path(args.inventory), password)
+        settings = make()
         if resetting:
-            return resetted(settings.reset(args.name), as_json, Path(args.inventory), password)
+            return resetted(settings.reset(args.name), as_json, make)
         if args.value:
-            return written(settings.write(args.name, args.value), as_json, Path(args.inventory), password)
+            return written(settings.write(args.name, args.value), as_json, make)
         if args.all == "true" or (args.changed == "true" and not args.name):
             rows, target = settings.everything(), {"kind": "all"}
         elif args.name in settings.specs:
