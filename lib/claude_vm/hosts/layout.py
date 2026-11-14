@@ -302,6 +302,37 @@ class Layout:
             found.append({"name": other.name, "address": other.address})
         return found
 
+    # ------------------------------------------------------------------------------------------- the names ----
+
+    def alias_file(self) -> Path | None:
+        """The managed SSH config, where each VM's alias records its host: as the shared local.yml names it, where it
+        names it as a path, else the default - by its 1.x name while that is the one there. None with the aliases off,
+        when nothing records where a VM is."""
+        local = _yaml(self.checkout / SHARED_LOCAL)
+        local = local if isinstance(local, dict) else {}
+        if local.get("claude_ssh_config") is False:
+            return None
+        named = local.get("claude_ssh_config_file")
+        if isinstance(named, str) and named and "{" not in named:
+            return Path(named).expanduser()
+        default = Path("~/.ssh/agent-warehouse.conf").expanduser()
+        legacy = default.with_name("claude-on-proxmox.conf")
+        return legacy if not default.exists() and legacy.exists() else default
+
+    def origins(self, names: list[str]) -> dict[str, str]:
+        """Of ``names``, those whose alias records one of the checkout's hosts, and that host: where each VM is. A
+        name with no alias, or one recording a host the checkout does not have, is none of them."""
+        path = self.alias_file()
+        try:
+            text = path.read_text(encoding="utf-8") if path else ""
+        except OSError:
+            text = ""
+        from ..proxmox import ssh_config_blocks
+
+        known = {host.name for host in self.every()}
+        recorded = {block["name"]: block["origin"] for block in ssh_config_blocks(text)}
+        return {name: recorded[name] for name in names if recorded.get(name) in known}
+
     # ------------------------------------------------------------------------------------------- the rules ----
 
     def never_inherited(self, host: Host) -> list[str]:

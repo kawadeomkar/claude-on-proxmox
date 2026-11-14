@@ -87,4 +87,22 @@ one host prunes, re-points and removes only that host's aliases: a fleet-wide `j
 against the homelab leaves the NUC's alone. A VM is never named after another of your hosts, nor given an alias of
 another host's address.
 
+A VM name belongs to one host, so a VM you name is found wherever it is:
+
+| You type | Runs against |
+|---|---|
+| `just code alpha`, `just login alpha`, `just destroy alpha`, `just deploy alpha` (it exists) | the host `alpha`'s alias records |
+| `just deploy newvm` (no alias) | the current host |
+| `just deploy --only configure`, `just login` (no names) | the current host |
+| `just login alpha beta`, on two hosts | refused: one host per run |
+| anything with `--host` | that host, even for a name another host's alias records: a warning, and the VM of the name on that host |
+
+The lookup is the managed SSH config on this machine, so it needs no host to answer; with `claude_ssh_config: false`
+nothing records where a VM is, and every run is the current host's. A VM whose name another host's alias holds is
+refused before anything is created, and the next `just init --host` writes `vm_default_name: <host>-default`, so a
+bare `just deploy` never makes a second VM of another host's default name. Two VMs of one name, made before - or
+while the aliases were off - still answer `just status`, `just login` and `just destroy` with `--host`; the alias stays
+with the host that recorded it, and a `just deploy` or `just code` that would point it at the other is refused until
+one of them has another name.
+
 `just status` keeps each host's settings apart (`.cache/status/<host>/`), and with `--host` reads that host.

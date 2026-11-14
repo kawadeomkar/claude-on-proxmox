@@ -357,6 +357,9 @@ if apt fails to resolve a mirror, that is the machine, not the change.
     - `claude_hosts_other` (the other hosts' names and addresses, from the resolver) feeds
       `claude_vm_inventory_hosts`, `claude_vm_inventory_addresses` and with it `proxmox_vm_known_hosts_kept`.
     - `just host <name>` switches under the run lock; no agent changes the current host.
+    - A VM name is one host's: a VM named runs against the host its alias records (`origins`, the managed SSH config
+      alone), names on two hosts are refused, and `--host` beside a name another host's alias records is a warning:
+      the run reaches that host's VM of the name, and `vm_names.yml` refuses the runs that would write its alias.
     - `tests/unit/test_hosts.py` runs the resolver on made-up layouts, the token rule through ansible-playbook, and
       the project's playbooks through an overlay against two fake Proxmox hosts with different secrets.
 - **The project writes exactly three things outside the repo on the controller, and has VS Code's own CLI

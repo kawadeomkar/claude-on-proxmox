@@ -75,7 +75,11 @@ def _checkout(root: Path, *, first: bool = True, local: dict | None = None) -> P
     )
     if first:
         (inventory / "hosts.yml").write_text(_hosts_yml("pve", "192.0.2.10"))
-    (inventory / "group_vars" / "all" / "local.yml").write_text(yaml.safe_dump(local or {"proxmox_storage": "shared"}))
+    # The managed SSH config the resolver reads a VM's host from: the test's own, never the developer's.
+    alias_file = {"claude_ssh_config_file": str(root / ".ssh" / "agent-warehouse.conf")}
+    (inventory / "group_vars" / "all" / "local.yml").write_text(
+        yaml.safe_dump(local or {"proxmox_storage": "shared", **alias_file})
+    )
     (root / ".vault_pass").write_text(PASSWORD + "\n")
     (root / ".vault_pass").chmod(0o600)
     _encrypt(inventory / "group_vars" / "all" / "vault.yml", {"vault_proxmox_api_token_secret": FIRST_SECRET}, root)
@@ -830,3 +834,80 @@ def test_the_current_host_is_said_for_just_inits_offer(tmp_path: Path) -> None:
     _host(root, "nuc")
     (root / "hosts" / "current").write_text("nuc\n")
     assert _tool(root, "current").stdout == "nuc\n"
+
+
+# ---------------------------------------------------------------------------------------- a named VM's host ----
+# A VM name is one host's, and the managed SSH config records which (# origin): a VM named is found where it is, never
+# on whichever host is current.
+
+
+def _aliases(root: Path, **origins: str) -> None:
+    """The managed SSH config in the run's home, a block for each VM recording its host ("" for none)."""
+    ssh = root / ".ssh"
+    ssh.mkdir(exist_ok=True)
+    text = ""
+    for name, origin in origins.items():
+        record = f"# origin: {origin}\n" if origin else ""
+        body = f"{record}Host {name}\n    HostName 192.0.2.99\n"
+        text += f"# BEGIN agent-warehouse: {name}\n{body}# END agent-warehouse: {name}\n"
+    (ssh / "agent-warehouse.conf").write_text(text)
+
+
+def test_a_named_vm_runs_against_the_host_its_alias_records(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    _aliases(root, alpha="nuc", beta="pve", gamma="", delta="lab")
+    assert _resolve(root, "--names=alpha")["host"] == "nuc"
+    (root / "hosts" / "current").write_text("nuc\n")
+    assert _resolve(root, "--names=beta")["host"] == "pve"
+    # No record, or one of a host the checkout does not have: the current host, as for a VM to be made.
+    assert _resolve(root, "--names=gamma")["host"] == "nuc"
+    assert _resolve(root, "--names=delta,newvm")["host"] == "nuc"
+    # A name with a record and one without: the recorded one's host.
+    assert _resolve(root, "--names=beta,newvm")["host"] == "pve"
+
+
+def test_names_on_two_hosts_are_one_run_too_many(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    _aliases(root, alpha="nuc", beta="pve")
+    said = _refused(root, "--names=alpha,beta")
+    assert "the VMs named are on 2 hosts (alpha on nuc; beta on pve)" in said
+
+
+def test_host_given_beside_a_name_another_host_has_reaches_its_own_vm_of_the_name_and_says_so(
+    tmp_path: Path,
+) -> None:
+    # A name two hosts each have, from before a name was one host's, keeps working with --host (plan §5); the run that
+    # would write its alias is refused by tasks/vm_names.yml, test_vm_names.py's.
+    root = _checkout(tmp_path)
+    _host(root, "nuc")
+    _aliases(root, alpha="nuc")
+    said = _tool(root, "env", f"--vault-pass={root / '.vault_pass'}", "--host=pve", "--names=alpha")
+    assert said.returncode == 0, said.stderr
+    assert said.stderr.startswith(
+        "warning: alpha is nuc's, as its SSH alias records, and this run is against pve: it reaches the VM of the name "
+        "on pve."
+    )
+    assert _resolve(root, "--host=pve", "--names=alpha")["host"] == "pve"
+    quiet = _tool(root, "env", f"--vault-pass={root / '.vault_pass'}", "--host=nuc", "--names=alpha")
+    assert quiet.returncode == 0 and quiet.stderr == "", quiet.stderr
+
+
+def test_with_the_aliases_off_a_name_records_nothing(tmp_path: Path) -> None:
+    root = _checkout(tmp_path, local={"claude_ssh_config": False})
+    _host(root, "nuc")
+    _aliases(root, alpha="nuc")
+    assert _resolve(root, "--names=alpha")["host"] == "pve"
+
+
+def test_a_recipe_given_a_vm_another_host_has_runs_against_that_host(tmp_path: Path) -> None:
+    from test_justfile import _runs
+
+    root = _checkout_copy(tmp_path)
+    _host_copy(root, "nuc")
+    _aliases(root, alpha="nuc")
+    result = _just_here(root, "login", "alpha")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "inventory.txt").read_text() == "inventory/controller.yml,hosts/nuc\n"
+    assert len(_runs(tmp_path, "ansible-playbook")) == 1

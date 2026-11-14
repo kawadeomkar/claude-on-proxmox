@@ -111,6 +111,38 @@ def env(opts, layout: hosts.Layout) -> int:
     if opts.host and opts.nested and opts.host != opts.nested:
         return _refuse(f"--host {opts.host} in a run against {opts.nested}: one host per run")
     many = layout.many()
+    routed = False
+    names = [name for name in opts.names.split(",") if name]
+    if many and names:
+        # A VM name is one host's, and its alias records which: a named VM is found where it is.
+        try:
+            origins = layout.origins(names)
+        except hosts.Refused as refused:
+            return _refuse(str(refused))
+        if given:
+            elsewhere = {name: origin for name, origin in origins.items() if origin != given}
+            if elsewhere:
+                # A name two hosts each have, made before a name was one host's: the run reaches the VM of the name on
+                # the host given, the alias stays the other's, and a run that would write it is refused
+                # (tasks/vm_names.yml).
+                said = ", ".join(f"{name} is {origin}'s" for name, origin in sorted(elsewhere.items()))
+                print(
+                    f"warning: {said}, as its SSH alias records, and this run is against {given}: it reaches the VM "
+                    f"of the name on {given}. A VM name belongs to one host, so the alias stays where it is, and a run "
+                    "here that would write it - just deploy, just code - is refused: give one of them another name",
+                    file=sys.stderr,
+                )
+        else:
+            on = sorted(set(origins.values()))
+            if len(on) > 1:
+                said = "; ".join(
+                    f"{', '.join(sorted(n for n, o in origins.items() if o == origin))} on {origin}" for origin in on
+                )
+                return _refuse(
+                    f"the VMs named are on {len(on)} hosts ({said}), as their SSH aliases record, and a run reaches "
+                    "one host: run each host's on its own, with --host"
+                )
+            given, routed = (on[0], True) if on else ("", False)
     try:
         # One host, and none asked for: nothing to choose, and nothing read - the run is as it always was.
         host = layout.resolve(given, opts.lenient) if given or many or layout.current_name() else None
@@ -120,7 +152,7 @@ def env(opts, layout: hosts.Layout) -> int:
     sources = ",".join(host.sources) if overlay else ""
     exported = os.environ.get("ANSIBLE_INVENTORY")
     if overlay and exported is not None and exported != sources:
-        why = "--host" if opts.host else f"{layout.hosts_rel}/current"
+        why = "--host" if opts.host else "the VMs named" if routed else f"{layout.hosts_rel}/current"
         return _refuse(
             f"ANSIBLE_INVENTORY is exported, and this run's host is {host.name} ({why}), whose inventory is "
             f"{sources}: one inventory per run. Unset it to reach {host.name}, or run against the first host"

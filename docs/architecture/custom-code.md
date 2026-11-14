@@ -1239,7 +1239,9 @@ host. `hosts/current` names the current host; `hosts/` is git-ignored and refuse
 
 - **One resolver** (`tools/check host`, which runs `tools/host`; the layout in `layout.py`) is the one place that
   knows a path. Each VM recipe asks it, in the line `{{ host_env }}`, after its own rules and before its lock: the
-  host of the run - `--host`, else a nested recipe's `host=`, else `hosts/current`'s, else the first - and, for the
+  host of the run - `--host`, else a nested recipe's `nested_host=`, else the host the VMs named are on, as their
+  aliases record (`# origin`; names on two hosts are refused, one host per run, and beside `--host` a name another
+  host's alias records is warned of and reached on the host given), else `hosts/current`'s, else the first - and, for the
   lines after it, `ANSIBLE_INVENTORY` exported for a host in `hosts/`, `$settings_files` and `$vault_files` (the
   shared ones first) for the checks, `$host_sources` for `tools/status`'s `-i`, and `$host_extra`, the other hosts'
   names and addresses, which `vm_args` passes as `claude_hosts_other`. With one host, and none asked for, it reads
