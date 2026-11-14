@@ -78,6 +78,7 @@
       api_token_id: "{{ proxmox_vm_api_token_id }}"
       api_token_secret: "{{ proxmox_vm_api_token_secret }}"
       validate_certs: "{{ proxmox_vm_validate_certs }}"
+      api_timeout: "{{ proxmox_vm_api_timeout }}"
   delegate_to: localhost
   block:
     - name: Look up Proxmox VM {{ proxmox_vm_name }}

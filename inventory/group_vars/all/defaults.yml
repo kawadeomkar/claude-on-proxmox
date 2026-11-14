@@ -40,6 +40,10 @@ proxmox_api_module_defaults:
   api_token_id: "{{ proxmox_api_token_id }}"
   api_token_secret: "{{ proxmox_api_token_secret }}"
   validate_certs: "{{ proxmox_validate_certs }}"
+  # How long each request a module makes waits for Proxmox's answer: the reads'
+  # claude_vm_api_timeout, never proxmoxer's 5 seconds, which a host copying a
+  # disk outlasts - a clone made, then failed before it was tagged this project's.
+  api_timeout: "{{ claude_vm_api_timeout }}"
 # Base URL for the one request no community.proxmox module makes on its own
 # (playbooks/tasks/cluster_vms.yml). A bare IPv6 address is bracketed, as
 # proxmoxer does for the modules.
@@ -59,8 +63,10 @@ proxmox_api_headers:
 # when certificates are not validated; callers `default(omit, true)` it.
 proxmox_api_ca_path: "{{ lookup('ansible.builtin.env', 'REQUESTS_CA_BUNDLE') if proxmox_validate_certs | bool else '' }}"
 # Seconds each of those reads waits for Proxmox: uri's own default, which
-# playbooks/tasks/cluster_vms.yml and vm_addresses.yml keep. `just status` passes
-# them 10, since a report that cannot reach the API should say so soon.
+# playbooks/tasks/cluster_vms.yml and vm_addresses.yml keep, and every request a
+# Proxmox module makes (the shared module defaults above, and the proxmox_vm
+# role's own). `just status` passes its reads 10, since a report that cannot
+# reach the API should say so soon.
 claude_vm_api_timeout: 30
 
 # just status (tools/status): how long each of its reads of the API waits.
@@ -416,6 +422,7 @@ proxmox_vm_api_user: "{{ proxmox_api_user }}"
 proxmox_vm_api_token_id: "{{ proxmox_api_token_id }}"
 proxmox_vm_api_token_secret: "{{ proxmox_api_token_secret }}"
 proxmox_vm_validate_certs: "{{ proxmox_validate_certs }}"
+proxmox_vm_api_timeout: "{{ claude_vm_api_timeout }}"
 proxmox_vm_node: "{{ proxmox_node }}"
 proxmox_vm_storage: "{{ proxmox_storage }}"
 # A golden is cloned by the number Proxmox knows it by (provision.yml), so its name only labels the clone.

@@ -156,6 +156,7 @@ def test_every_setting_that_reaches_a_role_is_in_an_example_file():
     not_settings = {
         "inventory_hostname": "Ansible's own: the VM's name",
         "proxmox_api_host": "taken from inventory/hosts.yml",
+        "claude_vm_api_timeout": "how long each request to the Proxmox API waits: the reads', and the modules'",
         "claude_vm_tailscale_tag": "made from claude_vm_tag: <ownership tag>-tailscale",
         "claude_vm_tags_owned": "made from claude_vm_tag: it, and its 1.x name while it is the default",
         "claude_vm_inventory_addresses": "made from the inventory: each of its hosts' ansible_host",

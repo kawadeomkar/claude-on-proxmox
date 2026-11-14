@@ -41,6 +41,12 @@ argument_specs:
       proxmox_vm_validate_certs:
         type: bool
         description: Verify the API's TLS certificate. Turn it on once the controller trusts the Proxmox CA.
+      proxmox_vm_api_timeout:
+        type: int
+        default: 30
+        description:
+          - Seconds each API request waits for Proxmox's answer. Not the modules' own 5, which a host busy copying a disk
+            outlasts in the middle of a clone, failing a run whose clone was made.
       proxmox_vm_node:
         type: str
         description: Node that holds the template, where new VMs are cloned.

@@ -29,6 +29,7 @@ All API calls are delegated to the controller.
 | `proxmox_vm_api_token_id` | str | `ansible` | Name of the API token, the part after the ! in user!token. Set through `proxmox_api_token_id` in local.yml. |
 | `proxmox_vm_api_token_secret` | str | `""` | API token secret. Keep it in an ansible-vault file. Asserted by the role rather than marked required, for the same reason as proxmox_vm_api_host. A secret: never logged. Set through `vault_proxmox_api_token_secret` in vault.yml. |
 | `proxmox_vm_validate_certs` | bool | `false` | Verify the API's TLS certificate. Turn it on once the controller trusts the Proxmox CA. Set through `proxmox_validate_certs` in local.yml. |
+| `proxmox_vm_api_timeout` | int | `30` | Seconds each API request waits for Proxmox's answer. Not the modules' own 5, which a host busy copying a disk outlasts in the middle of a clone, failing a run whose clone was made. |
 | `proxmox_vm_node` | str | `pve` | Node that holds the template, where new VMs are cloned. Set through `proxmox_node` in local.yml. |
 | `proxmox_vm_storage` | str | `local-lvm` | Storage a full clone's disks are created on. Set through `proxmox_storage` in local.yml. |
 | `proxmox_vm_template_name` | str | `ubuntu-24.04-cloudinit` | Name of the template VMs are cloned from. |

@@ -27,6 +27,15 @@ and provisioning one VM at a time avoids it.
 VMID. Taking that on trust points every subsequent task at the template and reconfigures it. Hence
 the explicit `assert: proxmox_vm_clone is changed`.
 
+## A host slow to answer during a clone
+
+The community.proxmox modules wait 5 seconds for each answer by default, and a host copying a template's disk for a
+full clone - a NUC's single disk, live, 2026-11-13 - took longer to answer the module's poll of the clone's task: the
+clone was made, the run failed, and the VM was left untagged, so the next run refused it as no VM of this project's.
+Every module's requests now wait `claude_vm_api_timeout` (30 s), as the project's own reads do
+(`proxmox_api_module_defaults`, and the `proxmox_vm` role's `proxmox_vm_api_timeout`). A VM left so is deleted by hand,
+once it is known to be the run's: `qm destroy <vmid>` on the host.
+
 ## `add_host` bypasses the play's host loop
 
 Covered in [§4.2](lifecycle.md#42-playbooksprovisionyml--three-plays).

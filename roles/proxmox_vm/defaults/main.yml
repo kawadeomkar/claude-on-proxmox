@@ -9,6 +9,9 @@ proxmox_vm_api_token_secret: ""
 # Set to true after trusting the PVE CA on the controller
 # (docs/getting-started/proxmox-access.md).
 proxmox_vm_validate_certs: false
+# Seconds each API request waits for Proxmox's answer: never proxmoxer's 5,
+# which a host busy copying a disk outlasts in the middle of a clone.
+proxmox_vm_api_timeout: 30
 
 # Where and from what to create the VM.
 proxmox_vm_node: pve

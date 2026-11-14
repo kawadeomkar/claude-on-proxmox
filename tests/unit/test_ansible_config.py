@@ -8,6 +8,10 @@ part way. ANSIBLE_KEEP_REMOTE_FILES=1 still turns pipelining off and keeps each 
 Only the inventory plugins the project's inventories need are enabled: never script, which runs any executable file in
 the inventory folder, nor auto, which loads any inventory plugin a YAML file there names. Each inventory the project
 hands Ansible still parses with them: inventory/'s files, init's own and the one Vagrant's provisioner writes.
+
+Every community.proxmox module's request waits as long as the project's own reads of the API do: proxmoxer's 5 seconds
+were outlasted by a host copying a disk mid-clone, which failed a run whose clone was made
+(docs/architecture/failure-modes.md, "A host slow to answer during a clone").
 """
 
 from __future__ import annotations
@@ -15,11 +19,13 @@ from __future__ import annotations
 import configparser
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import yaml
 from harness import _env
 
 REPO = Path(__file__).resolve().parents[2]
@@ -96,3 +102,23 @@ def test_every_inventory_the_project_hands_ansible_parses_and_none_runs(tmp_path
     vagrant = tmp_path / "vagrant_ansible_inventory"
     vagrant.write_text(VAGRANT_INVENTORY)
     assert _hosts(tmp_path, vagrant)["claude_vms"]["hosts"] == ["default"]
+
+
+def test_every_proxmox_module_waits_as_long_as_the_reads_of_the_api_do() -> None:
+    defaults = yaml.safe_load((REPO / "inventory" / "group_vars" / "all" / "defaults.yml").read_text())
+    assert defaults["claude_vm_api_timeout"] >= 30
+    assert defaults["proxmox_api_module_defaults"]["api_timeout"] == "{{ claude_vm_api_timeout }}"
+    assert defaults["proxmox_vm_api_timeout"] == "{{ claude_vm_api_timeout }}"
+    role = yaml.safe_load((REPO / "roles" / "proxmox_vm" / "tasks" / "main.yml").read_text())
+    own = [group for task in role for group in (task.get("module_defaults") or {}).values()]
+    assert own and all(group["api_timeout"] == "{{ proxmox_vm_api_timeout }}" for group in own)
+    # Every other module_defaults for the modules is the shared one, which waits as long: a block of its own is the
+    # proxmox_vm role's main.yml alone, held above - never another role's main.yml.
+    own_block = REPO / "roles" / "proxmox_vm" / "tasks" / "main.yml"
+    for path in [REPO / "deploy.yml", *REPO.glob("playbooks/**/*.yml"), *REPO.glob("roles/*/tasks/*.yml")]:
+        for found in re.finditer(r"group/community\.proxmox\.proxmox:(.*)", path.read_text()):
+            given = found.group(1).strip()
+            assert given == '"{{ proxmox_api_module_defaults }}"' or path == own_block and not given, (
+                path,
+                given,
+            )
