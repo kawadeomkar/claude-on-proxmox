@@ -360,8 +360,13 @@ if apt fails to resolve a mirror, that is the machine, not the change.
     - A VM name is one host's: a VM named runs against the host its alias records (`origins`, the managed SSH config
       alone), names on two hosts are refused, and `--host` beside a name another host's alias records is a warning:
       the run reaches that host's VM of the name, and `vm_names.yml` refuses the runs that would write its alias.
+    - A line a run prints or writes onto a VM that says what to run ends with `claude_host_flag` (` --host <name>`
+      with more than one host, empty with one): the retries, the roles' commands through `<role>_host_flag`,
+      `code_editor_flag` and the editor plan's own `host_flag`, which `validate` holds apart from `--editor`, and the
+      session notes, whose rows `session_notes.py` names it in from the notes' marker. A new such line takes it too.
     - `tests/unit/test_hosts.py` runs the resolver on made-up layouts, the token rule through ansible-playbook, and
-      the project's playbooks through an overlay against two fake Proxmox hosts with different secrets.
+      the project's playbooks through an overlay against two fake Proxmox hosts with different secrets; the
+      `provision` scenario's `second_host.yml` provisions, aliases and destroys a VM through one.
 - **The project writes exactly three things outside the repo on the controller, and has VS Code's own CLI
   write a fourth, and Claude Code's own CLI a fifth.** Read [On the controller](docs/architecture/security-model.md#on-the-controller) and
   [§4.8](docs/architecture/lifecycle.md#48-playbooksssh_configyml-and-playbookstasksssh_configyml) first.

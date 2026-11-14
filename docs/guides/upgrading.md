@@ -20,7 +20,8 @@ host changes nothing, but:
   and said; a bare word is a host's name, and in a checkout of one host `just init --host pve` stops, naming
   `--address`, rather than set up a second host by accident.
 - **Each SSH alias records its host** (`# origin: pve` in `~/.ssh/agent-warehouse.conf`). An alias written before
-  2.4 has none, and the next write of its VM records it; until then it is the one host's.
+  2.5 has none, and the next write of its VM records it; until then it is the one host's. Before you add a second
+  host, `just deploy --only ssh-config` writes them all again, so a VM you name is found on its own host.
 
 ## The project is called agent-warehouse
 

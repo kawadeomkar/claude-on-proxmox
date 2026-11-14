@@ -57,6 +57,10 @@ A host is created only with its address, given as `--address` or typed at the qu
 take the word for a host's name, as 2.4 took it for an address ([Upgrading](upgrading.md#more-than-one-host-from-25)).
 `just init --host nuc` again asks for what is still missing, as `just init` does.
 
+The aliases written before 2.5 record no host, and a VM named by one runs against the current host, which may not be
+its own once there are two. Run `just deploy --only ssh-config` against the first host once, before or after setting
+up the second: every alias of a VM it lists is written again, recording it.
+
 `just vault --host nuc` edits that host's vault, and `just settings` shows the run's host's values - the current
 host's, or the one `--host` names - each host file a layer of its own above the shared ones. `just settings vm_cores
 --value 2` writes the shared `local.yml`, as before, and says so when the host's file outranks it; with `--host nuc`
@@ -128,6 +132,19 @@ host's, and adds `hosts` and a `host` on every row. Each host's settings are kep
 
 `just deploy newvm`, about to make a VM no alias records, first asks every other host whether it has a VM of that
 name, and refuses one that does; a host that does not answer is said, and the run goes on.
+
+## What hosts do not do
+
+- **A VM stays on the host it was made on.** To move one, `just destroy` it, which saves what of its Claude Code
+  sessions exists only there, then `just deploy <name> --host <other>`.
+- **The GitHub account and the VPN are set up once, for every host.** `just init --host` asks neither again, and
+  Tailscale's auth key joins each host's VMs to the same tailnet. A setting in a host's own `local.yml`, or a secret
+  in its `vault.yml`, outranks the shared one for its runs, where one host's VMs need another.
+- **One run that changes something at a time, per checkout**, whichever host it is against: a deploy on the NUC is
+  refused while one on the homelab runs, as a second on one host is, the lock naming the host of the run that holds
+  it ([One run at a time](runs.md#one-run-at-a-time)).
+- **The hosts are separate Proxmox hosts.** The nodes of one Proxmox cluster are one host, `proxmox_node` picking the
+  node.
 
 ## Where the host is said
 
